@@ -250,7 +250,7 @@ const AdminView = ({
           <label className="block text-sm font-medium text-gray-700 mb-1">Rôle</label>
           <select 
             value={newUserRole}
-            onChange={(e) => { setNewUserRole(e.target.value); if (e.target.value !== 'client') setNewUserModuleId(''); }}
+            onChange={(e) => setNewUserRole(e.target.value)}
             className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none"
           >
             <option value="client">Client</option>
