@@ -809,19 +809,31 @@ const DocumentsView = ({
   );
 };
 
-const AccueilView = ({ setActiveTab }) => (
+const AccueilView = ({ setActiveTab, clientProgress }) => (
   <div className="flex flex-col items-center justify-center pt-10 md:pt-20 animate-fade-in">
       <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-6 border border-gray-100">
           <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
       </div>
       <h1 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">Bonjour.</h1>
-      <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Poursuivez votre exploration ou consultez vos documents en base.</p>
+      <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression Qualiopi et accédez à vos séances.</p>
       
-      <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
-         <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('exercices')}>
-              <h3 className="font-bold text-gray-800 text-lg mb-2">Exercices en attente</h3>
-              <p className="text-sm text-gray-500 mb-4">Vous avez 1 nouvel exercice cognitif à réaliser.</p>
-              <div className="bg-rose-50 text-rose-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Accéder aux exercices</div>
+      {/* Barre de Progression Qualiopi */}
+      <div className="w-full max-w-3xl mt-8 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+          <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">Progression Qualiopi</span>
+              <span className="text-sm font-black text-rose-500">{clientProgress}%</span>
+          </div>
+          <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-rose-500 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
+          </div>
+          <p className="text-[10px] text-gray-400 mt-2 italic text-right">Mise à jour automatique après chaque émargement de séance.</p>
+      </div>
+
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
+         <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('mes_seances')}>
+              <h3 className="font-bold text-gray-800 text-lg mb-2">Planning des Séances</h3>
+              <p className="text-sm text-gray-500 mb-4">Consultez vos dates et émarger vos rapports de présence.</p>
+              <div className="bg-rose-50 text-rose-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes séances</div>
           </div>
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('bilan')}>
               <h3 className="font-bold text-gray-800 text-lg mb-2">Synthèse de Bilan</h3>
@@ -831,6 +843,75 @@ const AccueilView = ({ setActiveTab }) => (
       </div>
   </div>
 );
+
+const SessionsView = ({ sessions, signSession, clients }) => {
+  const currentClientId = clients.length > 0 ? clients[0].id : null;
+  const mySessions = sessions.filter(s => s.client_id === currentClientId).sort((a, b) => a.numero_seance - b.numero_seance);
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Séances d'Accompagnement</h1>
+      <p className="text-gray-500 text-lg">Retrouvez le calendrier de vos 8 séances et signez vos émargements.</p>
+
+      <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
+                <th className="pb-4">Séance</th>
+                <th className="pb-4">Date prévue</th>
+                <th className="pb-4 text-center">Statut</th>
+                <th className="pb-4 text-right">Émargement</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {mySessions.map((session) => (
+                <tr key={session.id} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="py-5">
+                    <div className="flex items-center">
+                       <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center mr-4 text-gray-900 font-black">#{session.numero_seance}</div>
+                       <span className="font-bold text-gray-900">{session.nom}</span>
+                    </div>
+                  </td>
+                  <td className="py-5 font-medium text-gray-600">
+                    {session.date ? new Date(session.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'À définir par le coach'}
+                  </td>
+                  <td className="py-5 text-center">
+                    <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${
+                      session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+                    }`}>
+                      {session.statut === 'Signé' ? 'Signé ✓' : 'À signer'}
+                    </span>
+                  </td>
+                  <td className="py-5 text-right">
+                    {session.statut !== 'Signé' ? (
+                      <button 
+                        onClick={() => signSession(session)}
+                        disabled={!session.date}
+                        className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${
+                          session.date ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        Signer (Emarger)
+                      </button>
+                    ) : (
+                      <span className="text-green-500 font-bold text-sm bg-green-50 px-3 py-1 rounded-lg border border-green-100">Confirmé</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {mySessions.length === 0 && (
+                <tr>
+                   <td colSpan="4" className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const BilanView = ({ handleDownloadPDF }) => (
   <div className="space-y-6 max-w-5xl mx-auto">
@@ -950,6 +1031,17 @@ export default function App() {
     fetchSessions();
   }, []);
 
+  // Auto-génération des sessions manquantes pour les clients existants (ex: Matthys Tessier)
+  useEffect(() => {
+    if (clients.length > 0 && modules.length > 0 && sessions.length === 0) {
+      clients.forEach(client => {
+        if (client.module_id && !sessions.some(s => s.client_id === client.id)) {
+          generateSessions(client);
+        }
+      });
+    }
+  }, [clients, modules, sessions]);
+
   const fetchModules = async () => {
     const { data: mData, error: mErr } = await supabase.from('modules').select('*');
     if (!mErr && mData) setModules(mData);
@@ -1056,6 +1148,12 @@ export default function App() {
 
       await fetchUtilisateurs(); 
       await fetchDocuments();
+      
+      // AUTO-GÉNÉRATION DES SÉANCES
+      if (insertedClient.module_id) {
+         await generateSessions(insertedClient);
+      }
+
       setNewUserName('');
       setNewUserEmail('');
       setNewUserModuleId('');
@@ -1464,8 +1562,9 @@ export default function App() {
           {userRole === 'client' && (
             <>
               <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><HomeIcon /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><ClipboardIcon /> Mes Séances</button>
               <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><UserIcon /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><ClipboardIcon /> Exercices</button>
+              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><PlusIcon /> Exercices</button>
             </>
           )}
 
@@ -1542,9 +1641,10 @@ export default function App() {
                 isGeneratingSessions={isGeneratingSessions}
                 modules={modules}
               />}
-             {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} />}
-             {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
-             {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
+              {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={clients.length > 0 ? Math.min(100, Math.round(((clients[0].seances_effectuees || 0) / (clients[0].seances_totales || 10)) * 100)) : 0} />}
+              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} clients={clients} />}
+              {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
+              {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
              {activeTab === 'documents' && <DocumentsView 
                 documents={documents} 
                 clients={clients} 
