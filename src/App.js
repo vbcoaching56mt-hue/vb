@@ -17,6 +17,7 @@ const SettingsIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="cur
 const LogoutIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>;
 const UsersIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>;
 const PlusIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>;
+const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg>;
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -448,7 +449,7 @@ const AdminView = ({
 
 const FormateurView = ({ 
   clients, formateurs, sessions, generateSessions, 
-  updateSessionDate, signSession, isGeneratingSessions, modules 
+  updateSessionDate, signSession, modules 
 }) => {
   const currentFormateurId = formateurs.length > 0 ? formateurs[0].id : null; 
   const assignedClients = clients.filter(c => c.formateur_id === currentFormateurId);
@@ -510,11 +511,10 @@ const FormateurView = ({
                      </h4>
                      {clientSessions.length === 0 && client.module_id && (
                         <button 
-                          disabled={isGeneratingSessions}
                           onClick={() => generateSessions(client)}
-                          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-50"
+                          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
                         >
-                          {isGeneratingSessions ? "Génération..." : "Générer les 8 séances"}
+                          Générer les 8 séances
                         </button>
                      )}
                   </div>
