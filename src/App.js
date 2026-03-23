@@ -1637,12 +1637,13 @@ export default function App() {
                 clients={clients} 
                 formateurs={formateurs} 
                 assignFormateur={assignFormateur} 
+                assignModule={assignModule}
                 documents={documents}
                 modules={modules} moduleDocuments={moduleDocuments} handleAddModule={handleAddModule} handleLinkDocument={handleLinkDocument}
                 newModuleName={newModuleName} setNewModuleName={setNewModuleName} newModuleSeances={newModuleSeances} setNewModuleSeances={setNewModuleSeances}
                 newModDocName={newModDocName} setNewModDocName={setNewModDocName} newModDocType={newModDocType} setNewModDocType={setNewModDocType}
                 newModDocFile={newModDocFile} setNewModDocFile={setNewModDocFile}
-                addingToModuleId={addingToModuleId} setAddingToModuleId={setAddingToModuleId} newUserModuleId={newUserModuleId} setNewUserModuleId={setNewUserModuleId}
+                addingToModuleId={addingToModuleId} setAddingToModuleId={setAddingToModuleId}
              />}
               {activeTab === 'mes_clients' && <FormateurView 
                 clients={clients} 
