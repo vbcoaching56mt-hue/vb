@@ -841,13 +841,19 @@ const DocumentsView = ({
       </div>
 
       {/* Modals */}
-      <SignatureModal 
-         isOpen={signingDocId !== null} 
-         onClose={() => setSigningDocId(null)} 
-         onSave={handleSignatureSave} 
-      />
-      
-      <DocumentViewerModal 
+       <SignatureModal 
+          isOpen={signingDocId !== null} 
+          onClose={() => setSigningDocId(null)} 
+          onSave={handleSignatureSave} 
+       />
+
+       <SignatureModal 
+          isOpen={signingSessionId !== null} 
+          onClose={() => setSigningSessionId(null)} 
+          onSave={(signature) => handleSessionSignatureSave(signingSessionId, signature)} 
+       />
+       
+       <DocumentViewerModal 
          isOpen={viewingDocId !== null} 
          document={documents.find(d => d.id === viewingDocId)} 
          onClose={() => setViewingDocId(null)} 
@@ -873,7 +879,7 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
           <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
               <div className="h-full bg-rose-500 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
           </div>
-          <p className="text-[10px] text-gray-400 mt-2 italic text-right">Mise à jour automatique après chaque émargement de séance.</p>
+          <p className="text-[10px] text-gray-400 mt-2 italic text-left">Mise à jour automatique par signature électronique (Qualiopi).</p>
       </div>
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
@@ -891,8 +897,9 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
   </div>
 );
 
-const SessionsView = ({ sessions, signSession, currentUserId }) => {
+const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
+  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -900,6 +907,14 @@ const SessionsView = ({ sessions, signSession, currentUserId }) => {
       <p className="text-gray-500 text-lg">Retrouvez le calendrier de vos 8 séances et signez vos émargements.</p>
 
       <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center">
+            <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Séances
+          </h2>
+          <button onClick={handleDownloadAttendanceCertificate} className="inline-flex items-center text-sm px-4 py-2 bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-600 shadow-sm transition-colors">
+            <DownloadIcon className="mr-2" /> Attestation d'assiduité
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -933,12 +948,12 @@ const SessionsView = ({ sessions, signSession, currentUserId }) => {
                     {session.statut !== 'Signé' ? (
                       <button 
                         onClick={() => signSession(session)}
-                        disabled={!session.date}
+                        disabled={!session.date || new Date(session.date) > new Date()}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${
-                          session.date ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          (session.date && new Date(session.date) <= new Date()) ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
                       >
-                        Signer (Emarger)
+                        {(!session.date || new Date(session.date) > new Date()) ? 'En attente' : 'Signer (Emarger)'}
                       </button>
                     ) : (
                       <span className="text-green-500 font-bold text-sm bg-green-50 px-3 py-1 rounded-lg border border-green-100">Confirmé</span>
@@ -954,6 +969,16 @@ const SessionsView = ({ sessions, signSession, currentUserId }) => {
             </tbody>
           </table>
         </div>
+      </div>
+      
+      <div className="mt-12 flex justify-center">
+        <button 
+          onClick={handleDownloadAttendanceCertificate} 
+          className="bg-gray-900 border-2 border-gray-900 hover:bg-white hover:text-gray-900 text-white px-8 py-4 rounded-3xl font-bold shadow-xl flex items-center group transition-all"
+        >
+          <div className="w-8 h-8 bg-rose-500 rounded-lg flex items-center justify-center mr-3 group-hover:rotate-12 transition-transform shadow-lg shadow-rose-500/30 font-bold text-white">PDF</div>
+          Générer mon Attestation d'Assiduité
+        </button>
       </div>
     </div>
   );
@@ -1033,6 +1058,7 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState(null); 
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [signingSessionId, setSigningSessionId] = useState(null);
 
   // --- Supabase Database (États locaux mis à jour via DB) ---
   const [formateurs, setFormateurs] = useState([]);
@@ -1304,19 +1330,32 @@ export default function App() {
     if (!error) await fetchSessions();
   };
 
-  const signSession = async (session) => {
-    const { error } = await supabase.from('sessions').update({ statut: 'Signé', date_signature: new Date().toISOString() }).eq('id', session.id);
+  const signSession = (session) => {
+    setSigningSessionId(session.id);
+  };
+
+  const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    const { error } = await supabase.from('sessions').update({ 
+      statut: 'Signé', 
+      date_signature: new Date().toISOString(),
+      signature_image: signatureDataUrl 
+    }).eq('id', sessionId);
+
     if (!error) {
-       // On incrémente aussi les séances effectuées du client dans la table utilisateurs
        const client = clients.find(c => c.id === session.client_id);
        if (client) {
           const newEffectuees = (client.seances_effectuees || 0) + 1;
-          const { error: updErr } = await supabase.from('utilisateurs').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
-          if (updErr) console.error("Erreur mise à jour séances_effectuees :", updErr);
+          await supabase.from('utilisateurs').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
           await fetchUtilisateurs();
        }
        await fetchSessions();
-       alert(`Séance ${session.numero_seance} signée !`);
+       alert(`Séance émargée avec succès !`);
+    } else {
+       console.error("Erreur signature session:", error);
+       alert("Erreur lors de la signature : " + error.message);
     }
   };
 
@@ -1585,6 +1624,95 @@ export default function App() {
     }
   };
 
+  const handleDownloadAttendanceCertificate = async () => {
+    const client = clients.find(c => c.id === currentUserId);
+    if (!client) return;
+
+    const signedSessions = sessions.filter(s => s.client_id === currentUserId && s.statut === 'Signé');
+    const module = modules.find(m => m.id === client.module_id);
+    
+    try {
+      const doc = new jsPDF();
+      
+      // Header
+      doc.setFontSize(22);
+      doc.setTextColor(31, 41, 55); // gray-800
+      doc.text("Attestation d'Assiduité", 105, 30, { align: 'center' });
+      
+      doc.setFontSize(10);
+      doc.setTextColor(107, 114, 128); // gray-500
+      doc.text(`Doc Réf: QUALIOPI-ATT-${client.id}-${Date.now()}`, 105, 38, { align: 'center' });
+
+      // Client Info
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Détails du bénéficiaire :", 20, 55);
+      doc.setFont("Helvetica", "bold");
+      doc.text(`Nom : ${client.nom}`, 20, 62);
+      doc.setFont("Helvetica", "normal");
+      doc.text(`Email : ${client.email}`, 20, 69);
+      doc.text(`Module : ${module ? module.nom : 'Non défini'}`, 20, 76);
+
+      // Table Header
+      let yPos = 95;
+      doc.setFillColor(243, 244, 246);
+      doc.rect(20, yPos, 170, 10, 'F');
+      
+      doc.setFontSize(10);
+      doc.setFont("Helvetica", "bold");
+      doc.text("Séance", 25, yPos + 7);
+      doc.text("Date émargée", 80, yPos + 7);
+      doc.text("Durée (h)", 140, yPos + 7);
+      doc.text("Statut", 170, yPos + 7);
+
+      // Sessions List
+      doc.setFont("Helvetica", "normal");
+      yPos += 10;
+      
+      signedSessions.forEach((s, index) => {
+        if (yPos > 250) { doc.addPage(); yPos = 20; }
+        doc.line(20, yPos, 190, yPos);
+        doc.text(`#${s.numero_seance} ${s.nom.substring(0, 25)}`, 25, yPos + 7);
+        doc.text(s.date_signature ? new Date(s.date_signature).toLocaleDateString('fr-FR') : '-', 80, yPos + 7);
+        doc.text("1.50 h", 140, yPos + 7); // Durée simulée
+        doc.setTextColor(16, 185, 129); // green-500
+        doc.setTextColor(0, 0, 0);
+        yPos += 10;
+      });
+
+      // Totals
+      yPos += 10;
+      doc.setFont("Helvetica", "bold");
+      doc.text(`Total des heures validées : ${signedSessions.length * 1.5} heures`, 120, yPos);
+
+      // Footer Signatures
+      yPos += 30;
+      doc.text("Signature de l'organisme", 25, yPos);
+      doc.text("Signature du bénéficiaire", 130, yPos);
+      
+      doc.setDrawColor(209, 213, 219);
+      doc.rect(20, yPos + 5, 75, 40);
+      doc.rect(120, yPos + 5, 75, 40);
+      
+      doc.setFontSize(8);
+      doc.setFont("Helvetica", "italic");
+      doc.text("Tampon VB Coaching", 25, yPos + 40);
+
+      // Si le client a une signature enregistrée (dernier emargement), on peut tenter de l'afficher
+      const lastSig = signedSessions.length > 0 ? signedSessions[signedSessions.length - 1].signature_image : null;
+      if (lastSig) {
+        try {
+          doc.addImage(lastSig, 'PNG', 125, yPos + 10, 65, 30);
+        } catch (e) { console.error("Erreur image signature PDF:", e); }
+      }
+
+      doc.save(`Attestation_${client.nom.replace(' ', '_')}.pdf`);
+    } catch (err) {
+      console.error("Erreur PDF Assiduité:", err);
+      alert("Erreur lors de la génération du PDF.");
+    }
+  };
+
   // Affichage du simulateur de connexion
   if (!userRole) {
     return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
@@ -1704,7 +1832,7 @@ export default function App() {
                 currentUserId={currentUserId}
               />}
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} />}
+              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} />}
               {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
               {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
              {activeTab === 'documents' && <DocumentsView 
@@ -1728,6 +1856,25 @@ export default function App() {
              />}
         </main>
       </div>
+
+      {/* Modals Qualiopi */}
+      <SignatureModal 
+          isOpen={signingDocId !== null} 
+          onClose={() => setSigningDocId(null)} 
+          onSave={handleSignatureSave} 
+       />
+
+       <SignatureModal 
+          isOpen={signingSessionId !== null} 
+          onClose={() => setSigningSessionId(null)} 
+          onSave={(signature) => handleSessionSignatureSave(signingSessionId, signature)} 
+       />
+       
+       <DocumentViewerModal 
+          isOpen={viewingDocId !== null} 
+          document={documents.find(d => d.id === viewingDocId)} 
+          onClose={() => setViewingDocId(null)} 
+       />
     </div>
   );
 }
