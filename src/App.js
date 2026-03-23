@@ -1084,26 +1084,6 @@ export default function App() {
   const [sessions, setSessions] = useState([]);
   const [newModDocFile, setNewModDocFile] = useState(null);
   const [addingToModuleId, setAddingToModuleId] = useState(null);
-  const handleSessionSignatureSave = async (signatureDataUrl) => {
-    if (!signingSessionId) return;
-    try {
-      const { error } = await supabase
-        .from('sessions')
-        .update({ 
-          signature_image: signatureDataUrl,
-          statut: 'Signé',
-          date_signature: new Date().toISOString()
-        })
-        .eq('id', signingSessionId);
-
-      if (error) throw error;
-      setSigningSessionId(null);
-      // Optionnel : rafraîchir les données ici
-    } catch (err) {
-      console.error("Erreur signature séance:", err);
-      alert("Erreur lors de la signature");
-    }
-  };
 
   // États formulaire "Ajouter un document"
   const [newDocName, setNewDocName] = useState('');
