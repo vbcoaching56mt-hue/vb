@@ -643,7 +643,7 @@ const DocumentsView = ({
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
-
+  
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
@@ -1059,7 +1059,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [signingSessionId, setSigningSessionId] = useState(null);
-
+  const [signingDocId, setSigningDocId] = useState(null);
+  const [viewingDocId, setViewingDocId] = useState(null);
   // --- Supabase Database (États locaux mis à jour via DB) ---
   const [formateurs, setFormateurs] = useState([]);
   const [clients, setClients] = useState([]);
@@ -1083,6 +1084,26 @@ export default function App() {
   const [sessions, setSessions] = useState([]);
   const [newModDocFile, setNewModDocFile] = useState(null);
   const [addingToModuleId, setAddingToModuleId] = useState(null);
+  const handleSessionSignatureSave = async (signatureDataUrl) => {
+    if (!signingSessionId) return;
+    try {
+      const { error } = await supabase
+        .from('sessions')
+        .update({ 
+          signature_image: signatureDataUrl,
+          statut: 'Signé',
+          date_signature: new Date().toISOString()
+        })
+        .eq('id', signingSessionId);
+
+      if (error) throw error;
+      setSigningSessionId(null);
+      // Optionnel : rafraîchir les données ici
+    } catch (err) {
+      console.error("Erreur signature séance:", err);
+      alert("Erreur lors de la signature");
+    }
+  };
 
   // États formulaire "Ajouter un document"
   const [newDocName, setNewDocName] = useState('');
