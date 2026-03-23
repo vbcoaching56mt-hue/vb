@@ -657,10 +657,10 @@ const DocumentsView = ({
   }
 
   const handleSignatureSave = async (dataUrl) => {
-     if (!signingDocId) return;
-     await handleSignDocument(signingDocId, isClient ? 'client' : 'formateur', dataUrl);
-     setSigningDocId(null);
-  };
+    if (!signingDocId) return;
+    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl);
+    setSigningDocId(null);
+   };
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -743,7 +743,7 @@ const DocumentsView = ({
                <span className="text-sm font-bold text-gray-500">Filtrer par client :</span>
                <select value={selectedClientForDocs} onChange={e=>setSelectedClientForDocs(e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-gray-500 focus:border-gray-500 p-2 outline-none">
                   <option value="">Tous mes clients</option>
-                  {clients.filter(c => c.formateur_id === (formateurs.length > 0 ? formateurs[0].id : null)).map(c => (
+                  {clients.filter(c => c.formateur_id === currentUserId).map(c => (
                      <option key={c.id} value={c.id}>{c.nom}</option>
                   ))}
                </select>
@@ -1054,39 +1054,57 @@ const ExercicesView = ({ setActiveTab }) => (
 
 export default function App() {
   // --- États Session et Navigation ---
-  const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
-  const [currentUserId, setCurrentUserId] = useState(null); 
+  const [userRole, setUserRole] = useState(null);
+  const [currentUserId, setCurrentUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [signingSessionId, setSigningSessionId] = useState(null);
-  const [signingDocId, setSigningDocId] = useState(null);
-  const [viewingDocId, setViewingDocId] = useState(null);
 
-  // --- Supabase Database (États locaux mis à jour via DB) ---
+  // --- États UI centralisés ---
+  const LoginView = ({ handleLogin, clients, formateurs, selectedRole, setSelectedRole }) => { // LoginView
+  const FormateurView = ({ 
+  clients, formateurs, sessions, generateSessions, 
+  updateSessionDate, signSession, modules, currentUserId,
+  expandedClientId, setExpandedClientId
+}) => { // FormateurView
+  const DocumentsView = ({ 
+  userRole, documents, clients, formateurs, handleSignDocument, handleDownloadPDF,
+  handleAddDocument, newDocName, setNewDocName, newDocType, setNewDocType, newDocUrl, setNewDocUrl,
+  newDocFile, setNewDocFile, updateDateSeance,
+  newDocClientId, setNewDocClientId, newDocVisClient, setNewDocVisClient,
+  newDocVisFormateur, setNewDocVisFormateur, isAddingDoc, currentUserId,
+
+  selectedClientForDocs, setSelectedClientForDocs,
+  signingDocId, setSigningDocId,
+  viewingDocId, setViewingDocId,
+  signingSessionId, setSigningSessionId,
+  handleSignatureSave,
+  handleSessionSignatureSave
+}) => { // DocumentsView/App
+  const [signingSessionId, setSigningSessionId] = useState(null); // Sessions/Formateur/App
+
+  // --- Supabase Database ---
   const [formateurs, setFormateurs] = useState([]);
   const [clients, setClients] = useState([]);
   const [documents, setDocuments] = useState([]);
-  
-  // États Modules Supabase
   const [modules, setModules] = useState([]);
   const [moduleDocuments, setModuleDocuments] = useState([]);
-  
-  // États formulaire "Ajouter un compte"
+  const [sessions, setSessions] = useState([]);
+
+  // --- Ajouter utilisateur ---
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState('client');
   const [isAddingUser, setIsAddingUser] = useState(false);
 
-  // États formulaire "Ingénierie Modules" (Admin)
+  // --- Modules ---
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleSeances, setNewModuleSeances] = useState(1);
   const [newModDocName, setNewModDocName] = useState('');
   const [newModDocType, setNewModDocType] = useState('Contrat');
-  const [sessions, setSessions] = useState([]);
   const [newModDocFile, setNewModDocFile] = useState(null);
   const [addingToModuleId, setAddingToModuleId] = useState(null);
 
-  // États formulaire "Ajouter un document"
+  // --- Ajouter document ---
   const [newDocName, setNewDocName] = useState('');
   const [newDocType, setNewDocType] = useState('Autre');
   const [newDocUrl, setNewDocUrl] = useState('');
@@ -1717,7 +1735,15 @@ export default function App() {
 
   // Affichage du simulateur de connexion
   if (!userRole) {
-    return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
+    return (
+  <LoginView
+    handleLogin={handleLogin}
+    clients={clients}
+    formateurs={formateurs}
+    selectedRole={selectedRole}
+    setSelectedRole={setSelectedRole}
+  />
+);
   }
 
   return (
@@ -1823,60 +1849,70 @@ export default function App() {
                 newModDocFile={newModDocFile} setNewModDocFile={setNewModDocFile}
                 addingToModuleId={addingToModuleId} setAddingToModuleId={setAddingToModuleId}
              />}
-              {activeTab === 'mes_clients' && <FormateurView 
-                clients={clients} 
-                formateurs={formateurs} 
-                sessions={sessions} 
-                generateSessions={generateSessions} 
-                updateSessionDate={updateSessionDate} 
-                signSession={signSession} 
-                modules={modules}
-                currentUserId={currentUserId}
-              />}
+               {activeTab === 'mes_clients' && (
+  <FormateurView 
+    clients={clients} 
+    formateurs={formateurs} 
+    sessions={sessions} 
+    generateSessions={generateSessions} 
+    updateSessionDate={updateSessionDate} 
+    signSession={signSession} 
+    modules={modules}
+    currentUserId={currentUserId}
+    expandedClientId={expandedClientId}
+    setExpandedClientId={setExpandedClientId}
+  />
+)}
+  />
+)}
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
               {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} />}
               {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
               {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
-             {activeTab === 'documents' && <DocumentsView 
-                documents={documents} 
-                clients={clients} 
-                formateurs={formateurs}
-                userRole={userRole} 
-                currentUserId={currentUserId}
-                handleSignDocument={handleSignDocument} 
-                handleDownloadPDF={handleDownloadPDF} 
-                handleAddDocument={handleAddDocument}
-                updateDateSeance={updateDateSeance}
-                newDocName={newDocName} setNewDocName={setNewDocName}
-                newDocType={newDocType} setNewDocType={setNewDocType}
-                newDocUrl={newDocUrl} setNewDocUrl={setNewDocUrl}
-                newDocFile={newDocFile} setNewDocFile={setNewDocFile}
-                newDocClientId={newDocClientId} setNewDocClientId={setNewDocClientId}
-                newDocVisClient={newDocVisClient} setNewDocVisClient={setNewDocVisClient}
-                newDocVisFormateur={newDocVisFormateur} setNewDocVisFormateur={setNewDocVisFormateur}
-                isAddingDoc={isAddingDoc}
-             />}
+             {activeTab === 'documents' && (
+            <DocumentsView 
+    documents={documents} 
+    clients={clients} 
+    formateurs={formateurs}
+    userRole={userRole} 
+    currentUserId={currentUserId}
+    handleSignDocument={handleSignDocument} 
+    handleDownloadPDF={handleDownloadPDF} 
+    handleAddDocument={handleAddDocument}
+    updateDateSeance={updateDateSeance}
+    newDocName={newDocName}
+    setNewDocName={setNewDocName}
+    newDocType={newDocType}
+    setNewDocType={setNewDocType}
+    newDocUrl={newDocUrl}
+    setNewDocUrl={setNewDocUrl}
+    newDocFile={newDocFile}
+    setNewDocFile={setNewDocFile}
+    newDocClientId={newDocClientId}
+    setNewDocClientId={setNewDocClientId}
+    newDocVisClient={newDocVisClient}
+    setNewDocVisClient={setNewDocVisClient}
+    newDocVisFormateur={newDocVisFormateur}
+    setNewDocVisFormateur={setNewDocVisFormateur}
+    isAddingDoc={isAddingDoc}
+
+    selectedClientForDocs={selectedClientForDocs}
+    setSelectedClientForDocs={setSelectedClientForDocs}
+    signingDocId={signingDocId}
+    setSigningDocId={setSigningDocId}
+    viewingDocId={viewingDocId}
+    setViewingDocId={setViewingDocId}
+    signingSessionId={signingSessionId}
+    setSigningSessionId={setSigningSessionId}
+    handleSignatureSave={handleSignatureSave}
+    handleSessionSignatureSave={handleSessionSignatureSave}
+  />
+)}
         </main>
       </div>
 
       {/* Modals Qualiopi */}
-      <SignatureModal 
-          isOpen={signingDocId !== null} 
-          onClose={() => setSigningDocId(null)} 
-          onSave={handleSignatureSave} 
-       />
-
-       <SignatureModal 
-          isOpen={signingSessionId !== null} 
-          onClose={() => setSigningSessionId(null)} 
-          onSave={(signature) => handleSessionSignatureSave(signingSessionId, signature)} 
-       />
-       
-       <DocumentViewerModal 
-          isOpen={viewingDocId !== null} 
-          document={documents.find(d => d.id === viewingDocId)} 
-          onClose={() => setViewingDocId(null)} 
-       />
+    
     </div>
   );
 }
