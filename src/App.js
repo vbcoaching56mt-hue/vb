@@ -633,11 +633,20 @@ const FormateurView = ({
   );
 };
 
+const DocumentsView = ({ 
+  userRole, documents, clients, formateurs, handleSignDocument, handleDownloadPDF,
+  handleAddDocument, newDocName, setNewDocName, newDocType, setNewDocType, newDocUrl, setNewDocUrl,
+  newDocFile, setNewDocFile, updateDateSeance,
+  newDocClientId, setNewDocClientId, newDocVisClient, setNewDocVisClient,
   newDocVisFormateur, setNewDocVisFormateur, isAddingDoc, currentUserId
 }) => {
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
+
+  const isAdmin = userRole === 'admin';
+  const isClient = userRole === 'client';
+  const isFormateur = userRole === 'formateur';
 
   let displayedDocs = isAdmin ? documents : 
              isClient ? documents.filter(d => d.user_id === currentUserId && d.visible_client) :
