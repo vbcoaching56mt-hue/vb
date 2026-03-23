@@ -167,39 +167,89 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
 
-const LoginView = ({ handleLogin }) => (
-  <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
-    <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-      <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
-      <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à VB ERP</h1>
-      <p className="text-gray-500 mb-8">Choisissez votre profil de démonstration pour basculer de vue.</p>
-      
-      <div className="space-y-4 text-left">
-        <button onClick={() => handleLogin('admin')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-gray-900 hover:shadow-md transition-all group">
-          <div className="flex items-center">
-            <div className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-gray-900 group-hover:text-white transition-colors"><SettingsIcon /></div>
-            <div><p className="font-bold text-gray-900">Administrateur</p><p className="text-xs text-gray-500">Gestion globale</p></div>
+const LoginView = ({ handleLogin, clients, formateurs }) => {
+  const [selectedRole, setSelectedRole] = useState(null);
+
+  if (selectedRole === 'client') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in text-center">
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-6">Sélectionner un Client</h2>
+          <div className="space-y-3 text-left max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+            {clients.map(c => (
+              <button key={c.id} onClick={() => handleLogin('client', c.id)} className="w-full p-4 border border-gray-100 rounded-2xl hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center group">
+                <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mr-3 font-bold group-hover:bg-indigo-600 group-hover:text-white transition-colors">{c.nom.charAt(0)}</div>
+                <div className="text-left">
+                  <p className="font-bold text-gray-900 leading-tight">{c.nom}</p>
+                  <p className="text-xs text-gray-500">{c.email}</p>
+                </div>
+              </button>
+            ))}
+            {clients.length === 0 && <p className="text-center text-gray-400 py-4 italic">Aucun client trouvé.</p>}
           </div>
-          <span className="text-gray-300 group-hover:text-gray-900">→</span>
-        </button>
-        <button onClick={() => handleLogin('formateur')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group">
-          <div className="flex items-center">
-            <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-rose-500 group-hover:text-white transition-colors"><UsersIcon /></div>
-            <div><p className="font-bold text-gray-900">Formateur / Coach</p><p className="text-xs text-gray-500">Suivi des clients</p></div>
+          <button onClick={() => setSelectedRole(null)} className="mt-8 text-sm font-bold text-gray-400 hover:text-gray-600">← Retour</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedRole === 'formateur') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in text-center">
+          <h2 className="text-2xl font-extrabold text-gray-900 mb-6">Sélectionner un Coach</h2>
+          <div className="space-y-3 text-left max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+            {formateurs.map(f => (
+              <button key={f.id} onClick={() => handleLogin('formateur', f.id)} className="w-full p-4 border border-gray-100 rounded-2xl hover:border-rose-500 hover:bg-rose-50 transition-all flex items-center group">
+                <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-3 font-bold group-hover:bg-rose-600 group-hover:text-white transition-colors">{f.nom.charAt(0)}</div>
+                <div className="text-left">
+                  <p className="font-bold text-gray-900 leading-tight">{f.nom}</p>
+                  <p className="text-xs text-gray-500">{f.email}</p>
+                </div>
+              </button>
+            ))}
+            {formateurs.length === 0 && <p className="text-center text-gray-400 py-4 italic">Aucun formateur trouvé.</p>}
           </div>
-          <span className="text-gray-300 group-hover:text-rose-500">→</span>
-        </button>
-        <button onClick={() => handleLogin('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
-          <div className="flex items-center">
-            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><UserIcon /></div>
-            <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
-          </div>
-          <span className="text-gray-300 group-hover:text-indigo-500">→</span>
-        </button>
+          <button onClick={() => setSelectedRole(null)} className="mt-8 text-sm font-bold text-gray-400 hover:text-gray-600">← Retour</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
+        <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à VB ERP</h1>
+        <p className="text-gray-500 mb-8">Choisissez votre profil de démonstration pour basculer de vue.</p>
+        
+        <div className="space-y-4 text-left">
+          <button onClick={() => handleLogin('admin')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-gray-900 hover:shadow-md transition-all group">
+            <div className="flex items-center">
+              <div className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-gray-900 group-hover:text-white transition-colors"><SettingsIcon /></div>
+              <div><p className="font-bold text-gray-900">Administrateur</p><p className="text-xs text-gray-500">Gestion globale</p></div>
+            </div>
+            <span className="text-gray-300 group-hover:text-gray-900">→</span>
+          </button>
+          <button onClick={() => setSelectedRole('formateur')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group">
+            <div className="flex items-center">
+              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-rose-500 group-hover:text-white transition-colors"><UsersIcon /></div>
+              <div><p className="font-bold text-gray-900">Formateur / Coach</p><p className="text-xs text-gray-500">Suivi des clients</p></div>
+            </div>
+            <span className="text-gray-300 group-hover:text-rose-500">→</span>
+          </button>
+          <button onClick={() => setSelectedRole('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
+            <div className="flex items-center">
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><UserIcon /></div>
+              <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
+            </div>
+            <span className="text-gray-300 group-hover:text-indigo-500">→</span>
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const AdminView = ({ 
   handleAddUser, newUserName, setNewUserName, 
@@ -450,10 +500,9 @@ const AdminView = ({
 
 const FormateurView = ({ 
   clients, formateurs, sessions, generateSessions, 
-  updateSessionDate, signSession, modules 
+  updateSessionDate, signSession, modules, currentUserId 
 }) => {
-  const currentFormateurId = formateurs.length > 0 ? formateurs[0].id : null; 
-  const assignedClients = clients.filter(c => c.formateur_id === currentFormateurId);
+  const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
   const [expandedClientId, setExpandedClientId] = React.useState(null);
 
   return (
@@ -584,26 +633,14 @@ const FormateurView = ({
   );
 };
 
-const DocumentsView = ({ 
-  userRole, documents, clients, formateurs, handleSignDocument, handleDownloadPDF,
-  handleAddDocument, newDocName, setNewDocName, newDocType, setNewDocType, newDocUrl, setNewDocUrl,
-  newDocFile, setNewDocFile, updateDateSeance,
-  newDocClientId, setNewDocClientId, newDocVisClient, setNewDocVisClient,
-  newDocVisFormateur, setNewDocVisFormateur, isAddingDoc
+  newDocVisFormateur, setNewDocVisFormateur, isAddingDoc, currentUserId
 }) => {
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
 
-  const currentClientId = clients.length > 0 ? clients[0].id : null; 
-  const isAdmin = userRole === 'admin';
-  const isClient = userRole === 'client';
-  const isFormateur = userRole === 'formateur';
-
-  // Pour la démo, on simule que le visiteur client a l'ID du premier client (currentClientId).
-  // S'il est client, il ne voit que ses docs ET ceux qui sont explicitement visible_client=true
   let displayedDocs = isAdmin ? documents : 
-             isClient ? documents.filter(d => d.user_id === currentClientId && d.visible_client) :
+             isClient ? documents.filter(d => d.user_id === currentUserId && d.visible_client) :
              isFormateur ? documents.filter(d => d.visible_formateur) : [];
 
   if (isFormateur && selectedClientForDocs) {
@@ -845,9 +882,8 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
   </div>
 );
 
-const SessionsView = ({ sessions, signSession, clients }) => {
-  const currentClientId = clients.length > 0 ? clients[0].id : null;
-  const mySessions = sessions.filter(s => s.client_id === currentClientId).sort((a, b) => a.numero_seance - b.numero_seance);
+const SessionsView = ({ sessions, signSession, currentUserId }) => {
+  const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -985,6 +1021,7 @@ const ExercicesView = ({ setActiveTab }) => (
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
+  const [currentUserId, setCurrentUserId] = useState(null); 
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -1082,8 +1119,9 @@ export default function App() {
   };
 
   // --- Actions Navigation ---
-  const handleLogin = (role) => {
+  const handleLogin = (role, id = null) => {
     setUserRole(role);
+    setCurrentUserId(id);
     if (role === 'admin') setActiveTab('dashboard_admin');
     if (role === 'formateur') setActiveTab('mes_clients');
     if (role === 'client') setActiveTab('accueil');
@@ -1091,6 +1129,7 @@ export default function App() {
 
   const handleLogout = () => {
     setUserRole(null);
+    setCurrentUserId(null);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
   };
@@ -1539,7 +1578,7 @@ export default function App() {
 
   // Affichage du simulateur de connexion
   if (!userRole) {
-    return <LoginView handleLogin={handleLogin} />;
+    return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
   }
 
   return (
@@ -1614,12 +1653,12 @@ export default function App() {
               <div className="text-right mr-2">
                  <p className="text-sm font-bold text-gray-800 leading-tight">
                    {userRole === 'admin' && "Profil Admin"}
-                   {userRole === 'formateur' && "Connecté (Simulation)"}
-                   {userRole === 'client' && "Connecté (Simulation)"}
+                   {userRole === 'formateur' && (formateurs.find(f => f.id === currentUserId)?.nom || "Coach")}
+                   {userRole === 'client' && (clients.find(c => c.id === currentUserId)?.nom || "Bénéficiaire")}
                  </p>
               </div>
               <div className="w-10 h-10 rounded-full bg-gray-100 border-2 border-gray-200 flex items-center justify-center font-bold text-sm text-gray-600 shadow-sm">
-                 {userRole === 'admin' ? "AD" : "DB"}
+                 {userRole === 'admin' ? "AD" : (userRole === 'formateur' ? "CH" : "CL")}
               </div>
            </div>
         </header>
@@ -1653,9 +1692,10 @@ export default function App() {
                 updateSessionDate={updateSessionDate} 
                 signSession={signSession} 
                 modules={modules}
+                currentUserId={currentUserId}
               />}
-              {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={clients.length > 0 ? Math.min(100, Math.round(((clients[0].seances_effectuees || 0) / (clients[0].seances_totales || 10)) * 100)) : 0} />}
-              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} clients={clients} />}
+              {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
+              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} />}
               {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
               {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
              {activeTab === 'documents' && <DocumentsView 
@@ -1663,6 +1703,7 @@ export default function App() {
                 clients={clients} 
                 formateurs={formateurs}
                 userRole={userRole} 
+                currentUserId={currentUserId}
                 handleSignDocument={handleSignDocument} 
                 handleDownloadPDF={handleDownloadPDF} 
                 handleAddDocument={handleAddDocument}
