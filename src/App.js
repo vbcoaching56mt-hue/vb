@@ -1061,23 +1061,7 @@ export default function App() {
   const [signingSessionId, setSigningSessionId] = useState(null);
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
-  const handleSessionSignatureSave = async (signatureDataUrl) => {
-    if (!signingSessionId) return;
-    try {
-      const { error } = await supabase
-        .from('sessions')
-        .update({ 
-          signature_image: signatureDataUrl,
-          statut: 'Signé',
-          date_signature: new Date().toISOString()
-        })
-        .eq('id', signingSessionId);
-      if (error) throw error;
-      setSigningSessionId(null);
-    } catch (err) {
-      console.error("Erreur signature:", err);
-    }
-  };
+
   // --- Supabase Database (États locaux mis à jour via DB) ---
   const [formateurs, setFormateurs] = useState([]);
   const [clients, setClients] = useState([]);
