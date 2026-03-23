@@ -1009,7 +1009,6 @@ export default function App() {
   const [newModDocName, setNewModDocName] = useState('');
   const [newModDocType, setNewModDocType] = useState('Contrat');
   const [sessions, setSessions] = useState([]);
-  const [isGeneratingSessions, setIsGeneratingSessions] = useState(false);
   const [newModDocFile, setNewModDocFile] = useState(null);
   const [addingToModuleId, setAddingToModuleId] = useState(null);
 
