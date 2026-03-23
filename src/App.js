@@ -1645,16 +1645,15 @@ export default function App() {
                 newModDocFile={newModDocFile} setNewModDocFile={setNewModDocFile}
                 addingToModuleId={addingToModuleId} setAddingToModuleId={setAddingToModuleId}
              />}
-              {activeTab === 'mes_clients' && <FormateurView 
-                clients={clients} 
-                formateurs={formateurs} 
-                sessions={sessions} 
-                generateSessions={generateSessions} 
-                updateSessionDate={updateSessionDate} 
-                signSession={signSession} 
-                isGeneratingSessions={isGeneratingSessions}
-                modules={modules}
-              />}
+                <FormateurView 
+                  clients={clients} 
+                  formateurs={formateurs} 
+                  sessions={sessions} 
+                  generateSessions={generateSessions} 
+                  updateSessionDate={updateSessionDate} 
+                  signSession={signSession} 
+                  modules={modules}
+                />
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={clients.length > 0 ? Math.min(100, Math.round(((clients[0].seances_effectuees || 0) / (clients[0].seances_totales || 10)) * 100)) : 0} />}
               {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} clients={clients} />}
               {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
