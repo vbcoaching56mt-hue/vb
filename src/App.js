@@ -46,6 +46,7 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const startDrawing = (e) => {
@@ -1027,6 +1028,7 @@ export default function App() {
     fetchDocuments();
     fetchModules();
     fetchSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-génération de secours pour les clients sans sessions (ex: importations ou erreurs passées)
@@ -1040,7 +1042,9 @@ export default function App() {
         }
       });
     }
-  }, [clients, modules]); // On surveille clients et modules, sessions en lecture seule
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, modules]);
+ // On surveille clients et modules, sessions en lecture seule
 
   const fetchModules = async () => {
     const { data: mData, error: mErr } = await supabase.from('modules').select('*');
