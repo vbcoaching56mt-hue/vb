@@ -1031,16 +1031,18 @@ export default function App() {
     fetchSessions();
   }, []);
 
-  // Auto-génération des sessions manquantes pour les clients existants (ex: Matthys Tessier)
+  // Auto-génération de secours pour les clients sans sessions (ex: importations ou erreurs passées)
   useEffect(() => {
-    if (clients.length > 0 && modules.length > 0 && sessions.length === 0) {
+    // On ne lance l'auto-génération que si on a chargé les données et qu'on détecte un manque
+    if (clients.length > 0 && modules.length > 0 && sessions.length > 0) {
       clients.forEach(client => {
         if (client.module_id && !sessions.some(s => s.client_id === client.id)) {
+          console.log(`Auto-repair: Génération sessions pour ${client.nom}`);
           generateSessions(client);
         }
       });
     }
-  }, [clients, modules, sessions]);
+  }, [clients, modules]); // On surveille clients et modules, sessions en lecture seule
 
   const fetchModules = async () => {
     const { data: mData, error: mErr } = await supabase.from('modules').select('*');
@@ -1058,7 +1060,7 @@ export default function App() {
   const fetchUtilisateurs = async () => {
     const { data: usersData, error } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_id, seances_effectuees, seances_totales');
+      .select('id, nom, email, role, formateur_id, seances_effectuees, seances_totales, module_id');
       
     if (!error && usersData) {
       setClients(usersData.filter(u => u.role === 'client'));
@@ -1149,8 +1151,9 @@ export default function App() {
       await fetchUtilisateurs(); 
       await fetchDocuments();
       
-      // AUTO-GÉNÉRATION DES SÉANCES
+      // AUTO-GÉNÉRATION IMMÉDIATE DES SÉANCES
       if (insertedClient.module_id) {
+         console.log("Triggering immediate session generation for:", insertedClient.nom);
          await generateSessions(insertedClient);
       }
 
