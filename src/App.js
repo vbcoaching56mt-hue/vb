@@ -204,12 +204,12 @@ const AdminView = ({
   handleAddUser, newUserName, setNewUserName, 
   newUserEmail, setNewUserEmail, 
   newUserRole, setNewUserRole, isAddingUser, 
-  clients, formateurs, assignFormateur, documents,
+  clients, formateurs, assignFormateur, assignModule, documents,
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId, newUserModuleId, setNewUserModuleId
+  addingToModuleId, setAddingToModuleId
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -257,18 +257,6 @@ const AdminView = ({
             <option value="formateur">Formateur</option>
           </select>
         </div>
-        <div className="w-full lg:w-48">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Module</label>
-          <select 
-            value={newUserModuleId}
-            onChange={(e) => setNewUserModuleId(e.target.value)}
-            disabled={newUserRole !== 'client'}
-            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 disabled:opacity-50 block w-full p-3 outline-none"
-          >
-            <option value="">Aucun</option>
-            {modules.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
-          </select>
-        </div>
         <button 
           type="submit" 
           disabled={isAddingUser}
@@ -292,6 +280,7 @@ const AdminView = ({
               <th className="pb-3 font-medium">ID</th>
               <th className="pb-3 font-medium">Nom du Client</th>
               <th className="pb-3 font-medium">Statut</th>
+              <th className="pb-3 font-medium">Module Assigné</th>
               <th className="pb-3 font-medium">Formateur Assigné</th>
             </tr>
           </thead>
@@ -310,9 +299,21 @@ const AdminView = ({
                 </td>
                 <td className="py-4">
                   <select 
+                    value={client.module_id || ''} 
+                    onChange={(e) => assignModule(client.id, e.target.value)}
+                    className="bg-purple-50 border border-purple-100 text-purple-900 text-xs font-bold rounded-lg focus:ring-purple-500 focus:border-purple-500 block w-full p-2.5 outline-none"
+                  >
+                    <option value="">Aucun module</option>
+                    {modules.map(m => (
+                      <option key={m.id} value={m.id}>{m.nom}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="py-4">
+                  <select 
                     value={client.formateur_id || ''} 
                     onChange={(e) => assignFormateur(client.id, e.target.value)}
-                    className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-gray-500 focus:border-gray-500 block w-full p-2.5 outline-none"
+                    className="bg-gray-50 border border-gray-200 text-gray-900 text-xs rounded-lg focus:ring-gray-500 focus:border-gray-500 block w-full p-2.5 outline-none"
                   >
                     <option value="">Non assigné</option>
                     {formateurs.map(f => (
@@ -1000,7 +1001,6 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState('client');
-  const [newUserModuleId, setNewUserModuleId] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   // États formulaire "Ingénierie Modules" (Admin)
@@ -1099,72 +1099,82 @@ export default function App() {
     if (!newUserName.trim() || !newUserEmail.trim()) return;
     setIsAddingUser(true);
     
-    // AUCUNE VALIDATION LOCALE - On force l'ID en format Nombre (Number) pour le type BIGINT (int8)
-    const finalModuleId = (newUserRole === 'client' && newUserModuleId) ? Number(newUserModuleId) : null;
-
     const { data, error } = await supabase
       .from('utilisateurs')
-      .insert([{ nom: newUserName, email: newUserEmail, role: newUserRole, module_id: finalModuleId }])
+      .insert([{ nom: newUserName, email: newUserEmail, role: newUserRole }])
       .select();
       
     if (!error && data && data[0]) {
-      const insertedClient = data[0];
-      
-      // LOGIQUE D'AUTOMATISATION DES MODULES
-      if (newUserRole === 'client' && newUserModuleId) {
-         const assignedModule = modules.find(m => m.id === newUserModuleId);
-         const autoDocs = [];
-         
-         if (assignedModule) {
-            // Feuilles d'émargement selon seances_prevues
-            for (let i = 1; i <= assignedModule.seances_prevues; i++) {
-               autoDocs.push({
-                  nom: `${assignedModule.nom} - Feuille de présence (Séance ${i})`,
-                  type_document: 'Présence',
-                  user_id: insertedClient.id,
-                  visible_client: true, visible_formateur: true,
-                  signe_par_client: false, signe_par_formateur: false
-               });
-            }
-
-            // Documents types du module (ex: Contrats, Bilans)
-            const mDocs = moduleDocuments.filter(md => md.module_id === assignedModule.id);
-            for (const mDoc of mDocs) {
-               autoDocs.push({
-                  nom: `${assignedModule.nom} - ${mDoc.nom}`,
-                  type_document: mDoc.type_document,
-                  url: mDoc.url || null,
-                  user_id: insertedClient.id,
-                  visible_client: true, visible_formateur: true,
-                  signe_par_client: false, signe_par_formateur: false
-               });
-            }
-
-            // Batch insert des documents générés
-            if (autoDocs.length > 0) {
-              const { error: autoError } = await supabase.from('documents').insert(autoDocs);
-              if (autoError) console.error("Erreur gèn. auto docs:", autoError);
-            }
-         }
-      }
-
       await fetchUtilisateurs(); 
       await fetchDocuments();
-      
-      // AUTO-GÉNÉRATION IMMÉDIATE DES SÉANCES
-      if (insertedClient.module_id) {
-         console.log("Triggering immediate session generation for:", insertedClient.nom);
-         await generateSessions(insertedClient);
-      }
-
       setNewUserName('');
       setNewUserEmail('');
-      setNewUserModuleId('');
     } else {
       console.error("Erreur ajout user", error);
       alert('Erreur : ' + error?.message);
     }
     setIsAddingUser(false);
+  };
+
+  const assignModule = async (clientId, moduleId) => {
+    const finalModuleId = moduleId ? Number(moduleId) : null;
+    
+    // Update module_id in database
+    const { error: updateError } = await supabase
+      .from('utilisateurs')
+      .update({ module_id: finalModuleId })
+      .eq('id', clientId);
+
+    if (updateError) {
+      console.error("Erreur assignation module:", updateError);
+      return;
+    }
+
+    const client = clients.find(c => c.id === clientId);
+    if (client && finalModuleId) {
+      const assignedModule = modules.find(m => m.id === finalModuleId);
+      
+      if (assignedModule) {
+        // 1. GÉNÉRATION DES SESSIONS
+        await generateSessions(client);
+
+        // 2. GÉNÉRATION DES DOCUMENTS TYPES
+        const autoDocs = [];
+        
+        // Feuilles d'émargement selon seances_prevues
+        for (let i = 1; i <= assignedModule.seances_prevues; i++) {
+          autoDocs.push({
+            nom: `${assignedModule.nom} - Feuille de présence (Séance ${i})`,
+            type_document: 'Présence',
+            user_id: client.id,
+            visible_client: true, visible_formateur: true,
+            signe_par_client: false, signe_par_formateur: false
+          });
+        }
+
+        // Documents types du module (ex: Contrats, Bilans)
+        const mDocs = moduleDocuments.filter(md => md.module_id === assignedModule.id);
+        for (const mDoc of mDocs) {
+          autoDocs.push({
+            nom: `${assignedModule.nom} - ${mDoc.nom}`,
+            type_document: mDoc.type_document,
+            url: mDoc.url || null,
+            user_id: client.id,
+            visible_client: true, visible_formateur: true,
+            signe_par_client: false, signe_par_formateur: false
+          });
+        }
+
+        // Batch insert des documents générés
+        if (autoDocs.length > 0) {
+          const { error: autoError } = await supabase.from('documents').insert(autoDocs);
+          if (autoError) console.error("Erreur gèn. auto docs:", autoError);
+        }
+      }
+    }
+
+    await fetchUtilisateurs();
+    await fetchDocuments();
   };
 
   // --- Actions Supabase : Configuration Modules ---
