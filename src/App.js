@@ -1891,6 +1891,9 @@ export default function App() {
         return;
       }
 
+      const module = modules.find(m => m.id === client.module_id);
+      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
+
       // Extraction impérative des dates via requête sur sessions
       const { data: sessionDates, error: dateError } = await supabase
         .from('sessions')
@@ -1996,14 +1999,14 @@ export default function App() {
       const template = type === 'contrat' ? documentTemplates.contrat : documentTemplates.reglement;
       const title = type === 'contrat' ? 'Contrat de Formation' : 'Règlement Intérieur';
 
-      let content = template
-        .replace(/{{client_nom}}/g, client.nom)
-        .replace(/{{client_email}}/g, client.email)
-        .replace(/{{coach_nom}}/g, coach.nom)
+      let content = (typeof template === 'string' ? template : "")
+        .replace(/{{client_nom}}/g, client.nomcomplet_client || client.nom)
+        .replace(/{{client_email}}/g, client.client_email || client.email)
+        .replace(/{{coach_nom}}/g, coach.nom || 'Non assigné')
         .replace(/{{formation_nom}}/g, module?.nom || 'Formation')
         .replace(/{{date_debut}}/g, dateDebut)
         .replace(/{{date_fin}}/g, dateFin)
-        .replace(/{{heures_totales}}/g, totalHours.toFixed(1));
+        .replace(/{{prix_prestation}}/g, module?.prix_prestation || '');
 
       // Génération PDF
       const doc = new jsPDF();
