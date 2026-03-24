@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Buffer } from 'buffer';
-import process from 'process';
+import { Buffer } from 'buffer/';
+import process from 'process/browser';
 import { supabase } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
