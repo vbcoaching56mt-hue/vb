@@ -833,24 +833,6 @@ const DocumentsView = ({
         </div>
       </div>
 
-      {/* Modals */}
-       <SignatureModal 
-          isOpen={signingDocId !== null} 
-          onClose={() => setSigningDocId(null)} 
-          onSave={handleSignatureSave} 
-       />
-
-       <SignatureModal 
-          isOpen={signingSessionId !== null} 
-          onClose={() => setSigningSessionId(null)} 
-          onSave={(signature) => handleSessionSignatureSave(signingSessionId, signature)} 
-       />
-       
-       <DocumentViewerModal 
-         isOpen={viewingDocId !== null} 
-         document={documents.find(d => d.id === viewingDocId)} 
-         onClose={() => setViewingDocId(null)} 
-      />
     </div>
   );
 };
@@ -1892,4 +1874,3 @@ export default function App() {
     </div>
   );
 }
-
