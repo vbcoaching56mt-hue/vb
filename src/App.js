@@ -570,7 +570,8 @@ const FormateurView = ({
                   </div>
 
                   {clientSessions.length > 0 ? (
-                    <div className="overflow-hidden rounded-2xl border border-gray-100">
+                    <>
+                      <div className="overflow-hidden rounded-2xl border border-gray-100">
                       <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
                           <tr>
@@ -597,16 +598,7 @@ const FormateurView = ({
                                   session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
                                 }`}>{session.statut}</span>
                               </td>
-                              <td className="px-4 py-4 text-right flex gap-2 justify-end">
-                                {(userRole === 'admin' || userRole === 'formateur') && (
-                                  <button 
-                                    onClick={() => handleDownloadAttendanceCertificate(client.id)}
-                                    className="bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all"
-                                    title="Générer l'attestation d'assiduité"
-                                  >
-                                    <DownloadIcon />
-                                  </button>
-                                )}
+                              <td className="px-4 py-4 text-right">
                                 {session.statut !== 'Signé' ? (
                                   <button 
                                     onClick={() => signSession(session)}
@@ -630,6 +622,17 @@ const FormateurView = ({
                         </tbody>
                       </table>
                     </div>
+                    {(userRole === 'admin' || userRole === 'formateur') && (
+                       <div className="mt-6 flex justify-end">
+                          <button 
+                            onClick={() => handleDownloadAttendanceCertificate(client.id)}
+                            className="bg-gray-900 hover:bg-gray-800 text-white px-6 py-3 rounded-2xl text-sm font-bold flex items-center transition-all shadow-lg shadow-gray-200"
+                          >
+                            <DownloadIcon className="mr-2" /> Générer l'Attestation d'Assiduité Complète (PDF)
+                          </button>
+                       </div>
+                    )}
+                  </>
                   ) : (
                     <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                        <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
@@ -903,11 +906,6 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
           <h2 className="text-xl font-bold text-gray-800 flex items-center">
             <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Séances
           </h2>
-          {(userRole === 'admin' || userRole === 'formateur') && (
-            <button onClick={() => handleDownloadAttendanceCertificate(currentUserId)} className="inline-flex items-center text-sm px-4 py-2 bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-600 shadow-sm transition-colors">
-              <DownloadIcon className="mr-2" /> Attestation d'assiduité
-            </button>
-          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -978,17 +976,6 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
         </div>
       </div>
       
-      {(userRole === 'admin' || userRole === 'formateur') && (
-        <div className="mt-12 flex justify-center">
-          <button 
-            onClick={() => handleDownloadAttendanceCertificate(currentUserId)} 
-            className="bg-gray-900 border-2 border-gray-900 hover:bg-white hover:text-gray-900 text-white px-8 py-4 rounded-3xl font-bold shadow-xl flex items-center group transition-all"
-          >
-            <div className="w-8 h-8 bg-rose-500 rounded-lg flex items-center justify-center mr-3 group-hover:rotate-12 transition-transform shadow-lg shadow-rose-500/30 font-bold text-white">PDF</div>
-            Générer l'Attestation d'Assiduité du stagiaire
-          </button>
-        </div>
-      )}
     </div>
   );
 };
@@ -1654,93 +1641,118 @@ export default function App() {
   };
 
   const handleDownloadAttendanceCertificate = async (clientId) => {
-    // Si pas de clientId passé, on essaye d'utiliser currentUserId (cas client qui s'auto-génère, si autorisé par code futur)
     const targetId = clientId || currentUserId;
     const client = clients.find(c => c.id === targetId);
     if (!client) return;
 
-    const signedSessions = sessions.filter(s => s.client_id === targetId && s.statut === 'Signé');
+    const signedSessions = sessions.filter(s => s.client_id === targetId).sort((a,b) => a.numero_seance - b.numero_seance);
+    const formateur = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
     const module = modules.find(m => m.id === client.module_id);
+
+    const fetchBase64Image = async (url) => {
+      if (!url) return null;
+      if (url.startsWith('data:image')) return url;
+      try {
+        const res = await fetch(url);
+        const blobImg = await res.blob();
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blobImg);
+        });
+      } catch (e) { console.error("Err img:", e); return null; }
+    };
     
     try {
       const doc = new jsPDF();
       
       // Header
       doc.setFontSize(22);
-      doc.setTextColor(31, 41, 55); // gray-800
+      doc.setTextColor(31, 41, 55);
       doc.text("Attestation d'Assiduité", 105, 30, { align: 'center' });
       
       doc.setFontSize(10);
-      doc.setTextColor(107, 114, 128); // gray-500
+      doc.setTextColor(107, 114, 128);
       doc.text(`Doc Réf: QUALIOPI-ATT-${client.id}-${Date.now()}`, 105, 38, { align: 'center' });
 
-      // Client Info
+      // Identity Section
       doc.setFontSize(12);
       doc.setTextColor(0, 0, 0);
-      doc.text("Détails du bénéficiaire :", 20, 55);
       doc.setFont("Helvetica", "bold");
-      doc.text(`Nom : ${client.nom}`, 20, 62);
+      doc.text(`Bénéficiaire (Stagiaire) : ${client.nom}`, 20, 55);
+      doc.text(`Intervenant (Formateur) : ${formateur.nom}`, 20, 62);
       doc.setFont("Helvetica", "normal");
-      doc.text(`Email : ${client.email}`, 20, 69);
-      doc.text(`Module : ${module ? module.nom : 'Non défini'}`, 20, 76);
-
-      // Table Header
-      let yPos = 95;
-      doc.setFillColor(243, 244, 246);
-      doc.rect(20, yPos, 170, 10, 'F');
-      
       doc.setFontSize(10);
+      doc.text(`Email stagiaire : ${client.email}`, 20, 69);
+      doc.text(`Action de formation : ${module ? module.nom : 'Non défini'}`, 20, 76);
+
+      // Table Header setup
+      let yPos = 90;
+      doc.setFillColor(243, 244, 246);
+      doc.rect(15, yPos, 180, 12, 'F');
+      doc.setFontSize(9);
       doc.setFont("Helvetica", "bold");
-      doc.text("Séance", 25, yPos + 7);
-      doc.text("Date émargée", 80, yPos + 7);
-      doc.text("Durée (h)", 140, yPos + 7);
-      doc.text("Statut", 170, yPos + 7);
+      doc.text("Date & Module", 20, yPos + 8);
+      doc.text("Durée", 80, yPos + 8);
+      doc.text("Émargement Stagiaire", 110, yPos + 8);
+      doc.text("Émargement Formateur", 155, yPos + 8);
 
-      // Sessions List
-      doc.setFont("Helvetica", "normal");
-      yPos += 10;
+      yPos += 12;
       
-      signedSessions.forEach((s, index) => {
-        if (yPos > 250) { doc.addPage(); yPos = 20; }
-        doc.line(20, yPos, 190, yPos);
-        doc.text(`#${s.numero_seance} ${s.nom.substring(0, 25)}`, 25, yPos + 7);
-        doc.text(s.date_signature ? new Date(s.date_signature).toLocaleDateString('fr-FR') : '-', 80, yPos + 7);
-        doc.text("1.50 h", 140, yPos + 7); // Durée simulée
-        doc.setTextColor(16, 185, 129); // green-500
-        doc.setTextColor(0, 0, 0);
-        yPos += 10;
-      });
+      for (const s of signedSessions) {
+        if (yPos > 240) { doc.addPage(); yPos = 20; }
+        
+        doc.setDrawColor(229, 231, 235);
+        doc.line(15, yPos, 195, yPos);
+        
+        doc.setFont("Helvetica", "normal");
+        const sessionDate = s.date ? new Date(s.date).toLocaleDateString('fr-FR') : 'À venir';
+        doc.text(`${sessionDate}\n#${s.numero_seance} ${s.nom.substring(0, 25)}`, 20, yPos + 8);
+        doc.text("1.50 h", 80, yPos + 10);
 
-      // Totals
-      yPos += 10;
-      doc.setFont("Helvetica", "bold");
-      doc.text(`Total des heures validées : ${signedSessions.length * 1.5} heures`, 120, yPos);
+        // Client Signature
+        const sigClient = await fetchBase64Image(s.signature_image);
+        if (sigClient) {
+          doc.addImage(sigClient, 'PNG', 110, yPos + 2, 35, 15);
+        } else {
+          doc.setTextColor(220, 38, 38); // Red
+          doc.setFontSize(8);
+          doc.text("Non émargé", 110, yPos + 10);
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(9);
+        }
 
-      // Footer Signatures
-      yPos += 30;
-      doc.text("Signature de l'organisme", 25, yPos);
-      doc.text("Signature du bénéficiaire", 130, yPos);
-      
-      doc.setDrawColor(209, 213, 219);
-      doc.rect(20, yPos + 5, 75, 40);
-      doc.rect(120, yPos + 5, 75, 40);
-      
-      doc.setFontSize(8);
-      doc.setFont("Helvetica", "italic");
-      doc.text("Tampon VB Coaching", 25, yPos + 40);
+        // Formateur Signature
+        const sigForm = await fetchBase64Image(s.signature_formateur);
+        if (sigForm) {
+          doc.addImage(sigForm, 'PNG', 155, yPos + 2, 35, 15);
+        } else {
+          doc.setTextColor(220, 38, 38);
+          doc.setFontSize(8);
+          doc.text("Non émargé", 155, yPos + 10);
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(9);
+        }
 
-      // Si le client a une signature enregistrée (dernier emargement), on peut tenter de l'afficher
-      const lastSig = signedSessions.length > 0 ? signedSessions[signedSessions.length - 1].signature_image : null;
-      if (lastSig) {
-        try {
-          doc.addImage(lastSig, 'PNG', 125, yPos + 10, 65, 30);
-        } catch (e) { console.error("Erreur image signature PDF:", e); }
+        yPos += 20;
       }
 
-      doc.save(`Attestation_${client.nom.replace(' ', '_')}.pdf`);
+      doc.line(15, yPos, 195, yPos);
+      yPos += 15;
+      doc.setFont("Helvetica", "bold");
+      doc.text(`Total des heures validées : ${signedSessions.filter(s=>s.statut==='Signé').length * 1.5} heures`, 120, yPos);
+
+      // Footer
+      yPos += 25;
+      doc.setFontSize(8);
+      doc.setFont("Helvetica", "italic");
+      doc.text("Fait à Guipavas (29), le " + new Date().toLocaleDateString('fr-FR'), 20, yPos);
+      doc.text("Cachet de l'organisme de formation : VB Coaching", 20, yPos + 5);
+
+      doc.save(`Attestation_Assiduite_${client.nom.replace(' ', '_')}.pdf`);
     } catch (err) {
-      console.error("Erreur PDF Assiduité:", err);
-      alert("Erreur lors de la génération du PDF.");
+      console.error("Err PDF:", err);
+      alert("Erreur lors de la génération du PDF Qualiopi.");
     }
   };
 
@@ -1920,4 +1932,3 @@ export default function App() {
     </div>
   );
 }
-
