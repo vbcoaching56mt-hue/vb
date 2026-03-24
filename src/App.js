@@ -20,6 +20,7 @@ const PlusIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor
 const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg>;
 const TrashIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
 const SaveIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>;
+const AdjustmentsIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>;
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -253,16 +254,12 @@ const LoginView = ({ handleLogin, clients, formateurs }) => {
   );
 };
 
-const AdminView = ({ 
+const AdminDashboardView = ({ 
   handleAddUser, newUserName, setNewUserName, 
   newUserEmail, setNewUserEmail, 
   newUserRole, setNewUserRole, isAddingUser, 
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, moduleDocuments, handleAddModule, handleLinkDocument,
-  newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
-  newModDocName, setNewModDocName, newModDocType, setNewModDocType,
-  newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId
+  modules
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -439,11 +436,26 @@ const AdminView = ({
         {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
       </ul>
     </div>
+  </div>
+);
+
+const IngenierieView = ({
+  modules, moduleDocuments, handleAddModule, handleLinkDocument,
+  newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
+  newModDocName, setNewModDocName, newModDocType, setNewModDocType,
+  newModDocFile, setNewModDocFile,
+  addingToModuleId, setAddingToModuleId
+}) => (
+  <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div>
+       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Pédagogique</h1>
+       <p className="text-gray-500 text-lg mt-1">Configurez les modules, les séances prévues et les documents types.</p>
+    </div>
 
     {/* Configuration Modules */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-         <span className="w-2 h-6 bg-purple-500 rounded-full mr-3"></span> Ingénierie des Modules
+         <span className="w-2 h-6 bg-purple-500 rounded-full mr-3"></span> Gestion des Modules
       </h2>
       <form onSubmit={handleAddModule} className="flex flex-col md:flex-row gap-4 items-end mb-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
          <div className="flex-1">
@@ -2052,9 +2064,14 @@ export default function App() {
         
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
-            <button onClick={() => { setActiveTab('dashboard_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <SettingsIcon /> Dashboard Admin
-            </button>
+            <>
+              <button onClick={() => { setActiveTab('dashboard_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <SettingsIcon /> Dashboard Admin
+              </button>
+              <button onClick={() => { setActiveTab('ingenierie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ingenierie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <AdjustmentsIcon /> Ingénierie
+              </button>
+            </>
           )}
 
           {userRole === 'formateur' && (
@@ -2116,7 +2133,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
-             {activeTab === 'dashboard_admin' && <AdminView 
+             {activeTab === 'dashboard_admin' && <AdminDashboardView 
                 handleAddUser={handleAddUser} 
                 newUserName={newUserName} 
                 setNewUserName={setNewUserName} 
@@ -2130,11 +2147,25 @@ export default function App() {
                 assignFormateur={assignFormateur} 
                 assignModule={assignModule}
                 documents={documents}
-                modules={modules} moduleDocuments={moduleDocuments} handleAddModule={handleAddModule} handleLinkDocument={handleLinkDocument}
-                newModuleName={newModuleName} setNewModuleName={setNewModuleName} newModuleSeances={newModuleSeances} setNewModuleSeances={setNewModuleSeances}
-                newModDocName={newModDocName} setNewModDocName={setNewModDocName} newModDocType={newModDocType} setNewModDocType={setNewModDocType}
-                newModDocFile={newModDocFile} setNewModDocFile={setNewModDocFile}
-                addingToModuleId={addingToModuleId} setAddingToModuleId={setAddingToModuleId}
+                modules={modules}
+             />}
+             {activeTab === 'ingenierie' && <IngenierieView 
+                modules={modules} 
+                moduleDocuments={moduleDocuments} 
+                handleAddModule={handleAddModule} 
+                handleLinkDocument={handleLinkDocument}
+                newModuleName={newModuleName} 
+                setNewModuleName={setNewModuleName} 
+                newModuleSeances={newModuleSeances} 
+                setNewModuleSeances={setNewModuleSeances}
+                newModDocName={newModDocName} 
+                setNewModDocName={setNewModDocName} 
+                newModDocType={newModDocType} 
+                setNewModDocType={setNewModDocType}
+                newModDocFile={newModDocFile} 
+                setNewModDocFile={setNewModDocFile}
+                addingToModuleId={addingToModuleId} 
+                setAddingToModuleId={setAddingToModuleId}
              />}
               {activeTab === 'mes_clients' && <FormateurView 
                 clients={clients} 
