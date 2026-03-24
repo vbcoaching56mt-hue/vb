@@ -601,9 +601,14 @@ const FormateurView = ({
                                 {session.statut !== 'Signé' ? (
                                   <button 
                                     onClick={() => signSession(session)}
-                                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all"
+                                    disabled={!session.date || new Date(session.date) > new Date()}
+                                    className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                      (!session.date || new Date(session.date) > new Date()) 
+                                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                                    }`}
                                   >
-                                    Émarger (Signer)
+                                    Émarger (Coach)
                                   </button>
                                 ) : (
                                   <span className="text-green-500"><CheckIcon /></span>
@@ -923,7 +928,7 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                     {session.statut !== 'Signé' ? (
                       <button 
                         onClick={() => signSession(session)}
-                        disabled={new Date(session.date) > new Date().setHours(23, 59, 59, 999) || session.statut === 'Signé'}
+                        disabled={!session.date || new Date(session.date) > new Date()}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${
                           (session.date && new Date(session.date) <= new Date()) ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
@@ -1319,11 +1324,19 @@ export default function App() {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    const { error } = await supabase.from('sessions').update({ 
-      statut: 'Signé', 
-      date_signature: new Date().toISOString(),
-      signature_image: signatureDataUrl 
-    }).eq('id', sessionId);
+    const updateData = { 
+      statut: 'Signé', // On marque comme signé si une signature intervient
+    };
+
+    if (userRole === 'formateur') {
+      updateData.signature_formateur = signatureDataUrl;
+      updateData.date_signature_formateur = new Date().toISOString();
+    } else {
+      updateData.signature_image = signatureDataUrl;
+      updateData.date_signature = new Date().toISOString();
+    }
+
+    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
 
     if (!error) {
        const client = clients.find(c => c.id === session.client_id);
