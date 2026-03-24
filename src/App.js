@@ -3,6 +3,9 @@ import { supabase } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
+import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
@@ -259,7 +262,7 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail, 
   newUserRole, setNewUserRole, isAddingUser, 
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDynamicPDF
+  modules, handleGenerateDocx
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -344,16 +347,16 @@ const AdminDashboardView = ({
                   {client.module_id && (
                     <div className="flex gap-2 mt-2">
                       <button 
-                        onClick={() => handleGenerateDynamicPDF(client, 'contrat')}
+                        onClick={() => handleGenerateDocx(client, 'contrat')}
                         className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
                       >
-                        Générer Contrat
+                        Générer Contrat (Word)
                       </button>
                       <button 
-                        onClick={() => handleGenerateDynamicPDF(client, 'reglement')}
+                        onClick={() => handleGenerateDocx(client, 'reglement')}
                         className="text-[10px] bg-amber-50 text-amber-700 px-2 py-1 rounded font-bold border border-amber-100 hover:bg-amber-600 hover:text-white transition-all shadow-sm"
                       >
-                        Générer Règlement
+                        Générer Règlement (Word)
                       </button>
                     </div>
                   )}
@@ -461,41 +464,77 @@ const IngenierieView = ({
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
   addingToModuleId, setAddingToModuleId,
-  documentTemplates, setDocumentTemplates
+  documentTemplates, handleUploadDocxTemplate
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
-    <div>
-       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Pédagogique</h1>
-       <p className="text-gray-500 text-lg mt-1">Configurez les modules, les séances prévues et les documents types.</p>
+    <div className="flex justify-between items-start">
+      <div>
+        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Pédagogique</h1>
+        <p className="text-gray-500 text-lg mt-1">Configurez les modules, les séances prévues et les documents types.</p>
+      </div>
+      {/* Panneau d'aide aux balises */}
+      <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl w-64 shadow-sm">
+        <h3 className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3">Aide aux Balises Word</h3>
+        <ul className="text-[11px] space-y-2 text-blue-700 font-mono">
+          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_NOM}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_PRENOM}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_EMAIL}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{FORMATEUR_NOM}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{MODULE_NOM}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{DATE_DEBUT}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{DATE_FIN}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{TOTAL_HEURES}"}</li>
+        </ul>
+        <p className="text-[10px] text-blue-600 mt-3 italic">Copiez/collez ces balises dans vos fichiers .docx</p>
+      </div>
     </div>
 
-    {/* Modèles de Documents */}
+    {/* Modèles de Documents Word */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-         <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Modèles de Documents (Automatiques)
+         <span className="w-2 h-6 bg-indigo-500 rounded-full mr-3"></span> Modèles Word Dynamiques (.docx)
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-3">
-          <label className="block text-sm font-bold text-gray-700 flex items-center justify-between">
-            Contrat de Formation
-            <span className="text-[10px] text-gray-400 font-normal">Utilisez {"{{...}}"} pour les variables</span>
-          </label>
-          <textarea 
-            value={documentTemplates.contrat}
-            onChange={e => setDocumentTemplates({...documentTemplates, contrat: e.target.value})}
-            className="w-full h-64 p-4 text-sm bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:border-amber-500 font-serif leading-relaxed"
-          ></textarea>
+        <div className="space-y-4 p-5 bg-gray-50 rounded-2xl border border-gray-100">
+          <h3 className="font-bold text-gray-700">Contrat de Formation</h3>
+          <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-4 bg-white hover:border-indigo-400 transition-colors cursor-pointer group relative">
+             <input 
+               type="file" 
+               accept=".docx" 
+               className="absolute inset-0 opacity-0 cursor-pointer" 
+               onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'contrat')}
+             />
+             <div className="text-center">
+               <div className="mb-2 text-indigo-500 group-hover:scale-110 transition-transform">
+                 <svg className="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+               </div>
+               <p className="text-sm text-gray-600 font-medium">Uploader le .docx</p>
+               {documentTemplates.contrat && (
+                 <p className="text-[10px] text-green-600 mt-1 font-bold italic">Actif : {documentTemplates.contrat.name}</p>
+               )}
+             </div>
+          </div>
         </div>
-        <div className="space-y-3">
-          <label className="block text-sm font-bold text-gray-700 flex items-center justify-between">
-            Règlement Intérieur
-            <span className="text-[10px] text-gray-400 font-normal">Variables disponibles : {"{{client_nom}}"}, {"{{coach_nom}}"}, {"{{heures_totales}}"}...</span>
-          </label>
-          <textarea 
-            value={documentTemplates.reglement}
-            onChange={e => setDocumentTemplates({...documentTemplates, reglement: e.target.value})}
-            className="w-full h-64 p-4 text-sm bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:border-amber-500 font-serif leading-relaxed"
-          ></textarea>
+        
+        <div className="space-y-4 p-5 bg-gray-50 rounded-2xl border border-gray-100">
+          <h3 className="font-bold text-gray-700">Règlement Intérieur</h3>
+          <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-4 bg-white hover:border-amber-400 transition-colors cursor-pointer group relative">
+             <input 
+               type="file" 
+               accept=".docx" 
+               className="absolute inset-0 opacity-0 cursor-pointer" 
+               onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'reglement')}
+             />
+             <div className="text-center">
+               <div className="mb-2 text-amber-500 group-hover:scale-110 transition-transform">
+                 <svg className="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+               </div>
+               <p className="text-sm text-gray-600 font-medium">Uploader le .docx</p>
+               {documentTemplates.reglement && (
+                 <p className="text-[10px] text-green-600 mt-1 font-bold italic">Actif : {documentTemplates.reglement.name}</p>
+               )}
+             </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1326,29 +1365,11 @@ export default function App() {
   
   // Modèles de Documents par défaut
   const [documentTemplates, setDocumentTemplates] = useState({
-    contrat: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE
-
-BÉNÉFICIAIRE : {{client_nom}} ({{client_email}})
-ORGANISME : VB Coaching
-FORMATEUR : {{coach_nom}}
-
-OBJET : La présente formation porte sur le module "{{formation_nom}}".
-
-DURÉE ET CALENDRIER :
-La formation se déroulera du {{date_debut}} au {{date_fin}}, pour un volume total de {{heures_totales}} heures.
-
-Les parties s'engagent à respecter les termes de ce contrat.`,
-    reglement: `RÈGLEMENT INTÉRIEUR DE FORMATION
-
-Stagiaire : {{client_nom}}
-
-Article 1 : Objet du règlement.
-VB Coaching met à disposition ce document pour {{client_nom}} dans le cadre de la formation "{{formation_nom}}".
-
-Article 2 : Assiduité.
-Le stagiaire s'engage à être présent aux séances prévues du {{date_debut}} au {{date_fin}}.
-
-Total d'heures prévues : {{heures_totales}} h.`
+    contrat: null, // Sera un objet { url: '...', name: '...' }
+    reglement: null,
+    // On garde l'ancien système textuel en backup si besoin
+    contratText: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE...`,
+    reglementText: `RÈGLEMENT INTÉRIEUR DE FORMATION...`
   });
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [expandedClientId, setExpandedClientId] = useState(null);
@@ -1724,6 +1745,101 @@ Total d'heures prévues : {{heures_totales}} h.`
     } else {
       console.error("Erreur assignation", error);
       alert("Erreur: " + error.message);
+    }
+  };
+
+  const handleUploadDocxTemplate = async (file, type) => {
+    try {
+      if (!file) return;
+      const fileName = `template_${type}_${Date.now()}.docx`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+      setDocumentTemplates(prev => ({
+        ...prev,
+        [type]: { url: publicUrl, name: file.name }
+      }));
+      alert(`Modèle Word "${file.name}" enregistré avec succès.`);
+    } catch (err) {
+      console.error("Upload Template Error:", err);
+      alert("Erreur lors de l'upload du modèle Word.");
+    }
+  };
+
+  const handleGenerateDocx = async (client, type) => {
+    try {
+      const templateInfo = documentTemplates[type];
+      if (!templateInfo || !templateInfo.url) {
+        // Fallback sur le PDF classique si pas de docx
+        handleGenerateDynamicPDF(client, type);
+        return;
+      }
+
+      if (!client.module_id) {
+        alert("Veuillez d'abord assigner un module à ce client.");
+        return;
+      }
+
+      const module = modules.find(m => m.id === client.module_id);
+      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
+      const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+      
+      const dateDebut = clientSessions.length > 0 ? new Date(clientSessions[0].date).toLocaleDateString('fr-FR') : '[Date non définie]';
+      const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
+      
+      const totalHours = clientSessions.reduce((acc, s) => {
+        if (!s.heure_debut || !s.heure_fin) return acc + 1.5;
+        const [h1, m1] = s.heure_debut.split(':').map(Number);
+        const [h2, m2] = s.heure_fin.split(':').map(Number);
+        return acc + (h2 + m2/60) - (h1 + m1/60);
+      }, 0);
+
+      const response = await fetch(templateInfo.url);
+      const content = await response.arrayBuffer();
+      const zip = new PizZip(content);
+      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+
+      doc.setData({
+        CLIENT_NOM: client.nom.split(' ')[1] || client.nom,
+        CLIENT_PRENOM: client.nom.split(' ')[0] || '',
+        CLIENT_EMAIL: client.email,
+        FORMATEUR_NOM: coach.nom,
+        MODULE_NOM: module?.nom || 'Formation',
+        DATE_DEBUT: dateDebut,
+        DATE_FIN: dateFin,
+        TOTAL_HEURES: totalHours.toFixed(1)
+      });
+
+      doc.render();
+      const out = doc.getZip().generate({
+        type: 'blob',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+
+      // Save as file for manual check, then upload
+      const finalFileName = `${type}_${client.nom.replace(/\s+/g, '_')}_final.docx`;
+      saveAs(out, finalFileName);
+
+      // Auto-upload the result too
+      const { error: uploadError } = await supabase.storage.from('documents').upload(`${Date.now()}_${finalFileName}`, out);
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
+        await supabase.from('documents').insert([{
+          nom: `${type === 'contrat' ? 'Contrat' : 'Règlement'} Word - ${client.nom}`,
+          type_document: type === 'contrat' ? 'Contrat' : 'Autre',
+          url: publicUrl,
+          user_id: client.id,
+          visible_client: true,
+          visible_formateur: true
+        }]);
+        await fetchDocuments();
+      }
+      
+      alert(`Document "${finalFileName}" généré avec succès !`);
+    } catch (error) {
+      console.error("Docx Error:", error);
+      alert("Erreur lors de la génération du document Word.");
     }
   };
 
@@ -2311,7 +2427,7 @@ Total d'heures prévues : {{heures_totales}} h.`
                 assignModule={assignModule}
                 documents={documents}
                 modules={modules}
-                handleGenerateDynamicPDF={handleGenerateDynamicPDF}
+                handleGenerateDocx={handleGenerateDocx}
              />}
              {activeTab === 'ingenierie' && <IngenierieView 
                 modules={modules} 
@@ -2331,7 +2447,7 @@ Total d'heures prévues : {{heures_totales}} h.`
                 addingToModuleId={addingToModuleId} 
                 setAddingToModuleId={setAddingToModuleId}
                 documentTemplates={documentTemplates}
-                setDocumentTemplates={setDocumentTemplates}
+                handleUploadDocxTemplate={handleUploadDocxTemplate}
              />}
               {activeTab === 'mes_clients' && <FormateurView 
                 clients={clients} 
