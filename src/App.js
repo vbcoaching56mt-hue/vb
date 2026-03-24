@@ -259,7 +259,7 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail, 
   newUserRole, setNewUserRole, isAddingUser, 
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules
+  modules, handleGenerateDynamicPDF
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -341,6 +341,22 @@ const AdminDashboardView = ({
                 <td className="py-4 font-bold text-gray-900 flex flex-col">
                   <span>{client.nom}</span>
                   <span className="text-xs text-gray-400 font-normal">{client.email}</span>
+                  {client.module_id && (
+                    <div className="flex gap-2 mt-2">
+                      <button 
+                        onClick={() => handleGenerateDynamicPDF(client, 'contrat')}
+                        className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                      >
+                        Générer Contrat
+                      </button>
+                      <button 
+                        onClick={() => handleGenerateDynamicPDF(client, 'reglement')}
+                        className="text-[10px] bg-amber-50 text-amber-700 px-2 py-1 rounded font-bold border border-amber-100 hover:bg-amber-600 hover:text-white transition-all shadow-sm"
+                      >
+                        Générer Règlement
+                      </button>
+                    </div>
+                  )}
                 </td>
                 <td className="py-4">
                   <span className={`px-3 py-1 rounded-full text-xs font-bold ${
@@ -444,12 +460,44 @@ const IngenierieView = ({
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId
+  addingToModuleId, setAddingToModuleId,
+  documentTemplates, setDocumentTemplates
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Pédagogique</h1>
        <p className="text-gray-500 text-lg mt-1">Configurez les modules, les séances prévues et les documents types.</p>
+    </div>
+
+    {/* Modèles de Documents */}
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+         <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Modèles de Documents (Automatiques)
+      </h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-3">
+          <label className="block text-sm font-bold text-gray-700 flex items-center justify-between">
+            Contrat de Formation
+            <span className="text-[10px] text-gray-400 font-normal">Utilisez {"{{...}}"} pour les variables</span>
+          </label>
+          <textarea 
+            value={documentTemplates.contrat}
+            onChange={e => setDocumentTemplates({...documentTemplates, contrat: e.target.value})}
+            className="w-full h-64 p-4 text-sm bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:border-amber-500 font-serif leading-relaxed"
+          ></textarea>
+        </div>
+        <div className="space-y-3">
+          <label className="block text-sm font-bold text-gray-700 flex items-center justify-between">
+            Règlement Intérieur
+            <span className="text-[10px] text-gray-400 font-normal">Variables disponibles : {"{{client_nom}}"}, {"{{coach_nom}}"}, {"{{heures_totales}}"}...</span>
+          </label>
+          <textarea 
+            value={documentTemplates.reglement}
+            onChange={e => setDocumentTemplates({...documentTemplates, reglement: e.target.value})}
+            className="w-full h-64 p-4 text-sm bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:border-amber-500 font-serif leading-relaxed"
+          ></textarea>
+        </div>
+      </div>
     </div>
 
     {/* Configuration Modules */}
@@ -1275,6 +1323,33 @@ export default function App() {
   const [signingSessionId, setSigningSessionId] = useState(null);
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
+  
+  // Modèles de Documents par défaut
+  const [documentTemplates, setDocumentTemplates] = useState({
+    contrat: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE
+
+BÉNÉFICIAIRE : {{client_nom}} ({{client_email}})
+ORGANISME : VB Coaching
+FORMATEUR : {{coach_nom}}
+
+OBJET : La présente formation porte sur le module "{{formation_nom}}".
+
+DURÉE ET CALENDRIER :
+La formation se déroulera du {{date_debut}} au {{date_fin}}, pour un volume total de {{heures_totales}} heures.
+
+Les parties s'engagent à respecter les termes de ce contrat.`,
+    reglement: `RÈGLEMENT INTÉRIEUR DE FORMATION
+
+Stagiaire : {{client_nom}}
+
+Article 1 : Objet du règlement.
+VB Coaching met à disposition ce document pour {{client_nom}} dans le cadre de la formation "{{formation_nom}}".
+
+Article 2 : Assiduité.
+Le stagiaire s'engage à être présent aux séances prévues du {{date_debut}} au {{date_fin}}.
+
+Total d'heures prévues : {{heures_totales}} h.`
+  });
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [expandedClientId, setExpandedClientId] = useState(null);
 
@@ -1652,7 +1727,95 @@ export default function App() {
     }
   };
 
-  // --- Actions Supabase : Documents ---
+  const handleGenerateDynamicPDF = async (client, type) => {
+    try {
+      if (!client.module_id) {
+        alert("Veuillez d'abord assigner un module à ce client.");
+        return;
+      }
+
+      const module = modules.find(m => m.id === client.module_id);
+      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
+      const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+      
+      const dateDebut = clientSessions.length > 0 ? new Date(clientSessions[0].date).toLocaleDateString('fr-FR') : '[Date non définie]';
+      const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
+      
+      const totalHours = clientSessions.reduce((acc, s) => {
+        if (!s.heure_debut || !s.heure_fin) return acc + 1.5;
+        const [h1, m1] = s.heure_debut.split(':').map(Number);
+        const [h2, m2] = s.heure_fin.split(':').map(Number);
+        return acc + (h2 + m2/60) - (h1 + m1/60);
+      }, 0);
+
+      const template = type === 'contrat' ? documentTemplates.contrat : documentTemplates.reglement;
+      const title = type === 'contrat' ? 'Contrat de Formation' : 'Règlement Intérieur';
+
+      let content = template
+        .replace(/{{client_nom}}/g, client.nom)
+        .replace(/{{client_email}}/g, client.email)
+        .replace(/{{coach_nom}}/g, coach.nom)
+        .replace(/{{formation_nom}}/g, module?.nom || 'Formation')
+        .replace(/{{date_debut}}/g, dateDebut)
+        .replace(/{{date_fin}}/g, dateFin)
+        .replace(/{{heures_totales}}/g, totalHours.toFixed(1));
+
+      // Génération PDF
+      const doc = new jsPDF();
+      doc.setFontSize(22);
+      doc.setTextColor(31, 41, 55); // Gray-800
+      doc.text(title.toUpperCase(), 105, 30, { align: 'center' });
+      
+      doc.setFontSize(10);
+      doc.text("Document généré automatiquement par VB ERP", 105, 40, { align: 'center' });
+      
+      doc.setDrawColor(229, 231, 235);
+      doc.line(20, 45, 190, 45);
+
+      doc.setFontSize(11);
+      doc.setTextColor(55, 65, 81); // Gray-700
+      const splitContent = doc.splitTextToSize(content, 170);
+      doc.text(splitContent, 20, 60);
+
+      // Signature areas
+      const ySig = 230;
+      doc.setFontSize(10);
+      doc.text("Signature Client", 50, ySig, { align: 'center' });
+      doc.text("Signature VB Coaching", 150, ySig, { align: 'center' });
+      doc.rect(20, ySig + 5, 60, 30);
+      doc.rect(120, ySig + 5, 60, 30);
+
+      const pdfOutput = doc.output('blob');
+      const fileName = `${type}_${client.nom.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+
+      // Upload to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, pdfOutput);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+      // Link to User
+      const { error: dbError } = await supabase.from('documents').insert([{
+        nom: `${title} - ${client.nom}`,
+        type_document: type === 'contrat' ? 'Contrat' : 'Autre',
+        url: publicUrl,
+        user_id: client.id,
+        visible_client: true,
+        visible_formateur: true
+      }]);
+
+      if (dbError) throw dbError;
+
+      await fetchDocuments();
+      alert(`${title} généré et ajouté avec succès !`);
+    } catch (err) {
+      console.error("PDF Fail:", err);
+      alert("Erreur lors de la génération automatique.");
+    }
+  };
   const handleAddDocument = async (e) => {
     e.preventDefault();
     if (!newDocName.trim() || !newDocClientId) return;
@@ -2148,6 +2311,7 @@ export default function App() {
                 assignModule={assignModule}
                 documents={documents}
                 modules={modules}
+                handleGenerateDynamicPDF={handleGenerateDynamicPDF}
              />}
              {activeTab === 'ingenierie' && <IngenierieView 
                 modules={modules} 
@@ -2166,6 +2330,8 @@ export default function App() {
                 setNewModDocFile={setNewModDocFile}
                 addingToModuleId={addingToModuleId} 
                 setAddingToModuleId={setAddingToModuleId}
+                documentTemplates={documentTemplates}
+                setDocumentTemplates={setDocumentTemplates}
              />}
               {activeTab === 'mes_clients' && <FormateurView 
                 clients={clients} 
