@@ -767,17 +767,29 @@ const DocumentsView = ({
   selectedClientForDocs, setSelectedClientForDocs, signingDocId, setSigningDocId, viewingDocId, setViewingDocId,
   handleSignatureSave
 }) => {
+  const [expandedId, setExpandedId] = React.useState(null);
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
 
-  let displayedDocs = isAdmin ? documents : 
+  // Group clients by their documents
+  const clientsWithDocs = React.useMemo(() => {
+    let targetClients = clients;
+    if (isFormateur) {
+      targetClients = clients.filter(c => c.formateur_id === currentUserId);
+    }
+    
+    return targetClients
+      .map(client => ({
+        ...client,
+        docs: documents.filter(d => d.user_id === client.id)
+      }))
+      .sort((a, b) => a.nom.localeCompare(b.nom));
+  }, [clients, documents, isFormateur, currentUserId]);
+
+  const displayedDocs = isAdmin ? documents : 
              isClient ? documents.filter(d => d.user_id === currentUserId && d.visible_client) :
              isFormateur ? documents.filter(d => d.visible_formateur) : [];
-
-  if (isFormateur && selectedClientForDocs) {
-     displayedDocs = displayedDocs.filter(d => d.user_id === selectedClientForDocs);
-  }
 
 
   return (
@@ -850,112 +862,182 @@ const DocumentsView = ({
         </div>
       )}
 
+
       {/* Table Documents / Calendrier Sessions */}
-      <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-6 relative overflow-hidden">
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-          <h2 className="text-xl font-bold text-gray-800 flex items-center">
-             <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Documents
-          </h2>
-          {isFormateur && (
-            <div className="flex items-center gap-3">
-               <span className="text-sm font-bold text-gray-500">Filtrer par client :</span>
-               <select value={selectedClientForDocs} onChange={e=>setSelectedClientForDocs(e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-gray-500 focus:border-gray-500 p-2 outline-none">
-                  <option value="">Tous mes clients</option>
-                  {clients.filter(c => c.formateur_id === (formateurs.length > 0 ? formateurs[0].id : null)).map(c => (
-                     <option key={c.id} value={c.id}>{c.nom}</option>
-                  ))}
-               </select>
+      <div className="mt-6 space-y-6">
+        {isFormateur ? (
+          clientsWithDocs.map(client => {
+            const isExpanded = expandedId === client.id;
+            const clientDocs = client.docs;
+            
+            return (
+              <div key={client.id} className={`bg-white rounded-3xl p-6 shadow-sm border ${isExpanded ? 'border-indigo-200' : 'border-gray-100'} transition-all`}>
+                <div 
+                  className="flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : client.id)}
+                >
+                  <div className="flex items-center">
+                    <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-bold text-xl mr-4">{client.nom ? client.nom.charAt(0) : '?'}</div>
+                    <div className="flex flex-col">
+                      <h3 className="font-bold text-gray-900 text-lg">{client.nom}</h3>
+                      <p className="text-xs text-gray-500 font-medium">{clientDocs.length} document(s)</p>
+                    </div>
+                  </div>
+                  <button className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-600' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white'}`}>
+                    {isExpanded ? "Fermer le dossier" : "Ouvrir le dossier"}
+                  </button>
+                </div>
+
+                {isExpanded && (
+                  <div className="mt-6 pt-6 border-t border-gray-100 overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-gray-100 text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+                          <th className="pb-3 px-2">Document</th>
+                          <th className="pb-3 px-2">Statut Signature</th>
+                          <th className="pb-3 px-2 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clientDocs.map(doc => (
+                          <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors group">
+                            <td className="py-4 px-2">
+                              <div className="flex items-center">
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><ClipboardIcon /></div>
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-gray-900 text-sm">{doc.nom}</span>
+                                  {doc.type_document === 'Présence' && doc.date_seance && (
+                                    <span className="text-[10px] text-gray-400 font-medium">Séance du : {new Date(doc.date_seance).toLocaleDateString('fr-FR')}</span>
+                                  )}
+                                  {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="text-[10px] text-blue-600 font-bold hover:underline mt-0.5 text-left">Voir PDF ↗</button>}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4 px-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${doc.signe_par_client ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Bénéficiaire</span>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${doc.signe_par_formateur ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Formateur</span>
+                              </div>
+                            </td>
+                            <td className="py-4 px-2 text-right">
+                              <div className="flex justify-end gap-2">
+                                {!doc.signe_par_formateur && (
+                                  <button onClick={() => setSigningDocId(doc.id)} className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-lg text-[10px] hover:bg-indigo-700 shadow-sm shadow-indigo-100">Signer</button>
+                                )}
+                                <button onClick={() => handleDownloadPDF(doc)} className="p-1.5 border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition-colors" title="Télécharger">
+                                  <DownloadIcon />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {clientDocs.length === 0 && (
+                          <tr><td colSpan="3" className="py-8 text-center text-gray-400 italic text-sm">Aucun document pour ce bénéficiaire.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                 <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Documents
+              </h2>
             </div>
-          )}
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200 text-sm text-gray-500">
-                <th className="pb-3 font-medium">Document</th>
-                {!isClient && <th className="pb-3 font-medium">Bénéficiaire</th>}
-                <th className="pb-3 font-medium">Visibilité</th>
-                <th className="pb-3 font-medium">Statut de signature</th>
-                <th className="pb-3 font-medium text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayedDocs.map(doc => {
-                const clientAssocie = clients.find(c => c.id === doc.user_id);
-                return (
-                  <tr key={doc.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td className="py-4 font-bold text-gray-900 flex flex-col">
-                      <div className="flex items-center">
-                        <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><ClipboardIcon /></div>
-                        <span>{doc.nom}</span>
-                      </div>
-                      {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="inline-flex mt-2 items-center text-xs px-3 py-1.5 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors w-fit shadow-sm border border-blue-200">Voir le document ↗</button>}
-                    </td>
-                    {!isClient && (
-                      <td className="py-4 text-sm text-gray-600 font-medium">
-                        {clientAssocie?.nom || 'Non défini'}
-                      </td>
-                    )}
-                    <td className="py-4 text-xs font-medium space-y-1">
-                      <div className={`flex items-center ${doc.visible_client ? 'text-green-600' : 'text-gray-400'}`}>
-                        <div className={`w-2 h-2 rounded-full mr-1.5 ${doc.visible_client ? 'bg-green-500' : 'bg-gray-300'}`}></div> Client
-                      </div>
-                      <div className={`flex items-center ${doc.visible_formateur ? 'text-blue-600' : 'text-gray-400'}`}>
-                        <div className={`w-2 h-2 rounded-full mr-1.5 ${doc.visible_formateur ? 'bg-blue-500' : 'bg-gray-300'}`}></div> Formateur
-                      </div>
-                    </td>
-                    <td className="py-4">
-                      <div className="flex flex-col gap-1">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold w-max border ${
-                            doc.signe_par_client ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'
-                          }`}>
-                            Client: {doc.signe_par_client ? '✓ Signé' : 'À signer'}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold w-max border ${
-                            doc.signe_par_formateur ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-200'
-                          }`}>
-                            Formateur: {doc.signe_par_formateur ? '✓ Signé' : 'À signer'}
-                          </span>
-                      </div>
-                      {doc.type_document === 'Présence' && (
-                         <div className="mt-2 text-xs text-gray-500 flex items-center gap-1">
-                           <span title="Date de séance">📅</span>
-                           {isFormateur ? (
-                             <input type="date" value={doc.date_seance || ''} onChange={(e) => updateDateSeance(doc.id, e.target.value)} className="p-1 border border-indigo-200 rounded bg-indigo-50/50 outline-none w-28 text-[11px] text-gray-700 font-medium" />
-                           ) : (
-                             <span className="font-bold text-gray-700 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">{doc.date_seance ? new Date(doc.date_seance).toLocaleDateString() : 'Non définie'}</span>
-                           )}
-                         </div>
-                      )}
-                    </td>
-                    <td className="py-4 text-right space-x-2 whitespace-nowrap">
-                       {/* Bouton pour signer */}
-                       {isClient && !doc.signe_par_client && (
-                         <button onClick={() => setSigningDocId(doc.id)} className="inline-flex items-center text-sm px-4 py-1.5 bg-rose-500 text-white font-bold rounded-lg hover:bg-rose-600 shadow-sm transition-colors">   
-                           Signer (Client)
-                         </button>
-                       )}
-                         {isFormateur && !doc.signe_par_formateur && (
-                         <button onClick={() => setSigningDocId(doc.id)} className="inline-flex items-center text-sm px-4 py-1.5 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-600 shadow-sm transition-colors">   
-                           Signer (Coach)
-                         </button>
-                       )}
-                       {((isClient && doc.signe_par_client) || (isFormateur && doc.signe_par_formateur) || isAdmin) && (
-                         <button onClick={() => handleDownloadPDF(doc)} className="inline-flex items-center text-sm px-3 py-1.5 border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors">
-                           <span className="hidden lg:inline text-xs">Télécharger</span>
-                           <span className="lg:hidden"><DownloadIcon /></span>
-                         </button>
-                       )}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 text-sm text-gray-500">
+                    <th className="pb-3 font-medium">Document</th>
+                    {!isClient && <th className="pb-3 font-medium">Bénéficiaire</th>}
+                    <th className="pb-3 font-medium">Visibilité</th>
+                    <th className="pb-3 font-medium">Statut de signature</th>
+                    <th className="pb-3 font-medium text-right">Action</th>
                   </tr>
-                );
-              })}
-              {displayedDocs.length === 0 && (
-                <tr><td colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-gray-500">Aucun document dans la base.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {displayedDocs.map(doc => {
+                    const clientAssocie = clients.find(c => c.id === doc.user_id);
+                    return (
+                      <tr key={doc.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                        <td className="py-4 font-bold text-gray-900 flex flex-col">
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><ClipboardIcon /></div>
+                            <span>{doc.nom}</span>
+                          </div>
+                          {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="inline-flex mt-2 items-center text-xs px-3 py-1.5 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors w-fit shadow-sm border border-blue-200">Voir le document ↗</button>}
+                        </td>
+                        {!isClient && (
+                          <td className="py-4 text-sm text-gray-600 font-medium">
+                            {clientAssocie?.nom || 'Non défini'}
+                          </td>
+                        )}
+                        <td className="py-4 text-xs font-medium space-y-1">
+                          <div className={`flex items-center ${doc.visible_client ? 'text-green-600' : 'text-gray-400'}`}>
+                            <div className={`w-2 h-2 rounded-full mr-1.5 ${doc.visible_client ? 'bg-green-500' : 'bg-gray-300'}`}></div> Client
+                          </div>
+                          <div className={`flex items-center ${doc.visible_formateur ? 'text-blue-600' : 'text-gray-400'}`}>
+                            <div className={`w-2 h-2 rounded-full mr-1.5 ${doc.visible_formateur ? 'bg-blue-500' : 'bg-gray-300'}`}></div> Formateur
+                          </div>
+                        </td>
+                        <td className="py-4">
+                          <div className="flex flex-col gap-1">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold w-max border ${
+                                doc.signe_par_client ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'
+                              }`}>
+                                Client: {doc.signe_par_client ? '✓ Signé' : 'À signer'}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold w-max border ${
+                                doc.signe_par_formateur ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-200'
+                              }`}>
+                                Formateur: {doc.signe_par_formateur ? '✓ Signé' : 'À signer'}
+                              </span>
+                          </div>
+                          {doc.type_document === 'Présence' && (
+                             <div className="mt-2 text-xs text-gray-500 flex items-center gap-1">
+                               <span title="Date de séance">📅</span>
+                               {isFormateur ? (
+                                 <input type="date" value={doc.date_seance || ''} onChange={(e) => updateDateSeance(doc.id, e.target.value)} className="p-1 border border-indigo-200 rounded bg-indigo-50/50 outline-none w-28 text-[11px] text-gray-700 font-medium" />
+                               ) : (
+                                 <span className="font-bold text-gray-700 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">{doc.date_seance ? new Date(doc.date_seance).toLocaleDateString() : 'Non définie'}</span>
+                               )}
+                             </div>
+                          )}
+                        </td>
+                        <td className="py-4 text-right space-x-2 whitespace-nowrap">
+                           {/* Bouton pour signer */}
+                           {isClient && !doc.signe_par_client && (
+                             <button onClick={() => setSigningDocId(doc.id)} className="inline-flex items-center text-sm px-4 py-1.5 bg-rose-500 text-white font-bold rounded-lg hover:bg-rose-600 shadow-sm transition-colors">   
+                               Signer (Client)
+                             </button>
+                           )}
+                             {isFormateur && !doc.signe_par_formateur && (
+                             <button onClick={() => setSigningDocId(doc.id)} className="inline-flex items-center text-sm px-4 py-1.5 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-600 shadow-sm transition-colors">   
+                               Signer (Coach)
+                             </button>
+                           )}
+                           {((isClient && doc.signe_par_client) || (isFormateur && doc.signe_par_formateur) || isAdmin) && (
+                             <button onClick={() => handleDownloadPDF(doc)} className="inline-flex items-center text-sm px-3 py-1.5 border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors">
+                               <span className="hidden lg:inline text-xs">Télécharger</span>
+                               <span className="lg:hidden"><DownloadIcon /></span>
+                             </button>
+                           )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {displayedDocs.length === 0 && (
+                    <tr><td colSpan={isAdmin ? 5 : 4} className="py-8 text-center text-gray-500">Aucun document dans la base.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>
