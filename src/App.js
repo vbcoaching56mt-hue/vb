@@ -501,7 +501,7 @@ const AdminView = ({
 const FormateurView = ({ 
   clients, formateurs, sessions, generateSessions, 
   updateSessionDate, signSession, modules, currentUserId,
-  expandedClientId, setExpandedClientId
+  expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate
 }) => {
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
@@ -597,16 +597,19 @@ const FormateurView = ({
                                   session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
                                 }`}>{session.statut}</span>
                               </td>
-                              <td className="px-4 py-4 text-right">
+                              <td className="px-4 py-4 text-right flex gap-2 justify-end">
+                                {(userRole === 'admin' || userRole === 'formateur') && (
+                                  <button 
+                                    onClick={() => handleDownloadAttendanceCertificate(client.id)}
+                                    className="bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all"
+                                    title="Générer l'attestation d'assiduité"
+                                  >
+                                    <DownloadIcon />
+                                  </button>
+                                )}
                                 {session.statut !== 'Signé' ? (
                                   <button 
-                                    onClick={() => {
-                                      const today = new Date();
-                                      today.setHours(0, 0, 0, 0);
-                                      const sessionDate = new Date(session.date);
-                                      if (!session.date || sessionDate > today) return;
-                                      signSession(session);
-                                    }}
+                                    onClick={() => signSession(session)}
                                     disabled={!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))}
                                     className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
                                       (!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
@@ -615,7 +618,7 @@ const FormateurView = ({
                                     }`}
                                   >
                                     {(!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
-                                      ? 'Verrouillé (Date future)' 
+                                      ? 'Verrouillé' 
                                       : 'Émarger (Coach)'}
                                   </button>
                                 ) : (
@@ -885,8 +888,9 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
   </div>
 );
 
-const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate }) => {
+const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
+
   // const today = new Date().toISOString().split('T')[0]; // Removed unused variable causing build failure
 
   return (
@@ -899,9 +903,11 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
           <h2 className="text-xl font-bold text-gray-800 flex items-center">
             <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Séances
           </h2>
-          <button onClick={handleDownloadAttendanceCertificate} className="inline-flex items-center text-sm px-4 py-2 bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-600 shadow-sm transition-colors">
-            <DownloadIcon className="mr-2" /> Attestation d'assiduité
-          </button>
+          {(userRole === 'admin' || userRole === 'formateur') && (
+            <button onClick={() => handleDownloadAttendanceCertificate(currentUserId)} className="inline-flex items-center text-sm px-4 py-2 bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-600 shadow-sm transition-colors">
+              <DownloadIcon className="mr-2" /> Attestation d'assiduité
+            </button>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -972,15 +978,17 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
         </div>
       </div>
       
-      <div className="mt-12 flex justify-center">
-        <button 
-          onClick={handleDownloadAttendanceCertificate} 
-          className="bg-gray-900 border-2 border-gray-900 hover:bg-white hover:text-gray-900 text-white px-8 py-4 rounded-3xl font-bold shadow-xl flex items-center group transition-all"
-        >
-          <div className="w-8 h-8 bg-rose-500 rounded-lg flex items-center justify-center mr-3 group-hover:rotate-12 transition-transform shadow-lg shadow-rose-500/30 font-bold text-white">PDF</div>
-          Générer mon Attestation d'Assiduité
-        </button>
-      </div>
+      {(userRole === 'admin' || userRole === 'formateur') && (
+        <div className="mt-12 flex justify-center">
+          <button 
+            onClick={() => handleDownloadAttendanceCertificate(currentUserId)} 
+            className="bg-gray-900 border-2 border-gray-900 hover:bg-white hover:text-gray-900 text-white px-8 py-4 rounded-3xl font-bold shadow-xl flex items-center group transition-all"
+          >
+            <div className="w-8 h-8 bg-rose-500 rounded-lg flex items-center justify-center mr-3 group-hover:rotate-12 transition-transform shadow-lg shadow-rose-500/30 font-bold text-white">PDF</div>
+            Générer l'Attestation d'Assiduité du stagiaire
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -1645,11 +1653,13 @@ export default function App() {
     }
   };
 
-  const handleDownloadAttendanceCertificate = async () => {
-    const client = clients.find(c => c.id === currentUserId);
+  const handleDownloadAttendanceCertificate = async (clientId) => {
+    // Si pas de clientId passé, on essaye d'utiliser currentUserId (cas client qui s'auto-génère, si autorisé par code futur)
+    const targetId = clientId || currentUserId;
+    const client = clients.find(c => c.id === targetId);
     if (!client) return;
 
-    const signedSessions = sessions.filter(s => s.client_id === currentUserId && s.statut === 'Signé');
+    const signedSessions = sessions.filter(s => s.client_id === targetId && s.statut === 'Signé');
     const module = modules.find(m => m.id === client.module_id);
     
     try {
@@ -1850,12 +1860,14 @@ export default function App() {
                 updateSessionDate={updateSessionDate} 
                 signSession={signSession} 
                 modules={modules}
+                userRole={userRole}
                 currentUserId={currentUserId}
                 expandedClientId={expandedClientId}
                 setExpandedClientId={setExpandedClientId}
+                handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate}
               />}
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} />}
+              {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
               {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
               {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
               {activeTab === 'documents' && <DocumentsView 
@@ -1908,5 +1920,4 @@ export default function App() {
     </div>
   );
 }
-
 
