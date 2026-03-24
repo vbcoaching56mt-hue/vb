@@ -533,6 +533,17 @@ const FormateurView = ({
     setTimeout(() => setSavingId(null), 1500);
   };
 
+  const calculateDuration = (start, end) => {
+    if (!start || !end) return null;
+    const [h1, m1] = start.split(':').map(Number);
+    const [h2, m2] = end.split(':').map(Number);
+    let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+    if (diff <= 0) return null;
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
+    return `${h}h${m > 0 ? ` ${m}min` : ''}`;
+  };
+
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
       <div className="flex justify-between items-end">
@@ -662,6 +673,19 @@ const FormateurView = ({
                                   >
                                     {savingId === session.id ? <CheckIcon className="w-3.5 h-3.5" /> : <SaveIcon className="w-3.5 h-3.5" />}
                                   </button>
+                                </div>
+                                <div className="mt-1 text-[9px] font-medium text-gray-400">
+                                  {calculateDuration(
+                                    editedTimes[session.id]?.start ?? session.heure_debut, 
+                                    editedTimes[session.id]?.end ?? session.heure_fin
+                                  ) ? (
+                                    <span className="text-indigo-500 italic">Durée : {calculateDuration(
+                                      editedTimes[session.id]?.start ?? session.heure_debut, 
+                                      editedTimes[session.id]?.end ?? session.heure_fin
+                                    )}</span>
+                                  ) : (
+                                    "Durée : 0h"
+                                  )}
                                 </div>
                               </td>
                               <td className="px-4 py-4">
@@ -976,7 +1000,16 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
 const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
 
-  // const today = new Date().toISOString().split('T')[0]; // Removed unused variable causing build failure
+  const calculateDuration = (start, end) => {
+    if (!start || !end) return null;
+    const [h1, m1] = start.split(':').map(Number);
+    const [h2, m2] = end.split(':').map(Number);
+    let diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+    if (diff <= 0) return null;
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
+    return `${h}h${m > 0 ? ` ${m}min` : ''}`;
+  };
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -994,7 +1027,7 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
             <thead>
               <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
                 <th className="pb-4">Séance</th>
-                <th className="pb-4">Date prévue</th>
+                <th className="pb-4">Planification (Date & Heures)</th>
                 <th className="pb-4 text-center">Statut</th>
                 <th className="pb-4 text-right">Émargement</th>
               </tr>
@@ -1009,7 +1042,14 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                     </div>
                   </td>
                   <td className="py-5 font-medium text-gray-600">
-                    {session.date ? new Date(session.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'À définir par le coach'}
+                    <div className="flex flex-col">
+                      <span>{session.date ? new Date(session.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'À définir'}</span>
+                      {session.heure_debut && session.heure_fin && (
+                        <span className="text-[10px] text-indigo-600 font-bold mt-1">
+                          ⌚ {session.heure_debut} - {session.heure_fin} ({calculateDuration(session.heure_debut, session.heure_fin)})
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-5 text-center">
                     <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${
