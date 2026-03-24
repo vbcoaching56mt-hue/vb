@@ -5,8 +5,8 @@ import { supabase } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import PizZip from 'pizzip/js/index.js';
-import Docxtemplater from 'docxtemplater/js/docxtemplater.js';
+import PizZip from 'pizzip';
+import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
