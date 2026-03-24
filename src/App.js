@@ -362,6 +362,63 @@ const AdminDashboardView = ({
                 <td className="py-4 font-bold text-gray-900 flex flex-col">
                   <span>{client.nom}</span>
                   <span className="text-xs text-gray-400 font-normal">{client.email}</span>
+                  
+                  {/* Champs Client Additionnels (Nouveau) */}
+                  <div className="mt-3 grid grid-cols-1 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-2">
+                       <input 
+                        type="text" 
+                        placeholder="Nom complet (pour docs)" 
+                        defaultValue={client.nomcomplet_client || ''} 
+                        onBlur={async (e) => {
+                          const val = e.target.value;
+                          if (val !== client.nomcomplet_client) {
+                            await supabase.from('utilisateurs').update({ nomcomplet_client: val }).eq('id', client.id);
+                          }
+                        }}
+                        className="text-[10px] w-full p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        type="email" 
+                        placeholder="Email Client" 
+                        defaultValue={client.client_email || ''} 
+                        onBlur={async (e) => {
+                          const val = e.target.value;
+                          if (val !== client.client_email) {
+                            await supabase.from('utilisateurs').update({ client_email: val }).eq('id', client.id);
+                          }
+                        }}
+                        className="text-[10px] w-1/2 p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                      />
+                      <input 
+                        type="tel" 
+                        placeholder="Mobile Client" 
+                        defaultValue={client.client_phone || ''} 
+                        onBlur={async (e) => {
+                          const val = e.target.value;
+                          if (val !== client.client_phone) {
+                            await supabase.from('utilisateurs').update({ client_phone: val }).eq('id', client.id);
+                          }
+                        }}
+                        className="text-[10px] w-1/2 p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                      />
+                    </div>
+                    <input 
+                      type="text" 
+                      placeholder="Adresse de session" 
+                      defaultValue={client.adresse_session || ''} 
+                      onBlur={async (e) => {
+                        const val = e.target.value;
+                        if (val !== client.adresse_session) {
+                          await supabase.from('utilisateurs').update({ adresse_session: val }).eq('id', client.id);
+                        }
+                      }}
+                      className="text-[10px] w-full p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                    />
+                  </div>
+
                   {client.module_id && (
                     <div className="flex gap-2 mt-2">
                       <button
@@ -494,14 +551,18 @@ const IngenierieView = ({
       <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl w-64 shadow-sm">
         <h3 className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3">Aide aux Balises Word</h3>
         <ul className="text-[11px] space-y-2 text-blue-700 font-mono">
-          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_NOM}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_PRENOM}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{CLIENT_EMAIL}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{FORMATEUR_NOM}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{MODULE_NOM}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{DATE_DEBUT}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{DATE_FIN}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{TOTAL_HEURES}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{nom}"} (Formateur)</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{adresse_formateur}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{formateur_nda}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{formateur_siret}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{nomcomplet_client}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{client_phone}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{client_email}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{prix_prestation}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{adresse_session}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{date_debut}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{date_fin}"}</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{date_signature}"}</li>
         </ul>
         <p className="text-[10px] text-blue-600 mt-3 italic">Copiez/collez ces balises dans vos fichiers .docx</p>
       </div>
@@ -668,6 +729,43 @@ const FormateurView = ({
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Clients Assignés</h1>
           <p className="text-gray-500 text-lg mt-1">Suivez l'avancement et gérez les émargements des sessions.</p>
         </div>
+      </div>
+
+      {/* Mon Profil Formateur (Nouveau) */}
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+          <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Mon Profil Formateur
+        </h2>
+        {formateurs.filter(f => f.id === currentUserId).map(f => (
+          <form key={f.id} className="grid grid-cols-1 md:grid-cols-3 gap-4 outline-none" onSubmit={async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const updates = {
+              formateur_siret: formData.get('siret'),
+              formateur_nda: formData.get('nda'),
+              adresse_formateur: formData.get('adresse')
+            };
+            const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
+            if (!error) alert("Profil mis à jour !");
+            else alert("Erreur: " + error.message);
+          }}>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
+              <input name="siret" defaultValue={f.formateur_siret || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro SIRET" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">NDA</label>
+              <input name="nda" defaultValue={f.formateur_nda || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro de déclaration d'activité" />
+            </div>
+            <div className="md:col-span-3">
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
+              <input name="adresse" defaultValue={f.adresse_formateur || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Adresse complète du centre ou du formateur" />
+            </div>
+            <div className="md:col-span-3 text-right">
+              <button type="submit" className="bg-gray-900 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-800 transition-all">Enregistrer mon profil</button>
+            </div>
+          </form>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 gap-6">
@@ -1445,7 +1543,7 @@ export default function App() {
   // On surveille clients et modules, sessions en lecture seule
 
   const fetchModules = async () => {
-    const { data: mData, error: mErr } = await supabase.from('modules').select('*');
+    const { data: mData, error: mErr } = await supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
     if (!mErr && mData) setModules(mData);
 
     const { data: mdData, error: mdErr } = await supabase.from('module_documents').select('*');
@@ -1460,7 +1558,7 @@ export default function App() {
   const fetchUtilisateurs = async () => {
     const { data: usersData, error } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_id, seances_effectuees, seances_totales, module_id');
+      .select('id, nom, prenom, email, telephone, ref_dossier, role, formateur_id, seances_effectuees, seances_totales, module_id, formateur_siret, formateur_nda, adresse_formateur, nomcomplet_client, client_phone, client_email, adresse_session');
 
     if (!error && usersData) {
       setClients(usersData.filter(u => u.role === 'client'));
@@ -1793,14 +1891,23 @@ export default function App() {
         return;
       }
 
-      const module = modules.find(m => m.id === client.module_id);
-      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
-      const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+      // Extraction impérative des dates via requête sur sessions
+      const { data: sessionDates, error: dateError } = await supabase
+        .from('sessions')
+        .select('date')
+        .eq('client_id', client.id)
+        .not('date', 'is', null)
+        .order('date', { ascending: true });
+      
+      let dateDebut = '[Date non définie]';
+      let dateFin = '[Date non définie]';
 
-      const dateDebut = clientSessions.length > 0 ? new Date(clientSessions[0].date).toLocaleDateString('fr-FR') : '[Date non définie]';
-      const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
+      if (!dateError && sessionDates && sessionDates.length > 0) {
+        dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
+        dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
+      }
 
-      const totalHours = clientSessions.reduce((acc, s) => {
+      const totalHours = sessions.filter(s => s.client_id === client.id && s.date).reduce((acc, s) => {
         if (!s.heure_debut || !s.heure_fin) return acc + 1.5;
         const [h1, m1] = s.heure_debut.split(':').map(Number);
         const [h2, m2] = s.heure_fin.split(':').map(Number);
@@ -1819,14 +1926,18 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        CLIENT_NOM: client.nom.split(' ')[1] || client.nom,
-        CLIENT_PRENOM: client.nom.split(' ')[0] || '',
-        CLIENT_EMAIL: client.email,
-        FORMATEUR_NOM: coach.nom,
-        MODULE_NOM: module?.nom || 'Formation',
-        DATE_DEBUT: dateDebut,
-        DATE_FIN: dateFin,
-        TOTAL_HEURES: totalHours.toFixed(1)
+        nom: coach.nom || '',
+        adresse_formateur: coach.adresse_formateur || '',
+        formateur_nda: coach.formateur_nda || '',
+        formateur_siret: coach.formateur_siret || '',
+        nomcomplet_client: client.nomcomplet_client || `${client.nom || ''} ${client.prenom || ''}`.trim(),
+        client_phone: client.client_phone || client.telephone || '',
+        client_email: client.client_email || client.email || '',
+        prix_prestation: module?.prix_prestation || '',
+        adresse_session: client.adresse_session || '',
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        date_signature: new Date().toLocaleDateString('fr-FR')
       });
 
       doc.render();
