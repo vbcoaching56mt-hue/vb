@@ -19,6 +19,7 @@ const UsersIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="curren
 const PlusIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>;
 const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg>;
 const TrashIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
+const SaveIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>;
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -505,7 +506,32 @@ const FormateurView = ({
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
   handleAddSession, handleDeleteSession, updateSessionTime
 }) => {
+  const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
+  const [savingId, setSavingId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
+
+  const onTimeChange = (sessionId, field, value) => {
+    setEditedTimes(prev => ({
+      ...prev,
+      [sessionId]: {
+        ...(prev[sessionId] || { 
+          start: sessions.find(s=>s.id===sessionId)?.heure_debut || '', 
+          end: sessions.find(s=>s.id===sessionId)?.heure_fin || '' 
+        }),
+        [field]: value
+      }
+    }));
+  };
+
+  const onSaveTimes = async (sessionId) => {
+    setSavingId(sessionId);
+    const times = editedTimes[sessionId];
+    if (times) {
+      await updateSessionTime(sessionId, 'heure_debut', times.start);
+      await updateSessionTime(sessionId, 'heure_fin', times.end);
+    }
+    setTimeout(() => setSavingId(null), 1500);
+  };
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -590,8 +616,7 @@ const FormateurView = ({
                           <tr>
                             <th className="px-4 py-3 text-left">N° & Séance</th>
                             <th className="px-4 py-3 text-left">Date</th>
-                            <th className="px-4 py-3 text-left">Début</th>
-                            <th className="px-4 py-3 text-left">Fin</th>
+                            <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
                             <th className="px-4 py-3 text-left">Statut</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
@@ -609,20 +634,35 @@ const FormateurView = ({
                                 />
                               </td>
                               <td className="px-4 py-4">
-                                <input 
-                                  type="time" 
-                                  value={session.heure_debut || ''} 
-                                  onChange={(e) => updateSessionTime(session.id, 'heure_debut', e.target.value)}
-                                  className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
-                              </td>
-                              <td className="px-4 py-4">
-                                <input 
-                                  type="time" 
-                                  value={session.heure_fin || ''} 
-                                  onChange={(e) => updateSessionTime(session.id, 'heure_fin', e.target.value)}
-                                  className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex flex-col gap-1">
+                                    <input 
+                                      type="time" 
+                                      value={editedTimes[session.id]?.start ?? session.heure_debut ?? ''} 
+                                      onChange={(e) => onTimeChange(session.id, 'start', e.target.value)}
+                                      className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
+                                      title="Heure début"
+                                    />
+                                    <input 
+                                      type="time" 
+                                      value={editedTimes[session.id]?.end ?? session.heure_fin ?? ''} 
+                                      onChange={(e) => onTimeChange(session.id, 'end', e.target.value)}
+                                      className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
+                                      title="Heure fin"
+                                    />
+                                  </div>
+                                  <button 
+                                    onClick={() => onSaveTimes(session.id)}
+                                    className={`p-1.5 rounded-lg transition-all ${
+                                      savingId === session.id 
+                                        ? 'bg-green-100 text-green-600' 
+                                        : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
+                                    }`}
+                                    title="Enregistrer les horaires"
+                                  >
+                                    {savingId === session.id ? <CheckIcon className="w-3.5 h-3.5" /> : <SaveIcon className="w-3.5 h-3.5" />}
+                                  </button>
+                                </div>
                               </td>
                               <td className="px-4 py-4">
                                 <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
