@@ -18,6 +18,7 @@ const LogoutIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="curre
 const UsersIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>;
 const PlusIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>;
 const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7"/></svg>;
+const TrashIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>;
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -502,7 +503,7 @@ const FormateurView = ({
   clients, formateurs, sessions, generateSessions, 
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
-  handleAddSession, handleDeleteLastSession
+  handleAddSession, handleDeleteSession, updateSessionTime
 }) => {
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
@@ -562,22 +563,13 @@ const FormateurView = ({
                          </h4>
                          
                          {(userRole === 'admin' || userRole === 'formateur') && (
-                           <div className="flex gap-2">
                              <button 
                                onClick={() => handleAddSession(client)}
                                className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
                                title="Ajouter une séance"
                              >
-                                <span className="mr-1.5">➕</span> Ajouter
+                                <span className="mr-1.5">➕</span> Ajouter une séance
                              </button>
-                             <button 
-                               onClick={() => handleDeleteLastSession(client)}
-                               className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-rose-100 flex items-center"
-                               title="Supprimer la dernière séance"
-                             >
-                                <span className="mr-1.5">❌</span> Supprimer
-                             </button>
-                           </div>
                          )}
                       </div>
                       
@@ -596,9 +588,11 @@ const FormateurView = ({
                       <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
                           <tr>
-                            <th className="px-4 py-3">Séance</th>
-                            <th className="px-4 py-3">Date prévue</th>
-                            <th className="px-4 py-3">Statut</th>
+                            <th className="px-4 py-3 text-left">N° & Séance</th>
+                            <th className="px-4 py-3 text-left">Date</th>
+                            <th className="px-4 py-3 text-left">Début</th>
+                            <th className="px-4 py-3 text-left">Fin</th>
+                            <th className="px-4 py-3 text-left">Statut</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                           </tr>
                         </thead>
@@ -615,28 +609,55 @@ const FormateurView = ({
                                 />
                               </td>
                               <td className="px-4 py-4">
+                                <input 
+                                  type="time" 
+                                  value={session.heure_debut || ''} 
+                                  onChange={(e) => updateSessionTime(session.id, 'heure_debut', e.target.value)}
+                                  className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                              </td>
+                              <td className="px-4 py-4">
+                                <input 
+                                  type="time" 
+                                  value={session.heure_fin || ''} 
+                                  onChange={(e) => updateSessionTime(session.id, 'heure_fin', e.target.value)}
+                                  className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                              </td>
+                              <td className="px-4 py-4">
                                 <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
                                   session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
                                 }`}>{session.statut}</span>
                               </td>
                               <td className="px-4 py-4 text-right">
-                                {session.statut !== 'Signé' ? (
-                                  <button 
-                                    onClick={() => signSession(session)}
-                                    disabled={!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))}
-                                    className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                      (!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
-                                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
-                                    }`}
-                                  >
-                                    {(!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
-                                      ? 'Verrouillé' 
-                                      : 'Émarger (Coach)'}
-                                  </button>
-                                ) : (
-                                  <span className="text-green-500"><CheckIcon /></span>
-                                )}
+                                <div className="flex justify-end items-center gap-2">
+                                  {(userRole === 'admin' || userRole === 'formateur') && session.statut !== 'Signé' && (
+                                    <button 
+                                      onClick={() => handleDeleteSession(session)}
+                                      className="text-rose-400 hover:text-rose-600 transition-colors p-1"
+                                      title="Supprimer cette séance"
+                                    >
+                                      <TrashIcon className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                  {session.statut !== 'Signé' ? (
+                                    <button 
+                                      onClick={() => signSession(session)}
+                                      disabled={!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))}
+                                      className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                        (!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
+                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                                        : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                                      }`}
+                                    >
+                                      {(!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
+                                        ? 'Verrouillé' 
+                                        : 'Émarger (Coach)'}
+                                    </button>
+                                  ) : (
+                                    <span className="text-green-500"><CheckIcon /></span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -1372,17 +1393,13 @@ export default function App() {
     }
   };
 
-  const handleDeleteLastSession = async (client) => {
-    const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a,b) => b.numero_seance - a.numero_seance);
-    if (clientSessions.length === 0) return;
-    
-    const lastSession = clientSessions[clientSessions.length - 1];
-    if (lastSession.statut === 'Signé') {
-      alert("Impossible de supprimer une séance déjà signée.");
-      return;
-    }
+  const handleDeleteSession = async (session) => {
+    const client = clients.find(c => c.id === session.client_id);
+    if (!client) return;
 
-    const { error: delError } = await supabase.from('sessions').delete().eq('id', lastSession.id);
+    if (!window.confirm(`Supprimer la séance N°${session.numero_seance} de ${client.nom} ?`)) return;
+
+    const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
     
     if (!delError) {
       const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
@@ -1390,8 +1407,13 @@ export default function App() {
       await fetchUtilisateurs();
       await fetchSessions();
     } else {
-      alert("Erreur lors de la suppression de la séance: " + delError.message);
+      alert("Erreur suppression: " + delError.message);
     }
+  };
+
+  const updateSessionTime = async (sessionId, field, value) => {
+    const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
+    if (!error) await fetchSessions();
   };
 
   const updateSessionDate = async (sessionId, newDate) => {
@@ -1774,8 +1796,16 @@ export default function App() {
         
         doc.setFont("Helvetica", "normal");
         const sessionDate = s.date ? new Date(s.date).toLocaleDateString('fr-FR') : 'À venir';
-        doc.text(`${sessionDate}\n#${s.numero_seance} ${s.nom.substring(0, 25)}`, 20, yPos + 8);
-        doc.text("1.50 h", 80, yPos + 10);
+        const hoursDisplay = (s.heure_debut && s.heure_fin) ? `${s.heure_debut} - ${s.heure_fin}` : 'Horaire non défini';
+        doc.text(`${sessionDate}\n${hoursDisplay}\n#${s.numero_seance} ${s.nom.substring(0, 25)}`, 20, yPos + 6);
+        
+        let sessionDuration = 1.5;
+        if (s.heure_debut && s.heure_fin) {
+          const [h1, m1] = s.heure_debut.split(':').map(Number);
+          const [h2, m2] = s.heure_fin.split(':').map(Number);
+          sessionDuration = (h2 + m2/60) - (h1 + m1/60);
+        }
+        doc.text(`${sessionDuration.toFixed(2)} h`, 80, yPos + 10);
 
         // Client Signature
         const sigClient = await fetchBase64Image(s.signature_image);
@@ -1805,12 +1835,25 @@ export default function App() {
       }
 
       doc.line(15, yPos, 195, yPos);
-      yPos += 15;
+      yPos += 12;
+
+      // Calcul du total des heures emargees
+      const totalEmarge = signedSessions.reduce((acc, s) => {
+        if (s.statut !== 'Signé' || !s.heure_debut || !s.heure_fin) return acc + 1.5;
+        const [h1, m1] = s.heure_debut.split(':').map(Number);
+        const [h2, m2] = s.heure_fin.split(':').map(Number);
+        return acc + (h2 + m2/60) - (h1 + m1/60);
+      }, 0);
+
       doc.setFont("Helvetica", "bold");
-      doc.text(`Total des heures validées : ${signedSessions.filter(s=>s.statut==='Signé').length * 1.5} heures`, 120, yPos);
+      doc.text(`Total des heures émargées : ${totalEmarge.toFixed(2)} heures`, 120, yPos);
+      yPos += 7;
+      doc.setTextColor(30, 64, 175); // Blue
+      doc.text(`Total Travail Personnel (Contrat 24h) : ${(24 - totalEmarge).toFixed(2)} heures`, 120, yPos);
+      doc.setTextColor(0, 0, 0);
 
       // Footer
-      yPos += 25;
+      yPos += 18;
       doc.setFontSize(8);
       doc.setFont("Helvetica", "italic");
       doc.text("Fait à Guipavas (29), le " + new Date().toLocaleDateString('fr-FR'), 20, yPos);
@@ -1945,7 +1988,8 @@ export default function App() {
                 setExpandedClientId={setExpandedClientId}
                 handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate}
                 handleAddSession={handleAddSession}
-                handleDeleteLastSession={handleDeleteLastSession}
+                handleDeleteSession={handleDeleteSession}
+                updateSessionTime={updateSessionTime}
               />}
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
               {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
