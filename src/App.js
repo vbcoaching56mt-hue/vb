@@ -923,7 +923,7 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                     {session.statut !== 'Signé' ? (
                       <button 
                         onClick={() => signSession(session)}
-                        disabled={!session.date || new Date(session.date) > new Date()}
+                        disabled={new Date(session.date) > new Date().setHours(23, 59, 59, 999) || session.statut === 'Signé'}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${
                           (session.date && new Date(session.date) <= new Date()) ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
