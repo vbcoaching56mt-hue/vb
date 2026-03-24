@@ -7,7 +7,6 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
-import PizZipUtils from 'jszip-utils';
 import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
@@ -17,6 +16,17 @@ if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
   window.process = process;
 }
+
+const loadScript = (src) => {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = () => resolve();
+    script.onerror = (err) => reject(err);
+    document.head.appendChild(script);
+  });
+};
 
 // --- Icônes ---
 const HomeIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>;
@@ -1797,8 +1807,10 @@ export default function App() {
         return acc + (h2 + m2 / 60) - (h1 + m1 / 60);
       }, 0);
 
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js");
+      
       const content = await new Promise((resolve, reject) => {
-        PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
+        window.PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
           if (err) reject(err);
           else resolve(data);
         });
