@@ -501,7 +501,8 @@ const AdminView = ({
 const FormateurView = ({ 
   clients, formateurs, sessions, generateSessions, 
   updateSessionDate, signSession, modules, currentUserId,
-  expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate
+  expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
+  handleAddSession, handleDeleteLastSession
 }) => {
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
@@ -554,20 +555,40 @@ const FormateurView = ({
 
             {isExpanded && (
                <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
-                  <div className="flex justify-between items-center mb-6">
-                     <h4 className="font-bold text-gray-800 flex items-center">
-                        <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
-                        Planning des Séances - {assignedModule?.nom || 'Sans module'}
-                     </h4>
-                     {clientSessions.length === 0 && client.module_id && (
+                      <div className="flex items-center gap-3">
+                         <h4 className="font-bold text-gray-800 flex items-center">
+                            <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
+                            Planning des Séances - {assignedModule?.nom || 'Sans module'}
+                         </h4>
+                         
+                         {(userRole === 'admin' || userRole === 'formateur') && (
+                           <div className="flex gap-2">
+                             <button 
+                               onClick={() => handleAddSession(client)}
+                               className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
+                               title="Ajouter une séance"
+                             >
+                                <span className="mr-1.5">➕</span> Ajouter
+                             </button>
+                             <button 
+                               onClick={() => handleDeleteLastSession(client)}
+                               className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-rose-100 flex items-center"
+                               title="Supprimer la dernière séance"
+                             >
+                                <span className="mr-1.5">❌</span> Supprimer
+                             </button>
+                           </div>
+                         )}
+                      </div>
+                      
+                      {clientSessions.length === 0 && client.module_id && (
                         <button 
                           onClick={() => generateSessions(client)}
                           className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
                         >
-                          Générer les 8 séances
+                          Générer forfait 8 séances
                         </button>
-                     )}
-                  </div>
+                      )}
 
                   {clientSessions.length > 0 ? (
                     <>
@@ -1327,6 +1348,52 @@ export default function App() {
     }
   };
 
+  const handleAddSession = async (client) => {
+    const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a,b) => a.numero_seance - b.numero_seance);
+    const nextNum = clientSessions.length + 1;
+    const module = modules.find(m => m.id === client.module_id);
+    const moduleName = module ? module.nom : "Séance";
+    
+    const { error: insError } = await supabase.from('sessions').insert([{ 
+      numero_seance: nextNum, 
+      nom: `${moduleName} - Séance ${nextNum}`, 
+      client_id: client.id, 
+      module_id: client.module_id,
+      statut: 'À venir' 
+    }]);
+
+    if (!insError) {
+      const newTotal = (client.seances_totales || 0) + 1;
+      await supabase.from('utilisateurs').update({ seances_totales: newTotal }).eq('id', client.id);
+      await fetchUtilisateurs();
+      await fetchSessions();
+    } else {
+      alert("Erreur lors de l'ajout de la séance: " + insError.message);
+    }
+  };
+
+  const handleDeleteLastSession = async (client) => {
+    const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a,b) => b.numero_seance - a.numero_seance);
+    if (clientSessions.length === 0) return;
+    
+    const lastSession = clientSessions[clientSessions.length - 1];
+    if (lastSession.statut === 'Signé') {
+      alert("Impossible de supprimer une séance déjà signée.");
+      return;
+    }
+
+    const { error: delError } = await supabase.from('sessions').delete().eq('id', lastSession.id);
+    
+    if (!delError) {
+      const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
+      await supabase.from('utilisateurs').update({ seances_totales: newTotal }).eq('id', client.id);
+      await fetchUtilisateurs();
+      await fetchSessions();
+    } else {
+      alert("Erreur lors de la suppression de la séance: " + delError.message);
+    }
+  };
+
   const updateSessionDate = async (sessionId, newDate) => {
     const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
     if (!error) await fetchSessions();
@@ -1877,6 +1944,8 @@ export default function App() {
                 expandedClientId={expandedClientId}
                 setExpandedClientId={setExpandedClientId}
                 handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate}
+                handleAddSession={handleAddSession}
+                handleDeleteLastSession={handleDeleteLastSession}
               />}
               {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
               {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
