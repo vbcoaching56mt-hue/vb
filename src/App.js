@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
+import PizZipUtils from 'jszip-utils';
 import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
@@ -1796,8 +1797,12 @@ export default function App() {
         return acc + (h2 + m2 / 60) - (h1 + m1 / 60);
       }, 0);
 
-      const response = await fetch(templateInfo.url);
-      const content = await response.arrayBuffer();
+      const content = await new Promise((resolve, reject) => {
+        PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
+          if (err) reject(err);
+          else resolve(data);
+        });
+      });
       const zip = new PizZip(content);
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
