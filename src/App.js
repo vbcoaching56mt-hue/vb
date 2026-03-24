@@ -360,8 +360,8 @@ const AdminDashboardView = ({
               <tr key={client.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="py-4 text-xs text-gray-400 font-bold">#{client.id}</td>
                 <td className="py-4 font-bold text-gray-900 flex flex-col">
-                  <span>{client.nom}</span>
-                  <span className="text-xs text-gray-400 font-normal">{client.email}</span>
+                  <span>{client.nom || 'Sans Nom'}</span>
+                  <span className="text-xs text-gray-400 font-normal">{client.email || 'Email non renseigné'}</span>
                   
                   {/* Champs Client Additionnels (Nouveau) */}
                   <div className="mt-3 grid grid-cols-1 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
@@ -417,6 +417,22 @@ const AdminDashboardView = ({
                       }}
                       className="text-[10px] w-full p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
                     />
+                  </div>
+
+                  <div className="flex gap-2 mt-4 px-2">
+                    <button
+                      onClick={() => handleGenerateDocx(client, 'lettre_mission')}
+                      title="Générer Lettre de Mission (Modèle Admin)"
+                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold py-2 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1"
+                    >
+                      <DownloadIcon /> Lettre de Mission
+                    </button>
+                    <button
+                      onClick={() => handleGenerateDocx(client, 'contrat')}
+                      className="flex-1 bg-gray-900 hover:bg-gray-800 text-white text-[10px] font-bold py-2 rounded-xl shadow-sm transition-all"
+                    >
+                      Contrat
+                    </button>
                   </div>
 
                   {client.module_id && (
@@ -565,6 +581,26 @@ const IngenierieView = ({
           <li className="bg-white/50 p-1.5 rounded">{"{date_signature}"}</li>
         </ul>
         <p className="text-[10px] text-blue-600 mt-3 italic">Copiez/collez ces balises dans vos fichiers .docx</p>
+      </div>
+    </div>
+
+    {/* --- Section NOUVELLE: Modèles de Référence --- */}
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+        <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Modèles de Documents Références
+      </h2>
+      <div className="p-5 border border-amber-100 bg-amber-50/20 rounded-2xl">
+        <p className="text-sm text-amber-800 mb-4 font-medium italic">Ces documents servent de base pour tous les clients du centre.</p>
+        <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-amber-100 shadow-sm">
+          <div>
+            <h3 className="font-bold text-gray-900">Modèle: Lettre de Mission (.docx)</h3>
+            <p className="text-xs text-gray-500">{documentTemplates.lettre_mission?.name || "Aucun modèle de référence chargé"}</p>
+          </div>
+          <label className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-bold cursor-pointer transition-all">
+            Uploader Référence
+            <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'lettre_mission')} />
+          </label>
+        </div>
       </div>
     </div>
 
@@ -1477,6 +1513,7 @@ export default function App() {
   const [documentTemplates, setDocumentTemplates] = useState({
     contrat: null, // Sera un objet { url: '...', name: '...' }
     reglement: null,
+    lettre_mission: null, // Nouveau: Modèle de référence Admin
     // On garde l'ancien système textuel en backup si besoin
     contratText: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE...`,
     reglementText: `RÈGLEMENT INTÉRIEUR DE FORMATION...`
@@ -1558,7 +1595,7 @@ export default function App() {
   const fetchUtilisateurs = async () => {
     const { data: usersData, error } = await supabase
       .from('utilisateurs')
-      .select('id, nom, prenom, email, telephone, ref_dossier, role, formateur_id, seances_effectuees, seances_totales, module_id, formateur_siret, formateur_nda, adresse_formateur, nomcomplet_client, client_phone, client_email, adresse_session');
+      .select('id, nom, email, numero_dossier, role, formateur_id, seances_effectuees, seances_totales, module_id, formateur_siret, formateur_nda, adresse_formateur, nomcomplet_client, client_phone, client_email, adresse_session');
 
     if (!error && usersData) {
       setClients(usersData.filter(u => u.role === 'client'));
@@ -1573,8 +1610,23 @@ export default function App() {
     const { data: docsData, error } = await supabase
       .from('documents')
       .select('*');
-    if (!error && docsData) setDocuments(docsData);
-    else if (error) console.error("Erreur documents:", error);
+    if (!error && docsData) {
+      setDocuments(docsData);
+      // Charger les modèles de référence dans l'état documentTemplates
+      const refs = docsData.filter(d => d.type_document === 'Modèle Référence');
+      if (refs.length > 0) {
+        setDocumentTemplates(prev => {
+          const newTemplates = { ...prev };
+          refs.forEach(r => {
+            // On identifie le modèle par son nom ('contrat', 'reglement', 'lettre_mission')
+            if (['contrat', 'reglement', 'lettre_mission'].includes(r.nom)) {
+              newTemplates[r.nom] = { url: r.url, name: r.nom || 'Modèle' };
+            }
+          });
+          return newTemplates;
+        });
+      }
+    } else if (error) console.error("Erreur documents:", error);
   };
 
   // --- Actions Navigation ---
@@ -1870,7 +1922,24 @@ export default function App() {
         ...prev,
         [type]: { url: publicUrl, name: file.name }
       }));
-      alert(`Modèle Word "${file.name}" enregistré avec succès.`);
+
+      // Sauvegarder en tant que modèle de référence dans la DB
+      // On utilise 'nom' pour stocker la clé technique et on s'assure qu'on remplace l'ancien
+      const { data: existing } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
+      
+      if (existing && existing.length > 0) {
+        await supabase.from('documents').update({ url: publicUrl }).eq('id', existing[0].id);
+      } else {
+        await supabase.from('documents').insert([{
+          nom: type,
+          type_document: 'Modèle Référence',
+          url: publicUrl,
+          visible_client: false,
+          visible_formateur: false
+        }]);
+      }
+
+      alert(`Modèle Word "${file.name}" enregistré comme référence.`);
     } catch (err) {
       console.error("Upload Template Error:", err);
       alert("Erreur lors de l'upload du modèle Word.");
@@ -1881,8 +1950,7 @@ export default function App() {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
-        // Fallback sur le PDF classique si pas de docx
-        handleGenerateDynamicPDF(client, type);
+        alert(`Aucun modèle .docx trouvé pour "${type}". Veuillez l'uploader dans l'onglet Ingénierie.`);
         return;
       }
 
