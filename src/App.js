@@ -1910,12 +1910,6 @@ export default function App() {
         dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
       }
 
-      const totalHours = sessions.filter(s => s.client_id === client.id && s.date).reduce((acc, s) => {
-        if (!s.heure_debut || !s.heure_fin) return acc + 1.5;
-        const [h1, m1] = s.heure_debut.split(':').map(Number);
-        const [h2, m2] = s.heure_fin.split(':').map(Number);
-        return acc + (h2 + m2 / 60) - (h1 + m1 / 60);
-      }, 0);
 
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js");
       
@@ -1989,12 +1983,6 @@ export default function App() {
       const dateDebut = clientSessions.length > 0 ? new Date(clientSessions[0].date).toLocaleDateString('fr-FR') : '[Date non définie]';
       const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
 
-      const totalHours = clientSessions.reduce((acc, s) => {
-        if (!s.heure_debut || !s.heure_fin) return acc + 1.5;
-        const [h1, m1] = s.heure_debut.split(':').map(Number);
-        const [h2, m2] = s.heure_fin.split(':').map(Number);
-        return acc + (h2 + m2 / 60) - (h1 + m1 / 60);
-      }, 0);
 
       const template = type === 'contrat' ? documentTemplates.contrat : documentTemplates.reglement;
       const title = type === 'contrat' ? 'Contrat de Formation' : 'Règlement Intérieur';
