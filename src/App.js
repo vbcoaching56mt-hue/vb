@@ -874,7 +874,7 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
 
 const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
-  const today = new Date().toISOString().split('T')[0];
+  // const today = new Date().toISOString().split('T')[0]; // Removed unused variable causing build failure
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -1874,3 +1874,4 @@ export default function App() {
     </div>
   );
 }
+
