@@ -600,15 +600,23 @@ const FormateurView = ({
                               <td className="px-4 py-4 text-right">
                                 {session.statut !== 'Signé' ? (
                                   <button 
-                                    onClick={() => signSession(session)}
-                                    disabled={!session.date || new Date(session.date) > new Date()}
+                                    onClick={() => {
+                                      const today = new Date();
+                                      today.setHours(0, 0, 0, 0);
+                                      const sessionDate = new Date(session.date);
+                                      if (!session.date || sessionDate > today) return;
+                                      signSession(session);
+                                    }}
+                                    disabled={!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))}
                                     className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                      (!session.date || new Date(session.date) > new Date()) 
+                                      (!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
                                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
                                       : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
                                     }`}
                                   >
-                                    Émarger (Coach)
+                                    {(!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
+                                      ? 'Verrouillé (Date future)' 
+                                      : 'Émarger (Coach)'}
                                   </button>
                                 ) : (
                                   <span className="text-green-500"><CheckIcon /></span>
@@ -927,13 +935,26 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                   <td className="py-5 text-right">
                     {session.statut !== 'Signé' ? (
                       <button 
-                        onClick={() => signSession(session)}
-                        disabled={!session.date || new Date(session.date) > new Date()}
+                        onClick={() => {
+                          const today = new Date();
+                          today.setHours(0, 0, 0, 0);
+                          const sessionDate = new Date(session.date);
+                          if (!session.date || sessionDate > today) {
+                            // Ne rien faire si date future (sécurité client)
+                            return;
+                          }
+                          signSession(session);
+                        }}
+                        disabled={!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${
-                          (session.date && new Date(session.date) <= new Date()) ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          (session.date && new Date(session.date).setHours(0,0,0,0) <= new Date().setHours(0,0,0,0)) 
+                          ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md' 
+                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         }`}
                       >
-                        {(!session.date || new Date(session.date) > new Date()) ? 'En attente' : 'Signer (Emarger)'}
+                        {(!session.date || (new Date(session.date).setHours(0,0,0,0) > new Date().setHours(0,0,0,0))) 
+                          ? 'Verrouillé (Date future)' 
+                          : 'Signer (Emarger)'}
                       </button>
                     ) : (
                       <span className="text-green-500 font-bold text-sm bg-green-50 px-3 py-1 rounded-lg border border-green-100">Confirmé</span>
@@ -1887,4 +1908,5 @@ export default function App() {
     </div>
   );
 }
+
 
