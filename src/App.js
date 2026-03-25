@@ -280,7 +280,7 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDocx
+  modules, handleGenerateDocx, handleGenerateDynamicPDF
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -421,8 +421,8 @@ const AdminDashboardView = ({
 
                   <div className="flex gap-2 mt-4 px-2">
                     <button
-                      onClick={() => handleGenerateDocx(client, 'lettre_mission')}
-                      title="Générer Lettre de Mission (Modèle Admin)"
+                      onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
+                      title="Générer Lettre de Mission (PDF Dynamique)"
                       className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold py-2 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1"
                     >
                       <DownloadIcon /> Lettre de Mission
@@ -2052,17 +2052,44 @@ export default function App() {
       const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
 
 
-      const template = type === 'contrat' ? documentTemplates.contrat : documentTemplates.reglement;
-      const title = type === 'contrat' ? 'Contrat de Formation' : 'Règlement Intérieur';
+      const template = documentTemplates[type];
+      const title = type === 'contrat' ? 'Contrat de Formation' : (type === 'lettre_mission' ? 'Lettre de Mission' : 'Règlement Intérieur');
 
-      let content = (typeof template === 'string' ? template : "")
-        .replace(/{{client_nom}}/g, client.nomcomplet_client || client.nom)
-        .replace(/{{client_email}}/g, client.client_email || client.email)
-        .replace(/{{coach_nom}}/g, coach.nom || 'Non assigné')
-        .replace(/{{formation_nom}}/g, module?.nom || 'Formation')
-        .replace(/{{date_debut}}/g, dateDebut)
-        .replace(/{{date_fin}}/g, dateFin)
-        .replace(/{{prix_prestation}}/g, module?.prix_prestation || '');
+      let content = "";
+      if (typeof template === 'string') {
+        content = template;
+      } else if (template && template.url) {
+        // Si c'est un objet template avec URL (.docx), on pourrait essayer de l'extraire, 
+        // mais pour handleGenerateDynamicPDF (jsPDF text), on va utiliser une structure par défaut
+        // si ce n'est pas une chaîne pure.
+        content = type === 'lettre_mission' 
+          ? `LETTRE DE MISSION\n\nJe soussigné {nom}, certifie que le bénéficiaire {nomcomplet_client} est inscrit à la formation {formation_nom} débutant le {date_debut}.`
+          : `DOCUMENT : ${title}\n\nContenu généré pour {nomcomplet_client}.`;
+      } else {
+        // Fallback legacy
+        content = type === 'contrat' ? documentTemplates.contratText : documentTemplates.reglementText;
+      }
+
+      const mapping = {
+        "{nom}": coach.nom || 'Non assigné',
+        "{adresse_formateur}": coach.adresse_formateur || '',
+        "{formateur_nda}": coach.formateur_nda || '',
+        "{formateur_siret}": coach.formateur_siret || '',
+        "{nomcomplet_client}": client.nomcomplet_client || `${client.nom || ''} ${client.prenom || ''}`.trim(),
+        "{client_phone}": client.client_phone || client.telephone || '',
+        "{client_email}": client.client_email || client.email || '',
+        "{prix_prestation}": module?.prix_prestation || '',
+        "{adresse_session}": client.adresse_session || '',
+        "{date_debut}": dateDebut,
+        "{date_fin}": dateFin,
+        "{date_signature}": new Date().toLocaleDateString('fr-FR'),
+        "{formation_nom}": module?.nom || 'Formation'
+      };
+
+      Object.keys(mapping).forEach(key => {
+        const regex = new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+        content = content.replace(regex, mapping[key]);
+      });
 
       // Génération PDF
       const doc = new jsPDF();
@@ -2616,6 +2643,7 @@ export default function App() {
             documents={documents}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
+            handleGenerateDynamicPDF={handleGenerateDynamicPDF}
           />}
           {activeTab === 'ingenierie' && <IngenierieView
             modules={modules}
