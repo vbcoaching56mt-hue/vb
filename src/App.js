@@ -834,7 +834,7 @@ const FormateurView = ({
                 formateur_nda: formData.get('nda'),
                 adresse_formateur: formData.get('adresse')
               };
-              const { error } = await supabase.from('utilisateurs').upsert({ id: f.id, ...updates });
+              const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
               if (!error) {
                 alert("Profil mis à jour !");
                 await fetchUtilisateurs();
@@ -940,54 +940,25 @@ const FormateurView = ({
 
                   {/* Gestion Documentaire Dynamique */}
                   <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Documents de Début */}
-                    <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
-                      <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
-                        <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
+                    {/* Modèles Disponibles */}
+                    <div className="bg-indigo-50/30 border border-indigo-100 p-4 rounded-2xl col-span-full">
+                      <h4 className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest mb-3 flex items-center">
+                        <span className="w-1.5 h-3 bg-indigo-500 rounded-full mr-2"></span> Modèles Disponibles
                       </h4>
-                      <div className="flex flex-col gap-2">
-                        {Object.keys(documentTemplates)
-                          .filter(k => !k.toLowerCase().includes('attestation'))
-                          .map(key => (
-                            <button
-                              key={key}
-                              onClick={() => handleGenerateDocx(client, key)}
-                              className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                            >
-                              <span>{key}</span>
-                              <DownloadIcon size={14} />
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-
-                    {/* Documents de Fin */}
-                    <div className="bg-emerald-50/30 border border-emerald-100 p-4 rounded-2xl">
-                      <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
-                        <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
-                      </h4>
-                      <div className="flex flex-col gap-2">
-                        {Object.keys(documentTemplates)
-                          .filter(k => k.toLowerCase().includes('attestation'))
-                          .map(key => {
-                            const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
-                            const isFinished = lastSession && lastSession < new Date();
-                            return (
-                              <button
-                                key={key}
-                                disabled={!isFinished}
-                                onClick={() => handleGenerateDocx(client, key)}
-                                className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
-                                  isFinished 
-                                  ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                  : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                                }`}
-                              >
-                                <span>{key}</span>
-                                {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
-                              </button>
-                            );
-                          })}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {Object.keys(documentTemplates).map(key => (
+                          <button
+                            key={key}
+                            onClick={() => handleGenerateDocx(client, key)}
+                            className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-indigo-200 bg-white hover:bg-indigo-50 transition-all text-gray-700 shadow-sm"
+                          >
+                            <span className="truncate mr-2" title={key}>{key}</span>
+                            <DownloadIcon size={14} className="shrink-0 text-indigo-600" />
+                          </button>
+                        ))}
+                        {Object.keys(documentTemplates).length === 0 && (
+                          <span className="text-xs text-gray-400 italic py-2">Aucun modèle uploadé dans la modélothèque.</span>
+                        )}
                       </div>
                     </div>
                   </div>
