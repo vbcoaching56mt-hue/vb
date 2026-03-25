@@ -428,11 +428,11 @@ const AdminDashboardView = ({
                       </h4>
                       <div className="flex flex-col gap-2">
                         {Object.keys(documentTemplates)
-                          .filter(k => k !== 'contratText' && k !== 'reglementText' && !k.toLowerCase().includes('attestation'))
+                          .filter(k => !k.toLowerCase().includes('attestation'))
                           .map(key => (
                             <button
                               key={key}
-                              onClick={() => handleGenerateDynamicPDF(client, key)}
+                              onClick={() => handleGenerateDocx(client, key)}
                               className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
                             >
                               <span>{key}</span>
@@ -458,7 +458,7 @@ const AdminDashboardView = ({
                               <button
                                 key={key}
                                 disabled={!isFinished}
-                                onClick={() => handleGenerateDynamicPDF(client, key)}
+                                onClick={() => handleGenerateDocx(client, key)}
                                 className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
                                   isFinished 
                                   ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
@@ -1075,11 +1075,11 @@ const FormateurView = ({
                       </h4>
                       <div className="flex flex-col gap-2">
                         {Object.keys(documentTemplates)
-                          .filter(k => k !== 'contratText' && k !== 'reglementText' && !k.toLowerCase().includes('attestation'))
+                          .filter(k => !k.toLowerCase().includes('attestation'))
                           .map(key => (
                             <button
                               key={key}
-                              onClick={() => handleGenerateDynamicPDF(client, key)}
+                              onClick={() => handleGenerateDocx(client, key)}
                               className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
                             >
                               <span>{key}</span>
@@ -1104,7 +1104,7 @@ const FormateurView = ({
                               <button
                                 key={key}
                                 disabled={!isFinished}
-                                onClick={() => handleGenerateDynamicPDF(client, key)}
+                                onClick={() => handleGenerateDocx(client, key)}
                                 className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
                                   isFinished 
                                   ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
@@ -1769,17 +1769,7 @@ export default function App() {
   const [viewingDocId, setViewingDocId] = useState(null);
 
   // Modèles de Documents par défaut
-  const [documentTemplates, setDocumentTemplates] = useState({
-    contrat: null,
-    reglement: null,
-    lettre_mission: null,
-    engagement: null,
-    deontologie: null,
-    attestation_realisation: null,
-    // On garde l'ancien système textuel en backup si besoin
-    contratText: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE...`,
-    reglementText: `RÈGLEMENT INTÉRIEUR DE FORMATION...`
-  });
+  const [documentTemplates, setDocumentTemplates] = useState({});
   const [selectedClientForDocs, setSelectedClientForDocs] = useState('');
   const [expandedClientId, setExpandedClientId] = useState(null);
 
@@ -1869,22 +1859,28 @@ export default function App() {
   };
 
   const fetchDocuments = async () => {
-    // Récupérer les clés du nouveau schéma
-    const { data: docsData, error } = await supabase
-      .from('documents')
-      .select('*');
-    if (!error && docsData) {
-      setDocuments(docsData);
-      // Charger TOUS les modèles de référence dans l'état documentTemplates
-      const refs = docsData.filter(d => d.type_document === 'Modèle Référence');
-      setDocumentTemplates(prev => {
-        const newTemplates = { ...prev };
-        refs.forEach(r => {
-          newTemplates[r.nom] = { url: r.url, name: r.nom || 'Modèle' };
-        });
-        return newTemplates;
+    // 1. Charger les documents classiques (contrats générés, preuves, etc.)
+    const { data: docsData, error } = await supabase.from('documents').select('*');
+    if (!error && docsData) setDocuments(docsData);
+
+    // 2. Charger les modèles maîtres depuis la nouvelle table modeles_documents
+    const { data: modsData, error: modErr } = await supabase.from('modeles_documents').select('*');
+    if (!modErr && modsData) {
+      const templates = {};
+      modsData.forEach(m => {
+        templates[m.nom] = { url: m.url, name: m.nom };
       });
-    } else if (error) console.error("Erreur documents:", error);
+      setDocumentTemplates(templates);
+    } else if (modErr) {
+      console.warn("Table modeles_documents inaccessible, fallback sur documents (Modèle Référence)");
+      // Fallback au cas où la table n'est pas encore créée
+      const refs = docsData?.filter(d => d.type_document === 'Modèle Référence') || [];
+      const templates = {};
+      refs.forEach(r => {
+        templates[r.nom] = { url: r.url, name: r.nom };
+      });
+      setDocumentTemplates(templates);
+    }
   };
 
   // --- Actions Navigation ---
@@ -2181,12 +2177,22 @@ export default function App() {
         [type]: { url: publicUrl, name: file.name }
       }));
 
-      // Sauvegarder en tant que modèle de référence dans la DB
-      // On utilise 'nom' pour stocker la clé technique et on s'assure qu'on remplace l'ancien
-      const { data: existing } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
+      // Sauvegarder dans modeles_documents
+      const { data: existing } = await supabase.from('modeles_documents').select('id').eq('nom', type);
       
       if (existing && existing.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl }).eq('id', existing[0].id);
+        await supabase.from('modeles_documents').update({ url: publicUrl }).eq('id', existing[0].id);
+      } else {
+        await supabase.from('modeles_documents').insert([{
+          nom: type,
+          url: publicUrl
+        }]);
+      }
+
+      // Sync avec documents (facultatif mais utile pour la vue 'Documents' globale)
+      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
+      if (existingDoc && existingDoc.length > 0) {
+        await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: type,
@@ -2263,7 +2269,8 @@ export default function App() {
         adresse_session: client.adresse_session || '',
         date_debut: dateDebut,
         date_fin: dateFin,
-        date_signature: new Date().toLocaleDateString('fr-FR')
+        date_signature: new Date().toLocaleDateString('fr-FR'),
+        formation_nom: module?.nom || 'Formation'
       });
 
       doc.render();
@@ -2281,139 +2288,20 @@ export default function App() {
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
         await supabase.from('documents').insert([{
-          nom: `${type === 'contrat' ? 'Contrat' : 'Règlement'} Word - ${client.nom}`,
-          type_document: type === 'contrat' ? 'Contrat' : 'Autre',
+          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${client.nomcomplet_client || client.nom}`,
+          type_document: 'Autre',
           url: publicUrl,
           user_id: client.id,
           visible_client: true,
           visible_formateur: true
         }]);
-        await fetchDocuments();
-      }
 
-      alert(`Document "${finalFileName}" généré avec succès !`);
+        await fetchDocuments();
+        alert(`Document "${finalFileName}" généré et archivé.`);
+      }
     } catch (error) {
       console.error("Docx Error:", error);
       alert("Erreur lors de la génération du document Word.");
-    }
-  };
-
-  const handleGenerateDynamicPDF = async (client, type) => {
-    try {
-      if (!client.module_id) {
-        alert("Veuillez d'abord assigner un module à ce client.");
-        return;
-      }
-
-      const module = modules.find(m => m.id === client.module_id);
-      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
-      const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-      const dateDebut = clientSessions.length > 0 ? new Date(clientSessions[0].date).toLocaleDateString('fr-FR') : '[Date non définie]';
-      const dateFin = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date).toLocaleDateString('fr-FR') : '[Date non définie]';
-
-
-      const template = documentTemplates[type];
-      const title = {
-        'contrat': 'Contrat de Formation',
-        'reglement': 'Règlement Intérieur',
-        'lettre_mission': 'Lettre de Mission',
-        'engagement': "Feuille d'Engagement",
-        'deontologie': 'Code de Déontologie',
-        'attestation_realisation': 'Attestation de Réalisation'
-      }[type] || 'Document';
-
-      let content = "";
-      if (typeof template === 'string') {
-        content = template;
-      } else if (template && template.url) {
-        // Fallback structures if the Master model is not a simple string
-        const fallbacks = {
-          'lettre_mission': `LETTRE DE MISSION\n\nJe soussigné {nom}, certifie que le bénéficiaire {nomcomplet_client} est inscrit à la formation {formation_nom} débutant le {date_debut}.`,
-          'engagement': `FEUILLE D'ENGAGEMENT\n\nLe bénéficiaire {nomcomplet_client} s'engage à suivre le parcours {formation_nom} sous la supervision de {nom}.`,
-          'deontologie': `CODE DE DÉONTOLOGIE\n\nCe document atteste de l'engagement éthique entre {nom} et {nomcomplet_client}.`,
-          'attestation_realisation': `ATTESTATION DE RÉALISATION\n\nJe soussigné {nom}, atteste que {nomcomplet_client} a réalisé son parcours {formation_nom} du {date_debut} au {date_fin}.`
-        };
-        content = fallbacks[type] || `DOCUMENT : ${title}\n\nContenu généré pour {nomcomplet_client}.`;
-      } else {
-        content = type === 'contrat' ? documentTemplates.contratText : documentTemplates.reglementText;
-      }
-
-      const mapping = {
-        "{nom}": coach.nom || 'Non assigné',
-        "{adresse_formateur}": coach.adresse_formateur || '',
-        "{formateur_nda}": coach.formateur_nda || '',
-        "{formateur_siret}": coach.formateur_siret || '',
-        "{nomcomplet_client}": client.nomcomplet_client || `${client.nom || ''} ${client.prenom || ''}`.trim(),
-        "{client_phone}": client.client_phone || client.telephone || '',
-        "{client_email}": client.client_email || client.email || '',
-        "{prix_prestation}": module?.prix_prestation || '',
-        "{adresse_session}": client.adresse_session || '',
-        "{date_debut}": dateDebut,
-        "{date_fin}": dateFin,
-        "{date_signature}": new Date().toLocaleDateString('fr-FR'),
-        "{formation_nom}": module?.nom || 'Formation'
-      };
-
-      Object.keys(mapping).forEach(key => {
-        const regex = new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-        content = content.replace(regex, mapping[key]);
-      });
-
-      // Génération PDF
-      const doc = new jsPDF();
-      doc.setFontSize(22);
-      doc.setTextColor(31, 41, 55); // Gray-800
-      doc.text(title.toUpperCase(), 105, 30, { align: 'center' });
-
-      doc.setFontSize(10);
-      doc.text("Document généré automatiquement par VB ERP", 105, 40, { align: 'center' });
-
-      doc.setDrawColor(229, 231, 235);
-      doc.line(20, 45, 190, 45);
-
-      doc.setFontSize(11);
-      doc.setTextColor(55, 65, 81); // Gray-700
-      const splitContent = doc.splitTextToSize(content, 170);
-      doc.text(splitContent, 20, 60);
-
-      // Signature areas
-      const ySig = 230;
-      doc.setFontSize(10);
-      doc.text("Signature Client", 50, ySig, { align: 'center' });
-      doc.text("Signature VB Coaching", 150, ySig, { align: 'center' });
-      doc.rect(20, ySig + 5, 60, 30);
-      doc.rect(120, ySig + 5, 60, 30);
-
-      const pdfOutput = doc.output('blob');
-      const fileName = `${type}_${client.nom.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-
-      // Upload to Supabase Storage
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(fileName, pdfOutput);
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-
-      // Link to User
-      const { error: dbError } = await supabase.from('documents').insert([{
-        nom: `${title} - ${client.nom}`,
-        type_document: type === 'contrat' ? 'Contrat' : 'Autre',
-        url: publicUrl,
-        user_id: client.id,
-        visible_client: true,
-        visible_formateur: true
-      }]);
-
-      if (dbError) throw dbError;
-
-      await fetchDocuments();
-      alert(`${title} généré et ajouté avec succès !`);
-    } catch (err) {
-      console.error("PDF Fail:", err);
-      alert("Erreur lors de la génération automatique.");
     }
   };
   const handleAddDocument = async (e) => {
