@@ -279,7 +279,7 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments,
+  modules, handleGenerateDocx, supabase, fetchDocuments,
   sessions, expandedClientId, setExpandedClientId, fetchUtilisateurs, documentTemplates
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -898,7 +898,7 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
   handleAddSession, handleDeleteSession, updateSessionTime,
-  handleGenerateDynamicPDF, documents, fetchUtilisateurs, documentTemplates
+  handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2800,7 +2800,6 @@ export default function App() {
             documents={documents}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
-            handleGenerateDynamicPDF={handleGenerateDynamicPDF}
             supabase={supabase}
             fetchDocuments={fetchDocuments}
             sessions={sessions}
@@ -2847,7 +2846,7 @@ export default function App() {
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
-            handleGenerateDynamicPDF={handleGenerateDynamicPDF}
+            handleGenerateDocx={handleGenerateDocx}
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
