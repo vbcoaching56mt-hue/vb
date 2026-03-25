@@ -1,0 +1,208 @@
+
+> vb-logiciel@0.1.0 prebuild
+> dir node_modules\docxtemplater /s || ls -R node_modules/docxtemplater || echo 'node_modules not found'
+
+ Le volume dans le lecteur C s'appelle OS
+ Le numéro de série du volume est 1C58-70C3
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:30    <DIR>          ..
+24/03/2026  12:07                 7 .ignore
+24/03/2026  12:09    <DIR>          build
+24/03/2026  12:07            99 203 CHANGELOG.md
+24/03/2026  12:07                 0 constructorOptionsSchema.ts
+24/03/2026  12:07             7 028 docxtemplater.d.ts
+24/03/2026  12:07             9 448 docxtemplater.test-d.ts
+24/03/2026  12:07               878 expressions-ie11.d.ts
+24/03/2026  12:07            15 636 expressions-ie11.js
+24/03/2026  12:07             1 119 expressions.d.ts
+24/03/2026  12:07            21 605 expressions.js
+24/03/2026  12:07               779 inspect-module.d.ts
+24/03/2026  12:09    <DIR>          js
+24/03/2026  12:07            33 680 LICENSE.md
+24/03/2026  12:07             3 290 out.ts
+24/03/2026  12:07             4 816 package.json
+24/03/2026  12:07             5 221 README.md
+24/03/2026  12:07               430 SECURITY.md
+24/03/2026  12:07               446 text.d.ts
+24/03/2026  12:07             9 169 text.js
+24/03/2026  12:07             1 142 webpack.config.js
+              18 fichier(s)          213 897 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\build
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07           228 124 docxtemplater.js
+24/03/2026  12:07           102 301 docxtemplater.min.js
+               2 fichier(s)          330 425 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:09    <DIR>          browser-versions
+24/03/2026  12:07               867 content-types.js
+24/03/2026  12:07             2 438 debugger-module.js
+24/03/2026  12:07            14 852 doc-utils.js
+24/03/2026  12:07             7 028 docxtemplater.d.ts
+24/03/2026  12:07            34 622 docxtemplater.js
+24/03/2026  12:07             9 448 docxtemplater.test-d.ts
+24/03/2026  12:07             1 286 error-logger.js
+24/03/2026  12:07            23 877 errors.js
+24/03/2026  12:07               878 expressions-ie11.d.ts
+24/03/2026  12:07            18 459 expressions-ie11.js
+24/03/2026  12:07             1 119 expressions.d.ts
+24/03/2026  12:07            25 079 expressions.js
+24/03/2026  12:07             3 298 file-type-config.js
+24/03/2026  12:07             2 041 filetypes.js
+24/03/2026  12:07             1 516 get-content-types.js
+24/03/2026  12:07               627 get-relation-types.js
+24/03/2026  12:07               357 get-resolved-id.js
+24/03/2026  12:07             4 422 get-tags.js
+24/03/2026  12:07               779 inspect-module.d.ts
+24/03/2026  12:07             9 007 inspect-module.js
+24/03/2026  12:07             3 625 join-uncorrupt.js
+24/03/2026  12:07            17 625 lexer.js
+24/03/2026  12:07               801 memory-test.js
+24/03/2026  12:07               933 merge-sort.js
+24/03/2026  12:07            10 097 minizod.js
+24/03/2026  12:07             1 168 module-wrapper.js
+24/03/2026  12:09    <DIR>          modules
+24/03/2026  12:07             9 570 parser.js
+24/03/2026  12:07             3 217 postrender.js
+24/03/2026  12:07             1 702 prefix-matcher.js
+24/03/2026  12:07               657 proof-state-module.js
+24/03/2026  12:07             2 072 render.js
+24/03/2026  12:07             4 766 resolve.js
+24/03/2026  12:07             8 718 scope-manager.js
+24/03/2026  12:07               332 test-text.js
+24/03/2026  12:09    <DIR>          tests
+24/03/2026  12:07               446 text.d.ts
+24/03/2026  12:07             9 139 text.js
+24/03/2026  12:07            14 638 traits.js
+24/03/2026  12:07             3 609 uintarray-to-string.js
+24/03/2026  12:07               149 utils.js
+24/03/2026  12:07               433 xml-matcher.js
+24/03/2026  12:07             9 310 xml-templater.js
+              41 fichier(s)          265 007 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\browser-versions
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07                35 fs.js
+24/03/2026  12:07               140 xmldom.js
+               2 fichier(s)              175 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\modules
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07             3 905 common.js
+24/03/2026  12:07             9 647 expand-pair-trait.js
+24/03/2026  12:07             4 294 fix-doc-pr-corruption.js
+24/03/2026  12:07            19 661 loop.js
+24/03/2026  12:07             4 355 rawxml.js
+24/03/2026  12:07             6 698 render.js
+24/03/2026  12:07             4 416 space-preserve.js
+               7 fichier(s)           52 976 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\tests
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07             6 995 assertion-module.js
+24/03/2026  12:09    <DIR>          data
+24/03/2026  12:09    <DIR>          e2e
+24/03/2026  12:07            14 895 filenames.js
+24/03/2026  12:07             4 216 index.js
+24/03/2026  12:07             1 478 printy.js
+24/03/2026  12:07             1 052 string-repeat.js
+24/03/2026  12:09    <DIR>          unit
+24/03/2026  12:07            30 267 utils.js
+24/03/2026  12:07             7 657 xml-prettify.js
+               7 fichier(s)           66 560 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\tests\data
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07             1 627 raw-xml-pptx.js
+               1 fichier(s)            1 627 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\tests\e2e
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07             4 456 async.js
+24/03/2026  12:07            37 227 base.js
+24/03/2026  12:07             2 468 doc-props.js
+24/03/2026  12:07            45 633 errors.js
+24/03/2026  12:07            86 316 fixtures.js
+24/03/2026  12:07             4 323 inspect.js
+24/03/2026  12:07            53 233 integration.js
+24/03/2026  12:07             6 930 lexer-parser-render.js
+24/03/2026  12:07            29 618 modules.js
+24/03/2026  12:07             2 304 null-getter.js
+24/03/2026  12:07             3 834 pptx.js
+24/03/2026  12:07             9 929 speed.js
+24/03/2026  12:07             6 203 table.js
+24/03/2026  12:07             8 844 text.js
+24/03/2026  12:07            11 265 traits.js
+24/03/2026  12:07            10 274 v3.js
+24/03/2026  12:07             9 336 v4-constructor.js
+24/03/2026  12:07            18 799 xml-templater.js
+              18 fichier(s)          350 992 octets
+
+ Répertoire de C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\docxtemplater\js\tests\unit
+
+24/03/2026  12:09    <DIR>          .
+24/03/2026  12:09    <DIR>          ..
+24/03/2026  12:07             2 066 doc-utils.js
+24/03/2026  12:07             3 698 expressions.js
+24/03/2026  12:07             1 601 merge-sort.js
+24/03/2026  12:07            12 296 minizod.js
+24/03/2026  12:07             5 834 scope-manager.js
+24/03/2026  12:07             6 146 xml-matcher.js
+               6 fichier(s)           31 641 octets
+
+     Total des fichiers listés :
+             102 fichier(s)        1 313 300 octets
+              26 Rép(s)  257 830 572 032 octets libres
+
+> vb-logiciel@0.1.0 build
+> react-scripts build
+
+(node:123976) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  655.9 kB  build\static\js\main.fd8104d4.js
+  33.56 kB  build\static\js\732.8b751c54.chunk.js
+  8.74 kB   build\static\js\977.98e57384.chunk.js
+  5.8 kB    build\static\css\main.ddff05f8.css
+  1.77 kB   build\static\js\453.01f016a2.chunk.js
+
+The bundle size is significantly larger than recommended.
+Consider reducing it with code splitting: https://goo.gl/9VhYWB
+You can also analyze the project dependencies: https://goo.gl/LeUzfb
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+

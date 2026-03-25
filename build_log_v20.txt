@@ -1,0 +1,23 @@
+
+> vb-logiciel@0.1.0 build
+> react-scripts build
+
+(node:116684) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Failed to compile.
+
+[eslint] 
+src\App.js
+  Line 9:1:   Import in body of module; reorder to top  import/first
+  Line 10:1:  Import in body of module; reorder to top  import/first
+  Line 11:1:  Import in body of module; reorder to top  import/first
+  Line 12:1:  Import in body of module; reorder to top  import/first
+  Line 13:1:  Import in body of module; reorder to top  import/first
+  Line 14:1:  Import in body of module; reorder to top  import/first
+  Line 15:1:  Import in body of module; reorder to top  import/first
+  Line 16:1:  Import in body of module; reorder to top  import/first
+
+Search for the keywords to learn more about each error.
+
+

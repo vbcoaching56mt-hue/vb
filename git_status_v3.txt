@@ -1,0 +1,65 @@
+interactive rebase in progress; onto 07db2cc
+Last command done (1 command done):
+   pick 364bd6a # Fix Admin Dashboard UI, Accordion, and AddUser stability
+No commands remaining.
+You are currently rebasing branch 'master' on '07db2cc'.
+  (all conflicts fixed: run "git rebase --continue")
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   build_log_v12.txt
+	new file:   build_log_v13.txt
+	new file:   build_log_v14.txt
+	new file:   build_log_v15.txt
+	new file:   build_log_v16.txt
+	new file:   build_log_v17.txt
+	new file:   build_log_v18.txt
+	new file:   build_log_v19.txt
+	new file:   build_log_v20.txt
+	new file:   build_log_v21.txt
+	new file:   build_log_v22.txt
+	new file:   build_log_v23.txt
+	new file:   build_log_v24.txt
+	new file:   build_log_v25.txt
+	new file:   build_log_v26.txt
+	new file:   build_log_v27.txt
+	new file:   build_log_v28.txt
+	new file:   build_log_v29.txt
+	new file:   build_log_v30.txt
+	new file:   build_log_v31.txt
+	new file:   build_log_v32.txt
+	new file:   check_data.js
+	new file:   check_schema_local.js
+	new file:   check_schema_v2.js
+	new file:   check_schema_v3.js
+	new file:   check_schema_v4.js
+	new file:   check_schema_v5.js
+	new file:   check_schema_v6.js
+	new file:   clean_models.js
+	modified:   config-overrides.js
+	new file:   diff.txt
+	modified:   package-lock.json
+	new file:   schema_info.json
+	modified:   src/App.js
+	new file:   test_supabase.js
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   build_output.txt
+	modified:   package-lock.json
+	modified:   package.json
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	build_log.txt
+	eslint_clean_final.txt
+	eslint_current.json
+	eslint_final_clean.txt
+	eslint_final_report.txt
+	eslint_full.json
+	eslint_report.txt
+	git_status_full.txt
+	git_status_v2.txt
+	git_status_v3.txt
+

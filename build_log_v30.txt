@@ -1,0 +1,17 @@
+
+> vb-logiciel@0.1.0 build
+> react-app-rewired build
+
+(node:124628) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Failed to compile.
+
+Module not found: Error: Can't resolve 'process/browser' in 'C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\node_modules\canvg\lib'
+Did you mean 'browser.js'?
+BREAKING CHANGE: The request 'process/browser' failed to resolve only because it was resolved as fully specified
+(probably because the origin is strict EcmaScript Module, e. g. a module with javascript mimetype, a '*.mjs' file, or a '*.js' file where the package.json contains '"type": "module"').
+The extension in the request is mandatory for it to be fully specified.
+Add the extension to the request.
+
+

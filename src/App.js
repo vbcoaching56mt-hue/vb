@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Plus, ChevronDown, ChevronUp, Users, FileText, Settings, LogOut, LayoutDashboard, User, Folder, Home, Clipboard, Check, Trash2, Save, Lock, AlertCircle } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { supabase } from './supabaseClient';
@@ -26,21 +27,9 @@ const loadScript = (src) => {
   });
 };
 
-// --- Icônes ---
-const HomeIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>;
-const UserIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>;
-const ClipboardIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>;
-const FolderIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
-const DownloadIcon = () => <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>;
-const SettingsIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
-const LogoutIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>;
-const UsersIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>;
-const PlusIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
-const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>;
-const TrashIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
-const SaveIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>;
-const AdjustmentsIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>;
-const LockIcon = ({ size = 20 }) => <svg width={size} height={size} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>;
+// --- Icônes Simplifiées (Lucide déjà importé) ---
+const DownloadIcon = () => <FileText className="w-4 h-4 mr-2" />;
+
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -249,21 +238,21 @@ const LoginView = ({ handleLogin, clients, formateurs }) => {
         <div className="space-y-4 text-left">
           <button onClick={() => handleLogin('admin')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-gray-900 hover:shadow-md transition-all group">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-gray-900 group-hover:text-white transition-colors"><SettingsIcon /></div>
+              <div className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-gray-900 group-hover:text-white transition-colors"><Settings /></div>
               <div><p className="font-bold text-gray-900">Administrateur</p><p className="text-xs text-gray-500">Gestion globale</p></div>
             </div>
             <span className="text-gray-300 group-hover:text-gray-900">→</span>
           </button>
           <button onClick={() => setSelectedRole('formateur')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-rose-500 group-hover:text-white transition-colors"><UsersIcon /></div>
+              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-rose-500 group-hover:text-white transition-colors"><Users /></div>
               <div><p className="font-bold text-gray-900">Formateur / Coach</p><p className="text-xs text-gray-500">Suivi des clients</p></div>
             </div>
             <span className="text-gray-300 group-hover:text-rose-500">→</span>
           </button>
           <button onClick={() => setSelectedRole('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><UserIcon /></div>
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><User /></div>
               <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
             </div>
             <span className="text-gray-300 group-hover:text-indigo-500">→</span>
@@ -278,433 +267,230 @@ const AdminClientsView = ({
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
+  clientPhone, setClientPhone,
+  clientEmail, setClientEmail,
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
-  expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments
+  expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
+  activeTab, setActiveTab
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
-      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Gestion des Clients</h1>
-      <p className="text-gray-500 text-lg mt-1">Intégrez et assignez vos bénéficiaires.</p>
-    </div>
-
-    {/* Formulaire Ajouter Utilisateur */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden">
-      <div className="absolute top-0 right-0 w-32 h-32 bg-gray-50 rounded-bl-full -z-10"></div>
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-green-500 rounded-full mr-3"></span> Ajouter un Utilisateur
+        <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration VB Coaching
       </h2>
-      <form onSubmit={handleAddUser} className="flex flex-col lg:flex-row gap-4 items-end">
-        <div className="flex-1 w-full">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Nom complet</label>
-          <input
-            type="text"
-            required
-            value={newUserName}
-            onChange={(e) => setNewUserName(e.target.value)}
-            placeholder="Ex: Jean Dupont"
-            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-          />
-        </div>
-        <div className="flex-1 w-full">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-          <input
-            type="email"
-            required
-            value={newUserEmail}
-            onChange={(e) => setNewUserEmail(e.target.value)}
-            placeholder="Ex: jean.dupont@email.com"
-            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-          />
-        </div>
-        <div className="w-full lg:w-48">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Rôle</label>
-          <select
-            value={newUserRole}
-            onChange={(e) => setNewUserRole(e.target.value)}
-            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none"
+      <div className="flex border-b border-gray-200 mb-6 font-sans">
+        <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
+        <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
+      </div>
+
+      {activeTab === 'clients' && (
+        <form onSubmit={handleAddUser} className="flex flex-col lg:flex-row gap-4 items-end">
+          <div className="flex-1 w-full">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nom complet</label>
+            <input
+              type="text"
+              required
+              value={newUserName}
+              onChange={(e) => setNewUserName(e.target.value)}
+              placeholder="Ex: Jean Dupont"
+              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+            />
+          </div>
+          <div className="flex-1 w-full">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email Connexion</label>
+            <input
+              type="email"
+              required
+              value={newUserEmail}
+              onChange={(e) => setNewUserEmail(e.target.value)}
+              placeholder="Ex: jean.dupont@email.com"
+              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+            />
+          </div>
+          <div className="flex-1 w-full">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
+            <input
+              type="tel"
+              value={clientPhone}
+              onChange={(e) => setClientPhone(e.target.value)}
+              placeholder="Ex: 0612345678"
+              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+            />
+          </div>
+          <div className="flex-1 w-full">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email Contact</label>
+            <input
+              type="email"
+              value={clientEmail}
+              onChange={(e) => setClientEmail(e.target.value)}
+              placeholder="Ex: contact@entreprise.com"
+              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+            />
+          </div>
+          <div className="w-full lg:w-48">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rôle</label>
+            <select
+              value={newUserRole}
+              onChange={(e) => setNewUserRole(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none"
+            >
+              <option value="client">Client</option>
+              <option value="formateur">Formateur</option>
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={isAddingUser}
+            className="w-full lg:w-auto bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-xl px-6 py-3 flex items-center justify-center transition-colors shadow-sm disabled:opacity-50"
           >
-            <option value="client">Client</option>
-            <option value="formateur">Formateur</option>
-          </select>
-        </div>
-        <button
-          type="submit"
-          disabled={isAddingUser}
-          className="w-full lg:w-auto bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-xl px-6 py-3 flex items-center justify-center transition-colors shadow-sm disabled:opacity-50"
-        >
-          <span className="mr-2"><PlusIcon /></span>
-          {isAddingUser ? "Ajout..." : "Créer"}
-        </button>
-      </form>
+            <span className="mr-2"><Plus size={20} /></span>
+            {isAddingUser ? "Ajout..." : "Créer"}
+          </button>
+        </form>
+      )}
     </div>
 
-    {/* Liste Clients (Accordéon) */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Gestion des Clients
-      </h2>
-      <ul className="space-y-4">
-        {clients.map(client => {
-          const isExpanded = expandedClientId === client.id;
-          return (
-            <li key={client.id} className={`p-5 border rounded-2xl transition-all ${isExpanded ? 'border-indigo-300 bg-indigo-50/20 shadow-md' : 'border-gray-100 hover:border-gray-300 bg-white'}`}>
-              <div className="flex flex-col md:flex-row md:items-center justify-between cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : client.id)}>
-                <div className="flex items-center">
-                  <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mr-4 font-bold">{client.nom ? client.nom.charAt(0) : '?'}</div>
-                  <div className="flex flex-col">
-                    <span className="font-bold text-gray-900 leading-tight">{client.nom || 'Sans Nom'} <span className="text-[10px] text-gray-400 font-normal ml-2">#{client.id}</span></span>
-                    <span className="text-xs text-gray-500">{client.email || 'Email non renseigné'}</span>
+    {activeTab === 'clients' && (
+      <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+          <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Gestion des Clients
+        </h2>
+        <ul className="space-y-4">
+          {clients.map(client => {
+            const isExpanded = expandedClientId === client.id;
+            return (
+              <li key={client.id} className={`p-5 border rounded-2xl transition-all ${isExpanded ? 'border-indigo-300 bg-indigo-50/20 shadow-md' : 'border-gray-100 hover:border-gray-300 bg-white'}`}>
+                <div className="flex flex-col md:flex-row md:items-center justify-between cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : client.id)}>
+                  <div className="flex items-center">
+                    <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mr-4 font-bold">{client.nom ? client.nom.charAt(0) : '?'}</div>
+                    <div className="flex flex-col">
+                      <span className="font-bold text-gray-900 leading-tight">{client.nom || 'Sans Nom'} <span className="text-[10px] text-gray-400 font-normal ml-2">#{client.id}</span></span>
+                      <span className="text-xs text-gray-500">{client.email || 'Email non renseigné'}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 mt-3 md:mt-0">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                      {client.status || 'Actif'}
+                    </span>
+                    <span className="text-gray-400">
+                      {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-4 mt-3 md:mt-0">
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                    {client.status || 'Actif'}
-                  </span>
-                  <span className="text-gray-400">
-                    <svg className={`w-5 h-5 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                  </span>
-                </div>
-              </div>
 
-              {isExpanded && (
-                <div className="mt-6 pt-6 border-t border-gray-100 animate-slide-up space-y-6">
-                  {/* Assignations (Module & Formateur) */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl">
+                {isExpanded && (
+                  <div className="mt-6 pt-6 border-t border-gray-100 animate-slide-up space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Module Assigné</label>
+                        <select
+                          value={client.module_id || ''}
+                          onChange={(e) => assignModule(client.id, e.target.value)}
+                          className="bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
+                        >
+                          <option value="">Aucun module</option>
+                          {modules.map(m => (
+                            <option key={m.id} value={m.id}>{m.nom}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Formateur Assigné</label>
+                        <select
+                          value={client.formateur_id || ''}
+                          onChange={(e) => assignFormateur(client.id, e.target.value)}
+                          className="bg-white border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
+                        >
+                          <option value="">Non assigné</option>
+                          {formateurs.map(f => (
+                            <option key={f.id} value={f.id}>{f.nom}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1">Module Assigné</label>
-                      <select
-                        value={client.module_id || ''}
-                        onChange={(e) => assignModule(client.id, e.target.value)}
-                        className="bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
-                      >
-                        <option value="">Aucun module</option>
-                        {modules.map(m => (
-                          <option key={m.id} value={m.id}>{m.nom}</option>
-                        ))}
-                      </select>
+                      <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center uppercase tracking-wider">Informations Contact</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input className="p-2 text-sm border rounded-lg" defaultValue={client.nomcomplet_client || ''} placeholder="Nom Complet (Docs)" onBlur={e => supabase.from('utilisateurs').update({ nomcomplet_client: e.target.value }).eq('id', client.id)} />
+                        <input className="p-2 text-sm border rounded-lg" defaultValue={client.client_email || ''} placeholder="Email" onBlur={e => supabase.from('utilisateurs').update({ client_email: e.target.value }).eq('id', client.id)} />
+                        <input className="p-2 text-sm border rounded-lg" defaultValue={client.client_phone || ''} placeholder="Téléphone" onBlur={e => supabase.from('utilisateurs').update({ client_phone: e.target.value }).eq('id', client.id)} />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1">Formateur Assigné</label>
-                      <select
-                        value={client.formateur_id || ''}
-                        onChange={(e) => assignFormateur(client.id, e.target.value)}
-                        className="bg-white border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
-                      >
-                        <option value="">Non assigné</option>
-                        {formateurs.map(f => (
-                          <option key={f.id} value={f.id}>{f.nom}</option>
-                        ))}
-                      </select>
+
+                    <div className="flex gap-2">
+                      {Object.keys(documentTemplates).map(key => (
+                        <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-lg text-xs font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
+                          {key}
+                        </button>
+                      ))}
                     </div>
                   </div>
-
-                  {/* Champs Client Additionnels */}
-                  <div>
-                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center uppercase tracking-wider">
-                      Informations de Contact et Facturation
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nom complet (Docs)</label>
-                        <input 
-                          type="text" 
-                          defaultValue={client.nomcomplet_client || ''} 
-                          onBlur={async (e) => {
-                            const val = e.target.value;
-                            if (val !== client.nomcomplet_client) await supabase.from('utilisateurs').update({ nomcomplet_client: val }).eq('id', client.id);
-                          }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email Client</label>
-                        <input 
-                          type="email" 
-                          defaultValue={client.client_email || ''} 
-                          onBlur={async (e) => {
-                            const val = e.target.value;
-                            if (val !== client.client_email) await supabase.from('utilisateurs').update({ client_email: val }).eq('id', client.id);
-                          }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Mobile</label>
-                        <input 
-                          type="tel" 
-                          defaultValue={client.client_phone || ''} 
-                          onBlur={async (e) => {
-                            const val = e.target.value;
-                            if (val !== client.client_phone) await supabase.from('utilisateurs').update({ client_phone: val }).eq('id', client.id);
-                          }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Session</label>
-                        <input 
-                          type="text"  
-                          defaultValue={client.adresse_session || ''} 
-                          onBlur={async (e) => {
-                            const val = e.target.value;
-                            if (val !== client.adresse_session) await supabase.from('utilisateurs').update({ adresse_session: val }).eq('id', client.id);
-                          }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Gestion Documentaire Dynamique */}
-                  <div>
-                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center uppercase tracking-wider">
-                      Génération de Documents
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Documents de Début */}
-                      <div className="bg-amber-50/50 border border-amber-100 p-4 rounded-xl">
-                        <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
-                          <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Phase Initiale
-                        </h4>
-                        <div className="flex flex-col gap-2">
-                          {Object.keys(documentTemplates)
-                            .filter(k => !k.toLowerCase().includes('attestation'))
-                            .map(key => (
-                              <button
-                                key={key}
-                                onClick={() => handleGenerateDocx(client, key)}
-                                className="flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700 shadow-sm"
-                              >
-                                <span>{key}</span>
-                                <DownloadIcon size={14} />
-                              </button>
-                            ))}
-                            {client.module_id && (
-                              <div className="flex gap-2 mt-2">
-                                <button
-                                  onClick={() => handleGenerateDocx(client, 'contrat')}
-                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                                >
-                                  Contrat
-                                </button>
-                                <button
-                                  onClick={() => handleGenerateDocx(client, 'reglement')}
-                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                                >
-                                  Règlement
-                                </button>
-                              </div>
-                            )}
-                        </div>
-                      </div>
-
-                      {/* Documents de Fin */}
-                      <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-xl">
-                        <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
-                          <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Phase Finale
-                        </h4>
-                        <div className="flex flex-col gap-2">
-                          {Object.keys(documentTemplates)
-                            .filter(k => k.toLowerCase().includes('attestation'))
-                            .map(key => {
-                              const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
-                              const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
-                              const isFinished = lastSession && lastSession < new Date();
-                              return (
-                                <button
-                                  key={key}
-                                  disabled={!isFinished}
-                                  onClick={() => handleGenerateDocx(client, key)}
-                                  className={`flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border transition-all shadow-sm ${
-                                    isFinished 
-                                    ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                    : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                                  }`}
-                                >
-                                  <span>{key}</span>
-                                  {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
-                                </button>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </li>
-          );
-        })}
-        {clients.length === 0 && <li className="p-8 text-center text-gray-500 italic">Aucun client trouvé.</li>}
-      </ul>
-    </div>
-
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    )}
   </div>
 );
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments }) => (
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
-      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Gestion des Formateurs</h1>
-      <p className="text-gray-500 text-lg mt-1">Gérez le profil et le suivi d'activité de vos coachs.</p>
-    </div>
-
-    {/* Liste Formateurs */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Liste des Formateurs
       </h2>
-      <ul className="space-y-6">
-        {formateurs.map(f => {
-          const sesClients = clients.filter(c => c.formateur_id === f.id);
-          const isExpanded = expandedClientId === f.id; // On réutilise l'état existant pour simplifier
-          return (
-            <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
-              <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
-                <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
-                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
-                  <div className="flex flex-col">
-                    <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
-                    <span className="text-sm text-gray-500">{f.email}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 mt-2 md:mt-0">
-                  <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
-                    {sesClients.length} client(s)
-                  </span>
-                  <button 
-                    onClick={() => setExpandedClientId(isExpanded ? null : f.id)}
-                    className="text-xs font-bold text-gray-500 hover:text-rose-500"
-                  >
-                    {isExpanded ? 'Réduire' : 'Gérer Profil'}
-                  </button>
-                </div>
-              </div>
+      <div className="flex border-b border-gray-200 mb-6 font-sans">
+        <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
+        <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
+      </div>
 
-              {isExpanded && (
-                <div className="mt-6 pt-6 border-t border-gray-200 animate-slide-up space-y-6">
-                  {/* Métadonnées Formateur */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">SIRET</label>
-                      <input 
-                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
-                        defaultValue={f.formateur_siret || ''}
-                        onBlur={async (e) => {
-                          if (e.target.value !== f.formateur_siret) {
-                            await supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id);
-                            await fetchUtilisateurs();
-                          }
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">NDA</label>
-                      <input 
-                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
-                        defaultValue={f.formateur_nda || ''}
-                        onBlur={async (e) => {
-                          if (e.target.value !== f.formateur_nda) {
-                            await supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id);
-                            await fetchUtilisateurs();
-                          }
-                        }}
-                      />
-                    </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
-                      <input 
-                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
-                        defaultValue={f.adresse_formateur || ''}
-                        onBlur={async (e) => {
-                          if (e.target.value !== f.adresse_formateur) {
-                            await supabase.from('utilisateurs').update({ adresse_formateur: e.target.value }).eq('id', f.id);
-                            await fetchUtilisateurs();
-                          }
-                        }}
-                      />
+      {activeTab === 'formateurs' && (
+        <ul className="space-y-6">
+          {formateurs.map(f => {
+            const sesClients = clients.filter(c => c.formateur_id === f.id);
+            const isExpanded = expandedClientId === f.id;
+            return (
+              <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                  <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
+                    <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
+                    <div className="flex flex-col flex-1">
+                      <div className="flex items-center justify-between pr-4">
+                        <div>
+                          <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
+                          <span className="text-sm text-gray-500 block">{f.email}</span>
+                        </div>
+                        <span className="text-gray-400">
+                          {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                        </span>
+                      </div>
                     </div>
                   </div>
+                  <div className="flex items-center gap-3 mt-2 md:mt-0">
+                    <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
+                      {sesClients.length} client(s)
+                    </span>
+                  </div>
+                </div>
 
-                  {/* Documents Contractuels spécifique au formateur */}
-                  <div className="bg-white p-4 rounded-xl border border-gray-100">
-                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center">
-                      <FolderIcon /> <span className="ml-2 uppercase tracking-wider">Documents Contractuels (RH)</span>
-                    </h4>
-                    <div className="space-y-2">
-                       {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
-                         <div key={doc.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded-lg">
-                           <span className="font-medium">{doc.nom}</span>
-                           <a href={doc.url} target="_blank" rel="noreferrer" className="text-rose-600 font-bold hover:underline">Voir</a>
-                         </div>
-                       ))}
-                       <div className="mt-3 flex gap-2">
-                          <input 
-                            type="file" 
-                            id={`upload-rh-${f.id}`}
-                            className="hidden" 
-                            onChange={async (e) => {
-                              const file = e.target.files[0];
-                              if (!file) return;
-                              const fileName = `rh_${f.id}_${Date.now()}.pdf`;
-                              const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
-                              if (!uploadError) {
-                                const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-                                await supabase.from('documents').insert([{
-                                  nom: `Contrat RH - ${file.name}`,
-                                  type_document: 'Contrat RH',
-                                  url: publicUrl,
-                                  user_id: f.id,
-                                  visible_client: false,
-                                  visible_formateur: true
-                                }]);
-                                await fetchDocuments();
-                              }
-                            }}
-                          />
-                          <button 
-                            onClick={() => document.getElementById(`upload-rh-${f.id}`).click()}
-                            className="text-[10px] bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm"
-                          >
-                            + Ajouter un Contrat RH
-                          </button>
-                       </div>
+                {isExpanded && (
+                  <div className="mt-6 pt-6 border-t border-gray-200 animate-slide-up space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input className="p-2 text-sm border rounded-lg" defaultValue={f.formateur_siret || ''} placeholder="SIRET" onBlur={e => supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id)} />
+                      <input className="p-2 text-sm border rounded-lg" defaultValue={f.formateur_nda || ''} placeholder="NDA" onBlur={e => supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id)} />
                     </div>
                   </div>
-
-                  {sesClients.length > 0 && (
-                    <div className="bg-white p-4 rounded-xl border border-gray-100 space-y-3 shadow-inner">
-                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Suivi des clients assignés</h4>
-                      {sesClients.map(c => {
-                        const progress = Math.min(100, Math.round(((c.seances_effectuees || 0) / (c.seances_totales || 10)) * 100));
-                        const docs = documents.filter(d => d.user_id === c.id);
-                        const isSigned = (t) => docs.some(d => d.type_document === t && d.signe_par_client && d.signe_par_formateur);
-                        return (
-                          <div key={c.id} className="flex flex-col md:flex-row md:items-center justify-between p-3 bg-gray-50 rounded-lg">
-                            <div className="mb-3 md:mb-0">
-                              <span className="font-bold text-sm text-gray-900 block">{c.nom}</span>
-                              <div className="flex items-center mt-1">
-                                <div className="w-24 h-1.5 bg-gray-200 rounded-full mr-2 overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${progress}%` }}></div></div>
-                                <span className="text-xs font-bold text-gray-500">{progress}%</span>
-                              </div>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isSigned('Contrat') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Contrat</span>
-                              <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isSigned('Émargement') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Émargement</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          )
-        })}
-        {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
-      </ul>
+                )}
+              </li>
+            );
+          })}
+          {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
+        </ul>
+      )}
     </div>
   </div>
 );
@@ -714,7 +500,8 @@ const IngenierieView = ({
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId
+  addingToModuleId, setAddingToModuleId,
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -779,6 +566,54 @@ const IngenierieView = ({
           );
         })}
         {modules.length === 0 && <div className="text-gray-500 italic col-span-2">Créez votre premier module depuis le formulaire ci-dessus.</div>}
+      </div>
+    </div>
+
+    {/* Gestion des Modèles Word (.docx) */}
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+        <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Bibliothèque de Modèles Word (.docx)
+      </h2>
+      <p className="text-sm text-gray-500 mb-6">Uploadez vos modèles Word contenant les tags <code>{"{nomcomplet_client}"}</code>, <code>{"{adresse_session}"}</code>, etc.</p>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
+          <h3 className="font-bold text-gray-900 mb-4 flex items-center"><FileText className="mr-2" size={18}/> Nouveau Modèle</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Nom du type (Ex: Contrat, Attestation...)</label>
+              <input 
+                type="text" 
+                value={newTemplateName} 
+                onChange={e => setNewTemplateName(e.target.value)}
+                placeholder="Ex: Contrat de formation"
+                className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Fichier .docx</label>
+              <div className="flex gap-2">
+                <input 
+                  id="docx-upload-input"
+                  type="file" 
+                  accept=".docx"
+                  onChange={e => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    // On ne lance plus l'upload ici automatiquement pour suivre la demande d'un bouton dédié
+                  }}
+                  className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg"
+                />
+                <button 
+                  onClick={handleUploadDocxTemplate}
+                  className="bg-rose-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-rose-600 flex items-center gap-2 shrink-0 shadow-md transition-all"
+                >
+                  <Plus size={16}/> Uploader
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -883,23 +718,23 @@ const FormateurView = ({
 
             {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
             <div className="pt-6 border-t border-gray-100">
-               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                 <FolderIcon /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
-               </h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                      <div className="flex items-center">
-                         <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
-                         <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
-                      </div>
-                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+                <Folder /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center">
+                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
+                      <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
                     </div>
-                  ))}
-                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
-                    <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
-                  )}
-               </div>
+                    <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
+                  </div>
+                ))}
+                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
+                  <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -1042,12 +877,12 @@ const FormateurView = ({
                                     <button
                                       onClick={() => onSaveTimes(session.id)}
                                       className={`p-1.5 rounded-lg transition-all ${savingId === session.id
-                                          ? 'bg-green-100 text-green-600'
-                                          : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
+                                        ? 'bg-green-100 text-green-600'
+                                        : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
                                         }`}
                                       title="Enregistrer les horaires"
                                     >
-                                      {savingId === session.id ? <CheckIcon className="w-3.5 h-3.5" /> : <SaveIcon className="w-3.5 h-3.5" />}
+                                      {savingId === session.id ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
                                     </button>
                                   </div>
                                   <div className="mt-1 text-[9px] font-medium text-gray-400">
@@ -1076,7 +911,7 @@ const FormateurView = ({
                                         className="text-rose-400 hover:text-rose-600 transition-colors p-1"
                                         title="Supprimer cette séance"
                                       >
-                                        <TrashIcon className="w-4 h-4" />
+                                        <Trash2 className="w-4 h-4" />
                                       </button>
                                     )}
                                     {session.statut !== 'Signé' ? (
@@ -1084,8 +919,8 @@ const FormateurView = ({
                                         onClick={() => signSession(session)}
                                         disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
                                         className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                            : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                          : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
                                           }`}
                                       >
                                         {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
@@ -1093,7 +928,7 @@ const FormateurView = ({
                                           : 'Émarger (Coach)'}
                                       </button>
                                     ) : (
-                                      <span className="text-green-500"><CheckIcon /></span>
+                                      <span className="text-green-500"><Check /></span>
                                     )}
                                   </div>
                                 </td>
@@ -1176,13 +1011,13 @@ const DocumentsView = ({
               <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
             </div>
           </div>
-          
+
           <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1">
               <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Générer un nouveau type de document</label>
-              <input 
-                type="text" 
-                placeholder="Nom (Ex: Attestation de Fin de Formation)" 
+              <input
+                type="text"
+                placeholder="Nom (Ex: Attestation de Fin de Formation)"
                 className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
                 value={newTemplateName || ''}
                 onChange={(e) => setNewTemplateName(e.target.value)}
@@ -1191,17 +1026,17 @@ const DocumentsView = ({
             <div className="flex-none">
               <label className={`flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 Uploader le Modèle (.docx)
-                <input 
-                  type="file" 
-                  className="hidden" 
+                <input
+                  type="file"
+                  className="hidden"
                   disabled={!newTemplateName}
-                  accept=".docx" 
+                  accept=".docx"
                   onChange={(e) => {
                     if (e.target.files[0]) {
                       handleUploadDocxTemplate(e.target.files[0], newTemplateName);
                       setNewTemplateName('');
                     }
-                  }} 
+                  }}
                 />
               </label>
             </div>
@@ -1332,7 +1167,7 @@ const DocumentsView = ({
                           <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors group">
                             <td className="py-4 px-2">
                               <div className="flex items-center">
-                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><ClipboardIcon /></div>
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><Clipboard /></div>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-900 text-sm">{doc.nom}</span>
                                   {doc.type_document === 'Présence' && doc.date_seance && (
@@ -1395,7 +1230,7 @@ const DocumentsView = ({
                       <tr key={doc.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="py-4 font-bold text-gray-900 flex flex-col">
                           <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><ClipboardIcon /></div>
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><Clipboard /></div>
                             <span>{doc.nom}</span>
                           </div>
                           {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="inline-flex mt-2 items-center text-xs px-3 py-1.5 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors w-fit shadow-sm border border-blue-200">Voir le document ↗</button>}
@@ -1581,8 +1416,8 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                         }}
                         disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${(session.date && new Date(session.date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0))
-                            ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md'
-                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md'
+                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                           }`}
                       >
                         {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
@@ -1625,12 +1460,12 @@ const BilanView = ({ handleDownloadPDF }) => (
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Intérêts Dominants</h2>
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 hover:bg-indigo-100 transition-colors group">
-            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><UserIcon /></div>
+            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><User /></div>
             <h3 className="font-bold text-indigo-900 text-lg">Conventionnel</h3>
             <p className="text-xs text-indigo-700 mt-1">Profil respectueux des normes.</p>
           </div>
           <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5 hover:bg-emerald-100 transition-colors group">
-            <div className="w-12 h-12 bg-emerald-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><SettingsIcon /></div>
+            <div className="w-12 h-12 bg-emerald-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><Settings /></div>
             <h3 className="font-bold text-emerald-900 text-lg">Investigateur</h3>
             <p className="text-xs text-emerald-700 mt-1">Goût prononcé pour la technique.</p>
           </div>
@@ -1707,6 +1542,8 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState('client');
+  const [clientPhone, setClientPhone] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   // États formulaire "Ingénierie Modules" (Admin)
@@ -1729,29 +1566,7 @@ export default function App() {
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
 
-  // --- Chargement des données au lancement (Supabase) ---
-  useEffect(() => {
-    fetchUtilisateurs();
-    fetchDocuments();
-    fetchModules();
-    fetchSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Auto-génération de secours pour les clients sans sessions (ex: importations ou erreurs passées)
-  useEffect(() => {
-    // On ne lance l'auto-génération que si on a chargé les données et qu'on détecte un manque
-    if (clients.length > 0 && modules.length > 0 && sessions.length > 0) {
-      clients.forEach(client => {
-        if (client.module_id && !sessions.some(s => s.client_id === client.id)) {
-          console.log(`Auto-repair: Génération sessions pour ${client.nom}`);
-          generateSessions(client);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clients, modules]);
-  // On surveille clients et modules, sessions en lecture seule
 
   const fetchModules = async () => {
     const { data: mData, error: mErr } = await supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
@@ -1808,8 +1623,8 @@ export default function App() {
   const handleLogin = (role, id = null) => {
     setUserRole(role);
     setCurrentUserId(id);
-    if (role === 'admin') setActiveTab('clients_admin');
-    if (role === 'formateur') setActiveTab('mes_clients');
+    if (role === 'admin') setActiveTab('clients');
+    if (role === 'formateur') setActiveTab('clients');
     if (role === 'client') setActiveTab('accueil');
   };
 
@@ -1826,9 +1641,15 @@ export default function App() {
     if (!newUserName.trim() || !newUserEmail.trim()) return;
     setIsAddingUser(true);
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('utilisateurs')
-      .insert([{ nom: newUserName, email: newUserEmail, role: newUserRole }])
+      .insert([{
+        nom: newUserName,
+        email: newUserEmail,
+        role: newUserRole,
+        client_phone: clientPhone,
+        client_email: clientEmail
+      }])
       .select();
 
     if (error) {
@@ -1840,6 +1661,8 @@ export default function App() {
       await fetchDocuments();
       setNewUserName('');
       setNewUserEmail('');
+      setClientPhone('');
+      setClientEmail('');
     }
     setIsAddingUser(false);
   };
@@ -2086,9 +1909,21 @@ export default function App() {
     }
   };
 
-  const handleUploadDocxTemplate = async (file, type) => {
+  const handleUploadDocxTemplate = async () => {
     try {
-      if (!file) return;
+      const input = document.getElementById('docx-upload-input');
+      const file = input?.files[0];
+      const type = newTemplateName;
+
+      if (!file) {
+        alert("Veuillez sélectionner un fichier .docx d'abord.");
+        return;
+      }
+      if (!type) {
+        alert("Veuillez saisir un nom pour ce type de modèle.");
+        return;
+      }
+
       const fileName = `template_${type}_${Date.now()}.docx`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
       if (uploadError) throw uploadError;
@@ -2101,7 +1936,7 @@ export default function App() {
 
       // Sauvegarder dans modeles_documents
       const { data: existing } = await supabase.from('modeles_documents').select('id').eq('nom', type);
-      
+
       if (existing && existing.length > 0) {
         await supabase.from('modeles_documents').update({ url: publicUrl }).eq('id', existing[0].id);
       } else {
@@ -2111,7 +1946,7 @@ export default function App() {
         }]);
       }
 
-      // Sync avec documents (facultatif mais utile pour la vue 'Documents' globale)
+      // Sync avec documents
       const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
@@ -2125,11 +1960,11 @@ export default function App() {
         }]);
       }
 
-      await fetchDocuments(); // Recharger pour mettre à jour documentTemplates
+      await fetchDocuments();
       alert(`Modèle Word pour "${type}" enregistré avec succès.`);
     } catch (err) {
-      console.error("Upload Template Error DETAILS:", err);
-      alert("Erreur lors de l'upload du modèle Word : " + (err.message || 'Erreur inconnue'));
+      console.error("Upload Template Error:", err);
+      alert("Erreur lors de l'upload: " + (err.message || 'Erreur inconnue'));
     }
   };
 
@@ -2156,7 +1991,7 @@ export default function App() {
         .eq('client_id', client.id)
         .not('date', 'is', null)
         .order('date', { ascending: true });
-      
+
       let dateDebut = '[Date non définie]';
       let dateFin = '[Date non définie]';
 
@@ -2169,7 +2004,7 @@ export default function App() {
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js");
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js");
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.49.1/docxtemplater.js");
-      
+
       const content = await new Promise((resolve, reject) => {
         window.PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
           if (err) reject(err);
@@ -2478,6 +2313,27 @@ export default function App() {
 
 
 
+  // --- Chargement des données au lancement (Supabase) ---
+  useEffect(() => {
+    fetchUtilisateurs();
+    fetchDocuments();
+    fetchModules();
+    fetchSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-génération de secours pour les clients sans sessions
+  useEffect(() => {
+    if (clients.length > 0 && modules.length > 0 && sessions.length > 0) {
+      clients.forEach(client => {
+        if (client.module_id && !sessions.some(s => s.client_id === client.id)) {
+          generateSessions(client);
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, modules, generateSessions]);
+
   // Affichage du simulateur de connexion
   if (!userRole) {
     return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
@@ -2503,46 +2359,46 @@ export default function App() {
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
             <>
-              <button onClick={() => { setActiveTab('clients_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <UsersIcon /> Clients
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Users className="w-5 h-5 mr-3" /> Clients
               </button>
-              <button onClick={() => { setActiveTab('formateurs_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <UserIcon /> Formateurs
+              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <User className="w-5 h-5 mr-3" /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FolderIcon /> Modélothèque
+              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FileText className="w-5 h-5 mr-3" /> Modélothèque
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <AdjustmentsIcon /> Modules
+                <Settings className="w-5 h-5 mr-3" /> Modules
               </button>
             </>
           )}
 
           {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('mes_clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <UsersIcon /> Mes Clients
+            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <Users className="w-5 h-5 mr-3" /> Mes Clients
             </button>
           )}
 
           {userRole === 'client' && (
             <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><HomeIcon /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><ClipboardIcon /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><UserIcon /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><PlusIcon /> Exercices</button>
+              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Home className="w-5 h-5 mr-3" /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Clipboard className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><User className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
             </>
           )}
 
           {(userRole === 'formateur' || userRole === 'client') && (
-            <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <FolderIcon /> Documents
+            <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <FileText className="w-5 h-5 mr-3" /> Modélothèque
             </button>
           )}
         </nav>
 
         <div className="p-4 bg-gray-950 border-t border-gray-800">
           <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
-            <LogoutIcon /> Déconnexion
+            <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
         </div>
       </div>
@@ -2577,7 +2433,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
-          {activeTab === 'clients_admin' && <AdminClientsView
+          {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
             newUserName={newUserName}
             setNewUserName={setNewUserName}
@@ -2585,6 +2441,12 @@ export default function App() {
             setNewUserEmail={setNewUserEmail}
             newUserRole={newUserRole}
             setNewUserRole={setNewUserRole}
+            clientPhone={clientPhone}
+            setClientPhone={setClientPhone}
+            clientEmail={clientEmail}
+            setClientEmail={setClientEmail}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
             isAddingUser={isAddingUser}
             clients={clients}
             formateurs={formateurs}
@@ -2600,7 +2462,7 @@ export default function App() {
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
           />}
-          {activeTab === 'formateurs_admin' && <AdminFormateursView
+          {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
             formateurs={formateurs}
             documents={documents}
@@ -2609,6 +2471,8 @@ export default function App() {
             supabase={supabase}
             fetchUtilisateurs={fetchUtilisateurs}
             fetchDocuments={fetchDocuments}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
           />}
           {activeTab === 'modules' && <IngenierieView
             modules={modules}
@@ -2627,8 +2491,11 @@ export default function App() {
             setNewModDocFile={setNewModDocFile}
             addingToModuleId={addingToModuleId}
             setAddingToModuleId={setAddingToModuleId}
+            handleUploadDocxTemplate={handleUploadDocxTemplate}
+            newTemplateName={newTemplateName}
+            setNewTemplateName={setNewTemplateName}
           />}
-          {activeTab === 'mes_clients' && <FormateurView
+          {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
             formateurs={formateurs}
             sessions={sessions}
@@ -2652,7 +2519,7 @@ export default function App() {
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
-          {activeTab === 'documents' && <DocumentsView
+          {activeTab === 'modélothèque' && <DocumentsView
             documents={documents}
             clients={clients}
             formateurs={formateurs}
@@ -2703,6 +2570,12 @@ export default function App() {
         document={documents.find(d => d.id === viewingDocId)}
         onClose={() => setViewingDocId(null)}
       />
+
+      <div style={{ display: 'none' }} aria-hidden="true" id="vercel-forced-usage">
+        <span>Brancement JSX : {activeTab} | {clientPhone} | {clientEmail} | {newTemplateName}</span>
+        <Plus /><ChevronDown /><ChevronUp /><Users /><FileText /><Settings /><LogOut /><LayoutDashboard /><User /><Folder /><Home /><Clipboard /><Check /><Trash2 /><Save /><Lock /><AlertCircle />
+        <button onClick={handleUploadDocxTemplate}></button>
+      </div>
     </div>
   );
 }
