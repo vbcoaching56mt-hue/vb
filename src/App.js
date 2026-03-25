@@ -42,6 +42,7 @@ const CheckIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColo
 const TrashIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
 const SaveIcon = ({ className }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>;
 const AdjustmentsIcon = () => <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>;
+const LockIcon = ({ size = 20 }) => <svg width={size} height={size} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>;
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -280,7 +281,7 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDocx, handleGenerateDynamicPDF
+  modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -419,20 +420,65 @@ const AdminDashboardView = ({
                     />
                   </div>
 
-                  <div className="flex gap-2 mt-4 px-2">
-                    <button
-                      onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
-                      title="Générer Lettre de Mission (PDF Dynamique)"
-                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold py-2 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1"
-                    >
-                      <DownloadIcon /> Lettre de Mission
-                    </button>
-                    <button
-                      onClick={() => handleGenerateDocx(client, 'contrat')}
-                      className="flex-1 bg-gray-900 hover:bg-gray-800 text-white text-[10px] font-bold py-2 rounded-xl shadow-sm transition-all"
-                    >
-                      Contrat
-                    </button>
+                  {/* Gestion Documentaire - REFACTORisée */}
+                  <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Documents de Début */}
+                    <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
+                      <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
+                        <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
+                      </h4>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Lettre de Mission</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'engagement')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Feuille d'Engagement</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'deontologie')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Code de Déontologie</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Documents de Fin */}
+                    <div className="bg-emerald-50/30 border border-emerald-100 p-4 rounded-2xl">
+                      <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
+                        <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
+                      </h4>
+                      <div className="flex flex-col gap-2">
+                        {(() => {
+                          const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+                          const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                          const isFinished = lastSession && lastSession < new Date();
+                          return (
+                            <button
+                              disabled={!isFinished}
+                              onClick={() => handleGenerateDynamicPDF(client, 'attestation_realisation')}
+                              className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
+                                isFinished 
+                                ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
+                                : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                              }`}
+                            >
+                              <span>Attestation de Réalisation</span>
+                              {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
 
                   {client.module_id && (
@@ -500,44 +546,143 @@ const AdminDashboardView = ({
       <ul className="space-y-6">
         {formateurs.map(f => {
           const sesClients = clients.filter(c => c.formateur_id === f.id);
+          const isExpanded = expandedClientId === f.id; // On réutilise l'état existant pour simplifier
           return (
-            <li key={f.id} className="p-6 border border-gray-100 rounded-2xl bg-gray-50">
+            <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
               <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
-                <div className="flex items-center">
+                <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
                   <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
                   <div className="flex flex-col">
                     <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
                     <span className="text-sm text-gray-500">{f.email}</span>
                   </div>
                 </div>
-                <span className="mt-2 md:mt-0 text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
-                  {sesClients.length} client(s)
-                </span>
+                <div className="flex items-center gap-3 mt-2 md:mt-0">
+                  <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
+                    {sesClients.length} client(s)
+                  </span>
+                  <button 
+                    onClick={() => setExpandedClientId(isExpanded ? null : f.id)}
+                    className="text-xs font-bold text-gray-500 hover:text-rose-500"
+                  >
+                    {isExpanded ? 'Réduire' : 'Gérer Profil'}
+                  </button>
+                </div>
               </div>
-              {sesClients.length > 0 && (
-                <div className="mt-4 bg-white p-4 rounded-xl border border-gray-100 space-y-3">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Suivi Qualiopi des clients</h4>
-                  {sesClients.map(c => {
-                    const progress = Math.min(100, Math.round(((c.seances_effectuees || 0) / (c.seances_totales || 10)) * 100));
-                    const docs = documents.filter(d => d.user_id === c.id);
-                    const isSigned = (t) => docs.some(d => d.type_document === t && d.signe_par_client && d.signe_par_formateur);
-                    return (
-                      <div key={c.id} className="flex flex-col md:flex-row md:items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div className="mb-3 md:mb-0">
-                          <span className="font-bold text-sm text-gray-900 block">{c.nom}</span>
-                          <div className="flex items-center mt-1">
-                            <div className="w-24 h-1.5 bg-gray-200 rounded-full mr-2 overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${progress}%` }}></div></div>
-                            <span className="text-xs font-bold text-gray-500">{progress}% ({c.seances_effectuees || 0}/{c.seances_totales || 10})</span>
+
+              {isExpanded && (
+                <div className="mt-6 pt-6 border-t border-gray-200 animate-slide-up space-y-6">
+                  {/* Métadonnées Formateur */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">SIRET</label>
+                      <input 
+                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
+                        defaultValue={f.formateur_siret || ''}
+                        onBlur={async (e) => {
+                          if (e.target.value !== f.formateur_siret) {
+                            await supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">NDA</label>
+                      <input 
+                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
+                        defaultValue={f.formateur_nda || ''}
+                        onBlur={async (e) => {
+                          if (e.target.value !== f.formateur_nda) {
+                            await supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
+                      <input 
+                        className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
+                        defaultValue={f.adresse_formateur || ''}
+                        onBlur={async (e) => {
+                          if (e.target.value !== f.adresse_formateur) {
+                            await supabase.from('utilisateurs').update({ adresse_formateur: e.target.value }).eq('id', f.id);
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Documents Contractuels spécifique au formateur */}
+                  <div className="bg-white p-4 rounded-xl border border-gray-100">
+                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center">
+                      <FolderIcon /> <span className="ml-2 uppercase tracking-wider">Documents Contractuels (RH)</span>
+                    </h4>
+                    <div className="space-y-2">
+                       {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
+                         <div key={doc.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded-lg">
+                           <span className="font-medium">{doc.nom}</span>
+                           <a href={doc.url} target="_blank" rel="noreferrer" className="text-rose-600 font-bold hover:underline">Voir</a>
+                         </div>
+                       ))}
+                       <div className="mt-3 flex gap-2">
+                          <input 
+                            type="file" 
+                            id={`upload-rh-${f.id}`}
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files[0];
+                              if (!file) return;
+                              const fileName = `rh_${f.id}_${Date.now()}.pdf`;
+                              const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+                              if (!uploadError) {
+                                const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+                                await supabase.from('documents').insert([{
+                                  nom: `Contrat RH - ${file.name}`,
+                                  type_document: 'Contrat RH',
+                                  url: publicUrl,
+                                  user_id: f.id,
+                                  visible_client: false,
+                                  visible_formateur: true
+                                }]);
+                                await fetchDocuments();
+                              }
+                            }}
+                          />
+                          <button 
+                            onClick={() => document.getElementById(`upload-rh-${f.id}`).click()}
+                            className="text-[10px] bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm"
+                          >
+                            + Ajouter un Contrat RH
+                          </button>
+                       </div>
+                    </div>
+                  </div>
+
+                  {sesClients.length > 0 && (
+                    <div className="bg-white p-4 rounded-xl border border-gray-100 space-y-3 shadow-inner">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Suivi des clients assignés</h4>
+                      {sesClients.map(c => {
+                        const progress = Math.min(100, Math.round(((c.seances_effectuees || 0) / (c.seances_totales || 10)) * 100));
+                        const docs = documents.filter(d => d.user_id === c.id);
+                        const isSigned = (t) => docs.some(d => d.type_document === t && d.signe_par_client && d.signe_par_formateur);
+                        return (
+                          <div key={c.id} className="flex flex-col md:flex-row md:items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div className="mb-3 md:mb-0">
+                              <span className="font-bold text-sm text-gray-900 block">{c.nom}</span>
+                              <div className="flex items-center mt-1">
+                                <div className="w-24 h-1.5 bg-gray-200 rounded-full mr-2 overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${progress}%` }}></div></div>
+                                <span className="text-xs font-bold text-gray-500">{progress}%</span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isSigned('Contrat') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Contrat</span>
+                              <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isSigned('Émargement') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Émargement</span>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <span className={`text-[10px] font-bold px-2 py-1 rounded border ${isSigned('Contrat') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Contrat</span>
-                          <span className={`text-[10px] font-bold px-2 py-1 rounded border ${isSigned('Émargement') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Émargement</span>
-                          <span className={`text-[10px] font-bold px-2 py-1 rounded border ${isSigned('Évaluation') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-500 border-red-200'}`}>Évaluation</span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </li>
@@ -549,7 +694,7 @@ const AdminDashboardView = ({
   </div>
 );
 
-const IngenierieView = ({
+const ModelesMaitresView = ({
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
@@ -560,14 +705,14 @@ const IngenierieView = ({
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Pédagogique</h1>
-        <p className="text-gray-500 text-lg mt-1">Configurez les modules, les séances prévues et les documents types.</p>
+        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Bibliothèque des Modèles Maîtres</h1>
+        <p className="text-gray-500 text-lg mt-1">Gérez les modèles Word vierges qui servent de base à tous les accompagnements.</p>
       </div>
       {/* Panneau d'aide aux balises */}
       <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl w-64 shadow-sm">
         <h3 className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3">Aide aux Balises Word</h3>
         <ul className="text-[11px] space-y-2 text-blue-700 font-mono">
-          <li className="bg-white/50 p-1.5 rounded">{"{nom}"} (Formateur)</li>
+          <li className="bg-white/50 p-1.5 rounded">{"{nom}"} (Raison Sociale)</li>
           <li className="bg-white/50 p-1.5 rounded">{"{adresse_formateur}"}</li>
           <li className="bg-white/50 p-1.5 rounded">{"{formateur_nda}"}</li>
           <li className="bg-white/50 p-1.5 rounded">{"{formateur_siret}"}</li>
@@ -587,20 +732,26 @@ const IngenierieView = ({
     {/* --- Section NOUVELLE: Modèles de Référence --- */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Modèles de Documents Références
+        <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Bibliothèque des Modèles Maîtres (.docx)
       </h2>
-      <div className="p-5 border border-amber-100 bg-amber-50/20 rounded-2xl">
-        <p className="text-sm text-amber-800 mb-4 font-medium italic">Ces documents servent de base pour tous les clients du centre.</p>
-        <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-amber-100 shadow-sm">
-          <div>
-            <h3 className="font-bold text-gray-900">Modèle: Lettre de Mission (.docx)</h3>
-            <p className="text-xs text-gray-500">{documentTemplates.lettre_mission?.name || "Aucun modèle de référence chargé"}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {[
+          { id: 'lettre_mission', label: 'Lettre de Mission' },
+          { id: 'engagement', label: "Feuille d'Engagement" },
+          { id: 'deontologie', label: 'Code de Déontologie' },
+          { id: 'attestation_realisation', label: 'Attestation de Réalisation' }
+        ].map(item => (
+          <div key={item.id} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-gray-900 text-sm">{item.label}</h3>
+              <p className="text-[10px] text-gray-500 truncate max-w-[150px]">{documentTemplates[item.id]?.name || "Aucun modèle chargé"}</p>
+            </div>
+            <label className="bg-white border border-gray-200 hover:border-amber-500 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-sm">
+              Uploader
+              <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], item.id)} />
+            </label>
           </div>
-          <label className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-bold cursor-pointer transition-all">
-            Uploader Référence
-            <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'lettre_mission')} />
-          </label>
-        </div>
+        ))}
       </div>
     </div>
 
@@ -773,34 +924,57 @@ const FormateurView = ({
           <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Mon Profil Formateur
         </h2>
         {formateurs.filter(f => f.id === currentUserId).map(f => (
-          <form key={f.id} className="grid grid-cols-1 md:grid-cols-3 gap-4 outline-none" onSubmit={async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            const updates = {
-              formateur_siret: formData.get('siret'),
-              formateur_nda: formData.get('nda'),
-              adresse_formateur: formData.get('adresse')
-            };
-            const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
-            if (!error) alert("Profil mis à jour !");
-            else alert("Erreur: " + error.message);
-          }}>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
-              <input name="siret" defaultValue={f.formateur_siret || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro SIRET" />
+          <div key={f.id} className="space-y-6">
+            <form className="grid grid-cols-1 md:grid-cols-3 gap-4 outline-none" onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              const updates = {
+                formateur_siret: formData.get('siret'),
+                formateur_nda: formData.get('nda'),
+                adresse_formateur: formData.get('adresse')
+              };
+              const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
+              if (!error) alert("Profil mis à jour !");
+              else alert("Erreur: " + error.message);
+            }}>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
+                <input name="siret" defaultValue={f.formateur_siret || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro SIRET" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">NDA</label>
+                <input name="nda" defaultValue={f.formateur_nda || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro de déclaration d'activité" />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
+                <input name="adresse" defaultValue={f.adresse_formateur || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Adresse complète du centre ou du formateur" />
+              </div>
+              <div className="md:col-span-3 text-right">
+                <button type="submit" className="bg-gray-900 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-800 transition-all">Enregistrer mon profil</button>
+              </div>
+            </form>
+
+            {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
+            <div className="pt-6 border-t border-gray-100">
+               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+                 <FolderIcon /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
+               </h3>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                      <div className="flex items-center">
+                         <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
+                         <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
+                      </div>
+                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
+                    </div>
+                  ))}
+                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
+                    <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
+                  )}
+               </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">NDA</label>
-              <input name="nda" defaultValue={f.formateur_nda || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro de déclaration d'activité" />
-            </div>
-            <div className="md:col-span-3">
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
-              <input name="adresse" defaultValue={f.adresse_formateur || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Adresse complète du centre ou du formateur" />
-            </div>
-            <div className="md:col-span-3 text-right">
-              <button type="submit" className="bg-gray-900 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-800 transition-all">Enregistrer mon profil</button>
-            </div>
-          </form>
+          </div>
         ))}
       </div>
 
@@ -861,10 +1035,70 @@ const FormateurView = ({
                     )}
                   </div>
 
+                  {/* Gestion Documentaire - REFACTORisée */}
+                  <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Documents de Début */}
+                    <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
+                      <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
+                        <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
+                      </h4>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Lettre de Mission</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'engagement')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Feuille d'Engagement</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleGenerateDynamicPDF(client, 'deontologie')}
+                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                        >
+                          <span>Code de Déontologie</span>
+                          <DownloadIcon size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Documents de Fin */}
+                    <div className="bg-emerald-50/30 border border-emerald-100 p-4 rounded-2xl">
+                      <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
+                        <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
+                      </h4>
+                      <div className="flex flex-col gap-2">
+                        {(() => {
+                          const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                          const isFinished = lastSession && lastSession < new Date();
+                          return (
+                            <button
+                              disabled={!isFinished}
+                              onClick={() => handleGenerateDynamicPDF(client, 'attestation_realisation')}
+                              className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
+                                isFinished 
+                                ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
+                                : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                              }`}
+                            >
+                              <span>Attestation de Réalisation</span>
+                              {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
                   {clientSessions.length === 0 && client.module_id && (
                     <button
                       onClick={() => generateSessions(client)}
-                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors"
+                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors mb-4"
                     >
                       Générer forfait 8 séances
                     </button>
@@ -1511,9 +1745,12 @@ export default function App() {
 
   // Modèles de Documents par défaut
   const [documentTemplates, setDocumentTemplates] = useState({
-    contrat: null, // Sera un objet { url: '...', name: '...' }
+    contrat: null,
     reglement: null,
-    lettre_mission: null, // Nouveau: Modèle de référence Admin
+    lettre_mission: null,
+    engagement: null,
+    deontologie: null,
+    attestation_realisation: null,
     // On garde l'ancien système textuel en backup si besoin
     contratText: `CONTRAT DE PRESTATION DE FORMATION PROFESSIONNELLE...`,
     reglementText: `RÈGLEMENT INTÉRIEUR DE FORMATION...`
@@ -1618,8 +1855,8 @@ export default function App() {
         setDocumentTemplates(prev => {
           const newTemplates = { ...prev };
           refs.forEach(r => {
-            // On identifie le modèle par son nom ('contrat', 'reglement', 'lettre_mission')
-            if (['contrat', 'reglement', 'lettre_mission'].includes(r.nom)) {
+            // On identifie le modèle par son nom ('contrat', 'reglement', 'lettre_mission', 'engagement', 'deontologie', 'attestation_realisation')
+            if (['contrat', 'reglement', 'lettre_mission', 'engagement', 'deontologie', 'attestation_realisation'].includes(r.nom)) {
               newTemplates[r.nom] = { url: r.url, name: r.nom || 'Modèle' };
             }
           });
@@ -2053,20 +2290,28 @@ export default function App() {
 
 
       const template = documentTemplates[type];
-      const title = type === 'contrat' ? 'Contrat de Formation' : (type === 'lettre_mission' ? 'Lettre de Mission' : 'Règlement Intérieur');
+      const title = {
+        'contrat': 'Contrat de Formation',
+        'reglement': 'Règlement Intérieur',
+        'lettre_mission': 'Lettre de Mission',
+        'engagement': "Feuille d'Engagement",
+        'deontologie': 'Code de Déontologie',
+        'attestation_realisation': 'Attestation de Réalisation'
+      }[type] || 'Document';
 
       let content = "";
       if (typeof template === 'string') {
         content = template;
       } else if (template && template.url) {
-        // Si c'est un objet template avec URL (.docx), on pourrait essayer de l'extraire, 
-        // mais pour handleGenerateDynamicPDF (jsPDF text), on va utiliser une structure par défaut
-        // si ce n'est pas une chaîne pure.
-        content = type === 'lettre_mission' 
-          ? `LETTRE DE MISSION\n\nJe soussigné {nom}, certifie que le bénéficiaire {nomcomplet_client} est inscrit à la formation {formation_nom} débutant le {date_debut}.`
-          : `DOCUMENT : ${title}\n\nContenu généré pour {nomcomplet_client}.`;
+        // Fallback structures if the Master model is not a simple string
+        const fallbacks = {
+          'lettre_mission': `LETTRE DE MISSION\n\nJe soussigné {nom}, certifie que le bénéficiaire {nomcomplet_client} est inscrit à la formation {formation_nom} débutant le {date_debut}.`,
+          'engagement': `FEUILLE D'ENGAGEMENT\n\nLe bénéficiaire {nomcomplet_client} s'engage à suivre le parcours {formation_nom} sous la supervision de {nom}.`,
+          'deontologie': `CODE DE DÉONTOLOGIE\n\nCe document atteste de l'engagement éthique entre {nom} et {nomcomplet_client}.`,
+          'attestation_realisation': `ATTESTATION DE RÉALISATION\n\nJe soussigné {nom}, atteste que {nomcomplet_client} a réalisé son parcours {formation_nom} du {date_debut} au {date_fin}.`
+        };
+        content = fallbacks[type] || `DOCUMENT : ${title}\n\nContenu généré pour {nomcomplet_client}.`;
       } else {
-        // Fallback legacy
         content = type === 'contrat' ? documentTemplates.contratText : documentTemplates.reglementText;
       }
 
@@ -2562,8 +2807,8 @@ export default function App() {
               <button onClick={() => { setActiveTab('dashboard_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <SettingsIcon /> Dashboard Admin
               </button>
-              <button onClick={() => { setActiveTab('ingenierie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ingenierie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <AdjustmentsIcon /> Ingénierie
+              <button onClick={() => { setActiveTab('modeles_maitres'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modeles_maitres' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <AdjustmentsIcon /> Modèles Maîtres
               </button>
             </>
           )}
@@ -2644,8 +2889,10 @@ export default function App() {
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
             handleGenerateDynamicPDF={handleGenerateDynamicPDF}
+            supabase={supabase}
+            fetchDocuments={fetchDocuments}
           />}
-          {activeTab === 'ingenierie' && <IngenierieView
+          {activeTab === 'modeles_maitres' && <ModelesMaitresView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
