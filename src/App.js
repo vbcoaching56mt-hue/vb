@@ -274,18 +274,17 @@ const LoginView = ({ handleLogin, clients, formateurs }) => {
   );
 };
 
-const AdminDashboardView = ({
+const AdminClientsView = ({
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
-  clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDocx, supabase, fetchDocuments,
-  sessions, expandedClientId, setExpandedClientId, fetchUtilisateurs, documentTemplates
+  clients, formateurs, assignFormateur, assignModule,
+  modules, handleGenerateDocx, sessions, documentTemplates, supabase
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
-      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Dashboard Administrateur</h1>
-      <p className="text-gray-500 text-lg mt-1">Gérez les formateurs, les clients et les assignations depuis la base de données.</p>
+      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Gestion des Clients</h1>
+      <p className="text-gray-500 text-lg mt-1">Intégrez et assignez vos bénéficiaires.</p>
     </div>
 
     {/* Formulaire Ajouter Utilisateur */}
@@ -531,6 +530,16 @@ const AdminDashboardView = ({
       </div>
     </div>
 
+  </div>
+);
+
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments }) => (
+  <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div>
+      <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Gestion des Formateurs</h1>
+      <p className="text-gray-500 text-lg mt-1">Gérez le profil et le suivi d'activité de vos coachs.</p>
+    </div>
+
     {/* Liste Formateurs */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -574,7 +583,7 @@ const AdminDashboardView = ({
                         defaultValue={f.formateur_siret || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.formateur_siret) {
-                            await supabase.from('utilisateurs').upsert({ id: f.id, formateur_siret: e.target.value });
+                            await supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id);
                             await fetchUtilisateurs();
                           }
                         }}
@@ -587,7 +596,7 @@ const AdminDashboardView = ({
                         defaultValue={f.formateur_nda || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.formateur_nda) {
-                            await supabase.from('utilisateurs').upsert({ id: f.id, formateur_nda: e.target.value });
+                            await supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id);
                             await fetchUtilisateurs();
                           }
                         }}
@@ -600,7 +609,7 @@ const AdminDashboardView = ({
                         defaultValue={f.adresse_formateur || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.adresse_formateur) {
-                            await supabase.from('utilisateurs').upsert({ id: f.id, adresse_formateur: e.target.value });
+                            await supabase.from('utilisateurs').update({ adresse_formateur: e.target.value }).eq('id', f.id);
                             await fetchUtilisateurs();
                           }
                         }}
@@ -1789,7 +1798,7 @@ export default function App() {
   const handleLogin = (role, id = null) => {
     setUserRole(role);
     setCurrentUserId(id);
-    if (role === 'admin') setActiveTab('dashboard_admin');
+    if (role === 'admin') setActiveTab('clients_admin');
     if (role === 'formateur') setActiveTab('mes_clients');
     if (role === 'client') setActiveTab('accueil');
   };
@@ -2483,8 +2492,14 @@ export default function App() {
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
             <>
-              <button onClick={() => { setActiveTab('dashboard_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <SettingsIcon /> Dashboard Admin
+              <button onClick={() => { setActiveTab('clients_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <UsersIcon /> Clients
+              </button>
+              <button onClick={() => { setActiveTab('formateurs_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <UserIcon /> Formateurs
+              </button>
+              <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FolderIcon /> Modélothèque
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <AdjustmentsIcon /> Modules
@@ -2551,7 +2566,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
-          {activeTab === 'dashboard_admin' && <AdminDashboardView
+          {activeTab === 'clients_admin' && <AdminClientsView
             handleAddUser={handleAddUser}
             newUserName={newUserName}
             setNewUserName={setNewUserName}
@@ -2564,7 +2579,6 @@ export default function App() {
             formateurs={formateurs}
             assignFormateur={assignFormateur}
             assignModule={assignModule}
-            documents={documents}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
             supabase={supabase}
@@ -2574,6 +2588,16 @@ export default function App() {
             setExpandedClientId={setExpandedClientId}
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
+          />}
+          {activeTab === 'formateurs_admin' && <AdminFormateursView
+            clients={clients}
+            formateurs={formateurs}
+            documents={documents}
+            expandedClientId={expandedClientId}
+            setExpandedClientId={setExpandedClientId}
+            supabase={supabase}
+            fetchUtilisateurs={fetchUtilisateurs}
+            fetchDocuments={fetchDocuments}
           />}
           {activeTab === 'modules' && <IngenierieView
             modules={modules}
