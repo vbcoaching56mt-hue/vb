@@ -5,8 +5,6 @@ import { supabase } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import PizZip from 'pizzip';
-import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
@@ -2217,6 +2215,8 @@ export default function App() {
 
 
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js");
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js");
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.49.1/docxtemplater.js");
       
       const content = await new Promise((resolve, reject) => {
         window.PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
@@ -2224,8 +2224,8 @@ export default function App() {
           else resolve(data);
         });
       });
-      const zip = new PizZip(content);
-      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+      const zip = new window.PizZip(content);
+      const doc = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
         nom: coach.nom || '',
