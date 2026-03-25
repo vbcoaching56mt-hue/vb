@@ -280,7 +280,7 @@ const AdminDashboardView = ({
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
   modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments,
-  sessions, expandedClientId, setExpandedClientId
+  sessions, expandedClientId, setExpandedClientId, fetchUtilisateurs
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -419,7 +419,7 @@ const AdminDashboardView = ({
                     />
                   </div>
 
-                  {/* Gestion Documentaire - REFACTORisée */}
+                  {/* Gestion Documentaire Dynamique */}
                   <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Documents de Début */}
                     <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
@@ -427,27 +427,18 @@ const AdminDashboardView = ({
                         <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
                       </h4>
                       <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Lettre de Mission</span>
-                          <DownloadIcon size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'engagement')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Feuille d'Engagement</span>
-                          <DownloadIcon size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'deontologie')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Code de Déontologie</span>
-                          <DownloadIcon size={14} />
-                        </button>
+                        {Object.keys(documentTemplates)
+                          .filter(k => k !== 'contratText' && k !== 'reglementText' && !k.toLowerCase().includes('attestation'))
+                          .map(key => (
+                            <button
+                              key={key}
+                              onClick={() => handleGenerateDynamicPDF(client, key)}
+                              className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                            >
+                              <span>{key}</span>
+                              <DownloadIcon size={14} />
+                            </button>
+                          ))}
                       </div>
                     </div>
 
@@ -457,25 +448,28 @@ const AdminDashboardView = ({
                         <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
                       </h4>
                       <div className="flex flex-col gap-2">
-                        {(() => {
-                          const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
-                          const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
-                          const isFinished = lastSession && lastSession < new Date();
-                          return (
-                            <button
-                              disabled={!isFinished}
-                              onClick={() => handleGenerateDynamicPDF(client, 'attestation_realisation')}
-                              className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
-                                isFinished 
-                                ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                              }`}
-                            >
-                              <span>Attestation de Réalisation</span>
-                              {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
-                            </button>
-                          );
-                        })()}
+                        {Object.keys(documentTemplates)
+                          .filter(k => k.toLowerCase().includes('attestation'))
+                          .map(key => {
+                            const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+                            const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                            const isFinished = lastSession && lastSession < new Date();
+                            return (
+                              <button
+                                key={key}
+                                disabled={!isFinished}
+                                onClick={() => handleGenerateDynamicPDF(client, key)}
+                                className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
+                                  isFinished 
+                                  ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
+                                  : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                                }`}
+                              >
+                                <span>{key}</span>
+                                {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                              </button>
+                            );
+                          })}
                       </div>
                     </div>
                   </div>
@@ -580,7 +574,8 @@ const AdminDashboardView = ({
                         defaultValue={f.formateur_siret || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.formateur_siret) {
-                            await supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id);
+                            await supabase.from('utilisateurs').upsert({ id: f.id, formateur_siret: e.target.value });
+                            await fetchUtilisateurs();
                           }
                         }}
                       />
@@ -592,7 +587,8 @@ const AdminDashboardView = ({
                         defaultValue={f.formateur_nda || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.formateur_nda) {
-                            await supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id);
+                            await supabase.from('utilisateurs').upsert({ id: f.id, formateur_nda: e.target.value });
+                            await fetchUtilisateurs();
                           }
                         }}
                       />
@@ -604,7 +600,8 @@ const AdminDashboardView = ({
                         defaultValue={f.adresse_formateur || ''}
                         onBlur={async (e) => {
                           if (e.target.value !== f.adresse_formateur) {
-                            await supabase.from('utilisateurs').update({ adresse_formateur: e.target.value }).eq('id', f.id);
+                            await supabase.from('utilisateurs').upsert({ id: f.id, adresse_formateur: e.target.value });
+                            await fetchUtilisateurs();
                           }
                         }}
                       />
@@ -699,7 +696,8 @@ const ModelesMaitresView = ({
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
   addingToModuleId, setAddingToModuleId,
-  documentTemplates, handleUploadDocxTemplate
+  documentTemplates, handleUploadDocxTemplate,
+  newTemplateName, setNewTemplateName
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -728,29 +726,60 @@ const ModelesMaitresView = ({
       </div>
     </div>
 
-    {/* --- Section NOUVELLE: Modèles de Référence --- */}
+    {/* --- Section NOUVELLE: Modèles de Référence Dynamique --- */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Bibliothèque des Modèles Maîtres (.docx)
       </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {[
-          { id: 'lettre_mission', label: 'Lettre de Mission' },
-          { id: 'engagement', label: "Feuille d'Engagement" },
-          { id: 'deontologie', label: 'Code de Déontologie' },
-          { id: 'attestation_realisation', label: 'Attestation de Réalisation' }
-        ].map(item => (
-          <div key={item.id} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl flex items-center justify-between">
-            <div>
-              <h3 className="font-bold text-gray-900 text-sm">{item.label}</h3>
-              <p className="text-[10px] text-gray-500 truncate max-w-[150px]">{documentTemplates[item.id]?.name || "Aucun modèle chargé"}</p>
+      
+      {/* Formulaire pour ajouter un nouveau type de document */}
+      <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col md:flex-row gap-4 items-end">
+        <div className="flex-1">
+          <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Ajouter un nouveau type de document</label>
+          <input 
+            type="text" 
+            placeholder="Nom (Ex: Contrat de Partenariat)" 
+            className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
+            value={newTemplateName}
+            onChange={(e) => setNewTemplateName(e.target.value)}
+          />
+        </div>
+        <div className="flex-none">
+          <label className={`flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            Uploader le Modèle Word (.docx)
+            <input 
+              type="file" 
+              className="hidden" 
+              disabled={!newTemplateName}
+              accept=".docx" 
+              onChange={(e) => {
+                if (e.target.files[0]) {
+                  handleUploadDocxTemplate(e.target.files[0], newTemplateName);
+                  setNewTemplateName('');
+                }
+              }} 
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {Object.keys(documentTemplates).filter(k => k !== 'contratText' && k !== 'reglementText').map(key => (
+          <div key={key} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl group hover:border-amber-500 transition-all">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tighter">Modèle Actif</span>
+              <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
+                Mettre à jour
+                <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key)} />
+              </label>
             </div>
-            <label className="bg-white border border-gray-200 hover:border-amber-500 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-sm">
-              Uploader
-              <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], item.id)} />
-            </label>
+            <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
+            <p className="text-[10px] text-gray-500 truncate">{documentTemplates[key]?.name || "Modèle chargé"}</p>
           </div>
         ))}
+        {Object.keys(documentTemplates).filter(k => k !== 'contratText' && k !== 'reglementText').length === 0 && (
+          <div className="col-span-full py-10 text-center text-gray-400 italic text-sm">Aucun modèle de référence enregistré.</div>
+        )}
       </div>
     </div>
 
@@ -869,7 +898,7 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
   handleAddSession, handleDeleteSession, updateSessionTime,
-  handleGenerateDynamicPDF, documents
+  handleGenerateDynamicPDF, documents, fetchUtilisateurs
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -933,9 +962,11 @@ const FormateurView = ({
                 formateur_nda: formData.get('nda'),
                 adresse_formateur: formData.get('adresse')
               };
-              const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
-              if (!error) alert("Profil mis à jour !");
-              else alert("Erreur: " + error.message);
+              const { error } = await supabase.from('utilisateurs').upsert({ id: f.id, ...updates });
+              if (!error) {
+                alert("Profil mis à jour !");
+                await fetchUtilisateurs();
+              } else alert("Erreur: " + error.message);
             }}>
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
@@ -1035,7 +1066,7 @@ const FormateurView = ({
                     )}
                   </div>
 
-                  {/* Gestion Documentaire - REFACTORisée */}
+                  {/* Gestion Documentaire Dynamique */}
                   <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Documents de Début */}
                     <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
@@ -1043,27 +1074,18 @@ const FormateurView = ({
                         <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
                       </h4>
                       <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'lettre_mission')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Lettre de Mission</span>
-                          <DownloadIcon size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'engagement')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Feuille d'Engagement</span>
-                          <DownloadIcon size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleGenerateDynamicPDF(client, 'deontologie')}
-                          className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                        >
-                          <span>Code de Déontologie</span>
-                          <DownloadIcon size={14} />
-                        </button>
+                        {Object.keys(documentTemplates)
+                          .filter(k => k !== 'contratText' && k !== 'reglementText' && !k.toLowerCase().includes('attestation'))
+                          .map(key => (
+                            <button
+                              key={key}
+                              onClick={() => handleGenerateDynamicPDF(client, key)}
+                              className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
+                            >
+                              <span>{key}</span>
+                              <DownloadIcon size={14} />
+                            </button>
+                          ))}
                       </div>
                     </div>
 
@@ -1073,24 +1095,27 @@ const FormateurView = ({
                         <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
                       </h4>
                       <div className="flex flex-col gap-2">
-                        {(() => {
-                          const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
-                          const isFinished = lastSession && lastSession < new Date();
-                          return (
-                            <button
-                              disabled={!isFinished}
-                              onClick={() => handleGenerateDynamicPDF(client, 'attestation_realisation')}
-                              className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
-                                isFinished 
-                                ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                              }`}
-                            >
-                              <span>Attestation de Réalisation</span>
-                              {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
-                            </button>
-                          );
-                        })()}
+                        {Object.keys(documentTemplates)
+                          .filter(k => k.toLowerCase().includes('attestation'))
+                          .map(key => {
+                            const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                            const isFinished = lastSession && lastSession < new Date();
+                            return (
+                              <button
+                                key={key}
+                                disabled={!isFinished}
+                                onClick={() => handleGenerateDynamicPDF(client, key)}
+                                className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
+                                  isFinished 
+                                  ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
+                                  : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                                }`}
+                              >
+                                <span>{key}</span>
+                                {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                              </button>
+                            );
+                          })}
                       </div>
                     </div>
                   </div>
@@ -1791,6 +1816,7 @@ export default function App() {
   const [newDocVisClient, setNewDocVisClient] = useState(true);
   const [newDocVisFormateur, setNewDocVisFormateur] = useState(true);
   const [isAddingDoc, setIsAddingDoc] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
 
   // --- Chargement des données au lancement (Supabase) ---
   useEffect(() => {
@@ -1849,20 +1875,15 @@ export default function App() {
       .select('*');
     if (!error && docsData) {
       setDocuments(docsData);
-      // Charger les modèles de référence dans l'état documentTemplates
+      // Charger TOUS les modèles de référence dans l'état documentTemplates
       const refs = docsData.filter(d => d.type_document === 'Modèle Référence');
-      if (refs.length > 0) {
-        setDocumentTemplates(prev => {
-          const newTemplates = { ...prev };
-          refs.forEach(r => {
-            // On identifie le modèle par son nom ('contrat', 'reglement', 'lettre_mission', 'engagement', 'deontologie', 'attestation_realisation')
-            if (['contrat', 'reglement', 'lettre_mission', 'engagement', 'deontologie', 'attestation_realisation'].includes(r.nom)) {
-              newTemplates[r.nom] = { url: r.url, name: r.nom || 'Modèle' };
-            }
-          });
-          return newTemplates;
+      setDocumentTemplates(prev => {
+        const newTemplates = { ...prev };
+        refs.forEach(r => {
+          newTemplates[r.nom] = { url: r.url, name: r.nom || 'Modèle' };
         });
-      }
+        return newTemplates;
+      });
     } else if (error) console.error("Erreur documents:", error);
   };
 
@@ -2176,7 +2197,8 @@ export default function App() {
         }]);
       }
 
-      alert(`Modèle Word "${file.name}" enregistré comme référence.`);
+      await fetchDocuments(); // Recharger pour mettre à jour documentTemplates
+      alert(`Modèle Word pour "${type}" enregistré avec succès.`);
     } catch (err) {
       console.error("Upload Template Error:", err);
       alert("Erreur lors de l'upload du modèle Word.");
@@ -2896,6 +2918,7 @@ export default function App() {
             sessions={sessions}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
+            fetchUtilisateurs={fetchUtilisateurs}
           />}
           {activeTab === 'modeles_maitres' && <ModelesMaitresView
             modules={modules}
@@ -2916,6 +2939,8 @@ export default function App() {
             setAddingToModuleId={setAddingToModuleId}
             documentTemplates={documentTemplates}
             handleUploadDocxTemplate={handleUploadDocxTemplate}
+            newTemplateName={newTemplateName}
+            setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'mes_clients' && <FormateurView
             clients={clients}
@@ -2935,6 +2960,7 @@ export default function App() {
             updateSessionTime={updateSessionTime}
             handleGenerateDynamicPDF={handleGenerateDynamicPDF}
             documents={documents}
+            fetchUtilisateurs={fetchUtilisateurs}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
