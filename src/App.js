@@ -280,7 +280,7 @@ const AdminDashboardView = ({
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
   modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments,
-  sessions, expandedClientId, setExpandedClientId, fetchUtilisateurs
+  sessions, expandedClientId, setExpandedClientId, fetchUtilisateurs, documentTemplates
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -898,7 +898,7 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
   handleAddSession, handleDeleteSession, updateSessionTime,
-  handleGenerateDynamicPDF, documents, fetchUtilisateurs
+  handleGenerateDynamicPDF, documents, fetchUtilisateurs, documentTemplates
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2919,6 +2919,7 @@ export default function App() {
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
             fetchUtilisateurs={fetchUtilisateurs}
+            documentTemplates={documentTemplates}
           />}
           {activeTab === 'modeles_maitres' && <ModelesMaitresView
             modules={modules}
@@ -2961,6 +2962,7 @@ export default function App() {
             handleGenerateDynamicPDF={handleGenerateDynamicPDF}
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
+            documentTemplates={documentTemplates}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
