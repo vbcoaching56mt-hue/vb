@@ -279,7 +279,8 @@ const AdminClientsView = ({
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule,
-  modules, handleGenerateDocx, sessions, documentTemplates, supabase
+  modules, handleGenerateDocx, sessions, documentTemplates, supabase,
+  expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -338,196 +339,205 @@ const AdminClientsView = ({
       </form>
     </div>
 
-    {/* Table Clients */}
+    {/* Liste Clients (Accordéon) */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Gestion des Clients
       </h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-gray-200 text-sm text-gray-500">
-              <th className="pb-3 font-medium">ID</th>
-              <th className="pb-3 font-medium">Nom du Client</th>
-              <th className="pb-3 font-medium">Statut</th>
-              <th className="pb-3 font-medium">Module Assigné</th>
-              <th className="pb-3 font-medium">Formateur Assigné</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map(client => (
-              <tr key={client.id} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="py-4 text-xs text-gray-400 font-bold">#{client.id}</td>
-                <td className="py-4 font-bold text-gray-900 flex flex-col">
-                  <span>{client.nom || 'Sans Nom'}</span>
-                  <span className="text-xs text-gray-400 font-normal">{client.email || 'Email non renseigné'}</span>
-                  
-                  {/* Champs Client Additionnels (Nouveau) */}
-                  <div className="mt-3 grid grid-cols-1 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-2">
-                       <input 
-                        type="text" 
-                        placeholder="Nom complet (pour docs)" 
-                        defaultValue={client.nomcomplet_client || ''} 
-                        onBlur={async (e) => {
-                          const val = e.target.value;
-                          if (val !== client.nomcomplet_client) {
-                            await supabase.from('utilisateurs').update({ nomcomplet_client: val }).eq('id', client.id);
-                          }
-                        }}
-                        className="text-[10px] w-full p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                      />
+      <ul className="space-y-4">
+        {clients.map(client => {
+          const isExpanded = expandedClientId === client.id;
+          return (
+            <li key={client.id} className={`p-5 border rounded-2xl transition-all ${isExpanded ? 'border-indigo-300 bg-indigo-50/20 shadow-md' : 'border-gray-100 hover:border-gray-300 bg-white'}`}>
+              <div className="flex flex-col md:flex-row md:items-center justify-between cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : client.id)}>
+                <div className="flex items-center">
+                  <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mr-4 font-bold">{client.nom ? client.nom.charAt(0) : '?'}</div>
+                  <div className="flex flex-col">
+                    <span className="font-bold text-gray-900 leading-tight">{client.nom || 'Sans Nom'} <span className="text-[10px] text-gray-400 font-normal ml-2">#{client.id}</span></span>
+                    <span className="text-xs text-gray-500">{client.email || 'Email non renseigné'}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 mt-3 md:mt-0">
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                    {client.status || 'Actif'}
+                  </span>
+                  <span className="text-gray-400">
+                    <svg className={`w-5 h-5 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                  </span>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="mt-6 pt-6 border-t border-gray-100 animate-slide-up space-y-6">
+                  {/* Assignations (Module & Formateur) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Module Assigné</label>
+                      <select
+                        value={client.module_id || ''}
+                        onChange={(e) => assignModule(client.id, e.target.value)}
+                        className="bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
+                      >
+                        <option value="">Aucun module</option>
+                        {modules.map(m => (
+                          <option key={m.id} value={m.id}>{m.nom}</option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="flex gap-2">
-                      <input 
-                        type="email" 
-                        placeholder="Email Client" 
-                        defaultValue={client.client_email || ''} 
-                        onBlur={async (e) => {
-                          const val = e.target.value;
-                          if (val !== client.client_email) {
-                            await supabase.from('utilisateurs').update({ client_email: val }).eq('id', client.id);
-                          }
-                        }}
-                        className="text-[10px] w-1/2 p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                      />
-                      <input 
-                        type="tel" 
-                        placeholder="Mobile Client" 
-                        defaultValue={client.client_phone || ''} 
-                        onBlur={async (e) => {
-                          const val = e.target.value;
-                          if (val !== client.client_phone) {
-                            await supabase.from('utilisateurs').update({ client_phone: val }).eq('id', client.id);
-                          }
-                        }}
-                        className="text-[10px] w-1/2 p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                      />
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Formateur Assigné</label>
+                      <select
+                        value={client.formateur_id || ''}
+                        onChange={(e) => assignFormateur(client.id, e.target.value)}
+                        className="bg-white border border-gray-200 text-gray-900 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full p-2.5 outline-none shadow-sm"
+                      >
+                        <option value="">Non assigné</option>
+                        {formateurs.map(f => (
+                          <option key={f.id} value={f.id}>{f.nom}</option>
+                        ))}
+                      </select>
                     </div>
-                    <input 
-                      type="text" 
-                      placeholder="Adresse de session" 
-                      defaultValue={client.adresse_session || ''} 
-                      onBlur={async (e) => {
-                        const val = e.target.value;
-                        if (val !== client.adresse_session) {
-                          await supabase.from('utilisateurs').update({ adresse_session: val }).eq('id', client.id);
-                        }
-                      }}
-                      className="text-[10px] w-full p-1 border rounded bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
-                    />
+                  </div>
+
+                  {/* Champs Client Additionnels */}
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center uppercase tracking-wider">
+                      Informations de Contact et Facturation
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nom complet (Docs)</label>
+                        <input 
+                          type="text" 
+                          defaultValue={client.nomcomplet_client || ''} 
+                          onBlur={async (e) => {
+                            const val = e.target.value;
+                            if (val !== client.nomcomplet_client) await supabase.from('utilisateurs').update({ nomcomplet_client: val }).eq('id', client.id);
+                          }}
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email Client</label>
+                        <input 
+                          type="email" 
+                          defaultValue={client.client_email || ''} 
+                          onBlur={async (e) => {
+                            const val = e.target.value;
+                            if (val !== client.client_email) await supabase.from('utilisateurs').update({ client_email: val }).eq('id', client.id);
+                          }}
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Mobile</label>
+                        <input 
+                          type="tel" 
+                          defaultValue={client.client_phone || ''} 
+                          onBlur={async (e) => {
+                            const val = e.target.value;
+                            if (val !== client.client_phone) await supabase.from('utilisateurs').update({ client_phone: val }).eq('id', client.id);
+                          }}
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Session</label>
+                        <input 
+                          type="text"  
+                          defaultValue={client.adresse_session || ''} 
+                          onBlur={async (e) => {
+                            const val = e.target.value;
+                            if (val !== client.adresse_session) await supabase.from('utilisateurs').update({ adresse_session: val }).eq('id', client.id);
+                          }}
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   {/* Gestion Documentaire Dynamique */}
-                  <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Documents de Début */}
-                    <div className="bg-amber-50/30 border border-amber-100 p-4 rounded-2xl">
-                      <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
-                        <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Documents de Début
-                      </h4>
-                      <div className="flex flex-col gap-2">
-                        {Object.keys(documentTemplates)
-                          .filter(k => !k.toLowerCase().includes('attestation'))
-                          .map(key => (
-                            <button
-                              key={key}
-                              onClick={() => handleGenerateDocx(client, key)}
-                              className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700"
-                            >
-                              <span>{key}</span>
-                              <DownloadIcon size={14} />
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-
-                    {/* Documents de Fin */}
-                    <div className="bg-emerald-50/30 border border-emerald-100 p-4 rounded-2xl">
-                      <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
-                        <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Documents de Fin
-                      </h4>
-                      <div className="flex flex-col gap-2">
-                        {Object.keys(documentTemplates)
-                          .filter(k => k.toLowerCase().includes('attestation'))
-                          .map(key => {
-                            const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
-                            const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
-                            const isFinished = lastSession && lastSession < new Date();
-                            return (
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-800 mb-3 flex items-center uppercase tracking-wider">
+                      Génération de Documents
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Documents de Début */}
+                      <div className="bg-amber-50/50 border border-amber-100 p-4 rounded-xl">
+                        <h4 className="text-[10px] font-bold text-amber-800 uppercase tracking-widest mb-3 flex items-center">
+                          <span className="w-1.5 h-3 bg-amber-500 rounded-full mr-2"></span> Phase Initiale
+                        </h4>
+                        <div className="flex flex-col gap-2">
+                          {Object.keys(documentTemplates)
+                            .filter(k => !k.toLowerCase().includes('attestation'))
+                            .map(key => (
                               <button
                                 key={key}
-                                disabled={!isFinished}
                                 onClick={() => handleGenerateDocx(client, key)}
-                                className={`flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border transition-all ${
-                                  isFinished 
-                                  ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                  : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                                }`}
+                                className="flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border border-amber-200 bg-white hover:bg-amber-50 transition-all text-gray-700 shadow-sm"
                               >
                                 <span>{key}</span>
-                                {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                                <DownloadIcon size={14} />
                               </button>
-                            );
-                          })}
+                            ))}
+                            {client.module_id && (
+                              <div className="flex gap-2 mt-2">
+                                <button
+                                  onClick={() => handleGenerateDocx(client, 'contrat')}
+                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                                >
+                                  Contrat
+                                </button>
+                                <button
+                                  onClick={() => handleGenerateDocx(client, 'reglement')}
+                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                                >
+                                  Règlement
+                                </button>
+                              </div>
+                            )}
+                        </div>
+                      </div>
+
+                      {/* Documents de Fin */}
+                      <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-xl">
+                        <h4 className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-3 flex items-center">
+                          <span className="w-1.5 h-3 bg-emerald-500 rounded-full mr-2"></span> Phase Finale
+                        </h4>
+                        <div className="flex flex-col gap-2">
+                          {Object.keys(documentTemplates)
+                            .filter(k => k.toLowerCase().includes('attestation'))
+                            .map(key => {
+                              const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+                              const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                              const isFinished = lastSession && lastSession < new Date();
+                              return (
+                                <button
+                                  key={key}
+                                  disabled={!isFinished}
+                                  onClick={() => handleGenerateDocx(client, key)}
+                                  className={`flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border transition-all shadow-sm ${
+                                    isFinished 
+                                    ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
+                                    : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                                  }`}
+                                >
+                                  <span>{key}</span>
+                                  {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
+                                </button>
+                              );
+                            })}
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {client.module_id && (
-                    <div className="flex gap-2 mt-2">
-                      <button
-                        onClick={() => handleGenerateDocx(client, 'contrat')}
-                        className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-1 rounded font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                      >
-                        Générer Contrat (Word)
-                      </button>
-                      <button
-                        onClick={() => handleGenerateDocx(client, 'reglement')}
-                        className="text-[10px] bg-amber-50 text-amber-700 px-2 py-1 rounded font-bold border border-amber-100 hover:bg-amber-600 hover:text-white transition-all shadow-sm"
-                      >
-                        Générer Règlement (Word)
-                      </button>
-                    </div>
-                  )}
-                </td>
-                <td className="py-4">
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
-                    }`}>{client.status || 'Actif'}</span>
-                </td>
-                <td className="py-4">
-                  <select
-                    value={client.module_id || ''}
-                    onChange={(e) => assignModule(client.id, e.target.value)}
-                    className="bg-purple-50 border border-purple-100 text-purple-900 text-xs font-bold rounded-lg focus:ring-purple-500 focus:border-purple-500 block w-full p-2.5 outline-none"
-                  >
-                    <option value="">Aucun module</option>
-                    {modules.map(m => (
-                      <option key={m.id} value={m.id}>{m.nom}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="py-4">
-                  <select
-                    value={client.formateur_id || ''}
-                    onChange={(e) => assignFormateur(client.id, e.target.value)}
-                    className="bg-gray-50 border border-gray-200 text-gray-900 text-xs rounded-lg focus:ring-gray-500 focus:border-gray-500 block w-full p-2.5 outline-none"
-                  >
-                    <option value="">Non assigné</option>
-                    {formateurs.map(f => (
-                      <option key={f.id} value={f.id}>{f.nom}</option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-            ))}
-            {clients.length === 0 && (
-              <tr>
-                <td colSpan="4" className="py-8 text-center text-gray-500">Aucun client trouvé.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
+        {clients.length === 0 && <li className="p-8 text-center text-gray-500 italic">Aucun client trouvé.</li>}
+      </ul>
     </div>
 
   </div>
@@ -1821,14 +1831,15 @@ export default function App() {
       .insert([{ nom: newUserName, email: newUserEmail, role: newUserRole }])
       .select();
 
-    if (!error && data && data[0]) {
+    if (error) {
+      console.error("Erreur ajout user", error);
+      alert('Erreur ajout serveur : ' + error?.message);
+    } else {
+      alert(`Utilisateur ${newUserName} ajouté avec succès !`);
       await fetchUtilisateurs();
       await fetchDocuments();
       setNewUserName('');
       setNewUserEmail('');
-    } else {
-      console.error("Erreur ajout user", error);
-      alert('Erreur : ' + error?.message);
     }
     setIsAddingUser(false);
   };
@@ -2522,7 +2533,7 @@ export default function App() {
             </>
           )}
 
-          {(userRole === 'admin' || userRole === 'formateur' || userRole === 'client') && (
+          {(userRole === 'formateur' || userRole === 'client') && (
             <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
               <FolderIcon /> Documents
             </button>
