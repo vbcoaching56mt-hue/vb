@@ -690,146 +690,18 @@ const AdminDashboardView = ({
   </div>
 );
 
-const ModelesMaitresView = ({
+const IngenierieView = ({
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId,
-  documentTemplates, handleUploadDocxTemplate,
-  newTemplateName, setNewTemplateName
+  addingToModuleId, setAddingToModuleId
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
       <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Bibliothèque des Modèles Maîtres</h1>
-        <p className="text-gray-500 text-lg mt-1">Gérez les modèles Word vierges qui servent de base à tous les accompagnements.</p>
-      </div>
-      {/* Panneau d'aide aux balises */}
-      <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl w-64 shadow-sm">
-        <h3 className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3">Aide aux Balises Word</h3>
-        <ul className="text-[11px] space-y-2 text-blue-700 font-mono">
-          <li className="bg-white/50 p-1.5 rounded">{"{nom}"} (Raison Sociale)</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{adresse_formateur}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{formateur_nda}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{formateur_siret}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{nomcomplet_client}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{client_phone}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{client_email}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{prix_prestation}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{adresse_session}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{date_debut}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{date_fin}"}</li>
-          <li className="bg-white/50 p-1.5 rounded">{"{date_signature}"}</li>
-        </ul>
-        <p className="text-[10px] text-blue-600 mt-3 italic">Copiez/collez ces balises dans vos fichiers .docx</p>
-      </div>
-    </div>
-
-    {/* --- Section NOUVELLE: Modèles de Référence Dynamique --- */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Bibliothèque des Modèles Maîtres (.docx)
-      </h2>
-      
-      {/* Formulaire pour ajouter un nouveau type de document */}
-      <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col md:flex-row gap-4 items-end">
-        <div className="flex-1">
-          <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Ajouter un nouveau type de document</label>
-          <input 
-            type="text" 
-            placeholder="Nom (Ex: Contrat de Partenariat)" 
-            className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
-            value={newTemplateName}
-            onChange={(e) => setNewTemplateName(e.target.value)}
-          />
-        </div>
-        <div className="flex-none">
-          <label className={`flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            Uploader le Modèle Word (.docx)
-            <input 
-              type="file" 
-              className="hidden" 
-              disabled={!newTemplateName}
-              accept=".docx" 
-              onChange={(e) => {
-                if (e.target.files[0]) {
-                  handleUploadDocxTemplate(e.target.files[0], newTemplateName);
-                  setNewTemplateName('');
-                }
-              }} 
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {Object.keys(documentTemplates).filter(k => k !== 'contratText' && k !== 'reglementText').map(key => (
-          <div key={key} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl group hover:border-amber-500 transition-all">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tighter">Modèle Actif</span>
-              <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
-                Mettre à jour
-                <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key)} />
-              </label>
-            </div>
-            <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
-            <p className="text-[10px] text-gray-500 truncate">{documentTemplates[key]?.name || "Modèle chargé"}</p>
-          </div>
-        ))}
-        {Object.keys(documentTemplates).filter(k => k !== 'contratText' && k !== 'reglementText').length === 0 && (
-          <div className="col-span-full py-10 text-center text-gray-400 italic text-sm">Aucun modèle de référence enregistré.</div>
-        )}
-      </div>
-    </div>
-
-    {/* Modèles de Documents Word */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-indigo-500 rounded-full mr-3"></span> Modèles Word Dynamiques (.docx)
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-4 p-5 bg-gray-50 rounded-2xl border border-gray-100">
-          <h3 className="font-bold text-gray-700">Contrat de Formation</h3>
-          <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-4 bg-white hover:border-indigo-400 transition-colors cursor-pointer group relative">
-            <input
-              type="file"
-              accept=".docx"
-              className="absolute inset-0 opacity-0 cursor-pointer"
-              onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'contrat')}
-            />
-            <div className="text-center">
-              <div className="mb-2 text-indigo-500 group-hover:scale-110 transition-transform">
-                <svg className="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-              </div>
-              <p className="text-sm text-gray-600 font-medium">Uploader le .docx</p>
-              {documentTemplates.contrat && (
-                <p className="text-[10px] text-green-600 mt-1 font-bold italic">Actif : {documentTemplates.contrat.name}</p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-4 p-5 bg-gray-50 rounded-2xl border border-gray-100">
-          <h3 className="font-bold text-gray-700">Règlement Intérieur</h3>
-          <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-4 bg-white hover:border-amber-400 transition-colors cursor-pointer group relative">
-            <input
-              type="file"
-              accept=".docx"
-              className="absolute inset-0 opacity-0 cursor-pointer"
-              onChange={(e) => handleUploadDocxTemplate(e.target.files[0], 'reglement')}
-            />
-            <div className="text-center">
-              <div className="mb-2 text-amber-500 group-hover:scale-110 transition-transform">
-                <svg className="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-              </div>
-              <p className="text-sm text-gray-600 font-medium">Uploader le .docx</p>
-              {documentTemplates.reglement && (
-                <p className="text-[10px] text-green-600 mt-1 font-bold italic">Actif : {documentTemplates.reglement.name}</p>
-              )}
-            </div>
-          </div>
-        </div>
+        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Formation</h1>
+        <p className="text-gray-500 text-lg mt-1">Gérez la structure de vos modules et séances.</p>
       </div>
     </div>
 
@@ -896,7 +768,7 @@ const ModelesMaitresView = ({
 const FormateurView = ({
   clients, formateurs, sessions, generateSessions,
   updateSessionDate, signSession, modules, currentUserId,
-  expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
+  expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates
 }) => {
@@ -1235,16 +1107,7 @@ const FormateurView = ({
                           </tbody>
                         </table>
                       </div>
-                      {(userRole === 'admin' || userRole === 'formateur') && (
-                        <div className="mt-6 flex justify-end">
-                          <button
-                            onClick={() => handleDownloadAttendanceCertificate(client.id)}
-                            className="bg-gray-900 hover:bg-gray-800 text-white px-6 py-3 rounded-2xl text-sm font-bold flex items-center transition-all shadow-lg shadow-gray-200"
-                          >
-                            <DownloadIcon className="mr-2" /> Générer l'Attestation d'Assiduité Complète (PDF)
-                          </button>
-                        </div>
-                      )}
+
                     </>
                   ) : (
                     <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
@@ -1273,7 +1136,8 @@ const DocumentsView = ({
   newDocClientId, setNewDocClientId, newDocVisClient, setNewDocVisClient,
   newDocVisFormateur, setNewDocVisFormateur, isAddingDoc, currentUserId,
   selectedClientForDocs, setSelectedClientForDocs, signingDocId, setSigningDocId, viewingDocId, setViewingDocId,
-  handleSignatureSave
+  handleSignatureSave,
+  documentTemplates, handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const isAdmin = userRole === 'admin';
@@ -1306,6 +1170,68 @@ const DocumentsView = ({
         {isClient ? "Mes Documents" : "Gestion Documentaire"}
       </h1>
       <p className="text-gray-500 text-lg">Consultez et {isClient ? 'signez vos' : 'vérifiez les'} fichiers légaux ou de synthèse.</p>
+
+      {isAdmin && (
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8 mt-6">
+          <div className="flex justify-between items-start">
+            <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Ma Modélothèque (.docx)
+            </h2>
+            <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono">
+              <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
+            </div>
+          </div>
+          
+          <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Générer un nouveau type de document</label>
+              <input 
+                type="text" 
+                placeholder="Nom (Ex: Attestation de Fin de Formation)" 
+                className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
+                value={newTemplateName || ''}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+              />
+            </div>
+            <div className="flex-none">
+              <label className={`flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                Uploader le Modèle (.docx)
+                <input 
+                  type="file" 
+                  className="hidden" 
+                  disabled={!newTemplateName}
+                  accept=".docx" 
+                  onChange={(e) => {
+                    if (e.target.files[0]) {
+                      handleUploadDocxTemplate(e.target.files[0], newTemplateName);
+                      setNewTemplateName('');
+                    }
+                  }} 
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Object.keys(documentTemplates || {}).map(key => (
+              <div key={key} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl group hover:border-amber-500 transition-all">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tighter">Modèle Actif</span>
+                  <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
+                    Mettre à jour
+                    <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key)} />
+                  </label>
+                </div>
+                <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
+                <p className="text-[10px] text-gray-500 truncate">{documentTemplates[key]?.name || "Modèle chargé"}</p>
+              </div>
+            ))}
+            {Object.keys(documentTemplates || {}).length === 0 && (
+              <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle .docx enregistré.</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Formulaire Administrateur d'ajout de document */}
       {isAdmin && (
@@ -2554,142 +2480,7 @@ export default function App() {
     }
   };
 
-  const handleDownloadAttendanceCertificate = async (clientId) => {
-    const targetId = clientId || currentUserId;
-    const client = clients.find(c => c.id === targetId);
-    if (!client) return;
 
-    const signedSessions = sessions.filter(s => s.client_id === targetId).sort((a, b) => a.numero_seance - b.numero_seance);
-    const formateur = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
-    const module = modules.find(m => m.id === client.module_id);
-
-    const fetchBase64Image = async (url) => {
-      if (!url) return null;
-      if (url.startsWith('data:image')) return url;
-      try {
-        const res = await fetch(url);
-        const blobImg = await res.blob();
-        return await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blobImg);
-        });
-      } catch (e) { console.error("Err img:", e); return null; }
-    };
-
-    try {
-      const doc = new jsPDF();
-
-      // Header
-      doc.setFontSize(22);
-      doc.setTextColor(31, 41, 55);
-      doc.text("Attestation d'Assiduité", 105, 30, { align: 'center' });
-
-      doc.setFontSize(10);
-      doc.setTextColor(107, 114, 128);
-      doc.text(`Doc Réf: QUALIOPI-ATT-${client.id}-${Date.now()}`, 105, 38, { align: 'center' });
-
-      // Identity Section
-      doc.setFontSize(12);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont("Helvetica", "bold");
-      doc.text(`Bénéficiaire (Stagiaire) : ${client.nom}`, 20, 55);
-      doc.text(`Intervenant (Formateur) : ${formateur.nom}`, 20, 62);
-      doc.setFont("Helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(`Email stagiaire : ${client.email}`, 20, 69);
-      doc.text(`Action de formation : ${module ? module.nom : 'Non défini'}`, 20, 76);
-
-      // Table Header setup
-      let yPos = 90;
-      doc.setFillColor(243, 244, 246);
-      doc.rect(15, yPos, 180, 12, 'F');
-      doc.setFontSize(9);
-      doc.setFont("Helvetica", "bold");
-      doc.text("Date & Module", 20, yPos + 8);
-      doc.text("Durée", 80, yPos + 8);
-      doc.text("Émargement Stagiaire", 110, yPos + 8);
-      doc.text("Émargement Formateur", 155, yPos + 8);
-
-      yPos += 12;
-
-      for (const s of signedSessions) {
-        if (yPos > 240) { doc.addPage(); yPos = 20; }
-
-        doc.setDrawColor(229, 231, 235);
-        doc.line(15, yPos, 195, yPos);
-
-        doc.setFont("Helvetica", "normal");
-        const sessionDate = s.date ? new Date(s.date).toLocaleDateString('fr-FR') : 'À venir';
-        const hoursDisplay = (s.heure_debut && s.heure_fin) ? `${s.heure_debut} - ${s.heure_fin}` : 'Horaire non défini';
-        doc.text(`${sessionDate}\n${hoursDisplay}\n#${s.numero_seance} ${s.nom.substring(0, 25)}`, 20, yPos + 6);
-
-        let sessionDuration = 1.5;
-        if (s.heure_debut && s.heure_fin) {
-          const [h1, m1] = s.heure_debut.split(':').map(Number);
-          const [h2, m2] = s.heure_fin.split(':').map(Number);
-          sessionDuration = (h2 + m2 / 60) - (h1 + m1 / 60);
-        }
-        doc.text(`${sessionDuration.toFixed(2)} h`, 80, yPos + 10);
-
-        // Client Signature
-        const sigClient = await fetchBase64Image(s.signature_image);
-        if (sigClient) {
-          doc.addImage(sigClient, 'PNG', 110, yPos + 2, 35, 15);
-        } else {
-          doc.setTextColor(220, 38, 38); // Red
-          doc.setFontSize(8);
-          doc.text("Non émargé", 110, yPos + 10);
-          doc.setTextColor(0, 0, 0);
-          doc.setFontSize(9);
-        }
-
-        // Formateur Signature
-        const sigForm = await fetchBase64Image(s.signature_formateur);
-        if (sigForm) {
-          doc.addImage(sigForm, 'PNG', 155, yPos + 2, 35, 15);
-        } else {
-          doc.setTextColor(220, 38, 38);
-          doc.setFontSize(8);
-          doc.text("Non émargé", 155, yPos + 10);
-          doc.setTextColor(0, 0, 0);
-          doc.setFontSize(9);
-        }
-
-        yPos += 20;
-      }
-
-      doc.line(15, yPos, 195, yPos);
-      yPos += 12;
-
-      // Calcul du total des heures emargees
-      const totalEmarge = signedSessions.reduce((acc, s) => {
-        if (s.statut !== 'Signé' || !s.heure_debut || !s.heure_fin) return acc + 1.5;
-        const [h1, m1] = s.heure_debut.split(':').map(Number);
-        const [h2, m2] = s.heure_fin.split(':').map(Number);
-        return acc + (h2 + m2 / 60) - (h1 + m1 / 60);
-      }, 0);
-
-      doc.setFont("Helvetica", "bold");
-      doc.text(`Total des heures émargées : ${totalEmarge.toFixed(2)} heures`, 120, yPos);
-      yPos += 7;
-      doc.setTextColor(30, 64, 175); // Blue
-      doc.text(`Total Travail Personnel (Contrat 24h) : ${(24 - totalEmarge).toFixed(2)} heures`, 120, yPos);
-      doc.setTextColor(0, 0, 0);
-
-      // Footer
-      yPos += 18;
-      doc.setFontSize(8);
-      doc.setFont("Helvetica", "italic");
-      doc.text("Fait à Guipavas (29), le " + new Date().toLocaleDateString('fr-FR'), 20, yPos);
-      doc.text("Cachet de l'organisme de formation : VB Coaching", 20, yPos + 5);
-
-      doc.save(`Attestation_Assiduite_${client.nom.replace(' ', '_')}.pdf`);
-    } catch (err) {
-      console.error("Err PDF:", err);
-      alert("Erreur lors de la génération du PDF Qualiopi.");
-    }
-  };
 
   // Affichage du simulateur de connexion
   if (!userRole) {
@@ -2808,7 +2599,7 @@ export default function App() {
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
           />}
-          {activeTab === 'modeles_maitres' && <ModelesMaitresView
+          {activeTab === 'ingenierie' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
@@ -2825,10 +2616,6 @@ export default function App() {
             setNewModDocFile={setNewModDocFile}
             addingToModuleId={addingToModuleId}
             setAddingToModuleId={setAddingToModuleId}
-            documentTemplates={documentTemplates}
-            handleUploadDocxTemplate={handleUploadDocxTemplate}
-            newTemplateName={newTemplateName}
-            setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'mes_clients' && <FormateurView
             clients={clients}
@@ -2842,7 +2629,6 @@ export default function App() {
             currentUserId={currentUserId}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
-            handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate}
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
@@ -2852,7 +2638,7 @@ export default function App() {
             documentTemplates={documentTemplates}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
+          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
           {activeTab === 'documents' && <DocumentsView
