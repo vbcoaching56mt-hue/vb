@@ -6,6 +6,7 @@ import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
+import { Plus } from 'lucide-react';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
@@ -278,6 +279,8 @@ const AdminClientsView = ({
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
+  newClientPhone, setNewClientPhone,
+  newClientEmail, setNewClientEmail,
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments
@@ -307,13 +310,33 @@ const AdminClientsView = ({
           />
         </div>
         <div className="flex-1 w-full">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email Connexion</label>
           <input
             type="email"
             required
             value={newUserEmail}
             onChange={(e) => setNewUserEmail(e.target.value)}
             placeholder="Ex: jean.dupont@email.com"
+            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+          />
+        </div>
+        <div className="flex-1 w-full">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
+          <input
+            type="tel"
+            value={newClientPhone}
+            onChange={(e) => setNewClientPhone(e.target.value)}
+            placeholder="Ex: 0612345678"
+            className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
+          />
+        </div>
+        <div className="flex-1 w-full">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email Contact</label>
+          <input
+            type="email"
+            value={newClientEmail}
+            onChange={(e) => setNewClientEmail(e.target.value)}
+            placeholder="Ex: contact@entreprise.com"
             className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
           />
         </div>
@@ -333,7 +356,7 @@ const AdminClientsView = ({
           disabled={isAddingUser}
           className="w-full lg:w-auto bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-xl px-6 py-3 flex items-center justify-center transition-colors shadow-sm disabled:opacity-50"
         >
-          <span className="mr-2"><PlusIcon /></span>
+          <span className="mr-2"><Plus size={20} /></span>
           {isAddingUser ? "Ajout..." : "Créer"}
         </button>
       </form>
@@ -407,50 +430,50 @@ const AdminClientsView = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nom complet (Docs)</label>
-                        <input 
-                          type="text" 
-                          defaultValue={client.nomcomplet_client || ''} 
+                        <input
+                          type="text"
+                          defaultValue={client.nomcomplet_client || ''}
                           onBlur={async (e) => {
                             const val = e.target.value;
                             if (val !== client.nomcomplet_client) await supabase.from('utilisateurs').update({ nomcomplet_client: val }).eq('id', client.id);
                           }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email Client</label>
-                        <input 
-                          type="email" 
-                          defaultValue={client.client_email || ''} 
+                        <input
+                          type="email"
+                          defaultValue={client.client_email || ''}
                           onBlur={async (e) => {
                             const val = e.target.value;
                             if (val !== client.client_email) await supabase.from('utilisateurs').update({ client_email: val }).eq('id', client.id);
                           }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Mobile</label>
-                        <input 
-                          type="tel" 
-                          defaultValue={client.client_phone || ''} 
+                        <input
+                          type="tel"
+                          defaultValue={client.client_phone || ''}
                           onBlur={async (e) => {
                             const val = e.target.value;
                             if (val !== client.client_phone) await supabase.from('utilisateurs').update({ client_phone: val }).eq('id', client.id);
                           }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Session</label>
-                        <input 
-                          type="text"  
-                          defaultValue={client.adresse_session || ''} 
+                        <input
+                          type="text"
+                          defaultValue={client.adresse_session || ''}
                           onBlur={async (e) => {
                             const val = e.target.value;
                             if (val !== client.adresse_session) await supabase.from('utilisateurs').update({ adresse_session: val }).eq('id', client.id);
                           }}
-                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500" 
+                          className="w-full p-2 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                     </div>
@@ -480,22 +503,22 @@ const AdminClientsView = ({
                                 <DownloadIcon size={14} />
                               </button>
                             ))}
-                            {client.module_id && (
-                              <div className="flex gap-2 mt-2">
-                                <button
-                                  onClick={() => handleGenerateDocx(client, 'contrat')}
-                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                                >
-                                  Contrat
-                                </button>
-                                <button
-                                  onClick={() => handleGenerateDocx(client, 'reglement')}
-                                  className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                                >
-                                  Règlement
-                                </button>
-                              </div>
-                            )}
+                          {client.module_id && (
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={() => handleGenerateDocx(client, 'contrat')}
+                                className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                              >
+                                Contrat
+                              </button>
+                              <button
+                                onClick={() => handleGenerateDocx(client, 'reglement')}
+                                className="w-1/2 flex items-center justify-center text-[10px] bg-indigo-50 text-indigo-700 px-2 py-2 rounded-lg font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                              >
+                                Règlement
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -508,19 +531,18 @@ const AdminClientsView = ({
                           {Object.keys(documentTemplates)
                             .filter(k => k.toLowerCase().includes('attestation'))
                             .map(key => {
-                              const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a,b) => new Date(a.date) - new Date(b.date));
-                              const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length-1].date) : null;
+                              const clientSessions = sessions.filter(s => s.client_id === client.id && s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+                              const lastSession = clientSessions.length > 0 ? new Date(clientSessions[clientSessions.length - 1].date) : null;
                               const isFinished = lastSession && lastSession < new Date();
                               return (
                                 <button
                                   key={key}
                                   disabled={!isFinished}
                                   onClick={() => handleGenerateDocx(client, key)}
-                                  className={`flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border transition-all shadow-sm ${
-                                    isFinished 
-                                    ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50' 
-                                    : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
-                                  }`}
+                                  className={`flex items-center justify-between text-xs font-bold py-2.5 px-3 rounded-lg border transition-all shadow-sm ${isFinished
+                                      ? 'bg-white border-emerald-200 text-gray-700 hover:bg-emerald-50'
+                                      : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed opacity-60'
+                                    }`}
                                 >
                                   <span>{key}</span>
                                   {isFinished ? <DownloadIcon size={14} /> : <LockIcon size={14} />}
@@ -573,7 +595,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                   <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
                     {sesClients.length} client(s)
                   </span>
-                  <button 
+                  <button
                     onClick={() => setExpandedClientId(isExpanded ? null : f.id)}
                     className="text-xs font-bold text-gray-500 hover:text-rose-500"
                   >
@@ -588,7 +610,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">SIRET</label>
-                      <input 
+                      <input
                         className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
                         defaultValue={f.formateur_siret || ''}
                         onBlur={async (e) => {
@@ -601,7 +623,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">NDA</label>
-                      <input 
+                      <input
                         className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
                         defaultValue={f.formateur_nda || ''}
                         onBlur={async (e) => {
@@ -614,7 +636,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                     </div>
                     <div className="md:col-span-3">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
-                      <input 
+                      <input
                         className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-rose-500"
                         defaultValue={f.adresse_formateur || ''}
                         onBlur={async (e) => {
@@ -633,43 +655,43 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                       <FolderIcon /> <span className="ml-2 uppercase tracking-wider">Documents Contractuels (RH)</span>
                     </h4>
                     <div className="space-y-2">
-                       {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
-                         <div key={doc.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded-lg">
-                           <span className="font-medium">{doc.nom}</span>
-                           <a href={doc.url} target="_blank" rel="noreferrer" className="text-rose-600 font-bold hover:underline">Voir</a>
-                         </div>
-                       ))}
-                       <div className="mt-3 flex gap-2">
-                          <input 
-                            type="file" 
-                            id={`upload-rh-${f.id}`}
-                            className="hidden" 
-                            onChange={async (e) => {
-                              const file = e.target.files[0];
-                              if (!file) return;
-                              const fileName = `rh_${f.id}_${Date.now()}.pdf`;
-                              const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
-                              if (!uploadError) {
-                                const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-                                await supabase.from('documents').insert([{
-                                  nom: `Contrat RH - ${file.name}`,
-                                  type_document: 'Contrat RH',
-                                  url: publicUrl,
-                                  user_id: f.id,
-                                  visible_client: false,
-                                  visible_formateur: true
-                                }]);
-                                await fetchDocuments();
-                              }
-                            }}
-                          />
-                          <button 
-                            onClick={() => document.getElementById(`upload-rh-${f.id}`).click()}
-                            className="text-[10px] bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm"
-                          >
-                            + Ajouter un Contrat RH
-                          </button>
-                       </div>
+                      {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded-lg">
+                          <span className="font-medium">{doc.nom}</span>
+                          <a href={doc.url} target="_blank" rel="noreferrer" className="text-rose-600 font-bold hover:underline">Voir</a>
+                        </div>
+                      ))}
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          type="file"
+                          id={`upload-rh-${f.id}`}
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files[0];
+                            if (!file) return;
+                            const fileName = `rh_${f.id}_${Date.now()}.pdf`;
+                            const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+                            if (!uploadError) {
+                              const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+                              await supabase.from('documents').insert([{
+                                nom: `Contrat RH - ${file.name}`,
+                                type_document: 'Contrat RH',
+                                url: publicUrl,
+                                user_id: f.id,
+                                visible_client: false,
+                                visible_formateur: true
+                              }]);
+                              await fetchDocuments();
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => document.getElementById(`upload-rh-${f.id}`).click()}
+                          className="text-[10px] bg-rose-500 text-white px-3 py-1.5 rounded-lg font-bold shadow-sm"
+                        >
+                          + Ajouter un Contrat RH
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -883,23 +905,23 @@ const FormateurView = ({
 
             {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
             <div className="pt-6 border-t border-gray-100">
-               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                 <FolderIcon /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
-               </h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                      <div className="flex items-center">
-                         <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
-                         <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
-                      </div>
-                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+                <FolderIcon /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center">
+                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
+                      <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
                     </div>
-                  ))}
-                  {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
-                    <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
-                  )}
-               </div>
+                    <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
+                  </div>
+                ))}
+                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
+                  <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -1042,8 +1064,8 @@ const FormateurView = ({
                                     <button
                                       onClick={() => onSaveTimes(session.id)}
                                       className={`p-1.5 rounded-lg transition-all ${savingId === session.id
-                                          ? 'bg-green-100 text-green-600'
-                                          : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
+                                        ? 'bg-green-100 text-green-600'
+                                        : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
                                         }`}
                                       title="Enregistrer les horaires"
                                     >
@@ -1084,8 +1106,8 @@ const FormateurView = ({
                                         onClick={() => signSession(session)}
                                         disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
                                         className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                            : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                          : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
                                           }`}
                                       >
                                         {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
@@ -1176,13 +1198,13 @@ const DocumentsView = ({
               <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
             </div>
           </div>
-          
+
           <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col md:flex-row gap-4 items-end">
             <div className="flex-1">
               <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Générer un nouveau type de document</label>
-              <input 
-                type="text" 
-                placeholder="Nom (Ex: Attestation de Fin de Formation)" 
+              <input
+                type="text"
+                placeholder="Nom (Ex: Attestation de Fin de Formation)"
                 className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
                 value={newTemplateName || ''}
                 onChange={(e) => setNewTemplateName(e.target.value)}
@@ -1191,17 +1213,17 @@ const DocumentsView = ({
             <div className="flex-none">
               <label className={`flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 Uploader le Modèle (.docx)
-                <input 
-                  type="file" 
-                  className="hidden" 
+                <input
+                  type="file"
+                  className="hidden"
                   disabled={!newTemplateName}
-                  accept=".docx" 
+                  accept=".docx"
                   onChange={(e) => {
                     if (e.target.files[0]) {
                       handleUploadDocxTemplate(e.target.files[0], newTemplateName);
                       setNewTemplateName('');
                     }
-                  }} 
+                  }}
                 />
               </label>
             </div>
@@ -1581,8 +1603,8 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                         }}
                         disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
                         className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${(session.date && new Date(session.date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0))
-                            ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md'
-                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md'
+                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                           }`}
                       >
                         {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
@@ -1707,6 +1729,8 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState('client');
+  const [newClientPhone, setNewClientPhone] = useState('');
+  const [newClientEmail, setNewClientEmail] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   // États formulaire "Ingénierie Modules" (Admin)
@@ -1808,8 +1832,8 @@ export default function App() {
   const handleLogin = (role, id = null) => {
     setUserRole(role);
     setCurrentUserId(id);
-    if (role === 'admin') setActiveTab('clients_admin');
-    if (role === 'formateur') setActiveTab('mes_clients');
+    if (role === 'admin') setActiveTab('clients');
+    if (role === 'formateur') setActiveTab('clients');
     if (role === 'client') setActiveTab('accueil');
   };
 
@@ -1828,7 +1852,13 @@ export default function App() {
 
     const { data, error } = await supabase
       .from('utilisateurs')
-      .insert([{ nom: newUserName, email: newUserEmail, role: newUserRole }])
+      .insert([{
+        nom: newUserName,
+        email: newUserEmail,
+        role: newUserRole,
+        client_phone: newClientPhone,
+        client_email: newClientEmail
+      }])
       .select();
 
     if (error) {
@@ -1840,6 +1870,8 @@ export default function App() {
       await fetchDocuments();
       setNewUserName('');
       setNewUserEmail('');
+      setNewClientPhone('');
+      setNewClientEmail('');
     }
     setIsAddingUser(false);
   };
@@ -2101,7 +2133,7 @@ export default function App() {
 
       // Sauvegarder dans modeles_documents
       const { data: existing } = await supabase.from('modeles_documents').select('id').eq('nom', type);
-      
+
       if (existing && existing.length > 0) {
         await supabase.from('modeles_documents').update({ url: publicUrl }).eq('id', existing[0].id);
       } else {
@@ -2156,7 +2188,7 @@ export default function App() {
         .eq('client_id', client.id)
         .not('date', 'is', null)
         .order('date', { ascending: true });
-      
+
       let dateDebut = '[Date non définie]';
       let dateFin = '[Date non définie]';
 
@@ -2169,7 +2201,7 @@ export default function App() {
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.min.js");
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pizzip/3.1.4/pizzip.min.js");
       await loadScript("https://cdnjs.cloudflare.com/ajax/libs/docxtemplater/3.49.1/docxtemplater.js");
-      
+
       const content = await new Promise((resolve, reject) => {
         window.PizZipUtils.getBinaryContent(templateInfo.url, (err, data) => {
           if (err) reject(err);
@@ -2503,13 +2535,13 @@ export default function App() {
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
             <>
-              <button onClick={() => { setActiveTab('clients_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <UsersIcon /> Clients
               </button>
-              <button onClick={() => { setActiveTab('formateurs_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <UserIcon /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <FolderIcon /> Modélothèque
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
@@ -2519,7 +2551,7 @@ export default function App() {
           )}
 
           {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('mes_clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
               <UsersIcon /> Mes Clients
             </button>
           )}
@@ -2534,8 +2566,8 @@ export default function App() {
           )}
 
           {(userRole === 'formateur' || userRole === 'client') && (
-            <button onClick={() => { setActiveTab('documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <FolderIcon /> Documents
+            <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <FolderIcon /> Modélothèque
             </button>
           )}
         </nav>
@@ -2577,7 +2609,7 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
-          {activeTab === 'clients_admin' && <AdminClientsView
+          {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
             newUserName={newUserName}
             setNewUserName={setNewUserName}
@@ -2585,6 +2617,10 @@ export default function App() {
             setNewUserEmail={setNewUserEmail}
             newUserRole={newUserRole}
             setNewUserRole={setNewUserRole}
+            newClientPhone={newClientPhone}
+            setNewClientPhone={setNewClientPhone}
+            newClientEmail={newClientEmail}
+            setNewClientEmail={setNewClientEmail}
             isAddingUser={isAddingUser}
             clients={clients}
             formateurs={formateurs}
@@ -2600,7 +2636,7 @@ export default function App() {
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
           />}
-          {activeTab === 'formateurs_admin' && <AdminFormateursView
+          {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
             formateurs={formateurs}
             documents={documents}
@@ -2628,7 +2664,7 @@ export default function App() {
             addingToModuleId={addingToModuleId}
             setAddingToModuleId={setAddingToModuleId}
           />}
-          {activeTab === 'mes_clients' && <FormateurView
+          {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
             formateurs={formateurs}
             sessions={sessions}
@@ -2652,7 +2688,7 @@ export default function App() {
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
-          {activeTab === 'documents' && <DocumentsView
+          {activeTab === 'modélothèque' && <DocumentsView
             documents={documents}
             clients={clients}
             formateurs={formateurs}
