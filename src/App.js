@@ -830,15 +830,20 @@ const FormateurView = ({
               e.preventDefault();
               const formData = new FormData(e.target);
               const updates = {
-                formateur_siret: formData.get('siret'),
-                formateur_nda: formData.get('nda'),
-                adresse_formateur: formData.get('adresse')
+                formateur_siret: formData.get('siret') || null,
+                formateur_nda: formData.get('nda') || null,
+                adresse_formateur: formData.get('adresse') || null
               };
-              const { error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id);
+              console.log("Tentative d'enregistrement profil formateur :", updates);
+              const { data, error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id).select();
               if (!error) {
-                alert("Profil mis à jour !");
+                console.log("Succès enregistrement profil :", data);
+                alert("Profil mis à jour avec succès !");
                 await fetchUtilisateurs();
-              } else alert("Erreur: " + error.message);
+              } else {
+                console.error("Erreur critique update profil:", error);
+                alert("Erreur de sauvegarde: " + (error?.message || JSON.stringify(error)));
+              }
             }}>
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
@@ -2103,8 +2108,8 @@ export default function App() {
       await fetchDocuments(); // Recharger pour mettre à jour documentTemplates
       alert(`Modèle Word pour "${type}" enregistré avec succès.`);
     } catch (err) {
-      console.error("Upload Template Error:", err);
-      alert("Erreur lors de l'upload du modèle Word.");
+      console.error("Upload Template Error DETAILS:", err);
+      alert("Erreur lors de l'upload du modèle Word : " + (err.message || 'Erreur inconnue'));
     }
   };
 
@@ -2481,8 +2486,8 @@ export default function App() {
               <button onClick={() => { setActiveTab('dashboard_admin'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard_admin' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <SettingsIcon /> Dashboard Admin
               </button>
-              <button onClick={() => { setActiveTab('modeles_maitres'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modeles_maitres' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <AdjustmentsIcon /> Modèles Maîtres
+              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <AdjustmentsIcon /> Modules
               </button>
             </>
           )}
@@ -2570,7 +2575,7 @@ export default function App() {
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
           />}
-          {activeTab === 'ingenierie' && <IngenierieView
+          {activeTab === 'modules' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
