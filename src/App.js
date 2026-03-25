@@ -279,7 +279,8 @@ const AdminDashboardView = ({
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
   clients, formateurs, assignFormateur, assignModule, documents,
-  modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments
+  modules, handleGenerateDocx, handleGenerateDynamicPDF, supabase, fetchDocuments,
+  sessions, expandedClientId, setExpandedClientId
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -867,7 +868,8 @@ const FormateurView = ({
   clients, formateurs, sessions, generateSessions,
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole, handleDownloadAttendanceCertificate,
-  handleAddSession, handleDeleteSession, updateSessionTime
+  handleAddSession, handleDeleteSession, updateSessionTime,
+  handleGenerateDynamicPDF, documents
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2891,6 +2893,9 @@ export default function App() {
             handleGenerateDynamicPDF={handleGenerateDynamicPDF}
             supabase={supabase}
             fetchDocuments={fetchDocuments}
+            sessions={sessions}
+            expandedClientId={expandedClientId}
+            setExpandedClientId={setExpandedClientId}
           />}
           {activeTab === 'modeles_maitres' && <ModelesMaitresView
             modules={modules}
@@ -2928,6 +2933,8 @@ export default function App() {
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
+            handleGenerateDynamicPDF={handleGenerateDynamicPDF}
+            documents={documents}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} handleDownloadAttendanceCertificate={handleDownloadAttendanceCertificate} userRole={userRole} />}
