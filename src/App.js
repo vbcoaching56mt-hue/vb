@@ -2637,6 +2637,10 @@ export default function App() {
             viewingDocId={viewingDocId}
             setViewingDocId={setViewingDocId}
             handleSignatureSave={handleSignatureSave}
+            documentTemplates={documentTemplates}
+            handleUploadDocxTemplate={handleUploadDocxTemplate}
+            newTemplateName={newTemplateName}
+            setNewTemplateName={setNewTemplateName}
           />}
         </main>
       </div>
