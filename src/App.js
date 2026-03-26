@@ -6,7 +6,7 @@ import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
-import { Plus } from 'lucide-react';
+import { Plus, Users, FileText, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
@@ -279,8 +279,8 @@ const AdminClientsView = ({
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
-  newClientPhone, setNewClientPhone,
-  newClientEmail, setNewClientEmail,
+  clientPhone, setClientPhone,
+  clientEmail, setClientEmail,
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments
@@ -297,6 +297,11 @@ const AdminClientsView = ({
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-green-500 rounded-full mr-3"></span> Ajouter un Utilisateur
       </h2>
+      <div className="flex border-b border-gray-200 mb-6">
+        <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
+        <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
+      </div>
+
       <form onSubmit={handleAddUser} className="flex flex-col lg:flex-row gap-4 items-end">
         <div className="flex-1 w-full">
           <label className="block text-sm font-medium text-gray-700 mb-1">Nom complet</label>
@@ -324,8 +329,8 @@ const AdminClientsView = ({
           <label className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
           <input
             type="tel"
-            value={newClientPhone}
-            onChange={(e) => setNewClientPhone(e.target.value)}
+            value={clientPhone}
+            onChange={(e) => setClientPhone(e.target.value)}
             placeholder="Ex: 0612345678"
             className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
           />
@@ -334,8 +339,8 @@ const AdminClientsView = ({
           <label className="block text-sm font-medium text-gray-700 mb-1">Email Contact</label>
           <input
             type="email"
-            value={newClientEmail}
-            onChange={(e) => setNewClientEmail(e.target.value)}
+            value={clientEmail}
+            onChange={(e) => setClientEmail(e.target.value)}
             placeholder="Ex: contact@entreprise.com"
             className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
           />
@@ -385,7 +390,7 @@ const AdminClientsView = ({
                     {client.status || 'Actif'}
                   </span>
                   <span className="text-gray-400">
-                    <svg className={`w-5 h-5 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                   </span>
                 </div>
               </div>
@@ -565,7 +570,7 @@ const AdminClientsView = ({
   </div>
 );
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments }) => (
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Gestion des Formateurs</h1>
@@ -577,6 +582,10 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Liste des Formateurs
       </h2>
+      <div className="flex border-b border-gray-200 mb-6 font-sans">
+        <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
+        <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
+      </div>
       <ul className="space-y-6">
         {formateurs.map(f => {
           const sesClients = clients.filter(c => c.formateur_id === f.id);
@@ -586,9 +595,16 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
               <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
                 <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
                   <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
-                  <div className="flex flex-col">
-                    <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
-                    <span className="text-sm text-gray-500">{f.email}</span>
+                  <div className="flex flex-col flex-1">
+                    <div className="flex items-center justify-between pr-4">
+                      <div>
+                        <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
+                        <span className="text-sm text-gray-500 block">{f.email}</span>
+                      </div>
+                      <span className="text-gray-400">
+                        {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 mt-2 md:mt-0">
@@ -736,7 +752,8 @@ const IngenierieView = ({
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId
+  addingToModuleId, setAddingToModuleId,
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -801,6 +818,50 @@ const IngenierieView = ({
           );
         })}
         {modules.length === 0 && <div className="text-gray-500 italic col-span-2">Créez votre premier module depuis le formulaire ci-dessus.</div>}
+      </div>
+    </div>
+
+    {/* Gestion des Modèles Word (.docx) */}
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+        <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Bibliothèque de Modèles Word (.docx)
+      </h2>
+      <p className="text-sm text-gray-500 mb-6">Uploadez vos modèles Word contenant les tags <code>{"{nomcomplet_client}"}</code>, <code>{"{adresse_session}"}</code>, etc.</p>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
+          <h3 className="font-bold text-gray-900 mb-4 flex items-center"><FileText className="mr-2" size={18}/> Nouveau Modèle</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Nom du type (Ex: Contrat, Attestation...)</label>
+              <input 
+                type="text" 
+                value={newTemplateName} 
+                onChange={e => setNewTemplateName(e.target.value)}
+                placeholder="Ex: Contrat de formation"
+                className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Fichier .docx</label>
+              <input 
+                type="file" 
+                accept=".docx"
+                onChange={e => {
+                  const file = e.target.files[0];
+                  if (file && newTemplateName) {
+                    handleUploadDocxTemplate(file, newTemplateName);
+                    setTimeout(() => setNewTemplateName(''), 1000);
+                  } else if (!newTemplateName) {
+                    alert('Veuillez saisir un nom pour le modèle avant de choisir le fichier.');
+                    e.target.value = '';
+                  }
+                }}
+                className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg"
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1729,8 +1790,8 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState('client');
-  const [newClientPhone, setNewClientPhone] = useState('');
-  const [newClientEmail, setNewClientEmail] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
   const [isAddingUser, setIsAddingUser] = useState(false);
 
   // États formulaire "Ingénierie Modules" (Admin)
@@ -1856,8 +1917,8 @@ export default function App() {
         nom: newUserName,
         email: newUserEmail,
         role: newUserRole,
-        client_phone: newClientPhone,
-        client_email: newClientEmail
+        client_phone: clientPhone,
+        client_email: clientEmail
       }])
       .select();
 
@@ -1870,8 +1931,8 @@ export default function App() {
       await fetchDocuments();
       setNewUserName('');
       setNewUserEmail('');
-      setNewClientPhone('');
-      setNewClientEmail('');
+      setClientPhone('');
+      setClientEmail('');
     }
     setIsAddingUser(false);
   };
@@ -2617,10 +2678,12 @@ export default function App() {
             setNewUserEmail={setNewUserEmail}
             newUserRole={newUserRole}
             setNewUserRole={setNewUserRole}
-            newClientPhone={newClientPhone}
-            setNewClientPhone={setNewClientPhone}
-            newClientEmail={newClientEmail}
-            setNewClientEmail={setNewClientEmail}
+            clientPhone={clientPhone}
+            setClientPhone={setClientPhone}
+            clientEmail={clientEmail}
+            setClientEmail={setClientEmail}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
             isAddingUser={isAddingUser}
             clients={clients}
             formateurs={formateurs}
@@ -2645,6 +2708,8 @@ export default function App() {
             supabase={supabase}
             fetchUtilisateurs={fetchUtilisateurs}
             fetchDocuments={fetchDocuments}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
           />}
           {activeTab === 'modules' && <IngenierieView
             modules={modules}
@@ -2663,6 +2728,9 @@ export default function App() {
             setNewModDocFile={setNewModDocFile}
             addingToModuleId={addingToModuleId}
             setAddingToModuleId={setAddingToModuleId}
+            handleUploadDocxTemplate={handleUploadDocxTemplate}
+            newTemplateName={newTemplateName}
+            setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
