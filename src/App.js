@@ -283,7 +283,8 @@ const AdminClientsView = ({
   clientEmail, setClientEmail,
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
-  expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments
+  expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
+  activeTab, setActiveTab
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
