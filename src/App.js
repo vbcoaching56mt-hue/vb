@@ -2251,25 +2251,47 @@ export default function App() {
     const module = modules.find(m => m.id === client.module_id);
     if (!module) return;
 
-    const newSessions = [];
-    for (let i = 1; i <= module.seances_prevues; i++) {
-      newSessions.push({
-        client_id: client.id,
-        module_id: module.id,
-        numero_seance: i,
-        nom: `${module.nom} - Séance ${i}`,
-        statut: 'À venir'
-      });
+    // 1. Vérifier les séances existantes pour ce client + module
+    const { data: existingSessions, error: checkError } = await supabase
+      .from('sessions')
+      .select('numero_seance')
+      .eq('client_id', client.id)
+      .eq('module_id', module.id);
+
+    if (checkError) {
+      console.error('Erreur vérification séances existantes:', checkError);
+      alert('Erreur lors de la vérification des séances existantes.');
+      return;
     }
 
-    // On utilise insert direct car on n'a pas encore de RPC pour les sessions
-    const { error } = await supabase.from('sessions').insert(newSessions);
+    const existingNums = new Set((existingSessions || []).map(s => s.numero_seance));
+    const sessionsToInsert = [];
+
+    for (let i = 1; i <= module.seances_prevues; i++) {
+      if (!existingNums.has(i)) {
+        sessionsToInsert.push({
+          client_id: client.id,
+          module_id: module.id,
+          numero_seance: i,
+          nom: `${module.nom} - Séance ${i}`,
+          statut: 'À venir'
+        });
+      }
+    }
+
+    if (sessionsToInsert.length === 0) {
+      alert(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
+      return;
+    }
+
+    // 2. Insérer uniquement les séances manquantes
+    const { error } = await supabase.from('sessions').insert(sessionsToInsert);
     if (!error) {
       await fetchSessions();
-      alert(`${module.seances_prevues} séances générées pour ${client.nom}.`);
+      alert(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
     } else {
-      console.error("Erreur génération séances :", error);
-      alert("Erreur lors de la génération des séances : " + error.message);
+      console.error('Erreur génération séances :', error);
+      alert('Erreur lors de la génération des séances : ' + error.message);
     }
   };
 
@@ -2806,17 +2828,8 @@ export default function App() {
   }, [userRole]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
-  // Auto-génération de secours pour les clients sans sessions
-  useEffect(() => {
-    if (clients.length > 0 && modules.length > 0 && sessions.length > 0) {
-      clients.forEach(client => {
-        if (client.module_id && !sessions.some(s => s.client_id === client.id)) {
-          generateSessions(client);
-        }
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clients, modules, generateSessions]);
+  // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
+  // Les séances sont désormais générées uniquement via le bouton manuel dans la vue Formateur.
 
   // Affichage du simulateur de connexion ou de la page de mot de passe
   if (isSettingPassword) {
