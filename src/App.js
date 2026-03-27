@@ -186,85 +186,101 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
 
-const LoginView = ({ handleLogin, clients, formateurs }) => {
-  const [selectedRole, setSelectedRole] = useState(null);
+const LoginView = ({ handleLogin, supabase }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  if (selectedRole === 'client') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in text-center">
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-6">Sélectionner un Client</h2>
-          <div className="space-y-3 text-left max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-            {clients.map(c => (
-              <button key={c.id} onClick={() => handleLogin('client', c.id)} className="w-full p-4 border border-gray-100 rounded-2xl hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center group">
-                <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mr-3 font-bold group-hover:bg-indigo-600 group-hover:text-white transition-colors">{c.nom.charAt(0)}</div>
-                <div className="text-left">
-                  <p className="font-bold text-gray-900 leading-tight">{c.nom}</p>
-                  <p className="text-xs text-gray-500">{c.email}</p>
-                </div>
-              </button>
-            ))}
-            {clients.length === 0 && <p className="text-center text-gray-400 py-4 italic">Aucun client trouvé.</p>}
-          </div>
-          <button onClick={() => setSelectedRole(null)} className="mt-8 text-sm font-bold text-gray-400 hover:text-gray-600">← Retour</button>
-        </div>
-      </div>
-    );
-  }
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setIsLoading(true);
 
-  if (selectedRole === 'formateur') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in text-center">
-          <h2 className="text-2xl font-extrabold text-gray-900 mb-6">Sélectionner un Coach</h2>
-          <div className="space-y-3 text-left max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-            {formateurs.map(f => (
-              <button key={f.id} onClick={() => handleLogin('formateur', f.id)} className="w-full p-4 border border-gray-100 rounded-2xl hover:border-rose-500 hover:bg-rose-50 transition-all flex items-center group">
-                <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-3 font-bold group-hover:bg-rose-600 group-hover:text-white transition-colors">{f.nom.charAt(0)}</div>
-                <div className="text-left">
-                  <p className="font-bold text-gray-900 leading-tight">{f.nom}</p>
-                  <p className="text-xs text-gray-500">{f.email}</p>
-                </div>
-              </button>
-            ))}
-            {formateurs.length === 0 && <p className="text-center text-gray-400 py-4 italic">Aucun formateur trouvé.</p>}
-          </div>
-          <button onClick={() => setSelectedRole(null)} className="mt-8 text-sm font-bold text-gray-400 hover:text-gray-600">← Retour</button>
-        </div>
-      </div>
-    );
-  }
+    // 1. Authentification via Supabase
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password: password
+    });
+
+    if (authError) {
+      console.error('Erreur connexion:', authError);
+      if (authError.message.includes('Invalid login credentials')) {
+        setErrorMsg('Email ou mot de passe incorrect.');
+      } else if (authError.message.includes('Email not confirmed')) {
+        setErrorMsg('Votre email n\'a pas encore été confirmé.');
+      } else {
+        setErrorMsg(authError.message);
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    // 2. Chercher le rôle dans la base de données
+    const userEmail = authData.user?.email;
+    if (userEmail) {
+      const { data: userData, error: dbError } = await supabase
+        .from('utilisateurs')
+        .select('role, id')
+        .eq('email', userEmail)
+        .single();
+
+      if (userData && userData.role) {
+        handleLogin(userData.role, userData.id);
+        setIsLoading(false);
+        return;
+      } else {
+        console.error('Utilisateur non trouvé dans la DB:', dbError);
+        setErrorMsg('Votre compte existe mais n\'est pas encore configuré. Contactez l\'administrateur.');
+      }
+    }
+
+    setIsLoading(false);
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
         <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à VB ERP</h1>
-        <p className="text-gray-500 mb-8">Choisissez votre profil de démonstration pour basculer de vue.</p>
+        <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
 
-        <div className="space-y-4 text-left">
-          <button onClick={() => handleLogin('admin')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-gray-900 hover:shadow-md transition-all group">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-gray-900 group-hover:text-white transition-colors"><Settings /></div>
-              <div><p className="font-bold text-gray-900">Administrateur</p><p className="text-xs text-gray-500">Gestion globale</p></div>
-            </div>
-            <span className="text-gray-300 group-hover:text-gray-900">→</span>
+        <form onSubmit={handleSubmit} className="space-y-5 text-left">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse email</label>
+            <input 
+              type="email" 
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="votre@email.com"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Mot de passe</label>
+            <input 
+              type="password" 
+              required
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Votre mot de passe"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
+            />
+          </div>
+
+          {errorMsg && (
+            <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{errorMsg}</p>
+          )}
+
+          <button 
+            type="submit" 
+            disabled={isLoading}
+            className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isLoading ? 'Connexion en cours...' : 'Se connecter'}
           </button>
-          <button onClick={() => setSelectedRole('formateur')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-rose-500 group-hover:text-white transition-colors"><Users /></div>
-              <div><p className="font-bold text-gray-900">Formateur / Coach</p><p className="text-xs text-gray-500">Suivi des clients</p></div>
-            </div>
-            <span className="text-gray-300 group-hover:text-rose-500">→</span>
-          </button>
-          <button onClick={() => setSelectedRole('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><Users /></div>
-              <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
-            </div>
-            <span className="text-gray-300 group-hover:text-indigo-500">→</span>
-          </button>
-        </div>
+        </form>
       </div>
     </div>
   );
@@ -2834,7 +2850,7 @@ export default function App() {
   }
 
   if (!userRole) {
-    return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
+    return <LoginView handleLogin={handleLogin} supabase={supabase} />;
   }
 
   return (
