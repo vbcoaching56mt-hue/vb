@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, ChevronDown, ChevronUp, Users, FileText, Settings, LogOut, LayoutDashboard, User, Folder, Home, Clipboard, Check, Trash2, Save, Lock, AlertCircle } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Users, FileText, Settings, LogOut, User, Home, Clipboard, Check, Trash2, Save, Lock, AlertCircle } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { supabase } from './supabaseClient';
@@ -2571,11 +2571,6 @@ export default function App() {
         onClose={() => setViewingDocId(null)}
       />
 
-      <div style={{ display: 'none' }} aria-hidden="true" id="vercel-forced-usage">
-        <span>Brancement JSX : {activeTab} | {clientPhone} | {clientEmail} | {newTemplateName}</span>
-        <Plus /><ChevronDown /><ChevronUp /><Users /><FileText /><Settings /><LogOut /><LayoutDashboard /><User /><Folder /><Home /><Clipboard /><Check /><Trash2 /><Save /><Lock /><AlertCircle />
-        <button onClick={handleUploadDocxTemplate}></button>
-      </div>
     </div>
   );
 }
