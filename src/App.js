@@ -1987,11 +1987,12 @@ export default function App() {
     );
 
     // 2. Envoyer l'invitation via Supabase Auth Admin
-    // redirectTo = URL de notre app (doit être dans la whitelist Supabase > Auth > URL Configuration)
-    const redirectTo = `${window.location.origin}`;
+    // IMPORTANT: redirectTo doit être dans la whitelist Supabase > Auth > URL Configuration
+    // Et REACT_APP_APP_URL doit être défini dans les variables Vercel (ex: https://vb-macue-alpha.vercel.app)
+    const appUrl = process.env.REACT_APP_APP_URL || window.location.origin;
     const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: { full_name: nom, role: role },
-      redirectTo: redirectTo
+      redirectTo: appUrl
     });
 
     if (inviteError) {
