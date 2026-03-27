@@ -2800,8 +2800,6 @@ export default function App() {
       <SetPasswordView 
         supabase={supabase} 
         onComplete={async () => {
-          setIsSettingPassword(false);
-          
           // Attendre que Supabase finalise la session
           await new Promise(r => setTimeout(r, 500));
           
@@ -2810,9 +2808,6 @@ export default function App() {
           console.log('Auth user après SetPassword:', user, authError);
           
           if (user && user.email) {
-            // Charger les données utilisateurs
-            await fetchUtilisateurs();
-            
             // Chercher le rôle dans la base de données
             const { data: userData, error: dbError } = await supabase
               .from('utilisateurs')
@@ -2823,15 +2818,16 @@ export default function App() {
             console.log('DB user data:', userData, dbError);
             
             if (userData && userData.role) {
-              // Redirection automatique selon le rôle
+              // ⚡ D'ABORD définir le rôle, PUIS masquer le formulaire de mot de passe
               handleLogin(userData.role, userData.id);
+              setIsSettingPassword(false);
               return;
             }
           }
           
-          // Fallback : si on ne trouve pas le rôle, afficher la page de connexion
+          // Fallback: pas de rôle trouvé
           console.warn('Impossible de déterminer le rôle automatiquement.');
-          setUserRole(null);
+          setIsSettingPassword(false);
         }} 
       />
     );
