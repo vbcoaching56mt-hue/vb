@@ -2,7 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
+
+// Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
+const supabaseAdmin = createClient(
+  process.env.REACT_APP_SUPABASE_URL,
+  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY
+);
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -1922,9 +1929,7 @@ export default function App() {
     setIsAddingUser(true);
     
     // 1. Envoyer l'invitation via Supabase Auth
-    // Note: inviteUserByEmail nécessite une clé de service. 
-    // Sur le front-end, cela peut nécessiter une configuration spécifique ou une Edge Function.
-    const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
+    const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
       data: { full_name: nom, role: role }
     });
 
