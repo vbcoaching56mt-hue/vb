@@ -1,3 +1,4 @@
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
@@ -251,7 +252,7 @@ const LoginView = ({ handleLogin, clients, formateurs }) => {
           </button>
           <button onClick={() => setSelectedRole('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><User /></div>
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><Users /></div>
               <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
             </div>
             <span className="text-gray-300 group-hover:text-indigo-500">→</span>
@@ -881,7 +882,7 @@ const FormateurView = ({
                                         }`}
                                       title="Enregistrer les horaires"
                                     >
-                                      {savingId === session.id ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                                      {savingId === session.id ? <Plus className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
                                     </button>
                                   </div>
                                   <div className="mt-1 text-[9px] font-medium text-gray-400">
@@ -1166,7 +1167,7 @@ const DocumentsView = ({
                           <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors group">
                             <td className="py-4 px-2">
                               <div className="flex items-center">
-                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><Clipboard /></div>
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><FileText /></div>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-900 text-sm">{doc.nom}</span>
                                   {doc.type_document === 'Présence' && doc.date_seance && (
@@ -1229,7 +1230,7 @@ const DocumentsView = ({
                       <tr key={doc.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="py-4 font-bold text-gray-900 flex flex-col">
                           <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><Clipboard /></div>
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><FileText /></div>
                             <span>{doc.nom}</span>
                           </div>
                           {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="inline-flex mt-2 items-center text-xs px-3 py-1.5 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors w-fit shadow-sm border border-blue-200">Voir le document ↗</button>}
@@ -1459,7 +1460,7 @@ const BilanView = ({ handleDownloadPDF }) => (
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Intérêts Dominants</h2>
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 hover:bg-indigo-100 transition-colors group">
-            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><User /></div>
+            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><Users /></div>
             <h3 className="font-bold text-indigo-900 text-lg">Conventionnel</h3>
             <p className="text-xs text-indigo-700 mt-1">Profil respectueux des normes.</p>
           </div>
@@ -2362,7 +2363,7 @@ export default function App() {
                 <Users className="w-5 h-5 mr-3" /> Clients
               </button>
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <User className="w-5 h-5 mr-3" /> Formateurs
+                <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
               <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Modélothèque
@@ -2381,9 +2382,9 @@ export default function App() {
 
           {userRole === 'client' && (
             <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Home className="w-5 h-5 mr-3" /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Clipboard className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><User className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
             </>
           )}
