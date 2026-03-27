@@ -2037,34 +2037,21 @@ export default function App() {
       serviceKey
     );
 
-    // 2. Générer le lien d'invitation SANS envoyer d'email (on contourne le redirect Supabase)
-    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
-      type: 'invite',
-      email: email,
-      options: {
-        data: { full_name: nom, role: role }
-      }
+    // 2. Envoyer l'invitation via Supabase Auth Admin
+    // L'email utilise le template personnalisé dans Supabase Dashboard
+    // qui contient un lien direct vers notre app avec {{ .TokenHash }}
+    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
+      data: { full_name: nom, role: role }
     });
 
-    if (linkError) {
-      console.error("Erreur generateLink:", linkError);
-      alert(`Erreur lors de la création du lien : ${linkError.message}`);
+    if (inviteError) {
+      console.error("Erreur invitation Supabase:", inviteError);
+      alert(`L'invitation a échoué : ${inviteError.message}`);
       setIsAddingUser(false);
       return;
     }
 
-    // 3. Extraire le hashed_token et construire un lien direct vers NOTRE app
-    const hashedToken = linkData?.properties?.hashed_token;
-    if (!hashedToken) {
-      alert("Erreur : impossible de générer le token d'invitation.");
-      setIsAddingUser(false);
-      return;
-    }
-
-    const appUrl = process.env.REACT_APP_APP_URL || window.location.origin;
-    const inviteLink = `${appUrl}/#token_hash=${hashedToken}&type=invite`;
-
-    // 4. Créer l'entrée dans la table utilisateurs
+    // 3. Créer l'entrée dans la table utilisateurs
     const { error: dbError } = await supabase.from('utilisateurs').insert([{
       nom: nom,
       email: email,
@@ -2075,15 +2062,7 @@ export default function App() {
       console.error("Erreur DB après invitation:", dbError);
     }
 
-    // 5. Afficher le lien à l'admin et permettre de le copier
-    try {
-      await navigator.clipboard.writeText(inviteLink);
-      alert(`✅ Compte créé pour ${nom} !\n\n📋 Le lien d'invitation a été copié dans votre presse-papier.\n\nEnvoyez ce lien à ${email} par email ou messagerie.\n\nLien : ${inviteLink}`);
-    } catch {
-      // Fallback si clipboard non disponible
-      prompt(`✅ Compte créé pour ${nom} !\n\nCopiez ce lien et envoyez-le à ${email} :`, inviteLink);
-    }
-
+    alert(`✅ Invitation envoyée par email à ${email} !`);
     setIsAddingUser(false);
     setIsInviteModalOpen(false);
     fetchUtilisateurs();
