@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, ChevronDown, ChevronUp, Users, FileText, Settings, LogOut, LayoutDashboard, User, Folder, Home, Clipboard, Check, Trash2, Save, Lock, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
@@ -10,6 +11,12 @@ import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
+
+// Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
+const supabaseAdmin = createClient(
+  process.env.REACT_APP_SUPABASE_URL,
+  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY
+);
 
 if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
@@ -48,10 +55,10 @@ const radarData = [
 // MODALS
 // ==========================================
 const SignatureModal = ({ isOpen, onClose, onSave }) => {
-  const canvasRef = React.useRef(null);
-  const [isDrawing, setIsDrawing] = React.useState(false);
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (isOpen && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       ctx.lineWidth = 3;
@@ -60,6 +67,18 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  const getCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (e.touches && e.touches.length > 0) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        offsetX: e.touches[0].clientX - rect.left,
+        offsetY: e.touches[0].clientY - rect.top
+      };
+    }
+    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
+  };
 
   const startDrawing = (e) => {
     setIsDrawing(true);
@@ -78,18 +97,6 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   };
 
   const stopDrawing = () => setIsDrawing(false);
-
-  const getCoordinates = (e) => {
-    const canvas = canvasRef.current;
-    if (e.touches && e.touches.length > 0) {
-      const rect = canvas.getBoundingClientRect();
-      return {
-        offsetX: e.touches[0].clientX - rect.left,
-        offsetY: e.touches[0].clientY - rect.top
-      };
-    }
-    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
-  };
 
   const clearCanvas = () => {
     const canvas = canvasRef.current;
@@ -252,7 +259,7 @@ const LoginView = ({ handleLogin, clients, formateurs }) => {
           </button>
           <button onClick={() => setSelectedRole('client')} className="w-full flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-indigo-500 hover:shadow-md transition-all group">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><User /></div>
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mr-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors"><Users /></div>
               <div><p className="font-bold text-gray-900">Client / Bénéficiaire</p><p className="text-xs text-gray-500">Espace personnel</p></div>
             </div>
             <span className="text-gray-300 group-hover:text-indigo-500">→</span>
@@ -272,7 +279,7 @@ const AdminClientsView = ({
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
-  activeTab, setActiveTab
+  activeTab, setActiveTab, setIsInviteModalOpen
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -284,78 +291,29 @@ const AdminClientsView = ({
         <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
       </div>
 
-      {activeTab === 'clients' && (
-        <form onSubmit={handleAddUser} className="flex flex-col lg:flex-row gap-4 items-end">
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nom complet</label>
-            <input
-              type="text"
-              required
-              value={newUserName}
-              onChange={(e) => setNewUserName(e.target.value)}
-              placeholder="Ex: Jean Dupont"
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-            />
+      <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between mb-8 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
+            <Plus size={24} />
           </div>
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email Connexion</label>
-            <input
-              type="email"
-              required
-              value={newUserEmail}
-              onChange={(e) => setNewUserEmail(e.target.value)}
-              placeholder="Ex: jean.dupont@email.com"
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-            />
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Membre</h3>
+            <p className="text-sm text-gray-500">Invitez de nouveaux clients ou formateurs par email.</p>
           </div>
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Téléphone</label>
-            <input
-              type="tel"
-              value={clientPhone}
-              onChange={(e) => setClientPhone(e.target.value)}
-              placeholder="Ex: 0612345678"
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-            />
-          </div>
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email Contact</label>
-            <input
-              type="email"
-              value={clientEmail}
-              onChange={(e) => setClientEmail(e.target.value)}
-              placeholder="Ex: contact@entreprise.com"
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none transition-all"
-            />
-          </div>
-          <div className="w-full lg:w-48">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Rôle</label>
-            <select
-              value={newUserRole}
-              onChange={(e) => setNewUserRole(e.target.value)}
-              className="bg-gray-50 border border-gray-200 text-gray-900 text-sm rounded-xl focus:ring-green-500 focus:border-green-500 block w-full p-3 outline-none"
-            >
-              <option value="client">Client</option>
-              <option value="formateur">Formateur</option>
-            </select>
-          </div>
-          <button
-            type="submit"
-            disabled={isAddingUser}
-            className="w-full lg:w-auto bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-xl px-6 py-3 flex items-center justify-center transition-colors shadow-sm disabled:opacity-50"
-          >
-            <span className="mr-2"><Plus size={20} /></span>
-            {isAddingUser ? "Ajout..." : "Créer"}
-          </button>
-        </form>
-      )}
+        </div>
+        <button 
+          onClick={() => setIsInviteModalOpen(true)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
+        >
+          <Plus size={20} /> Inviter l'utilisateur
+        </button>
+      </div>
     </div>
 
-    {activeTab === 'clients' && (
-      <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Gestion des Clients
-        </h2>
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+        <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Gestion des Clients
+      </h2>
         <ul className="space-y-4">
           {clients.map(client => {
             const isExpanded = expandedClientId === client.id;
@@ -433,11 +391,10 @@ const AdminClientsView = ({
           })}
         </ul>
       </div>
-    )}
-  </div>
+    </div>
 );
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab }) => (
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -448,49 +405,86 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
         <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
       </div>
 
-      {activeTab === 'formateurs' && (
-        <ul className="space-y-6">
-          {formateurs.map(f => {
-            const sesClients = clients.filter(c => c.formateur_id === f.id);
-            const isExpanded = expandedClientId === f.id;
-            return (
-              <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
-                <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
-                  <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
-                    <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
-                    <div className="flex flex-col flex-1">
-                      <div className="flex items-center justify-between pr-4">
-                        <div>
-                          <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
-                          <span className="text-sm text-gray-500 block">{f.email}</span>
-                        </div>
-                        <span className="text-gray-400">
-                          {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                        </span>
+      <ul className="space-y-6">
+        {formateurs.map(f => {
+          const sesClients = clients.filter(c => c.formateur_id === f.id);
+          const isExpanded = expandedClientId === f.id;
+          return (
+            <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
+              <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
+                <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
+                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
+                  <div className="flex flex-col flex-1">
+                    <div className="flex items-center justify-between pr-4">
+                      <div>
+                        <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
+                        <span className="text-sm text-gray-500 block">{f.email}</span>
                       </div>
+                      <span className="text-gray-400">
+                        {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      </span>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-2 md:mt-0">
-                    <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
-                      {sesClients.length} client(s)
-                    </span>
                   </div>
                 </div>
+                <div className="flex items-center gap-3 mt-2 md:mt-0">
+                  <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
+                    {sesClients.length} client(s)
+                  </span>
+                </div>
+              </div>
 
-                {isExpanded && (
-                  <div className="mt-6 pt-6 border-t border-gray-200 animate-slide-up space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <input className="p-2 text-sm border rounded-lg" defaultValue={f.formateur_siret || ''} placeholder="SIRET" onBlur={e => supabase.from('utilisateurs').update({ formateur_siret: e.target.value }).eq('id', f.id)} />
-                      <input className="p-2 text-sm border rounded-lg" defaultValue={f.formateur_nda || ''} placeholder="NDA" onBlur={e => supabase.from('utilisateurs').update({ formateur_nda: e.target.value }).eq('id', f.id)} />
-                    </div>
+              {isExpanded && (
+                <div className="mt-6 pt-6 border-t border-gray-200 animate-slide-up space-y-6">
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-500 mb-4 uppercase tracking-wider flex items-center">
+                      <Users className="w-3.5 h-3.5 mr-2" /> Clients Assignés
+                    </h4>
+                    {sesClients.length > 0 ? (
+                      <div className="overflow-hidden border border-gray-100 rounded-xl shadow-sm">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Client</th>
+                              <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Module</th>
+                              <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Statut</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50 bg-white">
+                            {sesClients.map(client => {
+                              const clientModule = modules.find(m => m.id === client.module_id);
+                              return (
+                                <tr key={client.id} className="hover:bg-gray-50/50 transition-colors">
+                                  <td className="p-3">
+                                    <div className="font-bold text-sm text-gray-800">{client.nom || client.nomcomplet_client}</div>
+                                    <div className="text-[10px] text-gray-400">{client.email}</div>
+                                  </td>
+                                  <td className="p-3">
+                                    <span className="text-xs font-medium text-gray-600">{clientModule?.nom || 'Non assigné'}</span>
+                                  </td>
+                                  <td className="p-3 text-center">
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${client.status === 'Nouveau' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                                      {client.status || 'Actif'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="py-8 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                        <p className="text-sm text-gray-400 italic">Aucun client assigné à ce formateur.</p>
+                      </div>
+                    )}
                   </div>
-                )}
-              </li>
-            );
-          })}
-          {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
-        </ul>
-      )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+        {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
+      </ul>
     </div>
   </div>
 );
@@ -501,7 +495,8 @@ const IngenierieView = ({
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
   addingToModuleId, setAddingToModuleId,
-  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
+  handleUploadResource, newResourceName, setNewResourceName, isUploadingResource
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -569,6 +564,36 @@ const IngenierieView = ({
       </div>
     </div>
 
+    {/* Gestion des Ressources Pédagogiques (New) */}
+    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
+      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+        <span className="w-2 h-6 bg-emerald-500 rounded-full mr-3"></span> Gestion des Ressources Pédagogiques
+      </h2>
+      <div className="bg-emerald-50/50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row gap-4 items-end">
+        <div className="flex-1 w-full">
+          <label className="block text-xs font-bold text-emerald-800 uppercase mb-2">Nom de la Ressource</label>
+          <input 
+            type="text" 
+            placeholder="Ex: Guide Qualiopi 2024" 
+            value={newResourceName}
+            onChange={e => setNewResourceName(e.target.value)}
+            className="w-full text-sm p-3 bg-white border border-emerald-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
+          />
+        </div>
+        <div className="flex-none w-full md:w-auto">
+          <label className={`flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${(!newResourceName || isUploadingResource) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            {isUploadingResource ? 'Upload...' : 'Uploader Ressource'}
+            <input 
+              type="file" 
+              className="hidden" 
+              disabled={!newResourceName || isUploadingResource}
+              onChange={e => e.target.files[0] && handleUploadResource(e.target.files[0])}
+            />
+          </label>
+        </div>
+      </div>
+    </div>
+
     {/* Gestion des Modèles Word (.docx) */}
     <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -593,23 +618,21 @@ const IngenierieView = ({
             <div>
               <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Fichier .docx</label>
               <div className="flex gap-2">
-                <input 
-                  id="docx-upload-input"
-                  type="file" 
-                  accept=".docx"
-                  onChange={e => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    // On ne lance plus l'upload ici automatiquement pour suivre la demande d'un bouton dédié
-                  }}
-                  className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg"
-                />
-                <button 
-                  onClick={handleUploadDocxTemplate}
-                  className="bg-rose-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-rose-600 flex items-center gap-2 shrink-0 shadow-md transition-all"
-                >
-                  <Plus size={16}/> Uploader
-                </button>
+                <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      Uploader le Modèle (.docx)
+                      <input
+                        type="file"
+                        className="hidden"
+                        disabled={!newTemplateName}
+                        accept=".docx"
+                        onChange={(e) => {
+                          if (e.target.files[0]) {
+                            handleUploadDocxTemplate(e.target.files[0], newTemplateName);
+                            setNewTemplateName('');
+                          }
+                        }}
+                      />
+                    </label>
               </div>
             </div>
           </div>
@@ -719,7 +742,7 @@ const FormateurView = ({
             {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
             <div className="pt-6 border-t border-gray-100">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                <Folder /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
+                <FileText /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
@@ -882,7 +905,7 @@ const FormateurView = ({
                                         }`}
                                       title="Enregistrer les horaires"
                                     >
-                                      {savingId === session.id ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                                      {savingId === session.id ? <Plus className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
                                     </button>
                                   </div>
                                   <div className="mt-1 text-[9px] font-medium text-gray-400">
@@ -928,7 +951,7 @@ const FormateurView = ({
                                           : 'Émarger (Coach)'}
                                       </button>
                                     ) : (
-                                      <span className="text-green-500"><Check /></span>
+                                      <span className="text-green-500"><Plus /></span>
                                     )}
                                   </div>
                                 </td>
@@ -1167,7 +1190,7 @@ const DocumentsView = ({
                           <tr key={doc.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors group">
                             <td className="py-4 px-2">
                               <div className="flex items-center">
-                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><Clipboard /></div>
+                                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 transition-colors group-hover:bg-indigo-100 group-hover:text-indigo-600"><FileText /></div>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-900 text-sm">{doc.nom}</span>
                                   {doc.type_document === 'Présence' && doc.date_seance && (
@@ -1230,7 +1253,7 @@ const DocumentsView = ({
                       <tr key={doc.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="py-4 font-bold text-gray-900 flex flex-col">
                           <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><Clipboard /></div>
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center mr-3 text-gray-500 shrink-0"><FileText /></div>
                             <span>{doc.nom}</span>
                           </div>
                           {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="inline-flex mt-2 items-center text-xs px-3 py-1.5 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors w-fit shadow-sm border border-blue-200">Voir le document ↗</button>}
@@ -1460,7 +1483,7 @@ const BilanView = ({ handleDownloadPDF }) => (
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Intérêts Dominants</h2>
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 hover:bg-indigo-100 transition-colors group">
-            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><User /></div>
+            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><Users /></div>
             <h3 className="font-bold text-indigo-900 text-lg">Conventionnel</h3>
             <p className="text-xs text-indigo-700 mt-1">Profil respectueux des normes.</p>
           </div>
@@ -1508,6 +1531,290 @@ const ExercicesView = ({ setActiveTab }) => (
   </div>
 );
 
+const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole }) => {
+  const user = userRole === 'admin' ? { nom: 'Administrateur', email: 'admin@vb-coaching.fr' } : (userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : clients.find(c => c.id === currentUserId));
+  
+  const [profileData, setProfileData] = useState({
+    nom: user?.nom || '',
+    adresse: user?.adresse_formateur || user?.adresse_session || '',
+    siret: user?.formateur_siret || '',
+    nda: user?.formateur_nda || '',
+    nomcomplet: user?.nomcomplet_client || user?.nom || ''
+  });
+
+  const handleUpdate = async () => {
+    const updates = {
+      nom: profileData.nom,
+      adresse_formateur: profileData.adresse,
+      formateur_siret: profileData.siret,
+      formateur_nda: profileData.nda,
+      nomcomplet_client: profileData.nomcomplet
+    };
+    
+    const { error } = await supabase.from('utilisateurs').update(updates).eq('id', currentUserId);
+    if (!error) {
+      alert('Profil mis à jour avec succès !');
+      fetchUtilisateurs();
+    } else {
+      alert('Erreur lors de la mise à jour : ' + error.message);
+    }
+  };
+
+  return (
+    <div className="space-y-8 animate-fade-in max-w-2xl mx-auto">
+      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+          <span className="w-2 h-8 bg-indigo-600 rounded-full mr-4"></span> Mon Profil
+        </h2>
+        
+        <div className="space-y-5">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nom Complet / Raison Sociale</label>
+            <input 
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+              value={profileData.nomcomplet}
+              onChange={e => setProfileData({...profileData, nomcomplet: e.target.value})}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse</label>
+            <input 
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-sans"
+              value={profileData.adresse}
+              onChange={e => setProfileData({...profileData, adresse: e.target.value})}
+            />
+          </div>
+
+          {(userRole === 'admin' || userRole === 'formateur') && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
+                <input 
+                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  value={profileData.siret}
+                  onChange={e => setProfileData({...profileData, siret: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Numéro Déclaration Activité)</label>
+                <input 
+                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  value={profileData.nda}
+                  onChange={e => setProfileData({...profileData, nda: e.target.value})}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="pt-6">
+            <button 
+              onClick={handleUpdate}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+            >
+              <Save size={20} /> Enregistrer les modifications
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RessourcesView = ({ pedagogicalResources, supabase }) => {
+  const handleDownload = async (fileName) => {
+    const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(fileName, 60);
+    if (!error && data) {
+      window.open(data.signedUrl, '_blank');
+    } else {
+      alert('Erreur lors du téléchargement : ' + error?.message);
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ressources Pédagogiques</h1>
+          <p className="text-gray-500 text-lg">Bibliothèque de documents partagés par l'administration.</p>
+        </div>
+      </div>
+      
+      {pedagogicalResources.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {pedagogicalResources.map(res => (
+            <div key={res.name} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                  <FileText size={24} />
+                </div>
+                <button 
+                  onClick={() => handleDownload(res.name)}
+                  className="text-gray-400 hover:text-emerald-600 transition-colors"
+                >
+                  <Download size={20} />
+                </button>
+              </div>
+              <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={res.name.split('_').slice(1).join('_')}>
+                {res.name.split('_').slice(1).join('_') || res.name}
+              </h3>
+              <p className="text-[10px] text-gray-400">Ajouté le {new Date(res.created_at).toLocaleDateString()}</p>
+              
+              <button 
+                 onClick={() => handleDownload(res.name)}
+                 className="mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all uppercase tracking-wider"
+              >
+                Télécharger
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="bg-white py-20 text-center rounded-3xl border border-dashed border-gray-200">
+          <FileText className="mx-auto text-gray-200 mb-4" size={48} />
+          <p className="text-gray-400 italic">Aucune ressource disponible pour le moment.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SetPasswordView = ({ supabase, onComplete }) => {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (password.length < 8) {
+      setErrorMsg('Le mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMsg('Les mots de passe ne correspondent pas.');
+      return;
+    }
+
+    setIsUpdating(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    if (!error) {
+      // Nettoyer le hash de l'URL (tokens Supabase)
+      window.history.replaceState(null, '', window.location.pathname);
+      onComplete();
+    } else {
+      setErrorMsg('Erreur : ' + error.message);
+    }
+    setIsUpdating(false);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
+        <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">VB</div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
+        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à VBERP.</p>
+        <form onSubmit={handleSetPassword} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nouveau mot de passe</label>
+            <input 
+              type="password" 
+              required 
+              minLength={8}
+              placeholder="Minimum 8 caractères" 
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Confirmer le mot de passe</label>
+            <input 
+              type="password" 
+              required
+              placeholder="Saisissez à nouveau votre mot de passe"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            />
+          </div>
+          {errorMsg && (
+            <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{errorMsg}</p>
+          )}
+          <button 
+            type="submit" 
+            disabled={isUpdating}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isUpdating ? 'Configuration en cours...' : 'Valider et accéder à mon espace'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser }) => {
+  const [formData, setFormData] = useState({ nom: '', email: '', role: 'client' });
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-3xl p-8 shadow-2xl border border-gray-100 w-full max-w-md animate-scale-up relative">
+        <button onClick={onClose} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600">✕</button>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Inviter un Utilisateur</h2>
+        <p className="text-gray-500 text-sm mb-8">Un email sera envoyé pour définir le mot de passe.</p>
+        
+        <form onSubmit={(e) => { e.preventDefault(); onInvite(formData); }} className="space-y-5">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nom Complet</label>
+            <input 
+              required
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              value={formData.nom}
+              onChange={e => setFormData({...formData, nom: e.target.value})}
+              placeholder="Jean Dupont"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
+            <input 
+              required
+              type="email"
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              value={formData.email}
+              onChange={e => setFormData({...formData, email: e.target.value})}
+              placeholder="jean.dupont@email.com"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Rôle</label>
+            <select
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              value={formData.role}
+              onChange={e => setFormData({...formData, role: e.target.value})}
+            >
+              <option value="client">Client (Bénéficiaire)</option>
+              <option value="formateur">Formateur (Coach)</option>
+            </select>
+          </div>
+          
+          <button 
+            type="submit"
+            disabled={isAddingUser}
+            className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+          >
+            {isAddingUser ? 'Envoi...' : 'Envoyer l\'invitation'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // ==========================================
 // COMPOSANT PRINCIPAL
 // ==========================================
@@ -1518,6 +1825,17 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Détection synchrone au démarrage : lien invitation Supabase ou route /set-password
+  const [isSettingPassword, setIsSettingPassword] = useState(() => {
+    const hash = window.location.hash;
+    const path = window.location.pathname;
+    return (
+      path === '/set-password' ||
+      hash.includes('type=invite') ||
+      hash.includes('type=recovery') ||
+      (hash.includes('access_token') && (hash.includes('type=invite') || hash.includes('type=recovery')))
+    );
+  });
 
   // États de sélection et d'affichage centralisés
   const [signingSessionId, setSigningSessionId] = useState(null);
@@ -1565,6 +1883,10 @@ export default function App() {
   const [newDocVisFormateur, setNewDocVisFormateur] = useState(true);
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
+  const [pedagogicalResources, setPedagogicalResources] = useState([]);
+  const [newResourceName, setNewResourceName] = useState('');
+  const [isUploadingResource, setIsUploadingResource] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
 
 
@@ -1617,6 +1939,66 @@ export default function App() {
       });
       setDocumentTemplates(templates);
     }
+  };
+
+  const fetchPedagogicalResources = async () => {
+    const { data, error } = await supabase.storage.from('ressources-pedagogiques').list();
+    if (!error && data) {
+      setPedagogicalResources(data.filter(f => f.name !== '.emptyFolderPlaceholder'));
+    }
+  };
+
+  const handleUploadResource = async (file) => {
+    if (!file || !newResourceName.trim()) return;
+    setIsUploadingResource(true);
+    const ext = file.name.split('.').pop();
+    const cleanName = newResourceName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const fileName = `${Date.now()}_${cleanName}.${ext}`;
+    
+    const { error } = await supabase.storage.from('ressources-pedagogiques').upload(fileName, file);
+    
+    if (!error) {
+      alert('Ressource pédagogique ajoutée avec succès !');
+      setNewResourceName('');
+      fetchPedagogicalResources();
+    } else {
+      console.error("Erreur upload ressource:", error);
+      alert('Erreur lors de l\'upload : ' + error.message);
+    }
+    setIsUploadingResource(false);
+  };
+
+  const handleInviteUser = async (formData) => {
+    const { email, nom, role } = formData;
+    setIsAddingUser(true);
+    
+    // 1. Envoyer l'invitation via Supabase Auth
+    const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+      data: { full_name: nom, role: role }
+    });
+
+    if (inviteError) {
+      console.error("Erreur invitation Supabase:", inviteError);
+      alert("L'invitation n'a pas pu être envoyée. (Vérifiez la clé de service ou les permissions)");
+      setIsAddingUser(false);
+      return;
+    }
+
+    // 2. Créer l'entrée dans la table utilisateurs
+    const { error: dbError } = await supabase.from('utilisateurs').insert([{
+      nom: nom,
+      email: email,
+      role: role
+    }]);
+
+    if (dbError) {
+      console.error("Erreur DB après invitation:", dbError);
+    }
+
+    alert(`Invitation envoyée à ${email} !`);
+    setIsAddingUser(false);
+    setIsInviteModalOpen(false);
+    fetchUtilisateurs();
   };
 
   // --- Actions Navigation ---
@@ -1909,11 +2291,10 @@ export default function App() {
     }
   };
 
-  const handleUploadDocxTemplate = async () => {
+  const handleUploadDocxTemplate = async (fileArg, typeArg) => {
     try {
-      const input = document.getElementById('docx-upload-input');
-      const file = input?.files[0];
-      const type = newTemplateName;
+      const file = fileArg || null;
+      const type = typeArg || newTemplateName;
 
       if (!file) {
         alert("Veuillez sélectionner un fichier .docx d'abord.");
@@ -2319,8 +2700,20 @@ export default function App() {
     fetchDocuments();
     fetchModules();
     fetchSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    fetchPedagogicalResources();
+
+    // Détection des liens d'invitation ou de récupération de mot de passe
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (
+        event === 'PASSWORD_RECOVERY' || 
+        (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
+        window.location.pathname === '/set-password'
+      ) {
+        setIsSettingPassword(true);
+      }
+    });
+  }, [userRole]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   // Auto-génération de secours pour les clients sans sessions
   useEffect(() => {
@@ -2334,7 +2727,29 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clients, modules, generateSessions]);
 
-  // Affichage du simulateur de connexion
+  // Affichage du simulateur de connexion ou de la page de mot de passe
+  if (isSettingPassword) {
+    return (
+      <SetPasswordView 
+        supabase={supabase} 
+        onComplete={async () => {
+          setIsSettingPassword(false);
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: userData } = await supabase
+              .from('utilisateurs')
+              .select('role, id')
+              .eq('email', user.email)
+              .single();
+            if (userData) {
+              handleLogin(userData.role, userData.id);
+            }
+          }
+        }} 
+      />
+    );
+  }
+
   if (!userRole) {
     return <LoginView handleLogin={handleLogin} clients={clients} formateurs={formateurs} />;
   }
@@ -2363,7 +2778,7 @@ export default function App() {
                 <Users className="w-5 h-5 mr-3" /> Clients
               </button>
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <User className="w-5 h-5 mr-3" /> Formateurs
+                <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
               <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Modélothèque
@@ -2382,18 +2797,21 @@ export default function App() {
 
           {userRole === 'client' && (
             <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Home className="w-5 h-5 mr-3" /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Clipboard className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><User className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
             </>
           )}
 
-          {(userRole === 'formateur' || userRole === 'client') && (
-            <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <FileText className="w-5 h-5 mr-3" /> Modélothèque
-            </button>
-          )}
+              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FileText className="w-5 h-5 mr-3" /> Modélothèque
+              </button>
+              {userRole === 'formateur' && (
+                <button onClick={() => { setActiveTab('ressources'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ressources' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                  <FileText className="w-5 h-5 mr-3" /> Ressources
+                </button>
+              )}
         </nav>
 
         <div className="p-4 bg-gray-950 border-t border-gray-800">
@@ -2426,27 +2844,31 @@ export default function App() {
                 {userRole === 'client' && (clients.find(c => c.id === currentUserId)?.nom || "Bénéficiaire")}
               </p>
             </div>
-            <div className="w-10 h-10 rounded-full bg-gray-100 border-2 border-gray-200 flex items-center justify-center font-bold text-sm text-gray-600 shadow-sm">
+            <div 
+              onClick={() => setActiveTab('profil')}
+              className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105"
+            >
               {userRole === 'admin' ? "AD" : (userRole === 'formateur' ? "CH" : "CL")}
             </div>
           </div>
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
+          {activeTab === 'profil' && <ProfileView 
+            currentUserId={currentUserId}
+            supabase={supabase}
+            fetchUtilisateurs={fetchUtilisateurs}
+            formateurs={formateurs}
+            clients={clients}
+            userRole={userRole}
+          />}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
-            newUserName={newUserName}
-            setNewUserName={setNewUserName}
-            newUserEmail={newUserEmail}
-            setNewUserEmail={setNewUserEmail}
-            newUserRole={newUserRole}
-            setNewUserRole={setNewUserRole}
-            clientPhone={clientPhone}
-            setClientPhone={setClientPhone}
-            clientEmail={clientEmail}
-            setClientEmail={setClientEmail}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            newUserName={newUserName} setNewUserName={setNewUserName}
+            newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
+            newUserRole={newUserRole} setNewUserRole={setNewUserRole}
+            clientPhone={clientPhone} setClientPhone={setClientPhone}
+            clientEmail={clientEmail} setClientEmail={setClientEmail}
             isAddingUser={isAddingUser}
             clients={clients}
             formateurs={formateurs}
@@ -2454,13 +2876,14 @@ export default function App() {
             assignModule={assignModule}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
-            supabase={supabase}
-            fetchDocuments={fetchDocuments}
             sessions={sessions}
+            documentTemplates={documentTemplates}
+            supabase={supabase}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
             fetchUtilisateurs={fetchUtilisateurs}
-            documentTemplates={documentTemplates}
+            fetchDocuments={fetchDocuments}
+            setIsInviteModalOpen={setIsInviteModalOpen}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -2473,8 +2896,9 @@ export default function App() {
             fetchDocuments={fetchDocuments}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
+            modules={modules}
           />}
-          {activeTab === 'modules' && <IngenierieView
+          {activeTab === 'ingénierie' && userRole === 'admin' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
@@ -2494,6 +2918,10 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
+            handleUploadResource={handleUploadResource}
+            newResourceName={newResourceName}
+            setNewResourceName={setNewResourceName}
+            isUploadingResource={isUploadingResource}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
@@ -2549,6 +2977,16 @@ export default function App() {
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
           />}
+          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
+          {activeTab === 'profil' && <ProfileView 
+            currentUserId={currentUserId}
+            supabase={supabase}
+            fetchUtilisateurs={fetchUtilisateurs}
+            formateurs={formateurs}
+            clients={clients}
+            userRole={userRole}
+          />}
+          {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
         </main>
       </div>
 
@@ -2571,11 +3009,13 @@ export default function App() {
         onClose={() => setViewingDocId(null)}
       />
 
-      <div style={{ display: 'none' }} aria-hidden="true" id="vercel-forced-usage">
-        <span>Brancement JSX : {activeTab} | {clientPhone} | {clientEmail} | {newTemplateName}</span>
-        <Plus /><ChevronDown /><ChevronUp /><Users /><FileText /><Settings /><LogOut /><LayoutDashboard /><User /><Folder /><Home /><Clipboard /><Check /><Trash2 /><Save /><Lock /><AlertCircle />
-        <button onClick={handleUploadDocxTemplate}></button>
-      </div>
+      <InviteModal 
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+        onInvite={handleInviteUser}
+        isAddingUser={isAddingUser}
+      />
+
     </div>
   );
 }
