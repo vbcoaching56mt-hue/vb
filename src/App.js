@@ -272,7 +272,7 @@ const AdminClientsView = ({
   clients, formateurs, assignFormateur, assignModule,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
-  activeTab, setActiveTab
+  activeTab, setActiveTab, setIsInviteModalOpen
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
@@ -387,7 +387,7 @@ const AdminClientsView = ({
     </div>
 );
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab }) => (
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -488,7 +488,8 @@ const IngenierieView = ({
   newModDocName, setNewModDocName, newModDocType, setNewModDocType,
   newModDocFile, setNewModDocFile,
   addingToModuleId, setAddingToModuleId,
-  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
+  handleUploadResource, newResourceName, setNewResourceName, isUploadingResource
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -2788,18 +2789,11 @@ export default function App() {
           />}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
-            newUserName={newUserName}
-            setNewUserName={setNewUserName}
-            newUserEmail={newUserEmail}
-            setNewUserEmail={setNewUserEmail}
-            newUserRole={newUserRole}
-            setNewUserRole={setNewUserRole}
-            clientPhone={clientPhone}
-            setClientPhone={setClientPhone}
-            clientEmail={clientEmail}
-            setClientEmail={setClientEmail}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            newUserName={newUserName} setNewUserName={setNewUserName}
+            newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
+            newUserRole={newUserRole} setNewUserRole={setNewUserRole}
+            clientPhone={clientPhone} setClientPhone={setClientPhone}
+            clientEmail={clientEmail} setClientEmail={setClientEmail}
             isAddingUser={isAddingUser}
             clients={clients}
             formateurs={formateurs}
@@ -2807,13 +2801,14 @@ export default function App() {
             assignModule={assignModule}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
-            supabase={supabase}
-            fetchDocuments={fetchDocuments}
             sessions={sessions}
+            documentTemplates={documentTemplates}
+            supabase={supabase}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
             fetchUtilisateurs={fetchUtilisateurs}
-            documentTemplates={documentTemplates}
+            fetchDocuments={fetchDocuments}
+            setIsInviteModalOpen={setIsInviteModalOpen}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -2826,8 +2821,9 @@ export default function App() {
             fetchDocuments={fetchDocuments}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
+            modules={modules}
           />}
-          {activeTab === 'modules' && <IngenierieView
+          {activeTab === 'ingénierie' && userRole === 'admin' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
@@ -2847,6 +2843,10 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
+            handleUploadResource={handleUploadResource}
+            newResourceName={newResourceName}
+            setNewResourceName={setNewResourceName}
+            isUploadingResource={isUploadingResource}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
