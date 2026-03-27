@@ -1971,20 +1971,33 @@ export default function App() {
   const handleInviteUser = async (formData) => {
     const { email, nom, role } = formData;
     setIsAddingUser(true);
-    
-    // 1. Envoyer l'invitation via Supabase Auth
-    const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+
+    // 1. Créer un client admin local avec la service_role_key (portée limitée à cette fonction)
+    const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      alert("Clé de service non configurée. Vérifiez REACT_APP_SUPABASE_SERVICE_ROLE_KEY dans Vercel.");
+      setIsAddingUser(false);
+      return;
+    }
+
+    const adminClient = createClient(
+      process.env.REACT_APP_SUPABASE_URL,
+      serviceKey
+    );
+
+    // 2. Envoyer l'invitation via Supabase Auth Admin
+    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: { full_name: nom, role: role }
     });
 
     if (inviteError) {
       console.error("Erreur invitation Supabase:", inviteError);
-      alert("L'invitation n'a pas pu être envoyée. (Vérifiez la clé de service ou les permissions)");
+      alert(`L'invitation a échoué : ${inviteError.message}`);
       setIsAddingUser(false);
       return;
     }
 
-    // 2. Créer l'entrée dans la table utilisateurs
+    // 3. Créer l'entrée dans la table utilisateurs
     const { error: dbError } = await supabase.from('utilisateurs').insert([{
       nom: nom,
       email: email,
@@ -1995,7 +2008,7 @@ export default function App() {
       console.error("Erreur DB après invitation:", dbError);
     }
 
-    alert(`Invitation envoyée à ${email} !`);
+    alert(`✅ Invitation envoyée à ${email} !`);
     setIsAddingUser(false);
     setIsInviteModalOpen(false);
     fetchUtilisateurs();
