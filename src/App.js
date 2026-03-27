@@ -1,5 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, ChevronDown, ChevronUp, Users, FileText, Settings, LogOut, User, Home, Clipboard, Check, Trash2, Save, Lock, AlertCircle } from 'lucide-react';
+import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { supabase } from './supabaseClient';
@@ -719,7 +718,7 @@ const FormateurView = ({
             {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
             <div className="pt-6 border-t border-gray-100">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                <Folder /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
+                <FileText /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
@@ -928,7 +927,7 @@ const FormateurView = ({
                                           : 'Émarger (Coach)'}
                                       </button>
                                     ) : (
-                                      <span className="text-green-500"><Check /></span>
+                                      <span className="text-green-500"><Plus /></span>
                                     )}
                                   </div>
                                 </td>
