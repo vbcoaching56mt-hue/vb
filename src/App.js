@@ -1684,6 +1684,34 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isVerifying, setIsVerifying] = useState(true);
+  const [verifyError, setVerifyError] = useState('');
+
+  // Au montage : vérifier le token dans l'URL via verifyOtp
+  useEffect(() => {
+    const verifyToken = async () => {
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      const tokenHash = params.get('token_hash');
+      const type = params.get('type');
+
+      if (tokenHash && type) {
+        // Échanger le token_hash contre une session Supabase
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: type
+        });
+        if (error) {
+          console.error('Erreur verifyOtp:', error);
+          setVerifyError('Le lien est invalide ou a expiré. Demandez un nouveau lien à votre administrateur.');
+        }
+      }
+      // Si pas de token_hash, on cherche access_token (ancien flux)
+      // Supabase le gère automatiquement via onAuthStateChange
+      setIsVerifying(false);
+    };
+    verifyToken();
+  }, [supabase]);
 
   const handleSetPassword = async (e) => {
     e.preventDefault();
@@ -1701,7 +1729,6 @@ const SetPasswordView = ({ supabase, onComplete }) => {
     setIsUpdating(true);
     const { error } = await supabase.auth.updateUser({ password });
     if (!error) {
-      // Nettoyer le hash de l'URL (tokens Supabase)
       window.history.replaceState(null, '', window.location.pathname);
       onComplete();
     } else {
@@ -1709,6 +1736,30 @@ const SetPasswordView = ({ supabase, onComplete }) => {
     }
     setIsUpdating(false);
   };
+
+  if (isVerifying) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">VB</div>
+          <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (verifyError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
+          <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">!</div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
+          <p className="text-gray-500 text-sm mb-6">{verifyError}</p>
+          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="bg-gray-900 text-white font-bold py-3 px-6 rounded-xl">Retour à l'accueil</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
@@ -1825,16 +1876,16 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('accueil');
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
-  // Détection synchrone au démarrage : lien invitation Supabase ou route /set-password
+  // Détection synchrone au démarrage : lien invitation (token_hash ou access_token dans le hash)
   const [isSettingPassword, setIsSettingPassword] = useState(() => {
     const hash = window.location.hash;
     const path = window.location.pathname;
-    // Supabase redirige vers l'app avec #access_token=...&type=invite ou type=recovery
     return (
       path === '/set-password' ||
+      hash.includes('token_hash') ||
       hash.includes('type=invite') ||
       hash.includes('type=recovery') ||
-      hash.includes('access_token')  // catch-all pour tout lien Supabase Auth
+      hash.includes('access_token')
     );
   });
 
@@ -1973,7 +2024,7 @@ export default function App() {
     const { email, nom, role } = formData;
     setIsAddingUser(true);
 
-    // 1. Créer un client admin local avec la service_role_key (portée limitée à cette fonction)
+    // 1. Créer un client admin avec la service_role_key
     const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
     if (!serviceKey) {
       alert("Clé de service non configurée. Vérifiez REACT_APP_SUPABASE_SERVICE_ROLE_KEY dans Vercel.");
@@ -1986,23 +2037,34 @@ export default function App() {
       serviceKey
     );
 
-    // 2. Envoyer l'invitation via Supabase Auth Admin
-    // IMPORTANT: redirectTo doit être dans la whitelist Supabase > Auth > URL Configuration
-    // Et REACT_APP_APP_URL doit être défini dans les variables Vercel (ex: https://vb-macue-alpha.vercel.app)
-    const appUrl = process.env.REACT_APP_APP_URL || window.location.origin;
-    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: nom, role: role },
-      redirectTo: appUrl
+    // 2. Générer le lien d'invitation SANS envoyer d'email (on contourne le redirect Supabase)
+    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+      type: 'invite',
+      email: email,
+      options: {
+        data: { full_name: nom, role: role }
+      }
     });
 
-    if (inviteError) {
-      console.error("Erreur invitation Supabase:", inviteError);
-      alert(`L'invitation a échoué : ${inviteError.message}`);
+    if (linkError) {
+      console.error("Erreur generateLink:", linkError);
+      alert(`Erreur lors de la création du lien : ${linkError.message}`);
       setIsAddingUser(false);
       return;
     }
 
-    // 3. Créer l'entrée dans la table utilisateurs
+    // 3. Extraire le hashed_token et construire un lien direct vers NOTRE app
+    const hashedToken = linkData?.properties?.hashed_token;
+    if (!hashedToken) {
+      alert("Erreur : impossible de générer le token d'invitation.");
+      setIsAddingUser(false);
+      return;
+    }
+
+    const appUrl = process.env.REACT_APP_APP_URL || window.location.origin;
+    const inviteLink = `${appUrl}/#token_hash=${hashedToken}&type=invite`;
+
+    // 4. Créer l'entrée dans la table utilisateurs
     const { error: dbError } = await supabase.from('utilisateurs').insert([{
       nom: nom,
       email: email,
@@ -2013,7 +2075,15 @@ export default function App() {
       console.error("Erreur DB après invitation:", dbError);
     }
 
-    alert(`✅ Invitation envoyée à ${email} !`);
+    // 5. Afficher le lien à l'admin et permettre de le copier
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      alert(`✅ Compte créé pour ${nom} !\n\n📋 Le lien d'invitation a été copié dans votre presse-papier.\n\nEnvoyez ce lien à ${email} par email ou messagerie.\n\nLien : ${inviteLink}`);
+    } catch {
+      // Fallback si clipboard non disponible
+      prompt(`✅ Compte créé pour ${nom} !\n\nCopiez ce lien et envoyez-le à ${email} :`, inviteLink);
+    }
+
     setIsAddingUser(false);
     setIsInviteModalOpen(false);
     fetchUtilisateurs();
