@@ -187,7 +187,11 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
 // ==========================================
 
 const LoginView = ({ handleLogin, supabase }) => {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => {
+    // Tenter de pré-remplir l'email depuis l'URL (#email=... ou ?email=...)
+    const params = new URLSearchParams(window.location.hash.substring(1) || window.location.search);
+    return params.get('email') || '';
+  });
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -1745,7 +1749,11 @@ const SetPasswordView = ({ supabase, onComplete }) => {
     setIsUpdating(true);
     const { error } = await supabase.auth.updateUser({ password });
     if (!error) {
-      window.history.replaceState(null, '', window.location.pathname);
+      // Nettoyer les tokens sensibles mais garder l'email pour le LoginView si besoin
+      const params = new URLSearchParams(window.location.hash.substring(1));
+      const email = params.get('email');
+      const newHash = email ? `#email=${encodeURIComponent(email)}` : '';
+      window.history.replaceState(null, '', window.location.pathname + newHash);
       onComplete();
     } else {
       setErrorMsg('Erreur : ' + error.message);
