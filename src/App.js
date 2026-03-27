@@ -4,12 +4,6 @@ import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
-
-// Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
-const supabaseAdmin = createClient(
-  process.env.REACT_APP_SUPABASE_URL,
-  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY
-);
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -17,6 +11,12 @@ import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
+
+// Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
+const supabaseAdmin = createClient(
+  process.env.REACT_APP_SUPABASE_URL,
+  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY
+);
 
 if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
