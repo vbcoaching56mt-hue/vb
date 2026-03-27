@@ -2801,17 +2801,37 @@ export default function App() {
         supabase={supabase} 
         onComplete={async () => {
           setIsSettingPassword(false);
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: userData } = await supabase
+          
+          // Attendre que Supabase finalise la session
+          await new Promise(r => setTimeout(r, 500));
+          
+          // Récupérer l'utilisateur authentifié
+          const { data: { user }, error: authError } = await supabase.auth.getUser();
+          console.log('Auth user après SetPassword:', user, authError);
+          
+          if (user && user.email) {
+            // Charger les données utilisateurs
+            await fetchUtilisateurs();
+            
+            // Chercher le rôle dans la base de données
+            const { data: userData, error: dbError } = await supabase
               .from('utilisateurs')
               .select('role, id')
               .eq('email', user.email)
               .single();
-            if (userData) {
+            
+            console.log('DB user data:', userData, dbError);
+            
+            if (userData && userData.role) {
+              // Redirection automatique selon le rôle
               handleLogin(userData.role, userData.id);
+              return;
             }
           }
+          
+          // Fallback : si on ne trouve pas le rôle, afficher la page de connexion
+          console.warn('Impossible de déterminer le rôle automatiquement.');
+          setUserRole(null);
         }} 
       />
     );
