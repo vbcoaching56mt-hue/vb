@@ -1829,11 +1829,12 @@ export default function App() {
   const [isSettingPassword, setIsSettingPassword] = useState(() => {
     const hash = window.location.hash;
     const path = window.location.pathname;
+    // Supabase redirige vers l'app avec #access_token=...&type=invite ou type=recovery
     return (
       path === '/set-password' ||
       hash.includes('type=invite') ||
       hash.includes('type=recovery') ||
-      (hash.includes('access_token') && (hash.includes('type=invite') || hash.includes('type=recovery')))
+      hash.includes('access_token')  // catch-all pour tout lien Supabase Auth
     );
   });
 
@@ -1986,8 +1987,11 @@ export default function App() {
     );
 
     // 2. Envoyer l'invitation via Supabase Auth Admin
+    // redirectTo = URL de notre app (doit être dans la whitelist Supabase > Auth > URL Configuration)
+    const redirectTo = `${window.location.origin}`;
     const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: nom, role: role }
+      data: { full_name: nom, role: role },
+      redirectTo: redirectTo
     });
 
     if (inviteError) {
