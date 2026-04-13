@@ -381,21 +381,40 @@ const ClientDetailView = ({
     montant_prestation: client.montant_prestation || ''
   });
 
+  React.useEffect(() => {
+    const fetchDetailedClient = async () => {
+      const { data, error } = await supabase.from('clients').select('*').eq('id', client.id).single();
+      if (data && !error) {
+        setClientInfo({
+          nomcomplet_client: data.nom_complet || '',
+          client_email: data.email_contact || '',
+          client_phone: data.telephone || '',
+          adresse_client: data.adresse_postale || '',
+          numero_dossier: data.numero_dossier || '',
+          modalite_formation: data.modalite_formation || 'Mixte',
+          montant_prestation: data.montant_prestation || ''
+        });
+      }
+    };
+    fetchDetailedClient();
+  }, [client.id, supabase]);
+
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a,b)=> a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
 
   const handleSaveClientInfo = async () => {
     setIsSavingInfo(true);
-    const { error } = await supabase.from('utilisateurs').update({
-      nomcomplet_client: clientInfo.nomcomplet_client,
-      client_email: clientInfo.client_email,
-      client_phone: clientInfo.client_phone,
-      adresse_client: clientInfo.adresse_client,
-      adresse_session: clientInfo.adresse_client, 
+    const { error } = await supabase.from('clients').upsert({
+      id: client.id,
+      nom_complet: clientInfo.nomcomplet_client,
+      email_contact: clientInfo.client_email,
+      telephone: clientInfo.client_phone,
+      adresse_postale: clientInfo.adresse_client,
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
-      montant_prestation: clientInfo.montant_prestation
-    }).eq('id', client.id);
+      montant_prestation: clientInfo.montant_prestation,
+      formateur_id: client.formateur_id // Hérité de l'assignation globale
+    }, { onConflict: 'id' });
 
     if (error) {
       alert("Erreur lors de la sauvegarde : " + error.message);
@@ -2911,7 +2930,7 @@ export default function App() {
     }
   };
 
-  const handleGenerateDocx = async (client, type) => {
+  const handleGenerateDocx = async (clientRow, type) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -2919,19 +2938,29 @@ export default function App() {
         return;
       }
 
-      if (!client.module_id) {
+      // 1. Récupération depuis la table ciblée 'clients'
+      const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
+      const finalClient = theClient || clientRow; // fallback
+
+      // 2. Récupération formateur dans 'profiles'
+      let theCoach = { nom: 'Non assigné' };
+      if (finalClient.formateur_id) {
+        const { data: coachData } = await supabase.from('profiles').select('*').eq('id', finalClient.formateur_id).single();
+        if (coachData) theCoach = coachData;
+      }
+
+      if (!finalClient.module_id && !clientRow.module_id) {
         alert("Veuillez d'abord assigner un module à ce client.");
         return;
       }
 
-      const module = modules.find(m => m.id === client.module_id);
-      const coach = formateurs.find(f => f.id === client.formateur_id) || { nom: 'Non assigné' };
+      const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
 
       // Extraction impérative des dates via requête sur sessions
       const { data: sessionDates, error: dateError } = await supabase
         .from('sessions')
         .select('date')
-        .eq('client_id', client.id)
+        .eq('client_id', clientRow.id)
         .not('date', 'is', null)
         .order('date', { ascending: true });
 
@@ -2952,16 +2981,16 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom_formateur: `${coach.nom || ''} ${coach.prenom || ''}`.trim() || 'Non assigné',
-        adresse_formateur: coach.adresse_formateur || '',
-        formateur_nda: coach.formateur_nda || '',
-        formateur_siret: coach.formateur_siret || '',
-        nomcomplet_client: client.nomcomplet_client || `${client.nom || ''} ${client.prenom || ''}`.trim(),
-        client_phone: client.client_phone || client.telephone || '',
-        client_email: client.client_email || client.email || '',
-        prix_prestation: client.montant_prestation || module?.prix_prestation || '',
-        adresse_session: client.adresse_session || '',
-        modalite_formation: client.modalite_formation || 'Mixte',
+        nom_formateur: `${theCoach.nom || ''} ${theCoach.prenom || ''}`.trim() || 'Non assigné',
+        adresse_formateur: theCoach.adresse_formateur || theCoach.adresse || '',
+        formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
+        formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
+        nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
+        client_phone: finalClient.telephone || finalClient.client_phone || '',
+        client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
+        prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+        adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
+        modalite_formation: finalClient.modalite_formation || 'Mixte',
         date_debut: dateDebut,
         date_fin: dateFin,
         date_signature: new Date().toLocaleDateString('fr-FR'),
@@ -2975,7 +3004,8 @@ export default function App() {
       });
 
       // Save as file for manual check, then upload
-      const finalFileName = `${type}_${client.nom.replace(/\s+/g, '_')}_final.docx`;
+      const safeNomClient = (finalClient.nom_complet || clientRow.nom || 'Client').replace(/\s+/g, '_');
+      const finalFileName = `${type}_${safeNomClient}_final.docx`;
       saveAs(out, finalFileName);
 
       // Auto-upload the result too
@@ -2983,10 +3013,10 @@ export default function App() {
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
         await supabase.from('documents').insert([{
-          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${client.nomcomplet_client || client.nom}`,
+          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${finalClient.nom_complet || finalClient.nomcomplet_client || clientRow.nom}`,
           type_document: 'Autre',
           url: publicUrl,
-          user_id: client.id,
+          user_id: clientRow.id,
           visible_client: true,
           visible_formateur: true
         }]);
