@@ -370,8 +370,41 @@ const ClientDetailView = ({
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
+  const [isSavingInfo, setIsSavingInfo] = React.useState(false);
+  const [clientInfo, setClientInfo] = React.useState({
+    nomcomplet_client: client.nomcomplet_client || '',
+    client_email: client.client_email || '',
+    client_phone: client.client_phone || '',
+    adresse_client: client.adresse_client || client.adresse_session || '',
+    numero_dossier: client.numero_dossier || '',
+    modalite_formation: client.modalite_formation || 'Mixte',
+    montant_prestation: client.montant_prestation || ''
+  });
+
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a,b)=> a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
+
+  const handleSaveClientInfo = async () => {
+    setIsSavingInfo(true);
+    const { error } = await supabase.from('utilisateurs').update({
+      nomcomplet_client: clientInfo.nomcomplet_client,
+      client_email: clientInfo.client_email,
+      client_phone: clientInfo.client_phone,
+      adresse_client: clientInfo.adresse_client,
+      adresse_session: clientInfo.adresse_client, 
+      numero_dossier: clientInfo.numero_dossier,
+      modalite_formation: clientInfo.modalite_formation,
+      montant_prestation: clientInfo.montant_prestation
+    }).eq('id', client.id);
+
+    if (error) {
+      alert("Erreur lors de la sauvegarde : " + error.message);
+    } else {
+      await fetchUtilisateurs();
+      alert("Informations personnelles sauvegardées avec succès !");
+    }
+    setIsSavingInfo(false);
+  };
 
   const updateSession = async (id, payload) => {
     await supabase.from('sessions').update(payload).eq('id', id);
@@ -424,18 +457,53 @@ const ClientDetailView = ({
 
           <h3 className="text-lg font-bold text-gray-800 mt-8">Informations Personnelles</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.nomcomplet_client || ''} placeholder="Nom Complet (Génération Docs)" onBlur={e => supabase.from('utilisateurs').update({ nomcomplet_client: e.target.value }).eq('id', client.id)} />
-            <input className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.client_email || ''} placeholder="Email Contact" onBlur={e => supabase.from('utilisateurs').update({ client_email: e.target.value }).eq('id', client.id)} />
-            <input className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.client_phone || ''} placeholder="Téléphone" onBlur={e => supabase.from('utilisateurs').update({ client_phone: e.target.value }).eq('id', client.id)} />
-            <input className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.adresse_client || client.adresse_session || ''} placeholder="Adresse Postale" onBlur={e => supabase.from('utilisateurs').update({ adresse_client: e.target.value }).eq('id', client.id)} />
-            <input className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.numero_dossier || ''} placeholder="N° de Dossier" onBlur={e => supabase.from('utilisateurs').update({ numero_dossier: e.target.value }).eq('id', client.id)} />
-            <select className="p-3 text-sm border bg-gray-50 rounded-xl" defaultValue={client.modalite_formation || 'Mixte'} onChange={e => supabase.from('utilisateurs').update({ modalite_formation: e.target.value }).eq('id', client.id)}>
-              <option value="Mixte">Mixte (Présentiel & Distanciel)</option>
-              <option value="Présentiel">Présentiel</option>
-              <option value="Distanciel">Distanciel</option>
-            </select>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Nom Complet</label>
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.nomcomplet_client} onChange={e => setClientInfo({...clientInfo, nomcomplet_client: e.target.value})} placeholder="Nom Complet (Génération Docs)" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Email Contact</label>
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.client_email} onChange={e => setClientInfo({...clientInfo, client_email: e.target.value})} placeholder="Email Contact" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Téléphone</label>
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.client_phone} onChange={e => setClientInfo({...clientInfo, client_phone: e.target.value})} placeholder="Téléphone" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Adresse Postale</label>
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.adresse_client} onChange={e => setClientInfo({...clientInfo, adresse_client: e.target.value})} placeholder="Adresse complète" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">N° de Dossier</label>
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.numero_dossier} onChange={e => setClientInfo({...clientInfo, numero_dossier: e.target.value})} placeholder="N° de Dossier" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Montant de la Prestation (€)</label>
+              <input type="number" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.montant_prestation} onChange={e => setClientInfo({...clientInfo, montant_prestation: e.target.value})} placeholder="Montant en euros (ex: 1500)" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Modalités de la formation</label>
+              <select className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.modalite_formation} onChange={e => setClientInfo({...clientInfo, modalite_formation: e.target.value})}>
+                <option value="Mixte">Mixte (Présentiel & Distanciel)</option>
+                <option value="Présentiel">Présentiel</option>
+                <option value="Distanciel">Distanciel</option>
+              </select>
+            </div>
           </div>
-          <div className="flex gap-2 flex-wrap pt-4">
+          
+          <div className="flex justify-end pt-4 mb-4 border-b border-gray-100 pb-8">
+            <button 
+              onClick={handleSaveClientInfo}
+              disabled={isSavingInfo}
+              className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-all flex items-center disabled:opacity-50"
+            >
+              <Save size={18} className="mr-2" />
+              {isSavingInfo ? 'Enregistrement...' : 'Enregistrer les informations'}
+            </button>
+          </div>
+
+          <h3 className="text-lg font-bold text-gray-800 mt-2">Générateurs Automatiques</h3>
+          <div className="flex gap-2 flex-wrap pt-2">
              {Object.keys(documentTemplates || {}).map(key => (
                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
@@ -2884,15 +2952,16 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom_formateur: coach.nom || '',
+        nom_formateur: `${coach.nom || ''} ${coach.prenom || ''}`.trim() || 'Non assigné',
         adresse_formateur: coach.adresse_formateur || '',
         formateur_nda: coach.formateur_nda || '',
         formateur_siret: coach.formateur_siret || '',
         nomcomplet_client: client.nomcomplet_client || `${client.nom || ''} ${client.prenom || ''}`.trim(),
         client_phone: client.client_phone || client.telephone || '',
         client_email: client.client_email || client.email || '',
-        prix_prestation: module?.prix_prestation || '',
+        prix_prestation: client.montant_prestation || module?.prix_prestation || '',
         adresse_session: client.adresse_session || '',
+        modalite_formation: client.modalite_formation || 'Mixte',
         date_debut: dateDebut,
         date_fin: dateFin,
         date_signature: new Date().toLocaleDateString('fr-FR'),
