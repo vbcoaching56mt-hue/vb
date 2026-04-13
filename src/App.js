@@ -195,6 +195,8 @@ const LoginView = ({ handleLogin, supabase }) => {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -242,6 +244,75 @@ const LoginView = ({ handleLogin, supabase }) => {
     setIsLoading(false);
   };
 
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setIsLoading(true);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin + window.location.pathname,
+    });
+
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      setResetSent(true);
+    }
+    setIsLoading(false);
+  };
+
+  if (showForgotPassword) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
+          <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
+          <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
+          <p className="text-gray-500 mb-8">Saisissez votre email pour réinitialiser l'accès.</p>
+
+          {resetSent ? (
+            <div className="bg-green-50 text-green-700 p-4 rounded-xl text-sm font-medium mb-6">
+              Un email contenant le lien de réinitialisation vous a été envoyé.
+            </div>
+          ) : (
+            <form onSubmit={handleResetPassword} className="space-y-5 text-left">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse email</label>
+                <input 
+                  type="email" 
+                  required
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="votre@email.com"
+                  className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                />
+              </div>
+
+              {errorMsg && (
+                <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{errorMsg}</p>
+              )}
+
+              <button 
+                type="submit" 
+                disabled={isLoading}
+                className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isLoading ? 'Envoi en cours...' : 'Envoyer le lien'}
+              </button>
+            </form>
+          )}
+
+          <button 
+            type="button" 
+            onClick={() => { setShowForgotPassword(false); setResetSent(false); setErrorMsg(''); }}
+            className="mt-6 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            ← Retour à la connexion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
@@ -262,7 +333,16 @@ const LoginView = ({ handleLogin, supabase }) => {
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Mot de passe</label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-xs font-bold text-gray-400 uppercase">Mot de passe</label>
+              <button 
+                type="button" 
+                onClick={() => { setShowForgotPassword(true); setErrorMsg(''); }}
+                className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors"
+              >
+                Oublié ?
+              </button>
+            </div>
             <input 
               type="password" 
               required
