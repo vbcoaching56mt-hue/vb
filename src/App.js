@@ -554,8 +554,8 @@ const AdminClientsView = ({
         </h2>
         <div className="space-y-8">
           {Object.keys(clientsGroupedByFormateur).map(fId => {
-            const formateur = formateurs.find(f => f.id === fId);
-            const formateurName = formateur ? formateur.nom : 'Non Assignés';
+            const formateur = formateurs.find(f => String(f.id) === String(fId));
+            const formateurName = formateur ? `${formateur.nom || ''} ${formateur.prenom || ''}`.trim() : 'NON ASSIGNÉ';
             return (
               <div key={fId} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
                 <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex items-center">
@@ -2884,7 +2884,7 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom: coach.nom || '',
+        nom_formateur: coach.nom || '',
         adresse_formateur: coach.adresse_formateur || '',
         formateur_nda: coach.formateur_nda || '',
         formateur_siret: coach.formateur_siret || '',
