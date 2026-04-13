@@ -2225,8 +2225,12 @@ export default function App() {
         return;
       }
 
-      // 2. Insérer uniquement les séances manquantes
-      const { error } = await supabase.from('sessions').insert(sessionsToInsert);
+      // 2. Upsert : Empêche physiquement le doublon (via contrainte DB) 
+      const { error } = await supabase.from('sessions').upsert(sessionsToInsert, {
+        onConflict: 'client_id, module_id, nom',
+        ignoreDuplicates: true
+      });
+      
       if (!error) {
         await fetchSessions();
         alert(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
