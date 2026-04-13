@@ -716,72 +716,7 @@ const FormateurView = ({
         </div>
       </div>
 
-      {/* Mon Profil Formateur (Nouveau) */}
-      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Mon Profil Formateur
-        </h2>
-        {formateurs.filter(f => f.id === currentUserId).map(f => (
-          <div key={f.id} className="space-y-6">
-            <form className="grid grid-cols-1 md:grid-cols-3 gap-4 outline-none" onSubmit={async (e) => {
-              e.preventDefault();
-              const formData = new FormData(e.target);
-              const updates = {
-                formateur_siret: formData.get('siret') || null,
-                formateur_nda: formData.get('nda') || null,
-                adresse_formateur: formData.get('adresse') || null
-              };
-              console.log("Tentative d'enregistrement profil formateur :", updates);
-              const { data, error } = await supabase.from('utilisateurs').update(updates).eq('id', f.id).select();
-              if (!error) {
-                console.log("Succès enregistrement profil :", data);
-                alert("Profil mis à jour avec succès !");
-                await fetchUtilisateurs();
-              } else {
-                console.error("Erreur critique update profil:", error);
-                alert("Erreur de sauvegarde: " + (error?.message || JSON.stringify(error)));
-              }
-            }}>
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">SIRET</label>
-                <input name="siret" defaultValue={f.formateur_siret || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro SIRET" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">NDA</label>
-                <input name="nda" defaultValue={f.formateur_nda || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Numéro de déclaration d'activité" />
-              </div>
-              <div className="md:col-span-3">
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Adresse Professionnelle</label>
-                <input name="adresse" defaultValue={f.adresse_formateur || ''} className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-rose-500" placeholder="Adresse complète du centre ou du formateur" />
-              </div>
-              <div className="md:col-span-3 text-right">
-                <button type="submit" className="bg-gray-900 text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-800 transition-all">Enregistrer mon profil</button>
-              </div>
-            </form>
 
-            {/* Documents RH du formateur (visibles par lui seul et l'admin) */}
-            <div className="pt-6 border-t border-gray-100">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                <FileText /> <span className="ml-2">Mes Documents Contractuels (RH)</span>
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').map(doc => (
-                  <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center mr-3 shadow-sm text-rose-500">📄</div>
-                      <span className="text-xs font-bold text-gray-700">{doc.nom}</span>
-                    </div>
-                    <a href={doc.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-rose-600 bg-white px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-50 transition-all">Voir le document</a>
-                  </div>
-                ))}
-                {documents.filter(d => d.user_id === f.id && d.type_document === 'Contrat RH').length === 0 && (
-                  <p className="text-xs text-gray-400 italic">Aucun contrat RH n'est encore disponible.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
 
       <div className="grid grid-cols-1 gap-6">
         {assignedClients.length > 0 ? assignedClients.map(client => {
@@ -2251,47 +2186,56 @@ export default function App() {
     const module = modules.find(m => m.id === client.module_id);
     if (!module) return;
 
-    // 1. Vérifier les séances existantes pour ce client + module
-    const { data: existingSessions, error: checkError } = await supabase
-      .from('sessions')
-      .select('numero_seance')
-      .eq('client_id', client.id)
-      .eq('module_id', module.id);
+    // Verrou de concurrence local pour empêcher que l'effet ne s'exécute plusieurs fois simultanément
+    window._generatingSessionsFor = window._generatingSessionsFor || new Set();
+    if (window._generatingSessionsFor.has(client.id)) return;
+    window._generatingSessionsFor.add(client.id);
 
-    if (checkError) {
-      console.error('Erreur vérification séances existantes:', checkError);
-      alert('Erreur lors de la vérification des séances existantes.');
-      return;
-    }
+    try {
+      // 1. Vérifier les séances existantes pour ce client + module
+      const { data: existingSessions, error: checkError } = await supabase
+        .from('sessions')
+        .select('numero_seance')
+        .eq('client_id', client.id)
+        .eq('module_id', module.id);
 
-    const existingNums = new Set((existingSessions || []).map(s => s.numero_seance));
-    const sessionsToInsert = [];
-
-    for (let i = 1; i <= module.seances_prevues; i++) {
-      if (!existingNums.has(i)) {
-        sessionsToInsert.push({
-          client_id: client.id,
-          module_id: module.id,
-          numero_seance: i,
-          nom: `${module.nom} - Séance ${i}`,
-          statut: 'À venir'
-        });
+      if (checkError) {
+        console.error('Erreur vérification séances existantes:', checkError);
+        alert('Erreur lors de la vérification des séances existantes.');
+        return;
       }
-    }
 
-    if (sessionsToInsert.length === 0) {
-      alert(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
-      return;
-    }
+      const existingNums = new Set((existingSessions || []).map(s => s.numero_seance));
+      const sessionsToInsert = [];
 
-    // 2. Insérer uniquement les séances manquantes
-    const { error } = await supabase.from('sessions').insert(sessionsToInsert);
-    if (!error) {
-      await fetchSessions();
-      alert(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
-    } else {
-      console.error('Erreur génération séances :', error);
-      alert('Erreur lors de la génération des séances : ' + error.message);
+      for (let i = 1; i <= module.seances_prevues; i++) {
+        if (!existingNums.has(i)) {
+          sessionsToInsert.push({
+            client_id: client.id,
+            module_id: module.id,
+            numero_seance: i,
+            nom: `${module.nom} - Séance ${i}`,
+            statut: 'À venir'
+          });
+        }
+      }
+
+      if (sessionsToInsert.length === 0) {
+        alert(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
+        return;
+      }
+
+      // 2. Insérer uniquement les séances manquantes
+      const { error } = await supabase.from('sessions').insert(sessionsToInsert);
+      if (!error) {
+        await fetchSessions();
+        alert(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
+      } else {
+        console.error('Erreur génération séances :', error);
+        alert('Erreur lors de la génération des séances : ' + error.message);
+      }
+    } finally {
+      window._generatingSessionsFor.delete(client.id);
     }
   };
 
@@ -3098,14 +3042,7 @@ export default function App() {
             setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
-          {activeTab === 'profil' && <ProfileView 
-            currentUserId={currentUserId}
-            supabase={supabase}
-            fetchUtilisateurs={fetchUtilisateurs}
-            formateurs={formateurs}
-            clients={clients}
-            userRole={userRole}
-          />}
+
           {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
         </main>
       </div>
