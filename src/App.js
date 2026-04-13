@@ -249,9 +249,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
     setErrorMsg('');
     setIsLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: window.location.origin + window.location.pathname,
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
 
     if (error) {
       setErrorMsg(error.message);
@@ -1034,6 +1032,7 @@ const DocumentsView = ({
   documentTemplates, handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
+  const [modelesTab, setModelesTab] = React.useState('modeles');
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
@@ -1066,10 +1065,27 @@ const DocumentsView = ({
       <p className="text-gray-500 text-lg">Consultez et {isClient ? 'signez vos' : 'vérifiez les'} fichiers légaux ou de synthèse.</p>
 
       {isAdmin && (
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8 mt-6">
+        <div className="flex gap-4 mb-6">
+          <button 
+            onClick={() => setModelesTab('modeles')} 
+            className={`px-5 py-3 rounded-2xl font-bold transition-all shadow-sm ${modelesTab === 'modeles' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+            Modèles Automatiques (.docx)
+          </button>
+          <button 
+            onClick={() => setModelesTab('manuel')} 
+            className={`px-5 py-3 rounded-2xl font-bold transition-all shadow-sm ${modelesTab === 'manuel' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+            Assigner un document libre
+          </button>
+        </div>
+      )}
+
+      {isAdmin && modelesTab === 'modeles' && (
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-start">
             <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Ma Modélothèque (.docx)
+              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Ma Modélothèque
             </h2>
             <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono">
               <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
@@ -1128,8 +1144,8 @@ const DocumentsView = ({
       )}
 
       {/* Formulaire Administrateur d'ajout de document */}
-      {isAdmin && (
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden">
+      {isAdmin && modelesTab === 'manuel' && (
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden mb-8">
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-bl-full -z-10"></div>
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
             <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Mettre en ligne un Document
@@ -3101,9 +3117,7 @@ export default function App() {
             </>
           )}
 
-              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FileText className="w-5 h-5 mr-3" /> Modélothèque
-              </button>
+
               {userRole === 'formateur' && (
                 <button onClick={() => { setActiveTab('ressources'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ressources' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                   <FileText className="w-5 h-5 mr-3" /> Ressources
@@ -3195,7 +3209,7 @@ export default function App() {
             setActiveTab={setActiveTab}
             modules={modules}
           />}
-          {activeTab === 'ingénierie' && userRole === 'admin' && <IngenierieView
+          {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
