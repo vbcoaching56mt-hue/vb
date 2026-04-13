@@ -186,7 +186,7 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
 
-const LoginView = ({ handleLogin, supabase }) => {
+const LoginView = ({ handleLogin, supabase, successMessage }) => {
   const [email, setEmail] = useState(() => {
     // Tenter de pré-remplir l'email depuis l'URL (#email=... ou ?email=...)
     const params = new URLSearchParams(window.location.hash.substring(1) || window.location.search);
@@ -319,6 +319,12 @@ const LoginView = ({ handleLogin, supabase }) => {
         <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à VB ERP</h1>
         <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
+
+        {successMessage && (
+          <div className="mb-6 p-4 rounded-xl text-sm font-medium bg-green-50 text-green-700">
+            {successMessage}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-5 text-left">
           <div>
@@ -1846,6 +1852,123 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   );
 };
 
+const ResetPasswordPage = ({ supabase, onComplete }) => {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [isVerifying, setIsVerifying] = useState(true);
+  const [verifyError, setVerifyError] = useState('');
+
+  useEffect(() => {
+    const verifyToken = async () => {
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      const tokenHash = params.get('token_hash');
+      const type = params.get('type');
+
+      if (tokenHash && type === 'recovery') {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' });
+        if (error) {
+          setVerifyError('Lien expiré ou invalide. Veuillez refaire une demande de réinitialisation.');
+        }
+      }
+      setIsVerifying(false);
+    };
+    verifyToken();
+  }, [supabase]);
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (password.length < 8) {
+      setErrorMsg('Le mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMsg('Les mots de passe ne correspondent pas.');
+      return;
+    }
+
+    setIsUpdating(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    if (!error) {
+      onComplete();
+    } else {
+      setErrorMsg('Erreur lors de la mise à jour : ' + error.message);
+    }
+    setIsUpdating(false);
+  };
+
+  if (isVerifying) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
+           <div className="w-16 h-16 bg-rose-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">VB</div>
+           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (verifyError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
+           <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6">!</div>
+           <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
+           <p className="text-gray-500 text-sm mb-6">{verifyError}</p>
+           <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="bg-gray-900 text-white font-bold py-3 px-6 rounded-xl">Retour à l'accueil</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
+        <div className="w-16 h-16 bg-rose-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">VB</div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Nouveau mot de passe</h2>
+        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre nouveau mot de passe sécurisé.</p>
+        <form onSubmit={handleUpdatePassword} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nouveau mot de passe</label>
+            <input 
+              type="password" 
+              required 
+              minLength={8}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Confirmer le mot de passe</label>
+            <input 
+              type="password" 
+              required
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+            />
+          </div>
+          {errorMsg && (
+            <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{errorMsg}</p>
+          )}
+          <button 
+            type="submit" 
+            disabled={isUpdating}
+            className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-lg transition-all disabled:opacity-50"
+          >
+            {isUpdating ? 'Enregistrement...' : 'Enregistrer le nouveau mot de passe'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser }) => {
   const [formData, setFormData] = useState({ nom: '', email: '', role: 'client' });
 
@@ -1921,12 +2044,22 @@ export default function App() {
     const path = window.location.pathname;
     return (
       path === '/set-password' ||
-      hash.includes('token_hash') ||
       hash.includes('type=invite') ||
-      hash.includes('type=recovery') ||
-      hash.includes('access_token')
+      (hash.includes('access_token') && !hash.includes('type=recovery')) ||
+      (hash.includes('token_hash') && !hash.includes('type=recovery'))
     );
   });
+
+  const [isResetPassword, setIsResetPassword] = useState(() => {
+    const hash = window.location.hash;
+    const path = window.location.pathname;
+    return (
+      path === '/reset-password' ||
+      hash.includes('type=recovery')
+    );
+  });
+
+  const [resetSuccessMsg, setResetSuccessMsg] = useState('');
 
   // États de sélection et d'affichage centralisés
   const [signingSessionId, setSigningSessionId] = useState(null);
@@ -2898,8 +3031,24 @@ export default function App() {
     );
   }
 
+  if (isResetPassword) {
+    return (
+      <ResetPasswordPage 
+        supabase={supabase} 
+        onComplete={async () => {
+          // On ne fait pas de log out car l'utilisateur est nouvellement authentifié
+          // mais on peut signer la session out pour forcer un vrain login, ou juste le renvoyer
+          await supabase.auth.signOut();
+          window.history.replaceState(null, '', '/');
+          setIsResetPassword(false);
+          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.");
+        }} 
+      />
+    );
+  }
+
   if (!userRole) {
-    return <LoginView handleLogin={handleLogin} supabase={supabase} />;
+    return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} />;
   }
 
   return (
