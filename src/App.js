@@ -1991,7 +1991,7 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
   </div>
 );
 
-const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole }) => {
+const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole, pedagogicalResources }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
 
   const calculateDuration = (start, end) => {
@@ -3996,7 +3996,7 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} />}
+          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
           {activeTab === 'modélothèque' && <DocumentsView
