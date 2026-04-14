@@ -2499,10 +2499,11 @@ export default function App() {
       .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, telephone')
       .eq('role', 'formateur');
 
-    // 2. Charger les clients depuis 'clients'
+    // 2. Charger les clients depuis 'utilisateurs' aussi (puisqu'ils sont dans le même tableau)
     const { data: clientsData, error: clientsError } = await supabase
-      .from('clients')
-      .select('*');
+      .from('utilisateurs')
+      .select('*')
+      .eq('role', 'client');
 
     if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
     if (clientsError) console.error("Erreur fetch clients:", clientsError);
@@ -2515,17 +2516,17 @@ export default function App() {
       // Mapping pour garder la compatibilité avec le reste du code
       const mappedClients = clientsData.map(c => ({
         id: c.id,
-        nom: c.nom_complet || "Client sans nom",
-        email: c.email_contact,
+        nom: c.nomcomplet_client || c.nom_complet || "Client sans nom",
+        email: c.client_email || c.email_contact,
         role: 'client',
         numero_dossier: c.numero_dossier,
         formateur_id: c.formateur_id,
         module_id: c.module_id,
         seances_effectuees: c.seances_effectuees || 0,
         seances_totales: c.seances_totales || 0,
-        nomcomplet_client: c.nom_complet,
-        client_phone: c.telephone,
-        client_email: c.email_contact,
+        nomcomplet_client: c.nomcomplet_client || c.nom_complet,
+        client_phone: c.client_telephone || c.telephone,
+        client_email: c.client_email || c.email_contact,
         adresse_session: c.adresse_postale,
         montant_prestation: c.montant_prestation,
         modalite_formation: c.modalite_formation || 'Mixte'
@@ -3068,8 +3069,8 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom_formateur: theCoach.nom || 'Non assigné',
-        raison_sociale: theCoach.nom || 'Non assigné',
+        nom_formateur: theCoach.nom || theCoach.nom_complet || theCoach.nomcomplet_client || 'Non assigné',
+        raison_sociale: theCoach.nom || theCoach.nom_complet || theCoach.nomcomplet_client || 'Non assigné',
         adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
         formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
         formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
