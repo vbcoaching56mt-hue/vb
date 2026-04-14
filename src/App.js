@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download, ChevronLeft, ChevronRight, Layout } from 'lucide-react';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
