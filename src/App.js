@@ -692,8 +692,25 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules }) => (
-  <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules }) => {
+  const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
+
+  if (selectedFormateurId) {
+    const formateur = formateurs.find(f => f.id === selectedFormateurId);
+    if (formateur) {
+      return (
+        <FormateurDetailView 
+          formateur={formateur} 
+          onBack={() => setSelectedFormateurId(null)} 
+          supabase={supabase} 
+          fetchUtilisateurs={fetchUtilisateurs} 
+        />
+      );
+    }
+  }
+
+  return (
+    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div>
       <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
         <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Liste des Formateurs
@@ -710,24 +727,24 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           return (
             <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
               <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
-                <div className="flex items-center cursor-pointer" onClick={() => setExpandedClientId(isExpanded ? null : f.id)}>
-                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl">{f.nom ? f.nom.charAt(0) : '?'}</div>
+                <div className="flex items-center cursor-pointer hover:bg-white p-2 rounded-xl transition-all flex-1" onClick={() => setSelectedFormateurId(f.id)}>
+                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl shadow-sm">{f.nom ? f.nom.charAt(0) : '?'}</div>
                   <div className="flex flex-col flex-1">
                     <div className="flex items-center justify-between pr-4">
                       <div>
-                        <span className="font-bold text-gray-900 text-lg">{f.nom}</span>
+                        <span className="font-bold text-gray-900 text-lg hover:text-rose-600 transition-colors">{f.nom}</span>
                         <span className="text-sm text-gray-500 block">{f.email}</span>
                       </div>
-                      <span className="text-gray-400">
-                        {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      <span className="text-rose-400 bg-rose-50 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        Voir profil <ChevronRight size={14} />
                       </span>
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 mt-2 md:mt-0">
-                  <span className="text-sm font-bold text-rose-700 bg-rose-100 px-4 py-1.5 rounded-full">
-                    {sesClients.length} client(s)
-                  </span>
+                <div className="flex items-center gap-3 mt-2 md:mt-0 ml-4 border-l border-gray-100 pl-4">
+                  <button onClick={() => setExpandedClientId(isExpanded ? null : f.id)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                    {isExpanded ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
+                  </button>
                 </div>
               </div>
 
@@ -781,11 +798,11 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
             </li>
           );
         })}
-        {formateurs.length === 0 && <li className="p-4 text-center text-gray-500">Aucun formateur trouvé.</li>}
       </ul>
     </div>
   </div>
-);
+  );
+};
 
 const IngenierieView = ({
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
@@ -3012,10 +3029,10 @@ export default function App() {
       const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
       const finalClient = theClient || clientRow; // fallback
 
-      // 2. Récupération formateur dans 'profiles'
+      // 2. Récupération formateur dans 'utilisateurs'
       let theCoach = { nom: 'Non assigné' };
       if (finalClient.formateur_id) {
-        const { data: coachData } = await supabase.from('profiles').select('*').eq('id', finalClient.formateur_id).single();
+        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', finalClient.formateur_id).single();
         if (coachData) theCoach = coachData;
       }
 
@@ -3051,10 +3068,12 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom_formateur: `${theCoach.nom || ''} ${theCoach.prenom || ''}`.trim() || 'Non assigné',
-        adresse_formateur: theCoach.adresse_formateur || theCoach.adresse || '',
-        formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
-        formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
+        nom_formateur: theCoach.raison_sociale || theCoach.nom || 'Non assigné',
+        adresse_formateur: theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
+        formateur_nda: theCoach.nda || '',
+        formateur_siret: theCoach.siret || '',
+        email_formateur: theCoach.email || '',
+        tel_formateur: theCoach.telephone || '',
         nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
         client_phone: finalClient.telephone || finalClient.client_phone || '',
         client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
@@ -3692,3 +3711,119 @@ export default function App() {
     </div>
   );
 }
+
+const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs }) => {
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [legalInfo, setLegalInfo] = React.useState({
+    raison_sociale: formateur.raison_sociale || formateur.nom || '',
+    siret: formateur.siret || '',
+    nda: formateur.nda || '',
+    adresse_pro: formateur.adresse_pro || formateur.adresse_client || '',
+    email: formateur.email || '',
+    telephone: formateur.telephone || ''
+  });
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    const { error } = await supabase
+      .from('utilisateurs')
+      .update({
+        raison_sociale: legalInfo.raison_sociale,
+        siret: legalInfo.siret,
+        nda: legalInfo.nda,
+        adresse_pro: legalInfo.adresse_pro,
+        email: legalInfo.email,
+        telephone: legalInfo.telephone
+      })
+      .eq('id', formateur.id);
+
+    if (error) {
+      alert("Erreur lors de la sauvegarde : " + error.message);
+    } else {
+      await fetchUtilisateurs();
+      alert("Informations légales enregistrées !");
+    }
+    setIsSaving(false);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
+        <ChevronLeft className="w-5 h-5 mr-1" /> Retour à la liste des formateurs
+      </button>
+
+      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
+           <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center font-bold text-3xl shadow-inner">
+             {formateur.nom ? formateur.nom.charAt(0) : '?'}
+           </div>
+           <div>
+             <h2 className="text-3xl font-bold text-gray-900">{formateur.nom}</h2>
+             <p className="text-gray-500 text-lg">Profil Formateur & Informations Légales</p>
+           </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <FileText className="text-rose-500" /> Identité Professionnelle
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Raison Sociale / Nom complet</label>
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all font-medium" 
+                  value={legalInfo.raison_sociale} onChange={e => setLegalInfo({...legalInfo, raison_sociale: e.target.value})} placeholder="Ex: Matthys Coaching EURL" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
+                    value={legalInfo.siret} onChange={e => setLegalInfo({...legalInfo, siret: e.target.value})} placeholder="14 chiffres" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Qualiopi)</label>
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
+                    value={legalInfo.nda} onChange={e => setLegalInfo({...legalInfo, nda: e.target.value})} placeholder="N° Déclaration" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <Plus className="text-indigo-500" /> Coordonnées & Contact
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Professionnelle</label>
+                <textarea rows="2" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
+                  value={legalInfo.adresse_pro} onChange={e => setLegalInfo({...legalInfo, adresse_pro: e.target.value})} placeholder="Adresse complète du siège" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
+                    value={legalInfo.email} onChange={e => setLegalInfo({...legalInfo, email: e.target.value})} placeholder="Email pro" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
+                    value={legalInfo.telephone} onChange={e => setLegalInfo({...legalInfo, telephone: e.target.value})} placeholder="06..." />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-12 flex justify-end">
+          <button onClick={handleSave} disabled={isSaving} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
+            <Save size={20} />
+            {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
