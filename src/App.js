@@ -502,7 +502,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
-  pedagogicalResources
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -786,7 +786,7 @@ const AdminClientsView = ({
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
-  pedagogicalResources
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -806,6 +806,8 @@ const AdminClientsView = ({
           sessions={sessions} fetchSessions={fetchSessions} documents={documents} 
           handleGenerateDocx={handleGenerateDocx} documentTemplates={documentTemplates} 
           pedagogicalResources={pedagogicalResources}
+          handleDownloadResource={handleDownloadResource}
+          handleUploadExerciseResponse={handleUploadExerciseResponse}
         />
       );
     }
@@ -1008,7 +1010,7 @@ const IngenierieView = ({
   newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase, 
-  createSessionFolder
+  createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
@@ -1224,7 +1226,7 @@ const FormateurView = ({
   expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
-  pedagogicalResources
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2065,7 +2067,10 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
   </div>
 );
 
-const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole, pedagogicalResources }) => {
+const SessionsView = ({ 
+  sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole, 
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse 
+}) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
 
   const calculateDuration = (start, end) => {
@@ -4145,6 +4150,8 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
             fetchSessions={fetchSessions}
             documents={documents}
+            handleDownloadResource={handleDownloadResource}
+            handleUploadExerciseResponse={handleUploadExerciseResponse}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -4205,6 +4212,9 @@ export default function App() {
             setIsResourceModalOpen={setIsResourceModalOpen}
             activeFolderId={activeFolderId}
             setActiveFolderId={setActiveFolderId}
+            handleDeleteFolder={handleDeleteFolder}
+            handleDeleteStepResource={handleDeleteStepResource}
+            handleAddStepResource={handleAddStepResource}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
@@ -4226,9 +4236,11 @@ export default function App() {
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
             pedagogicalResources={pedagogicalResources}
+            handleDownloadResource={handleDownloadResource}
+            handleUploadExerciseResponse={handleUploadExerciseResponse}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} />}
+          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
           {activeTab === 'modélothèque' && <DocumentsView
