@@ -229,11 +229,11 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
         return;
       }
 
-      // Si pas trouvé, chercher dans la table 'clients'
+      // Si pas trouvé, chercher dans la table 'clients' (insensible à la casse)
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
         .select('id')
-        .eq('email_contact', userEmail)
+        .ilike('email_contact', userEmail)
         .single();
 
       if (clientData) {
@@ -2603,7 +2603,8 @@ export default function App() {
     // 3. Créer l'entrée dans la table correspondante
     if (role === 'client') {
       // Pour les clients : on utilise la table 'clients' avec l'UUID de l'Auth
-      const { error: dbError } = await supabase.from('clients').insert([{
+      // CRUCIAL : on utilise adminClient pour outrepasser les règles RLS lors de l'insertion initiale
+      const { error: dbError } = await adminClient.from('clients').insert([{
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
