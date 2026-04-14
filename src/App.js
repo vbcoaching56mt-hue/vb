@@ -3715,7 +3715,7 @@ export default function App() {
 const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
-    raison_sociale: formateur.raison_sociale || formateur.nom || '',
+    nom: formateur.nom || '',
     formateur_siret: formateur.formateur_siret || formateur.siret || '',
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
@@ -3728,7 +3728,7 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
     const { error } = await supabase
       .from('utilisateurs')
       .update({
-        raison_sociale: legalInfo.raison_sociale,
+        nom: legalInfo.nom,
         formateur_siret: legalInfo.formateur_siret,
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
@@ -3772,7 +3772,7 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Raison Sociale / Nom complet</label>
                 <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all font-medium" 
-                  value={legalInfo.raison_sociale} onChange={e => setLegalInfo({...legalInfo, raison_sociale: e.target.value})} placeholder="Ex: Matthys Coaching EURL" />
+                  value={legalInfo.nom} onChange={e => setLegalInfo({...legalInfo, nom: e.target.value})} placeholder="Ex: Matthys Coaching EURL" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
