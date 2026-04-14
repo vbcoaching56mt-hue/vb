@@ -2608,8 +2608,7 @@ export default function App() {
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
-        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null,
-        role: 'client'
+        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null
       }]);
       if (dbError) {
         console.error("Erreur DB clients après invitation:", dbError);
@@ -2661,7 +2660,7 @@ export default function App() {
           nom_complet: newUserName,
           email_contact: newUserEmail,
           telephone: clientPhone,
-          role: 'client'
+          formateur_id: null // Pas de formateur sélectionné pour l'ajout manuel simple
         }]);
       error = clientError;
     } else {
