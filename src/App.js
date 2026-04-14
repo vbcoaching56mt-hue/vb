@@ -2496,7 +2496,7 @@ export default function App() {
     // 1. Charger les formateurs depuis 'utilisateurs'
     const { data: formateursData, error: formateursError } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur')
+      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, telephone')
       .eq('role', 'formateur');
 
     // 2. Charger les clients depuis 'clients'
