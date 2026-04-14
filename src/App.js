@@ -2782,7 +2782,7 @@ export default function App() {
     window._generatingSessionsFor.add(client.id);
 
     try {
-      // 1. Vérifier les séances existantes pour ce client + module
+      // 1. Vérifier les séances existantes pour ce client + module (utilisant le UUID client.id)
       const { data: existingSessions, error: checkError } = await supabase
         .from('sessions')
         .select('numero_seance')
@@ -2791,7 +2791,7 @@ export default function App() {
 
       if (checkError) {
         console.error('Erreur vérification séances existantes:', checkError);
-        alert('Erreur lors de la vérification des séances existantes.');
+        // Suppression de l'alerte pour ne pas bloquer l'interface
         return;
       }
 
@@ -2811,7 +2811,7 @@ export default function App() {
       }
 
       if (sessionsToInsert.length === 0) {
-        alert(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
+        console.log(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
         return;
       }
 
@@ -2823,10 +2823,10 @@ export default function App() {
       
       if (!error) {
         await fetchSessions();
-        alert(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
+        // Optionnel : console.log pour suivi silencieux
+        console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
       } else {
         console.error('Erreur génération séances :', error);
-        alert('Erreur lors de la génération des séances : ' + error.message);
       }
     } finally {
       window._generatingSessionsFor.delete(client.id);
