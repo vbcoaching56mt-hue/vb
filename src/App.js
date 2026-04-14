@@ -2300,8 +2300,8 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   );
 };
 
-const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser }) => {
-  const [formData, setFormData] = useState({ nom: '', email: '', role: 'client' });
+const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) => {
+  const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
 
   if (!isOpen) return null;
 
@@ -2345,6 +2345,23 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser }) => {
               <option value="formateur">Formateur (Coach)</option>
             </select>
           </div>
+          
+          {formData.role === 'client' && (
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Formateur Référent</label>
+              <select
+                required
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                value={formData.formateur_id}
+                onChange={e => setFormData({...formData, formateur_id: e.target.value})}
+              >
+                <option value="">Sélectionner un formateur</option>
+                {formateurs.map(f => (
+                  <option key={f.id} value={f.id}>{f.nom}</option>
+                ))}
+              </select>
+            </div>
+          )}
           
           <button 
             type="submit"
@@ -2590,9 +2607,13 @@ export default function App() {
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
+        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null,
         role: 'client'
       }]);
-      if (dbError) console.error("Erreur DB clients après invitation:", dbError);
+      if (dbError) {
+        console.error("Erreur DB clients après invitation:", dbError);
+        alert(`Erreur side-effect clients : ${dbError.message}`);
+      }
     } else {
       // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
       const { error: dbError } = await supabase.from('utilisateurs').insert([{
@@ -3690,6 +3711,7 @@ export default function App() {
         onClose={() => setIsInviteModalOpen(false)}
         onInvite={handleInviteUser}
         isAddingUser={isAddingUser}
+        formateurs={formateurs}
       />
 
     </div>
