@@ -884,10 +884,10 @@ const IngenierieView = ({
   addingToModuleId, setAddingToModuleId,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
   handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
-  modelingModuleId, setModelingModuleId, moduleSessionTemplates, fetchModules,
+  modelingModuleId, setModelingModuleId, moduleSessionTemplates, moduleStepResources, fetchModules,
   newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
-  setIsAddingStep, supabase
+  setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -952,39 +952,133 @@ const IngenierieView = ({
                 </div>
               )}
 
-              {/* Interface de Modélisation du Parcours (New) */}
+              {/* Interface de Modélisation du Parcours (Upgraded) */}
               {modelingModuleId === mod.id && (
                 <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in">
                   <h4 className="text-sm font-bold text-indigo-700 mb-4 flex items-center gap-2">
-                    <Layout size={16} /> Modélisation du Parcours Client
+                    <Layout size={16} /> Modélisation du Parcours (Sessions & Éléments)
                   </h4>
                   
-                  <div className="space-y-3 mb-6">
-                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).map((template, idx) => (
-                      <div key={template.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-xs">
-                        <div className="flex items-center gap-3">
-                          <span className="w-6 h-6 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center font-bold">{idx + 1}</span>
-                          <div>
-                            <p className="font-bold text-gray-900">{template.titre}</p>
-                            <p className="text-[10px] text-gray-500">{template.type_activite} {template.ressource_id ? `• Ressource liée` : ''}</p>
+                  <div className="space-y-4 mb-6">
+                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).map((template, idx) => {
+                      const resources = moduleStepResources.filter(r => r.template_id === template.id);
+                      return (
+                        <div key={template.id} className="bg-white rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
+                          {/* Folder Header */}
+                          <div className="bg-indigo-50/50 p-4 flex items-center justify-between border-b border-indigo-50">
+                            <div className="flex items-center gap-3">
+                              <span className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-sm">{idx + 1}</span>
+                              <div>
+                                <p className="font-bold text-gray-900">{template.titre}</p>
+                                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-tight">Dossier Séance</p>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={async () => {
+                                if(window.confirm('Supprimer cette séance et tout son contenu ?')) {
+                                  await supabase.from('module_step_resources').delete().eq('template_id', template.id);
+                                  await supabase.from('module_session_templates').delete().eq('id', template.id);
+                                  fetchModules();
+                                }
+                              }}
+                              className="text-gray-300 hover:text-red-500 transition-colors bg-white w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* Nested Resources */}
+                          <div className="p-4 space-y-2">
+                            {resources.map((res, rIdx) => (
+                              <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-gray-400">
+                                    {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : '⚙️'}
+                                  </span>
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={async () => {
+                                    await supabase.from('module_step_resources').delete().eq('id', res.id);
+                                    fetchModules();
+                                  }}
+                                  className="text-gray-300 hover:text-red-400"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            ))}
+
+                            {/* Add Buttons inside Folder */}
+                            <div className="flex flex-wrap gap-2 pt-2 border-t border-dashed border-gray-100 mt-2">
+                              <button 
+                                onClick={async () => {
+                                  await supabase.from('module_step_resources').insert([{
+                                    template_id: template.id,
+                                    type: 'signature',
+                                    titre: 'Émargement de présence',
+                                    ordre: resources.length + 1
+                                  }]);
+                                  fetchModules();
+                                }}
+                                className="text-[9px] font-bold bg-white text-indigo-600 border border-indigo-100 px-2 py-1 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                              >
+                                + Signature
+                              </button>
+                              
+                              <div className="flex gap-1 items-center bg-white border border-gray-100 rounded-lg pr-1">
+                                <select 
+                                  className="text-[9px] font-bold text-gray-600 outline-none p-1 bg-transparent"
+                                  onChange={async (e) => {
+                                    if(e.target.value) {
+                                      await supabase.from('module_step_resources').insert([{
+                                        template_id: template.id,
+                                        type: 'document',
+                                        titre: 'Document : ' + e.target.value,
+                                        ressource_id: e.target.value,
+                                        ordre: resources.length + 1
+                                      }]);
+                                      e.target.value = "";
+                                      fetchModules();
+                                    }
+                                  }}
+                                >
+                                  <option value="">+ Document</option>
+                                  {pedagogicalResources.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
+                                </select>
+                              </div>
+
+                              <button 
+                                onClick={async () => {
+                                  const titre = window.prompt("Nom de l'exercice :", "Exercice d'application");
+                                  if (titre) {
+                                    await supabase.from('module_step_resources').insert([{
+                                      template_id: template.id,
+                                      type: 'exercice',
+                                      titre: titre,
+                                      ordre: resources.length + 1
+                                    }]);
+                                    fetchModules();
+                                  }
+                                }}
+                                className="text-[9px] font-bold bg-white text-emerald-600 border border-emerald-100 px-2 py-1 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                              >
+                                + Exercice
+                              </button>
+                            </div>
                           </div>
                         </div>
-                        <button 
-                          onClick={async () => {
-                            const { error } = await supabase.from('module_session_templates').delete().eq('id', template.id);
-                            if (!error) fetchModules();
-                          }}
-                          className="text-gray-300 hover:text-red-500 transition-colors"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {moduleSessionTemplates.filter(t => t.module_id === mod.id).length === 0 && (
-                      <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-xl border border-dashed border-gray-200 text-center">Aucune étape définie pour ce module.</p>
+                      <p className="text-xs text-gray-400 italic bg-gray-50 p-6 rounded-2xl border border-dashed border-gray-200 text-center">Aucune séance (dossier) définie.</p>
                     )}
                   </div>
 
+                  {/* Add Folder Form */}
                   <form 
                     onSubmit={async (e) => {
                       e.preventDefault();
@@ -993,55 +1087,34 @@ const IngenierieView = ({
                       const { error } = await supabase.from('module_session_templates').insert([{
                         module_id: mod.id,
                         titre: newStepTitle,
-                        type_activite: newStepActivity,
-                        ressource_id: selectedResourceId || null,
                         ordre: moduleSessionTemplates.filter(t => t.module_id === mod.id).length + 1
                       }]);
                       if (!error) {
                         setNewStepTitle('');
-                        setSelectedResourceId('');
+                        // CRUCIAL: Re-fetch manually as the button fix requested
                         fetchModules();
                       }
                       setIsAddingStep(false);
                     }}
-                    className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 space-y-3"
+                    className="bg-indigo-900 p-4 rounded-2xl shadow-xl space-y-3"
                   >
-                    <input 
-                      required 
-                      type="text" 
-                      placeholder="Titre de l'étape (ex: Séance 1 : Analyse)" 
-                      value={newStepTitle} 
-                      onChange={e => setNewStepTitle(e.target.value)} 
-                      className="w-full text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500" 
-                    />
                     <div className="flex gap-2">
-                      <select 
-                        value={newStepActivity} 
-                        onChange={e => setNewStepActivity(e.target.value)} 
-                        className="flex-1 text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 bg-white"
+                      <input 
+                        required 
+                        type="text" 
+                        placeholder="Nouveau Dossier (ex: Séance 1 : Analyse)" 
+                        value={newStepTitle} 
+                        onChange={e => setNewStepTitle(e.target.value)} 
+                        className="flex-1 text-xs p-2.5 bg-indigo-800 border-none text-white placeholder-indigo-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400" 
+                      />
+                      <button 
+                        type="submit" 
+                        disabled={isAddingStep}
+                        className="bg-white text-indigo-900 font-bold px-4 rounded-xl text-xs hover:bg-indigo-50 transition-all disabled:opacity-50"
                       >
-                        <option value="Signature">Signature Présence</option>
-                        <option value="Document PDF">Document PDF</option>
-                        <option value="Exercice">Exercice / Outil</option>
-                      </select>
-                      <select 
-                        value={selectedResourceId} 
-                        onChange={e => setSelectedResourceId(e.target.value)} 
-                        className="flex-1 text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 bg-white"
-                      >
-                        <option value="">Aucune Ressource</option>
-                        {pedagogicalResources.map(res => (
-                          <option key={res.name} value={res.name}>{res.name}</option>
-                        ))}
-                      </select>
+                        {isAddingStep ? '...' : 'Créer Dossier'}
+                      </button>
                     </div>
-                    <button 
-                      type="submit" 
-                      disabled={isAddingStep}
-                      className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-indigo-700 transition-all shadow-sm flex items-center justify-center gap-2"
-                    >
-                      {isAddingStep ? 'Ajout...' : '+ Ajouter cette étape'}
-                    </button>
                   </form>
                 </div>
               )}
@@ -1271,113 +1344,122 @@ const FormateurView = ({
 
 
                   {clientSessions.length > 0 ? (
-                    <>
-                      <div className="overflow-hidden rounded-2xl border border-gray-100">
-                        <table className="w-full text-left text-sm">
-                          <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
-                            <tr>
-                              <th className="px-4 py-3 text-left">N° & Séance</th>
-                              <th className="px-4 py-3 text-left">Date</th>
-                              <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
-                              <th className="px-4 py-3 text-left">Statut</th>
-                              <th className="px-4 py-3 text-right">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100 bg-white">
-                            {clientSessions.sort((a, b) => a.numero_seance - b.numero_seance).map(session => (
-                              <tr key={session.id} className="hover:bg-gray-50/50 transition-colors">
-                                <td className="px-4 py-4 font-bold text-gray-900">N°{session.numero_seance} - {session.nom}</td>
-                                <td className="px-4 py-4">
-                                  <input
-                                    type="date"
-                                    value={session.date || ''}
-                                    onChange={(e) => updateSessionDate(session.id, e.target.value)}
-                                    className="border border-gray-200 rounded-lg p-1.5 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
-                                  />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <div className="flex items-center gap-1.5">
-                                    <div className="flex flex-col gap-1">
-                                      <input
-                                        type="time"
-                                        value={editedTimes[session.id]?.start ?? session.heure_debut ?? ''}
-                                        onChange={(e) => onTimeChange(session.id, 'start', e.target.value)}
-                                        className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
-                                        title="Heure début"
-                                      />
-                                      <input
-                                        type="time"
-                                        value={editedTimes[session.id]?.end ?? session.heure_fin ?? ''}
-                                        onChange={(e) => onTimeChange(session.id, 'end', e.target.value)}
-                                        className="border border-gray-200 rounded-lg p-1 text-[10px] w-20 outline-none focus:ring-1 focus:ring-indigo-500"
-                                        title="Heure fin"
-                                      />
-                                    </div>
-                                    <button
-                                      onClick={() => onSaveTimes(session.id)}
-                                      className={`p-1.5 rounded-lg transition-all ${savingId === session.id
-                                        ? 'bg-green-100 text-green-600'
-                                        : 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100'
-                                        }`}
-                                      title="Enregistrer les horaires"
-                                    >
-                                      {savingId === session.id ? <Plus className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-                                    </button>
-                                  </div>
-                                  <div className="mt-1 text-[9px] font-medium text-gray-400">
-                                    {calculateDuration(
-                                      editedTimes[session.id]?.start ?? session.heure_debut,
-                                      editedTimes[session.id]?.end ?? session.heure_fin
-                                    ) ? (
-                                      <span className="text-indigo-500 italic">Durée : {calculateDuration(
-                                        editedTimes[session.id]?.start ?? session.heure_debut,
-                                        editedTimes[session.id]?.end ?? session.heure_fin
-                                      )}</span>
-                                    ) : (
-                                      "Durée : 0h"
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
-                                    }`}>{session.statut}</span>
-                                </td>
-                                <td className="px-4 py-4 text-right">
-                                  <div className="flex justify-end items-center gap-2">
-                                    {(userRole === 'admin' || userRole === 'formateur') && session.statut !== 'Signé' && (
-                                      <button
-                                        onClick={() => handleDeleteSession(session)}
-                                        className="text-rose-400 hover:text-rose-600 transition-colors p-1"
-                                        title="Supprimer cette séance"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    )}
-                                    {session.statut !== 'Signé' ? (
-                                      <button
-                                        onClick={() => signSession(session)}
-                                        disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
-                                        className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all ${(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                          : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
-                                          }`}
-                                      >
-                                        {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                                          ? 'Verrouillé'
-                                          : 'Émarger (Coach)'}
-                                      </button>
-                                    ) : (
-                                      <span className="text-green-500"><Plus /></span>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                    <div className="overflow-hidden rounded-2xl border border-gray-100">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                          <tr>
+                            <th className="px-4 py-3 text-left">N° & Séance</th>
+                            <th className="px-4 py-3 text-left">Date</th>
+                            <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
+                            <th className="px-4 py-3 text-left">Statut</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white">
+                          {(() => {
+                            const grouped = clientSessions.reduce((acc, s) => {
+                              const key = `${s.numero_seance}-${s.nom}`;
+                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                              acc[key].items.push(s);
+                              return acc;
+                            }, {});
 
-                    </>
+                            return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                              <React.Fragment key={gIdx}>
+                                {/* Folder Header Row */}
+                                <tr className="bg-indigo-50/30">
+                                  <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Layout size={12} className="text-indigo-600" />
+                                      <span>SÉANCE {group.numero} : {group.nom}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="date"
+                                      value={group.date || ''}
+                                      onChange={(e) => {
+                                        group.items.forEach(s => updateSessionDate(s.id, e.target.value));
+                                      }}
+                                      className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex flex-col gap-0.5">
+                                        <input
+                                          type="time"
+                                          value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
+                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                        />
+                                        <input
+                                          type="time"
+                                          value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
+                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                        />
+                                      </div>
+                                      <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
+                                        <Save size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td colSpan="2" className="px-4 py-3 text-right">
+                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+                                  </td>
+                                </tr>
+                                
+                                {/* Nested Items */}
+                                {group.items.map(session => (
+                                  <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
+                                    <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
+                                      <span className="text-[14px]">
+                                        {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
+                                      </span>
+                                      <span className="truncate">{session.ressource_titre || session.nom}</span>
+                                    </td>
+                                    <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                        {session.statut}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                      <div className="flex justify-end items-center gap-2">
+                                        {session.statut !== 'Signé' && (
+                                          <button
+                                            onClick={() => handleDeleteSession(session)}
+                                            className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        )}
+                                        {session.statut !== 'Signé' && session.type_activite === 'signature' && (
+                                          <button
+                                            onClick={() => signSession(session)}
+                                            disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
+                                            className={`px-3 py-1 rounded-lg text-[9px] font-bold transition-all ${(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
+                                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
+                                              }`}
+                                          >
+                                            Émarger
+                                          </button>
+                                        )}
+                                        {session.statut === 'Signé' && (
+                                          <span className="text-green-500 font-bold text-[10px]">✓ Confirmé</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </React.Fragment>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
                     <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                       <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
@@ -1945,59 +2027,79 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {mySessions.map((session) => (
-                <tr key={session.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="py-5">
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center mr-4 text-gray-900 font-black">#{session.numero_seance}</div>
-                      <span className="font-bold text-gray-900">{session.nom}</span>
-                    </div>
-                  </td>
-                  <td className="py-5 font-medium text-gray-600">
-                    <div className="flex flex-col">
-                      <span>{session.date ? new Date(session.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'À définir'}</span>
-                      {session.heure_debut && session.heure_fin && (
-                        <span className="text-[10px] text-indigo-600 font-bold mt-1">
-                          ⌚ {session.heure_debut} - {session.heure_fin} ({calculateDuration(session.heure_debut, session.heure_fin)})
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-5 text-center">
-                    <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
-                      }`}>
-                      {session.statut === 'Signé' ? 'Signé ✓' : 'À signer'}
-                    </span>
-                  </td>
-                  <td className="py-5 text-right">
-                    {session.statut !== 'Signé' ? (
-                      <button
-                        onClick={() => {
-                          const today = new Date();
-                          today.setHours(0, 0, 0, 0);
-                          const sessionDate = new Date(session.date);
-                          if (!session.date || sessionDate > today) {
-                            // Ne rien faire si date future (sécurité client)
-                            return;
-                          }
-                          signSession(session);
-                        }}
-                        disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
-                        className={`px-5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all ${(session.date && new Date(session.date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0))
-                          ? 'bg-rose-500 text-white hover:bg-rose-600 hover:shadow-md'
-                          : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                          }`}
-                      >
-                        {(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                          ? 'Verrouillé (Date future)'
-                          : 'Signer (Emarger)'}
-                      </button>
-                    ) : (
-                      <span className="text-green-500 font-bold text-sm bg-green-50 px-3 py-1 rounded-lg border border-green-100">Confirmé</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {(() => {
+                const grouped = mySessions.reduce((acc, s) => {
+                  const key = `${s.numero_seance}-${s.nom}`;
+                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                  acc[key].items.push(s);
+                  return acc;
+                }, {});
+
+                return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                  <React.Fragment key={gIdx}>
+                    <tr className="bg-gray-50/50">
+                      <td colSpan="4" className="py-3 px-4 border-l-4 border-gray-900">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center mr-3 text-xs font-black">#{group.numero}</div>
+                            <span className="font-black text-gray-900 text-sm uppercase tracking-tighter">{group.nom}</span>
+                          </div>
+                          <div className="text-[10px] font-bold text-gray-500">
+                             {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    {group.items.map(session => (
+                      <tr key={session.id} className="hover:bg-gray-50/30 transition-colors">
+                        <td className="py-4 pl-12">
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                            <div className="flex flex-col">
+                              <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                              <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 text-xs italic text-gray-400">
+                           {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
+                        </td>
+                        <td className="py-4 text-center">
+                          <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {session.statut === 'Signé' ? 'Signé ✓' : 'À signer'}
+                          </span>
+                        </td>
+                        <td className="py-4 text-right pr-4">
+                          {session.statut !== 'Signé' && session.type_activite === 'signature' && (
+                            <button
+                              onClick={() => {
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                const sessionDate = new Date(session.date);
+                                if (!session.date || sessionDate > today) return;
+                                signSession(session);
+                              }}
+                              disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
+                              className={`px-4 py-2 rounded-xl text-[10px] font-bold shadow-sm transition-all ${(session.date && new Date(session.date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0))
+                                ? 'bg-rose-500 text-white hover:bg-rose-600'
+                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                }`}
+                            >
+                              Signer
+                            </button>
+                          )}
+                          {session.type_activite === 'document' && session.ressource_id && (
+                             <a href={pedagogicalResources.find(r => r.name === session.ressource_id)?.url || '#'} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-[10px] shadow-sm hover:bg-indigo-700 transition-colors">
+                               Ouvrir PDF ↗
+                             </a>
+                          )}
+                           {session.statut === 'Signé' && <span className="text-green-500 font-bold text-[10px]">✓ Terminé</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                ));
+              })()}
               {mySessions.length === 0 && (
                 <tr>
                   <td colSpan="4" className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</td>
@@ -2611,6 +2713,7 @@ export default function App() {
   const [modules, setModules] = useState([]);
   const [moduleDocuments, setModuleDocuments] = useState([]);
   const [moduleSessionTemplates, setModuleSessionTemplates] = useState([]);
+  const [moduleStepResources, setModuleStepResources] = useState([]);
 
   // États formulaire "Ajouter un compte"
   const [newUserName, setNewUserName] = useState('');
@@ -2634,6 +2737,7 @@ export default function App() {
   const [newStepTitle, setNewStepTitle] = useState('');
   const [newStepActivity, setNewStepActivity] = useState('Signature');
   const [selectedResourceId, setSelectedResourceId] = useState('');
+  const [isAddingStepResource, setIsAddingStepResource] = useState(false);
   const [isAddingStep, setIsAddingStep] = useState(false);
 
   // États formulaire "Ajouter un document"
@@ -2662,6 +2766,9 @@ export default function App() {
 
     const { data: mstData, error: mstErr } = await supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
     if (!mstErr && mstData) setModuleSessionTemplates(mstData);
+
+    const { data: msrData, error: msrErr } = await supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
+    if (!msrErr && msrData) setModuleStepResources(msrData);
   };
 
   const fetchSessions = async () => {
@@ -3004,19 +3111,39 @@ export default function App() {
 
       // 3. Si templates existent, on les utilise. Sinon, fallback sur l'ancienne logique
       if (templates && templates.length > 0) {
-        templates.forEach((t, idx) => {
-          if (!existingTitles.has(t.titre)) {
+        // Nouvelle logique Imbriquée (Keyro)
+        for (const t of templates) {
+          const { data: resources } = await supabase
+            .from('module_step_resources')
+            .select('*')
+            .eq('template_id', t.id)
+            .order('ordre', { ascending: true });
+
+          if (resources && resources.length > 0) {
+            resources.forEach(res => {
+              sessionsToInsert.push({
+                client_id: client.id,
+                module_id: module.id,
+                numero_seance: t.ordre,
+                nom: t.titre, // Nom du dossier/séance
+                type_activite: res.type,
+                ressource_id: res.ressource_id,
+                ressource_titre: res.titre,
+                statut: 'À venir'
+              });
+            });
+          } else {
+            // Dossier vide
             sessionsToInsert.push({
               client_id: client.id,
               module_id: module.id,
-              numero_seance: t.ordre || (idx + 1),
-              titre: t.titre,
-              type_activite: t.type_activite,
-              ressource_id: t.ressource_id,
+              numero_seance: t.ordre,
+              nom: t.titre,
+              type_activite: 'Dossier (Vide)',
               statut: 'À venir'
             });
           }
-        });
+        }
       } else {
         // Fallback backward compatibility : génération par nombre de séances prévues
         for (let i = 1; i <= module.seances_prevues; i++) {
@@ -3832,6 +3959,7 @@ export default function App() {
             modelingModuleId={modelingModuleId}
             setModelingModuleId={setModelingModuleId}
             moduleSessionTemplates={moduleSessionTemplates}
+            moduleStepResources={moduleStepResources}
             fetchModules={fetchModules}
             newStepTitle={newStepTitle}
             setNewStepTitle={setNewStepTitle}
@@ -3842,6 +3970,8 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
             isAddingStep={isAddingStep}
             setIsAddingStep={setIsAddingStep}
+            isAddingStepResource={isAddingStepResource}
+            setIsAddingStepResource={setIsAddingStepResource}
             supabase={supabase}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
