@@ -3826,4 +3826,3 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
   );
 };
 
-export default App;
