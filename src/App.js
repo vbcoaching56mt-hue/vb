@@ -173,6 +173,126 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
   );
 };
 
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) => {
+  const [type, setType] = useState('signature');
+  const [title, setTitle] = useState('');
+  const [metadata, setMetadata] = useState({ 
+    requiresClientSignature: true, 
+    requiresTrainerSignature: false,
+    documentType: 'signature' // 'info' | 'signature'
+  });
+  const [selectedResourceId, setSelectedResourceId] = useState('');
+
+  // Reset local state when modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      setType('signature');
+      setTitle('');
+      setMetadata({ 
+        requiresClientSignature: true, 
+        requiresTrainerSignature: false,
+        documentType: 'signature' 
+      });
+      setSelectedResourceId('');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in">
+      <div className="bg-white rounded-[32px] w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden animate-slide-up">
+        <div className="bg-indigo-600 p-8 text-white relative">
+          <h2 className="text-2xl font-black">Ajouter un élément</h2>
+          <p className="text-indigo-100 text-sm mt-1 opacity-80">Configurez les détails de l'activité.</p>
+          <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+        </div>
+        
+        <div className="p-8 space-y-6">
+          <div className="grid grid-cols-3 gap-3">
+            {['signature', 'document', 'exercice'].map(t => (
+              <button 
+                key={t}
+                onClick={() => setType(t)}
+                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${type === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-100 bg-gray-50 text-gray-400 hover:border-indigo-200'}`}
+              >
+                <span className="text-2xl">{t === 'signature' ? '✍️' : t === 'document' ? '📄' : '⚙️'}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest">{t}</span>
+              </button>
+            ))}
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Libellé de l'activité</label>
+            <input 
+              type="text" 
+              placeholder={type === 'signature' ? 'Émargement de présence' : type === 'exercice' ? 'Nom de l\'exercice' : 'Titre du document'}
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium transition-all"
+            />
+          </div>
+
+          {type === 'document' && (
+            <div className="space-y-4 animate-slide-up">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Source du Document</label>
+                <select 
+                  className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                  value={selectedResourceId}
+                  onChange={e => setSelectedResourceId(e.target.value)}
+                >
+                  <option value="">Sélectionner dans la modélothèque...</option>
+                  {pedagogicalResources.map(r => (
+                    <option key={r.name} value={r.name}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
+                <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Type d'interaction</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={metadata.documentType === 'info'} onChange={() => setMetadata({...metadata, documentType: 'info'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                    <span className="text-sm font-bold text-gray-700">Lecture seule</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={metadata.documentType === 'signature'} onChange={() => setMetadata({...metadata, documentType: 'signature'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                    <span className="text-sm font-bold text-gray-700">À signer</span>
+                  </label>
+                </div>
+
+                {metadata.documentType === 'signature' && (
+                  <div className="pt-3 border-t border-indigo-100 mt-2 flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({...metadata, requiresClientSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({...metadata, requiresTrainerSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="pt-4">
+            <button 
+              onClick={() => onSave({ type, title, metadata, resourceId: selectedResourceId })}
+              disabled={!title.trim()}
+              className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
+            >
+              Enregistrer l'activité
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ==========================================
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
@@ -889,308 +1009,214 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase, 
   createSessionFolder
-}) => (
-  <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
-    <div className="flex justify-between items-start">
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Formation</h1>
-        <p className="text-gray-500 text-lg mt-1">Gérez la structure de vos modules et séances.</p>
+}) => {
+  const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
+  const [activeFolderId, setActiveFolderId] = React.useState(null);
+
+  return (
+    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+      <div className="flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Formation</h1>
+          <p className="text-gray-500 text-lg mt-1">Gérez la structure de vos modules et séances.</p>
+        </div>
       </div>
-    </div>
 
-    {/* Configuration Modules */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-purple-500 rounded-full mr-3"></span> Gestion des Modules
-      </h2>
-      <form onSubmit={handleAddModule} className="flex flex-col md:flex-row gap-4 items-end mb-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Nom du nouveau module</label>
-          <input required type="text" value={newModuleName} onChange={e => setNewModuleName(e.target.value)} placeholder="Ex: Bilan 24h" className="w-full p-2.5 rounded-lg border outline-none text-sm" />
-        </div>
-        <div className="w-32">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Séances prévues</label>
-          <input required type="number" min="1" value={newModuleSeances} onChange={e => setNewModuleSeances(e.target.value)} className="w-full p-2.5 rounded-lg border outline-none text-sm" />
-        </div>
-        <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg px-6 py-2.5 shadow-sm transition-colors">Créer Module</button>
-      </form>
+      {/* Configuration Modules */}
+      <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+          <span className="w-2 h-6 bg-purple-500 rounded-full mr-3"></span> Gestion des Modules
+        </h2>
+        <form onSubmit={handleAddModule} className="flex flex-col md:flex-row gap-4 items-end mb-8 bg-gray-50 p-4 rounded-xl border border-gray-200">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nom du nouveau module</label>
+            <input required type="text" value={newModuleName} onChange={e => setNewModuleName(e.target.value)} placeholder="Ex: Bilan 24h" className="w-full p-2.5 rounded-lg border outline-none text-sm" />
+          </div>
+          <div className="w-32">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Séances prévues</label>
+            <input required type="number" min="1" value={newModuleSeances} onChange={e => setNewModuleSeances(e.target.value)} className="w-full p-2.5 rounded-lg border outline-none text-sm" />
+          </div>
+          <button type="submit" className="bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg px-6 py-2.5 shadow-sm transition-colors">Créer Module</button>
+        </form>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {modules.map(mod => {
-          const docs = moduleDocuments.filter(md => md.module_id === mod.id);
-          return (
-            <div key={mod.id} className="border border-purple-100 bg-purple-50/20 p-5 rounded-2xl relative shadow-sm">
-              <h3 className="font-bold text-gray-900 text-lg pr-24">{mod.nom}</h3>
-              <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {modules.map(mod => {
+            const docs = moduleDocuments.filter(md => md.module_id === mod.id);
+            const templates = moduleSessionTemplates.filter(t => String(t.module_id) === String(mod.id));
+            
+            return (
+              <div key={mod.id} className="border border-purple-100 bg-purple-50/20 p-5 rounded-2xl relative shadow-sm h-fit">
+                <h3 className="font-bold text-gray-900 text-lg pr-24">{mod.nom}</h3>
+                <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
 
-              <h4 className="text-sm font-bold text-gray-600 mt-6 mb-3">Documents types ({docs.length})</h4>
-              <ul className="space-y-2 mb-4">
-                {docs.map(d => (
-                  <li key={d.id} className="text-xs flex items-center bg-white p-2.5 rounded-lg border border-gray-100 shadow-sm">
-                    <strong className="w-24 shrink-0 text-gray-400 font-bold">{d.type_document}</strong>
-                    <span className="text-gray-900 font-medium truncate">{d.nom}</span>
-                  </li>
-                ))}
-                {docs.length === 0 && <li className="text-xs text-gray-400 italic">Aucun document type lié.</li>}
-              </ul>
+                <h4 className="text-sm font-bold text-gray-600 mt-6 mb-3">Documents types ({docs.length})</h4>
+                <ul className="space-y-2 mb-4">
+                  {docs.map(d => (
+                    <li key={d.id} className="text-xs flex items-center bg-white p-2.5 rounded-lg border border-gray-100 shadow-sm">
+                      <strong className="w-24 shrink-0 text-gray-400 font-bold">{d.type_document}</strong>
+                      <span className="text-gray-900 font-medium truncate">{d.nom}</span>
+                    </li>
+                  ))}
+                  {docs.length === 0 && <li className="text-xs text-gray-400 italic">Aucun document type lié.</li>}
+                </ul>
 
-              {addingToModuleId === mod.id ? (
-                <form onSubmit={(e) => handleLinkDocument(e, mod)} className="bg-white p-4 rounded-xl shadow-sm border border-purple-200 flex flex-col gap-3 animate-fade-in">
-                  <input required type="text" placeholder="Nom du document (Ex: Contrat)" value={newModDocName} onChange={e => setNewModDocName(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500" />
-                  <input type="file" onChange={(e) => setNewModDocFile(e.target.files[0] || null)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500 bg-gray-50 text-gray-700" accept=".pdf,image/*" />
-                  <div className="flex gap-2">
-                    <select value={newModDocType} onChange={e => setNewModDocType(e.target.value)} className="flex-1 text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500">
-                      <option value="Autre">Autre</option><option value="Contrat">Contrat</option><option value="Évaluation">Évaluation</option>
-                    </select>
-                    <button type="submit" className="bg-gray-900 text-white px-4 rounded-lg text-sm shrink-0 font-medium hover:bg-gray-800">Lier</button>
-                    <button type="button" onClick={() => setAddingToModuleId(null)} className="text-gray-400 hover:text-gray-600 px-2 shrink-0">✕</button>
-                  </div>
-                </form>
-              ) : (
-                <div className="flex gap-2">
-                  <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
-                  <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
-                </div>
-              )}
-
-              {/* Interface de Modélisation du Parcours (Upgraded) */}
-              {modelingModuleId === mod.id && (
-                <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in">
-                  <h4 className="text-sm font-bold text-indigo-700 mb-4 flex items-center gap-2">
-                    <Layout size={16} /> Modélisation du Parcours (Sessions & Éléments)
-                  </h4>
-                  
-                  <div className="space-y-4 mb-6">
-                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).map((template, idx) => {
-                      const resources = moduleStepResources.filter(r => r.template_id === template.id);
-                      return (
-                        <div key={template.id} className="bg-white rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
-                          {/* Folder Header */}
-                          <div className="bg-indigo-50/50 p-4 flex items-center justify-between border-b border-indigo-50">
-                            <div className="flex items-center gap-3">
-                              <span className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-sm">{idx + 1}</span>
-                              <div>
-                                <p className="font-bold text-gray-900">{template.titre}</p>
-                                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-tight">Dossier Séance</p>
-                              </div>
-                            </div>
-                            <button 
-                              onClick={async () => {
-                                if(window.confirm('Supprimer cette séance et tout son contenu ?')) {
-                                  await supabase.from('module_step_resources').delete().eq('template_id', template.id);
-                                  await supabase.from('module_session_templates').delete().eq('id', template.id);
-                                  fetchModules();
-                                }
-                              }}
-                              className="text-gray-300 hover:text-red-500 transition-colors bg-white w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
-                            >
-                              ✕
-                            </button>
-                          </div>
-
-                          {/* Nested Resources */}
-                          <div className="p-4 space-y-2">
-                            {resources.map((res, rIdx) => (
-                              <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
-                                <div className="flex items-center gap-3">
-                                  <span className="text-gray-400">
-                                    {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : '⚙️'}
-                                  </span>
-                                  <div className="flex flex-col">
-                                    <span className="font-bold text-gray-800">{res.titre}</span>
-                                    <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
-                                  </div>
-                                </div>
-                                <button 
-                                  onClick={async () => {
-                                    await supabase.from('module_step_resources').delete().eq('id', res.id);
-                                    fetchModules();
-                                  }}
-                                  className="text-gray-300 hover:text-red-400"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-                            ))}
-
-                            {/* Add Buttons inside Folder */}
-                            <div className="flex flex-wrap gap-2 pt-2 border-t border-dashed border-gray-100 mt-2">
-                              <button 
-                                onClick={async () => {
-                                  await supabase.from('module_step_resources').insert([{
-                                    template_id: template.id,
-                                    type: 'signature',
-                                    titre: 'Émargement de présence',
-                                    ordre: resources.length + 1
-                                  }]);
-                                  fetchModules();
-                                }}
-                                className="text-[9px] font-bold bg-white text-indigo-600 border border-indigo-100 px-2 py-1 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                              >
-                                + Signature
-                              </button>
-                              
-                              <div className="flex gap-1 items-center bg-white border border-gray-100 rounded-lg pr-1">
-                                <select 
-                                  className="text-[9px] font-bold text-gray-600 outline-none p-1 bg-transparent"
-                                  onChange={async (e) => {
-                                    if(e.target.value) {
-                                      await supabase.from('module_step_resources').insert([{
-                                        template_id: template.id,
-                                        type: 'document',
-                                        titre: 'Document : ' + e.target.value,
-                                        ressource_id: e.target.value,
-                                        ordre: resources.length + 1
-                                      }]);
-                                      e.target.value = "";
-                                      fetchModules();
-                                    }
-                                  }}
-                                >
-                                  <option value="">+ Document</option>
-                                  {pedagogicalResources.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
-                                </select>
-                              </div>
-
-                              <button 
-                                onClick={async () => {
-                                  const titre = window.prompt("Nom de l'exercice :", "Exercice d'application");
-                                  if (titre) {
-                                    await supabase.from('module_step_resources').insert([{
-                                      template_id: template.id,
-                                      type: 'exercice',
-                                      titre: titre,
-                                      ordre: resources.length + 1
-                                    }]);
-                                    fetchModules();
-                                  }
-                                }}
-                                className="text-[9px] font-bold bg-white text-emerald-600 border border-emerald-100 px-2 py-1 rounded-lg hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
-                              >
-                                + Exercice
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).length === 0 && (
-                      <p className="text-xs text-gray-400 italic bg-gray-50 p-6 rounded-2xl border border-dashed border-gray-200 text-center">Aucune séance (dossier) définie.</p>
-                    )}
-                  </div>
-
-                  {/* Add Folder Form */}
-                  <form 
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      await createSessionFolder(mod.id, newStepTitle);
-                    }}
-                    className="bg-indigo-900 p-4 rounded-2xl shadow-xl space-y-3"
-                  >
+                {addingToModuleId === mod.id ? (
+                  <form onSubmit={(e) => handleLinkDocument(e, mod)} className="bg-white p-4 rounded-xl shadow-sm border border-purple-200 flex flex-col gap-3 animate-fade-in">
+                    <input required type="text" placeholder="Nom du document (Ex: Contrat)" value={newModDocName} onChange={e => setNewModDocName(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500" />
+                    <input type="file" onChange={(e) => setNewModDocFile(e.target.files[0] || null)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500 bg-gray-50 text-gray-700" accept=".pdf,image/*" />
                     <div className="flex gap-2">
-                      <input 
-                        required 
-                        type="text" 
-                        placeholder="Nouveau Dossier (ex: Séance 1 : Analyse)" 
-                        value={newStepTitle} 
-                        onChange={e => setNewStepTitle(e.target.value)} 
-                        className="flex-1 text-xs p-2.5 bg-indigo-800 border-none text-white placeholder-indigo-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400" 
-                      />
-                      <button 
-                        type="submit" 
-                        disabled={isAddingStep}
-                        className="bg-white text-indigo-900 font-bold px-4 rounded-xl text-xs hover:bg-indigo-50 transition-all disabled:opacity-50"
-                      >
-                        {isAddingStep ? '...' : 'Créer Dossier'}
-                      </button>
+                      <select value={newModDocType} onChange={e => setNewModDocType(e.target.value)} className="flex-1 text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500">
+                        <option value="Autre">Autre</option><option value="Contrat">Contrat</option><option value="Évaluation">Évaluation</option>
+                      </select>
+                      <button type="submit" className="bg-gray-900 text-white px-4 rounded-lg text-sm shrink-0 font-medium hover:bg-gray-800">Lier</button>
+                      <button type="button" onClick={() => setAddingToModuleId(null)} className="text-gray-400 hover:text-gray-600 px-2 shrink-0">✕</button>
                     </div>
                   </form>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {modules.length === 0 && <div className="text-gray-500 italic col-span-2">Créez votre premier module depuis le formulaire ci-dessus.</div>}
-      </div>
-    </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
+                    <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
+                  </div>
+                )}
 
-    {/* Gestion des Ressources Pédagogiques (New) */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-emerald-500 rounded-full mr-3"></span> Gestion des Ressources Pédagogiques
-      </h2>
-      <div className="bg-emerald-50/50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row gap-4 items-end">
-        <div className="flex-1 w-full">
-          <label className="block text-xs font-bold text-emerald-800 uppercase mb-2">Nom de la Ressource</label>
-          <input 
-            type="text" 
-            placeholder="Ex: Guide Qualiopi 2024" 
-            value={newResourceName}
-            onChange={e => setNewResourceName(e.target.value)}
-            className="w-full text-sm p-3 bg-white border border-emerald-200 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
-          />
+                {/* Interface de Modélisation du Parcours */}
+                {modelingModuleId === mod.id && (
+                  <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in space-y-6">
+                    <h4 className="text-sm font-bold text-indigo-700 flex items-center gap-2">
+                      <Layout size={16} /> Modélisation du Parcours
+                    </h4>
+                    
+                    <div className="space-y-4">
+                      {templates.map((template, idx) => {
+                        const resources = moduleStepResources.filter(r => r.template_id === template.id);
+                        return (
+                          <div key={template.id} className="bg-white rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
+                            <div className="bg-indigo-50/50 p-4 flex items-center justify-between border-b border-indigo-50">
+                              <div className="flex items-center gap-3">
+                                <span className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-sm">{idx + 1}</span>
+                                <div>
+                                  <p className="font-bold text-gray-900">{template.titre}</p>
+                                  <p className="text-[10px] text-gray-400 uppercase font-black">Dossier Séance</p>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => handleDeleteFolder(template.id)}
+                                className="text-gray-300 hover:text-red-500 bg-white w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+                              >✕</button>
+                            </div>
+
+                            <div className="p-4 space-y-2">
+                              {resources.map((res) => (
+                                <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-gray-400">
+                                      {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : '⚙️'}
+                                    </span>
+                                    <div className="flex flex-col">
+                                      <span className="font-bold text-gray-800">{res.titre}</span>
+                                      <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
+                                    </div>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                              
+                              <button 
+                                onClick={() => { setActiveFolderId(template.id); setIsResourceModalOpen(true); }}
+                                className="text-[10px] font-black bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-black transition-all shadow-lg flex items-center gap-2 mt-2"
+                              >
+                                <Plus size={14} /> Ajouter un élément
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {templates.length === 0 && (
+                        <div className="bg-gray-50 border border-dashed border-gray-200 p-8 rounded-[32px] text-center">
+                          <p className="text-gray-400 text-sm italic">Aucun dossier créé.</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <form 
+                      onSubmit={async (e) => { e.preventDefault(); await createSessionFolder(mod.id, newStepTitle); }}
+                      className="bg-indigo-900 p-4 rounded-2xl shadow-xl space-y-3"
+                    >
+                      <div className="flex gap-2">
+                        <input required type="text" placeholder="Nouveau Dossier..." value={newStepTitle} onChange={e => setNewStepTitle(e.target.value)} className="flex-1 text-xs p-2.5 bg-indigo-800 border-none text-white rounded-xl outline-none" />
+                        <button type="submit" disabled={isAddingStep} className="bg-white text-indigo-900 font-bold px-4 rounded-xl text-xs hover:bg-indigo-50 disabled:opacity-50">
+                          {isAddingStep ? '...' : 'Créer Dossier'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {modules.length === 0 && <div className="text-gray-500 italic col-span-2">Créez votre premier module.</div>}
         </div>
-        <div className="flex-none w-full md:w-auto">
+      </div>
+
+      {/* Gestion des Ressources */}
+      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+          <span className="w-2 h-6 bg-emerald-500 rounded-full mr-3"></span> Ressources Pédagogiques
+        </h2>
+        <div className="bg-emerald-50/50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row gap-4 items-end">
+          <div className="flex-1 w-full">
+            <label className="block text-xs font-bold text-emerald-800 uppercase mb-2">Nom Ressource</label>
+            <input type="text" placeholder="Ex: Guide Qualiopi" value={newResourceName} onChange={e => setNewResourceName(e.target.value)} className="w-full text-sm p-3 bg-white border border-emerald-200 rounded-xl outline-none" />
+          </div>
           <label className={`flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${(!newResourceName || isUploadingResource) ? 'opacity-50 cursor-not-allowed' : ''}`}>
             {isUploadingResource ? 'Upload...' : 'Uploader Ressource'}
-            <input 
-              type="file" 
-              className="hidden" 
-              disabled={!newResourceName || isUploadingResource}
-              onChange={e => e.target.files[0] && handleUploadResource(e.target.files[0])}
-            />
+            <input type="file" className="hidden" disabled={!newResourceName || isUploadingResource} onChange={e => e.target.files[0] && handleUploadResource(e.target.files[0])} />
           </label>
         </div>
       </div>
-    </div>
 
-    {/* Gestion des Modèles Word (.docx) */}
-    <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mt-8">
-      <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-        <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Bibliothèque de Modèles Word (.docx)
-      </h2>
-      <p className="text-sm text-gray-500 mb-6">Uploadez vos modèles Word contenant les tags <code>{"{nomcomplet_client}"}</code>, <code>{"{adresse_session}"}</code>, etc.</p>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Gestion des Modèles DOCX */}
+      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+          <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Bibliothèque de Modèles Word
+        </h2>
         <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
           <h3 className="font-bold text-gray-900 mb-4 flex items-center"><FileText className="mr-2" size={18}/> Nouveau Modèle</h3>
           <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Nom du type (Ex: Contrat, Attestation...)</label>
-              <input 
-                type="text" 
-                value={newTemplateName} 
-                onChange={e => setNewTemplateName(e.target.value)}
-                placeholder="Ex: Contrat de formation"
-                className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Fichier .docx</label>
-              <div className="flex gap-2">
-                <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                      Uploader le Modèle (.docx)
-                      <input
-                        type="file"
-                        className="hidden"
-                        disabled={!newTemplateName}
-                        accept=".docx"
-                        onChange={(e) => {
-                          if (e.target.files[0]) {
-                            handleUploadDocxTemplate(e.target.files[0], newTemplateName);
-                            setNewTemplateName('');
-                          }
-                        }}
-                      />
-                    </label>
-              </div>
-            </div>
+            <input type="text" value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)} placeholder="Nom du type" className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white" />
+            <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              Uploader le Modèle (.docx)
+              <input type="file" className="hidden" disabled={!newTemplateName} accept=".docx" onChange={(e) => { if(e.target.files[0]) { handleUploadDocxTemplate(e.target.files[0], newTemplateName); setNewTemplateName(''); } }} />
+            </label>
           </div>
         </div>
       </div>
+
+      <StepResourceModal 
+        isOpen={isResourceModalOpen}
+        onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); }}
+        pedagogicalResources={pedagogicalResources}
+        onSave={async (data) => {
+          setIsResourceModalOpen(false);
+          setIsAddingStepResource(true);
+          const { error } = await supabase.from('module_step_resources').insert([{
+            template_id: activeFolderId,
+            type: data.type,
+            titre: data.title,
+            ressource_id: data.resourceId,
+            metadata: data.metadata,
+            ordre: moduleStepResources.filter(r => r.template_id === activeFolderId).length + 1
+          }]);
+          if (!error) await fetchModules();
+          setIsAddingStepResource(false);
+          setActiveFolderId(null);
+        }}
+      />
     </div>
-  </div>
-);
+  );
+};
 
 const FormateurView = ({
   clients, formateurs, sessions, generateSessions,
@@ -1416,29 +1442,88 @@ const FormateurView = ({
                                     </td>
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
-                                        {session.statut !== 'Signé' && (
-                                          <button
-                                            onClick={() => handleDeleteSession(session)}
-                                            className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                                          >
-                                            <Trash2 size={14} />
-                                          </button>
-                                        )}
-                                        {session.statut !== 'Signé' && session.type_activite === 'signature' && (
-                                          <button
-                                            onClick={() => signSession(session)}
-                                            disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
-                                            className={`px-3 py-1 rounded-lg text-[9px] font-bold transition-all ${(!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)))
-                                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white'
-                                              }`}
-                                          >
-                                            Émarger
-                                          </button>
-                                        )}
-                                        {session.statut === 'Signé' && (
-                                          <span className="text-green-500 font-bold text-[10px]">✓ Confirmé</span>
-                                        )}
+                                        {(() => {
+                                          const today = new Date().toISOString().split('T')[0];
+                                          const sessionDate = session.date || group.date;
+                                          const isDateLocked = sessionDate && today < sessionDate;
+                                          const metadata = session.metadata || {};
+
+                                          if (session.type_activite === 'signature') {
+                                            const isSigned = session.statut === 'Signé';
+                                            return (
+                                              <button 
+                                                disabled={isSigned || isDateLocked}
+                                                onClick={() => signSession(session)}
+                                                className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                              >
+                                                {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
+                                              </button>
+                                            );
+                                          }
+
+                                          if (session.type_activite === 'document') {
+                                            const isToSign = metadata.isToSign;
+                                            return (
+                                              <div className="flex gap-2">
+                                                <button 
+                                                  onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                                                >
+                                                  Consulter
+                                                </button>
+                                                {isToSign && (
+                                                  <button 
+                                                    disabled={session.statut === 'Signé' || isDateLocked}
+                                                    onClick={() => signSession(session)}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                                  >
+                                                    {session.statut === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+
+                                          if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                            return (
+                                              <div className="flex gap-2">
+                                                <button 
+                                                  onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                                >
+                                                  Télécharger
+                                                </button>
+                                                {userRole === 'client' && (
+                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                    Soumettre Réponse
+                                                    <input 
+                                                      type="file" 
+                                                      className="hidden" 
+                                                      onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                                    />
+                                                  </label>
+                                                )}
+                                                {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
+                                                  <button 
+                                                    onClick={() => window.open(session.reponse_url, '_blank')}
+                                                    className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                  >
+                                                    Voir Réponse
+                                                  </button>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+
+                                          return (
+                                            <button
+                                              onClick={() => handleDeleteSession(session)}
+                                              className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          );
+                                        })()}
                                       </div>
                                     </td>
                                   </tr>
@@ -2059,30 +2144,80 @@ const SessionsView = ({ sessions, signSession, currentUserId, handleDownloadAtte
                           </span>
                         </td>
                         <td className="py-4 text-right pr-4">
-                          {session.statut !== 'Signé' && session.type_activite === 'signature' && (
-                            <button
-                              onClick={() => {
-                                const today = new Date();
-                                today.setHours(0, 0, 0, 0);
-                                const sessionDate = new Date(session.date);
-                                if (!session.date || sessionDate > today) return;
-                                signSession(session);
-                              }}
-                              disabled={!session.date || (new Date(session.date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0))}
-                              className={`px-4 py-2 rounded-xl text-[10px] font-bold shadow-sm transition-all ${(session.date && new Date(session.date).setHours(0, 0, 0, 0) <= new Date().setHours(0, 0, 0, 0))
-                                ? 'bg-rose-500 text-white hover:bg-rose-600'
-                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                }`}
-                            >
-                              Signer
-                            </button>
-                          )}
-                          {session.type_activite === 'document' && session.ressource_id && (
-                             <a href={pedagogicalResources.find(r => r.name === session.ressource_id)?.url || '#'} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-[10px] shadow-sm hover:bg-indigo-700 transition-colors">
-                               Ouvrir PDF ↗
-                             </a>
-                          )}
-                           {session.statut === 'Signé' && <span className="text-green-500 font-bold text-[10px]">✓ Terminé</span>}
+                          <div className="flex justify-end gap-2">
+                            {(() => {
+                              const today = new Date().toISOString().split('T')[0];
+                              const sessionDate = session.date || group.date;
+                              const isDateLocked = sessionDate && today < sessionDate;
+                              const metadata = session.metadata || {};
+
+                              if (session.type_activite === 'signature') {
+                                return (
+                                  <button 
+                                    disabled={session.statut === 'Signé' || isDateLocked}
+                                    onClick={() => signSession(session)}
+                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                  >
+                                    {session.statut === 'Signé' ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
+                                  </button>
+                                );
+                              }
+
+                              if (session.type_activite === 'document') {
+                                const isToSign = metadata.isToSign;
+                                return (
+                                  <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                                    >
+                                      Consulter
+                                    </button>
+                                    {isToSign && (
+                                      <button 
+                                        disabled={session.statut === 'Signé' || isDateLocked}
+                                        onClick={() => signSession(session)}
+                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                      >
+                                        {session.statut === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                return (
+                                  <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                    >
+                                      Télécharger
+                                    </button>
+                                    <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                      {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
+                                      <input 
+                                        type="file" 
+                                        className="hidden" 
+                                        onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                      />
+                                    </label>
+                                    {session.reponse_url && (
+                                      <button 
+                                        onClick={() => window.open(session.reponse_url, '_blank')}
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
+                                      >
+                                        Ma Réponse ↗
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              return null;
+                            })()}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2728,6 +2863,8 @@ export default function App() {
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isAddingStepResource, setIsAddingStepResource] = useState(false);
   const [isAddingStep, setIsAddingStep] = useState(false);
+  const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
+  const [activeFolderId, setActiveFolderId] = useState(null);
 
   // États formulaire "Ajouter un document"
   const [newDocName, setNewDocName] = useState('');
@@ -3083,6 +3220,43 @@ export default function App() {
     setIsAddingStep(false);
   };
 
+  const handleAddStepResource = async (templateId, stepData) => {
+    if (!templateId) return;
+    
+    setIsAddingStepResource(true);
+    const { error } = await supabase.from('module_step_resources').insert([{
+      template_id: templateId,
+      titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
+      type: stepData.type,
+      ressource_id: stepData.resourceId,
+      metadata: stepData.metadata,
+      ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
+    }]);
+
+    if (error) {
+      console.error("Erreur ajout ressource:", error);
+      alert("Erreur lors de l'ajout : " + error.message);
+    } else {
+      setIsResourceModalOpen(false);
+      await fetchModules();
+    }
+    setIsAddingStepResource(false);
+  };
+
+  const handleDeleteFolder = async (folderId) => {
+    if (!window.confirm("Supprimer ce dossier et tout son contenu ?")) return;
+    const { error } = await supabase.from('module_session_templates').delete().eq('id', folderId);
+    if (!error) await fetchModules();
+    else alert("Erreur supression : " + error.message);
+  };
+
+  const handleDeleteStepResource = async (resourceId) => {
+    if (!window.confirm("Supprimer cet élément ?")) return;
+    const { error } = await supabase.from('module_step_resources').delete().eq('id', resourceId);
+    if (!error) await fetchModules();
+    else alert("Erreur supression : " + error.message);
+  };
+
   const generateSessions = async (client) => {
     if (!client.module_id) return;
     const module = modules.find(m => m.id === client.module_id);
@@ -3136,10 +3310,11 @@ export default function App() {
                 client_id: client.id,
                 module_id: module.id,
                 numero_seance: t.ordre,
-                nom: t.titre, // Nom du dossier/séance
+                nom: t.titre,
                 type_activite: res.type,
                 ressource_id: res.ressource_id,
                 ressource_titre: res.titre,
+                metadata: res.metadata, // Propagate metadata (signatures, etc.)
                 statut: 'À venir'
               });
             });
@@ -3164,7 +3339,7 @@ export default function App() {
               client_id: client.id,
               module_id: module.id,
               numero_seance: i,
-              titre: defaultTitle,
+              nom: defaultTitle,
               statut: 'À venir'
             });
           }
@@ -3357,6 +3532,47 @@ export default function App() {
     } catch (err) {
       console.error("Upload Template Error:", err);
       alert("Erreur lors de l'upload: " + (err.message || 'Erreur inconnue'));
+    }
+  };
+
+  const handleDownloadResource = async (fileName) => {
+    const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(fileName, 60);
+    if (!error && data) {
+      window.open(data.signedUrl, '_blank');
+    } else {
+      alert('Erreur lors du téléchargement : ' + error?.message);
+    }
+  };
+
+  const handleUploadExerciseResponse = async (sessionId, file) => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${sessionId}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from('exercices-reponses')
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('exercices-reponses')
+        .getPublicUrl(fileName);
+
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({ 
+          reponse_url: publicUrl,
+          statut: 'Rendu'
+        })
+        .eq('id', sessionId);
+
+      if (updateError) throw updateError;
+      
+      await fetchSessions();
+      alert('Réponse envoyée avec succès !');
+    } catch (error) {
+      console.error('Erreur upload exercice:', error);
+      alert('Erreur lors de l\'envoi : ' + error.message);
     }
   };
 
@@ -3985,6 +4201,10 @@ export default function App() {
             setIsAddingStepResource={setIsAddingStepResource}
             supabase={supabase}
             createSessionFolder={createSessionFolder}
+            isResourceModalOpen={isResourceModalOpen}
+            setIsResourceModalOpen={setIsResourceModalOpen}
+            activeFolderId={activeFolderId}
+            setActiveFolderId={setActiveFolderId}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
