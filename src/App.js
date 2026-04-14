@@ -380,7 +380,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 };
 
 const ClientDetailView = ({
-  client, formateurs, assignFormateur, assignModule, modules,
+  client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
@@ -474,7 +474,7 @@ const ClientDetailView = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-xs font-bold text-gray-500 mb-1">Module Assigné</label>
-              <select value={client.module_id || ''} onChange={(e) => assignModule(client.id, e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-xl focus:ring-indigo-500 block w-full p-3 outline-none">
+              <select value={client.module_id || ''} onChange={(e) => handleModuleChange(client.id, e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-xl focus:ring-indigo-500 block w-full p-3 outline-none">
                 <option value="">Aucun module</option>
                 {modules.map(m => (<option key={m.id} value={m.id}>{m.nom}</option>))}
               </select>
@@ -592,7 +592,7 @@ const AdminClientsView = ({
   newUserRole, setNewUserRole, isAddingUser,
   clientPhone, setClientPhone,
   clientEmail, setClientEmail,
-  clients, formateurs, assignFormateur, assignModule,
+  clients, formateurs, assignFormateur, handleModuleChange,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents
@@ -610,7 +610,7 @@ const AdminClientsView = ({
       return (
         <ClientDetailView 
           client={selectedClient} formateurs={formateurs} assignFormateur={assignFormateur} 
-          assignModule={assignModule} modules={modules} supabase={supabase} 
+          handleModuleChange={handleModuleChange} modules={modules} supabase={supabase} 
           fetchUtilisateurs={fetchUtilisateurs} onBack={() => setExpandedClientId(null)} 
           sessions={sessions} fetchSessions={fetchSessions} documents={documents} 
           handleGenerateDocx={handleGenerateDocx} documentTemplates={documentTemplates} 
@@ -2690,10 +2690,10 @@ export default function App() {
     setIsAddingUser(false);
   };
 
-  const assignModule = async (clientId, moduleId) => {
+  const handleModuleChange = async (clientId, moduleId) => {
     const finalModuleId = moduleId ? Number(moduleId) : null;
 
-    // Update module_id in the correct table
+    // 1. Sauvegarde dans Supabase table 'clients'
     const { error: updateError } = await supabase
       .from('clients')
       .update({ module_id: finalModuleId })
@@ -2701,52 +2701,27 @@ export default function App() {
 
     if (updateError) {
       console.error("Erreur assignation module:", updateError);
+      alert("Erreur lors de l'assignation : " + updateError.message);
       return;
     }
 
-    const client = clients.find(c => c.id === clientId);
-    if (client && finalModuleId) {
-      const assignedModule = modules.find(m => m.id === finalModuleId);
+    // 2. Récupérer l'objet client frais pour Qualiopi (séances)
+    const { data: updatedClient } = await supabase.from('clients').select('*').eq('id', clientId).single();
 
-      if (assignedModule) {
-        // 1. GÉNÉRATION DES SESSIONS
-        await generateSessions(client);
-
-        // 2. GÉNÉRATION DES DOCUMENTS TYPES
-        const autoDocs = [];
-
-        // Feuilles d'émargement selon seances_prevues
-        for (let i = 1; i <= assignedModule.seances_prevues; i++) {
-          autoDocs.push({
-            nom: `${assignedModule.nom} - Feuille de présence (Séance ${i})`,
-            type_document: 'Présence',
-            user_id: client.id,
-            visible_client: true, visible_formateur: true,
-            signe_par_client: false, signe_par_formateur: false
-          });
-        }
-
-        // Documents types du module (ex: Contrats, Bilans)
-        const mDocs = moduleDocuments.filter(md => md.module_id === assignedModule.id);
-        for (const mDoc of mDocs) {
-          autoDocs.push({
-            nom: `${assignedModule.nom} - ${mDoc.nom}`,
-            type_document: mDoc.type_document,
-            url: mDoc.url || null,
-            user_id: client.id,
-            visible_client: true, visible_formateur: true,
-            signe_par_client: false, signe_par_formateur: false
-          });
-        }
-
-        // Batch insert des documents générés
-        if (autoDocs.length > 0) {
-          const { error: autoError } = await supabase.from('documents').insert(autoDocs);
-          if (autoError) console.error("Erreur gèn. auto docs:", autoError);
-        }
-      }
+    if (updatedClient && finalModuleId) {
+      // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
+      const compatibleClient = {
+        ...updatedClient,
+        nom: updatedClient.nom_complet,
+        id: updatedClient.id,
+        module_id: finalModuleId
+      };
+      
+      // 3. Déclenchement automatique des sessions (Qualiopi)
+      await generateSessions(compatibleClient);
     }
 
+    // 4. Rafraîchir l'UI globale
     await fetchUtilisateurs();
     await fetchDocuments();
   };
@@ -3576,7 +3551,7 @@ export default function App() {
             clients={clients}
             formateurs={formateurs}
             assignFormateur={assignFormateur}
-            assignModule={assignModule}
+            handleModuleChange={handleModuleChange}
             modules={modules}
             handleGenerateDocx={handleGenerateDocx}
             sessions={sessions}
