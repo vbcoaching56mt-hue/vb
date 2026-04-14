@@ -883,7 +883,11 @@ const IngenierieView = ({
   newModDocFile, setNewModDocFile,
   addingToModuleId, setAddingToModuleId,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
-  handleUploadResource, newResourceName, setNewResourceName, isUploadingResource
+  handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
+  modelingModuleId, setModelingModuleId, moduleSessionTemplates, fetchModules,
+  newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
+  selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
+  setIsAddingStep, supabase
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -3825,6 +3829,20 @@ export default function App() {
             newResourceName={newResourceName}
             setNewResourceName={setNewResourceName}
             isUploadingResource={isUploadingResource}
+            modelingModuleId={modelingModuleId}
+            setModelingModuleId={setModelingModuleId}
+            moduleSessionTemplates={moduleSessionTemplates}
+            fetchModules={fetchModules}
+            newStepTitle={newStepTitle}
+            setNewStepTitle={setNewStepTitle}
+            newStepActivity={newStepActivity}
+            setNewStepActivity={setNewStepActivity}
+            selectedResourceId={selectedResourceId}
+            setSelectedResourceId={setSelectedResourceId}
+            pedagogicalResources={pedagogicalResources}
+            isAddingStep={isAddingStep}
+            setIsAddingStep={setIsAddingStep}
+            supabase={supabase}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
