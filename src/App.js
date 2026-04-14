@@ -173,7 +173,7 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
   );
 };
 
-const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) => {
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [metadata, setMetadata] = useState({ 
@@ -182,6 +182,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) =>
     documentType: 'signature' // 'info' | 'signature'
   });
   const [selectedResourceId, setSelectedResourceId] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -194,8 +195,36 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) =>
         documentType: 'signature' 
       });
       setSelectedResourceId('');
+      setIsUploading(false);
     }
   }, [isOpen]);
+
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `modeling-imports/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('ressources-pedagogiques')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Link the uploaded file
+      setSelectedResourceId(filePath); // Store the full storage path
+      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, "")); // Auto-title if empty
+      
+      console.log('File uploaded and linked:', filePath);
+    } catch (err) {
+      console.error('Error uploading file in modal:', err);
+      alert('Erreur lors de l\'import du fichier.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -208,12 +237,25 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) =>
           <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
         </div>
         
-        <div className="p-8 space-y-6">
+        <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
           <div className="grid grid-cols-3 gap-3">
             {['signature', 'document', 'exercice'].map(t => (
               <button 
                 key={t}
-                onClick={() => setType(t)}
+                onClick={() => {
+                  setType(t);
+                  // Update default title and metadata based on type
+                  if (t === 'signature') {
+                    setTitle('Émargement de présence');
+                    setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'signature' });
+                  } else if (t === 'exercice') {
+                    setTitle('');
+                    setMetadata({ documentType: 'info' }); // Exercises are info/work by default
+                  } else {
+                    setTitle('');
+                    setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'info' });
+                  }
+                }}
                 className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${type === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-100 bg-gray-50 text-gray-400 hover:border-indigo-200'}`}
               >
                 <span className="text-2xl">{t === 'signature' ? '✍️' : t === 'document' ? '📄' : '⚙️'}</span>
@@ -233,58 +275,87 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources }) =>
             />
           </div>
 
-          {type === 'document' && (
+          {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Source du Document</label>
-                <select 
-                  className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                  value={selectedResourceId}
-                  onChange={e => setSelectedResourceId(e.target.value)}
-                >
-                  <option value="">Sélectionner dans la modélothèque...</option>
-                  {pedagogicalResources.map(r => (
-                    <option key={r.name} value={r.name}>{r.name}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Source du Fichier</label>
+                <div className="space-y-3">
+                  <select 
+                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                    value={selectedResourceId}
+                    onChange={e => setSelectedResourceId(e.target.value)}
+                  >
+                    <option value="">Sélectionner dans la modélothèque...</option>
+                    {pedagogicalResources.map(r => (
+                      <option key={r.name} value={r.name}>{r.name}</option>
+                    ))}
+                  </select>
+                  
+                  <div className="flex items-center gap-4">
+                    <div className="h-px bg-gray-100 flex-1"></div>
+                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
+                    <div className="h-px bg-gray-100 flex-1"></div>
+                  </div>
+
+                  <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier (PDF, Word, Excel)'}
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      disabled={isUploading}
+                      accept=".pdf,.doc,.docx,.xls,.xlsx"
+                      onChange={(e) => e.target.files[0] && handleFileUpload(e.target.files[0])} 
+                    />
+                  </label>
+                  {selectedResourceId && !isUploading && (
+                    <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                      ✓ Fichier lié : {selectedResourceId}
+                    </p>
+                  )}
+                </div>
               </div>
 
-              <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
-                <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Type d'interaction</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" checked={metadata.documentType === 'info'} onChange={() => setMetadata({...metadata, documentType: 'info'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                    <span className="text-sm font-bold text-gray-700">Lecture seule</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" checked={metadata.documentType === 'signature'} onChange={() => setMetadata({...metadata, documentType: 'signature'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                    <span className="text-sm font-bold text-gray-700">À signer</span>
-                  </label>
-                </div>
-
-                {metadata.documentType === 'signature' && (
-                  <div className="pt-3 border-t border-indigo-100 mt-2 flex gap-4">
+              {type === 'document' && (
+                <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
+                  <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Type d'interaction</label>
+                  <div className="flex gap-4">
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({...metadata, requiresClientSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                      <input type="radio" checked={metadata.documentType === 'info'} onChange={() => setMetadata({...metadata, documentType: 'info'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-sm font-bold text-gray-700">Lecture seule</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({...metadata, requiresTrainerSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                      <input type="radio" checked={metadata.documentType === 'signature'} onChange={() => setMetadata({...metadata, documentType: 'signature'})} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-sm font-bold text-gray-700">À signer</span>
                     </label>
                   </div>
-                )}
-              </div>
+
+                  {metadata.documentType === 'signature' && (
+                    <div className="pt-3 border-t border-indigo-100 mt-2 flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({...metadata, requiresClientSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({...metadata, requiresTrainerSignature: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          <div className="pt-4">
+          <div className="pt-4 pb-2">
             <button 
-              onClick={() => onSave({ type, title, metadata, resourceId: selectedResourceId })}
-              disabled={!title.trim()}
+              onClick={() => {
+                onSave({ type, title, metadata, resourceId: selectedResourceId });
+                onClose(); // Instant feedback
+              }}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
-              Enregistrer l'activité
+              {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
             </button>
           </div>
         </div>
@@ -1200,21 +1271,8 @@ const IngenierieView = ({
         isOpen={isResourceModalOpen}
         onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); }}
         pedagogicalResources={pedagogicalResources}
-        onSave={async (data) => {
-          setIsResourceModalOpen(false);
-          setIsAddingStepResource(true);
-          const { error } = await supabase.from('module_step_resources').insert([{
-            template_id: activeFolderId,
-            type: data.type,
-            titre: data.title,
-            ressource_id: data.resourceId,
-            metadata: data.metadata,
-            ordre: moduleStepResources.filter(r => r.template_id === activeFolderId).length + 1
-          }]);
-          if (!error) await fetchModules();
-          setIsAddingStepResource(false);
-          setActiveFolderId(null);
-        }}
+        supabase={supabase}
+        onSave={(data) => handleAddStepResource(activeFolderId, data)}
       />
     </div>
   );
