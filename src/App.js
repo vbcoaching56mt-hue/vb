@@ -3068,7 +3068,8 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.setData({
-        nom_formateur: theCoach.raison_sociale || theCoach.nom || 'Non assigné',
+        nom_formateur: theCoach.nom || 'Non assigné',
+        raison_sociale: theCoach.nom || 'Non assigné',
         adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
         formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
         formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
