@@ -216,6 +216,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
     // 2. Chercher le rôle dans la base de données
     const userEmail = authData.user?.email;
     if (userEmail) {
+      // D'abord chercher dans utilisateurs (formateurs/admin)
       const { data: userData, error: dbError } = await supabase
         .from('utilisateurs')
         .select('role, id')
@@ -226,9 +227,22 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
         handleLogin(userData.role, userData.id);
         setIsLoading(false);
         return;
+      }
+
+      // Si pas trouvé, chercher dans la table 'clients'
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('email_contact', userEmail)
+        .single();
+
+      if (clientData) {
+        handleLogin('client', clientData.id);
+        setIsLoading(false);
+        return;
       } else {
-        console.error('Utilisateur non trouvé dans la DB:', dbError);
-        setErrorMsg('Votre compte existe mais n\'est pas encore configuré. Contactez l\'administrateur.');
+        console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
+        setErrorMsg('Votre compte existe mais n\'est pas encore configuré dans les tables de données. Contactez l\'administrateur.');
       }
     }
 
@@ -1899,7 +1913,17 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
       nomcomplet_client: profileData.nomcomplet
     };
     
-    const { error } = await supabase.from('utilisateurs').update(updates).eq('id', currentUserId);
+    let error;
+    if (userRole === 'client') {
+      const result = await supabase.from('clients').update({
+        nom_complet: profileData.nomcomplet,
+        adresse_postale: profileData.adresse
+      }).eq('id', currentUserId);
+      error = result.error;
+    } else {
+      const result = await supabase.from('utilisateurs').update(updates).eq('id', currentUserId);
+      error = result.error;
+    }
     if (!error) {
       alert('Profil mis à jour avec succès !');
       fetchUtilisateurs();
@@ -2435,15 +2459,44 @@ export default function App() {
   };
 
   const fetchUtilisateurs = async () => {
-    const { data: usersData, error } = await supabase
+    // 1. Charger les formateurs depuis 'utilisateurs'
+    const { data: formateursData, error: formateursError } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, numero_dossier, role, formateur_id, seances_effectuees, seances_totales, module_id, formateur_siret, formateur_nda, adresse_formateur, nomcomplet_client, client_phone, client_email, adresse_session');
+      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur')
+      .eq('role', 'formateur');
 
-    if (!error && usersData) {
-      setClients(usersData.filter(u => u.role === 'client'));
-      setFormateurs(usersData.filter(u => u.role === 'formateur'));
-    } else if (error) {
-      console.error("Erreur utilisateurs:", error);
+    // 2. Charger les clients depuis 'clients'
+    const { data: clientsData, error: clientsError } = await supabase
+      .from('clients')
+      .select('*');
+
+    if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
+    if (clientsError) console.error("Erreur fetch clients:", clientsError);
+
+    if (formateursData) {
+      setFormateurs(formateursData);
+    }
+
+    if (clientsData) {
+      // Mapping pour garder la compatibilité avec le reste du code
+      const mappedClients = clientsData.map(c => ({
+        id: c.id,
+        nom: c.nom_complet || "Client sans nom",
+        email: c.email_contact,
+        role: 'client',
+        numero_dossier: c.numero_dossier,
+        formateur_id: c.formateur_id,
+        module_id: c.module_id,
+        seances_effectuees: c.seances_effectuees || 0,
+        seances_totales: c.seances_totales || 0,
+        nomcomplet_client: c.nom_complet,
+        client_phone: c.telephone,
+        client_email: c.email_contact,
+        adresse_session: c.adresse_postale,
+        montant_prestation: c.montant_prestation,
+        modalite_formation: c.modalite_formation || 'Mixte'
+      }));
+      setClients(mappedClients);
     }
   };
 
@@ -2517,9 +2570,7 @@ export default function App() {
     );
 
     // 2. Envoyer l'invitation via Supabase Auth Admin
-    // L'email utilise le template personnalisé dans Supabase Dashboard
-    // qui contient un lien direct vers notre app avec {{ .TokenHash }}
-    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
+    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
       data: { full_name: nom, role: role }
     });
 
@@ -2530,15 +2581,26 @@ export default function App() {
       return;
     }
 
-    // 3. Créer l'entrée dans la table utilisateurs
-    const { error: dbError } = await supabase.from('utilisateurs').insert([{
-      nom: nom,
-      email: email,
-      role: role
-    }]);
+    const newUserId = inviteData.user?.id;
 
-    if (dbError) {
-      console.error("Erreur DB après invitation:", dbError);
+    // 3. Créer l'entrée dans la table correspondante
+    if (role === 'client') {
+      // Pour les clients : on utilise la table 'clients' avec l'UUID de l'Auth
+      const { error: dbError } = await supabase.from('clients').insert([{
+        id: newUserId,
+        nom_complet: nom,
+        email_contact: email,
+        role: 'client'
+      }]);
+      if (dbError) console.error("Erreur DB clients après invitation:", dbError);
+    } else {
+      // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
+      const { error: dbError } = await supabase.from('utilisateurs').insert([{
+        nom: nom,
+        email: email,
+        role: role
+      }]);
+      if (dbError) console.error("Erreur DB utilisateurs après invitation:", dbError);
     }
 
     alert(`✅ Invitation envoyée par email à ${email} !`);
@@ -2569,16 +2631,28 @@ export default function App() {
     if (!newUserName.trim() || !newUserEmail.trim()) return;
     setIsAddingUser(true);
 
-    const { error } = await supabase
-      .from('utilisateurs')
-      .insert([{
-        nom: newUserName,
-        email: newUserEmail,
-        role: newUserRole,
-        client_phone: clientPhone,
-        client_email: clientEmail
-      }])
-      .select();
+    let error;
+    if (newUserRole === 'client') {
+      const { error: clientError } = await supabase
+        .from('clients')
+        .insert([{
+          nom_complet: newUserName,
+          email_contact: newUserEmail,
+          telephone: clientPhone,
+          role: 'client'
+        }]);
+      error = clientError;
+    } else {
+      const { error: userError } = await supabase
+        .from('utilisateurs')
+        .insert([{
+          nom: newUserName,
+          email: newUserEmail,
+          role: newUserRole,
+        }])
+        .select();
+      error = userError;
+    }
 
     if (error) {
       console.error("Erreur ajout user", error);
@@ -2598,9 +2672,9 @@ export default function App() {
   const assignModule = async (clientId, moduleId) => {
     const finalModuleId = moduleId ? Number(moduleId) : null;
 
-    // Update module_id in database
+    // Update module_id in the correct table
     const { error: updateError } = await supabase
-      .from('utilisateurs')
+      .from('clients')
       .update({ module_id: finalModuleId })
       .eq('id', clientId);
 
@@ -2779,7 +2853,7 @@ export default function App() {
 
     if (!insError) {
       const newTotal = (client.seances_totales || 0) + 1;
-      await supabase.from('utilisateurs').update({ seances_totales: newTotal }).eq('id', client.id);
+      await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
       await fetchUtilisateurs();
       await fetchSessions();
     } else {
@@ -2797,7 +2871,7 @@ export default function App() {
 
     if (!delError) {
       const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
-      await supabase.from('utilisateurs').update({ seances_totales: newTotal }).eq('id', client.id);
+      await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
       await fetchUtilisateurs();
       await fetchSessions();
     } else {
@@ -2841,7 +2915,7 @@ export default function App() {
       const client = clients.find(c => c.id === session.client_id);
       if (client) {
         const newEffectuees = (client.seances_effectuees || 0) + 1;
-        await supabase.from('utilisateurs').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
+        await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
         await fetchUtilisateurs();
       }
       await fetchSessions();
@@ -2860,7 +2934,7 @@ export default function App() {
     if (!userIdParsed) return;
 
     const { error } = await supabase
-      .from('utilisateurs')
+      .from('clients')
       .update({ formateur_id: formateurIdParsed })
       .eq('id', userIdParsed);
 
