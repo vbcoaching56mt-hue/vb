@@ -3069,9 +3069,9 @@ export default function App() {
 
       doc.setData({
         nom_formateur: theCoach.raison_sociale || theCoach.nom || 'Non assigné',
-        adresse_formateur: theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
-        formateur_nda: theCoach.nda || '',
-        formateur_siret: theCoach.siret || '',
+        adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
+        formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
+        formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
         email_formateur: theCoach.email || '',
         tel_formateur: theCoach.telephone || '',
         nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
@@ -3716,9 +3716,9 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
   const [isSaving, setIsSaving] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
     raison_sociale: formateur.raison_sociale || formateur.nom || '',
-    siret: formateur.siret || '',
-    nda: formateur.nda || '',
-    adresse_pro: formateur.adresse_pro || formateur.adresse_client || '',
+    formateur_siret: formateur.formateur_siret || formateur.siret || '',
+    formateur_nda: formateur.formateur_nda || formateur.nda || '',
+    adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     email: formateur.email || '',
     telephone: formateur.telephone || ''
   });
@@ -3729,9 +3729,9 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
       .from('utilisateurs')
       .update({
         raison_sociale: legalInfo.raison_sociale,
-        siret: legalInfo.siret,
-        nda: legalInfo.nda,
-        adresse_pro: legalInfo.adresse_pro,
+        formateur_siret: legalInfo.formateur_siret,
+        formateur_nda: legalInfo.formateur_nda,
+        adresse_formateur: legalInfo.adresse_formateur,
         email: legalInfo.email,
         telephone: legalInfo.telephone
       })
@@ -3778,12 +3778,12 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
                   <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
-                    value={legalInfo.siret} onChange={e => setLegalInfo({...legalInfo, siret: e.target.value})} placeholder="14 chiffres" />
+                    value={legalInfo.formateur_siret} onChange={e => setLegalInfo({...legalInfo, formateur_siret: e.target.value})} placeholder="14 chiffres" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Qualiopi)</label>
                   <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
-                    value={legalInfo.nda} onChange={e => setLegalInfo({...legalInfo, nda: e.target.value})} placeholder="N° Déclaration" />
+                    value={legalInfo.formateur_nda} onChange={e => setLegalInfo({...legalInfo, formateur_nda: e.target.value})} placeholder="N° Déclaration" />
                 </div>
               </div>
             </div>
@@ -3797,7 +3797,7 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs })
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Professionnelle</label>
                 <textarea rows="2" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" 
-                  value={legalInfo.adresse_pro} onChange={e => setLegalInfo({...legalInfo, adresse_pro: e.target.value})} placeholder="Adresse complète du siège" />
+                  value={legalInfo.adresse_formateur} onChange={e => setLegalInfo({...legalInfo, adresse_formateur: e.target.value})} placeholder="Adresse complète du siège" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
