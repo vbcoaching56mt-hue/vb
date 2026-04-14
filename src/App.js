@@ -381,7 +381,8 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
-  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates
+  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
+  pedagogicalResources
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -442,6 +443,24 @@ const ClientDetailView = ({
   const updateSession = async (id, payload) => {
     await supabase.from('sessions').update(payload).eq('id', id);
     if(fetchSessions) fetchSessions();
+  };
+
+  const handleAddCustomSession = async () => {
+    const nextNum = clientSessions.length + 1;
+    const { error } = await supabase.from('sessions').insert([{
+      client_id: client.id,
+      module_id: client.module_id,
+      numero_seance: nextNum,
+      titre: `Séance personnalisée ${nextNum}`,
+      statut: 'À venir'
+    }]);
+    if (!error && fetchSessions) fetchSessions();
+  };
+
+  const handleDeleteSession = async (id) => {
+    if (!window.confirm("Supprimer cette séance ?")) return;
+    const { error } = await supabase.from('sessions').delete().eq('id', id);
+    if (!error && fetchSessions) fetchSessions();
   };
 
   return (
@@ -548,17 +567,68 @@ const ClientDetailView = ({
 
       {activeTab === 'seances' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-800 mb-6">Calendrier des Séances</h3>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-lg font-bold text-gray-800">Calendrier des Séances</h3>
+            <button onClick={handleAddCustomSession} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm transition-all">
+              <Plus size={14} /> Ajouter une étape personnalisée
+            </button>
+          </div>
           <div className="space-y-4">
             {clientSessions.length > 0 ? clientSessions.map(session => (
-              <div key={session.id} className="p-4 border border-gray-100 rounded-2xl bg-gray-50 flex flex-col md:flex-row flex-wrap gap-4 items-center">
-                <div className="font-bold text-sm text-gray-800 min-w-[120px]">{session.titre}</div>
-                <input type="date" className="p-2 text-sm border border-gray-200 rounded-lg outline-none" defaultValue={session.date || ''} onBlur={(e) => updateSession(session.id, {date: e.target.value})} />
-                <input type="time" className="p-2 text-sm border border-gray-200 rounded-lg outline-none" defaultValue={session.heure_debut || ''} onBlur={(e) => updateSession(session.id, {heure_debut: e.target.value})} />
-                <input type="text" placeholder="Titre ressource (optionnel)" className="p-2 text-sm border border-gray-200 rounded-lg outline-none flex-1 min-w-[120px]" defaultValue={session.ressource_titre || ''} onBlur={(e) => updateSession(session.id, {ressource_titre: e.target.value})} />
-                <input type="url" placeholder="URL Drive (pour client)" className="p-2 text-sm border border-gray-200 rounded-lg outline-none flex-1 min-w-[150px]" defaultValue={session.ressource_url || ''} onBlur={(e) => updateSession(session.id, {ressource_url: e.target.value})} />
+              <div key={session.id} className="p-5 border border-gray-100 rounded-2xl bg-gray-50 flex flex-col gap-4 relative group">
+                <button onClick={() => handleDeleteSession(session.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                  <Trash2 size={16} />
+                </button>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Titre de la séance / étape</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 font-bold text-gray-800"
+                      defaultValue={session.titre} 
+                      onBlur={(e) => updateSession(session.id, {titre: e.target.value})} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type d'Activité</label>
+                    <select 
+                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 bg-white"
+                      defaultValue={session.type_activite || 'Signature'}
+                      onChange={(e) => updateSession(session.id, {type_activite: e.target.value})}
+                    >
+                      <option value="Signature">Signature Présence</option>
+                      <option value="Document PDF">Document PDF</option>
+                      <option value="Exercice">Exercice / Outil</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-gray-200/50">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Date</label>
+                    <input type="date" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.date || ''} onBlur={(e) => updateSession(session.id, {date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Heure</label>
+                    <input type="time" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.heure_debut || ''} onBlur={(e) => updateSession(session.id, {heure_debut: e.target.value})} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ressource Pédagogique (Modélothèque)</label>
+                    <select 
+                      className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none bg-white"
+                      defaultValue={session.ressource_id || ''}
+                      onChange={(e) => updateSession(session.id, {ressource_id: e.target.value})}
+                    >
+                      <option value="">Aucune ressource liée</option>
+                      {pedagogicalResources.map(res => (
+                        <option key={res.name} value={res.name}>{res.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
-            )) : <p className="text-gray-500 italic text-sm">Le formateur n'a pas encore généré les séances pour ce client.</p>}
+            )) : <p className="text-gray-500 italic text-sm text-center py-8">Aucune séance n'est encore programmée pour ce client.</p>}
           </div>
         </div>
       )}
@@ -595,7 +665,8 @@ const AdminClientsView = ({
   clients, formateurs, assignFormateur, handleModuleChange,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
-  activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents
+  activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
+  pedagogicalResources
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -614,6 +685,7 @@ const AdminClientsView = ({
           fetchUtilisateurs={fetchUtilisateurs} onBack={() => setExpandedClientId(null)} 
           sessions={sessions} fetchSessions={fetchSessions} documents={documents} 
           handleGenerateDocx={handleGenerateDocx} documentTemplates={documentTemplates} 
+          pedagogicalResources={pedagogicalResources}
         />
       );
     }
@@ -870,7 +942,104 @@ const IngenierieView = ({
                   </div>
                 </form>
               ) : (
-                <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg w-fit transition-all">+ Ajouter Doc. Type</button>
+                <div className="flex gap-2">
+                  <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
+                  <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
+                </div>
+              )}
+
+              {/* Interface de Modélisation du Parcours (New) */}
+              {modelingModuleId === mod.id && (
+                <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in">
+                  <h4 className="text-sm font-bold text-indigo-700 mb-4 flex items-center gap-2">
+                    <Layout size={16} /> Modélisation du Parcours Client
+                  </h4>
+                  
+                  <div className="space-y-3 mb-6">
+                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).map((template, idx) => (
+                      <div key={template.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-xs">
+                        <div className="flex items-center gap-3">
+                          <span className="w-6 h-6 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center font-bold">{idx + 1}</span>
+                          <div>
+                            <p className="font-bold text-gray-900">{template.titre}</p>
+                            <p className="text-[10px] text-gray-500">{template.type_activite} {template.ressource_id ? `• Ressource liée` : ''}</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            const { error } = await supabase.from('module_session_templates').delete().eq('id', template.id);
+                            if (!error) fetchModules();
+                          }}
+                          className="text-gray-300 hover:text-red-500 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    {moduleSessionTemplates.filter(t => t.module_id === mod.id).length === 0 && (
+                      <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-xl border border-dashed border-gray-200 text-center">Aucune étape définie pour ce module.</p>
+                    )}
+                  </div>
+
+                  <form 
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!newStepTitle.trim()) return;
+                      setIsAddingStep(true);
+                      const { error } = await supabase.from('module_session_templates').insert([{
+                        module_id: mod.id,
+                        titre: newStepTitle,
+                        type_activite: newStepActivity,
+                        ressource_id: selectedResourceId || null,
+                        ordre: moduleSessionTemplates.filter(t => t.module_id === mod.id).length + 1
+                      }]);
+                      if (!error) {
+                        setNewStepTitle('');
+                        setSelectedResourceId('');
+                        fetchModules();
+                      }
+                      setIsAddingStep(false);
+                    }}
+                    className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 space-y-3"
+                  >
+                    <input 
+                      required 
+                      type="text" 
+                      placeholder="Titre de l'étape (ex: Séance 1 : Analyse)" 
+                      value={newStepTitle} 
+                      onChange={e => setNewStepTitle(e.target.value)} 
+                      className="w-full text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500" 
+                    />
+                    <div className="flex gap-2">
+                      <select 
+                        value={newStepActivity} 
+                        onChange={e => setNewStepActivity(e.target.value)} 
+                        className="flex-1 text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 bg-white"
+                      >
+                        <option value="Signature">Signature Présence</option>
+                        <option value="Document PDF">Document PDF</option>
+                        <option value="Exercice">Exercice / Outil</option>
+                      </select>
+                      <select 
+                        value={selectedResourceId} 
+                        onChange={e => setSelectedResourceId(e.target.value)} 
+                        className="flex-1 text-xs p-2.5 border border-gray-200 rounded-lg outline-none focus:border-indigo-500 bg-white"
+                      >
+                        <option value="">Aucune Ressource</option>
+                        {pedagogicalResources.map(res => (
+                          <option key={res.name} value={res.name}>{res.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button 
+                      type="submit" 
+                      disabled={isAddingStep}
+                      className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-xs hover:bg-indigo-700 transition-all shadow-sm flex items-center justify-center gap-2"
+                    >
+                      {isAddingStep ? 'Ajout...' : '+ Ajouter cette étape'}
+                    </button>
+                  </form>
+                </div>
               )}
             </div>
           );
@@ -962,7 +1131,8 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
-  handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates
+  handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
+  pedagogicalResources
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -1095,14 +1265,6 @@ const FormateurView = ({
                     </div>
                   </div>
 
-                  {clientSessions.length === 0 && client.module_id && (
-                    <button
-                      onClick={() => generateSessions(client)}
-                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors mb-4"
-                    >
-                      Générer forfait 8 séances
-                    </button>
-                  )}
 
                   {clientSessions.length > 0 ? (
                     <>
@@ -2444,6 +2606,7 @@ export default function App() {
   // États Modules Supabase
   const [modules, setModules] = useState([]);
   const [moduleDocuments, setModuleDocuments] = useState([]);
+  const [moduleSessionTemplates, setModuleSessionTemplates] = useState([]);
 
   // États formulaire "Ajouter un compte"
   const [newUserName, setNewUserName] = useState('');
@@ -2461,6 +2624,13 @@ export default function App() {
   const [sessions, setSessions] = useState([]);
   const [newModDocFile, setNewModDocFile] = useState(null);
   const [addingToModuleId, setAddingToModuleId] = useState(null);
+  const [modelingModuleId, setModelingModuleId] = useState(null);
+  
+  // États formulaire "Étape de Parcours"
+  const [newStepTitle, setNewStepTitle] = useState('');
+  const [newStepActivity, setNewStepActivity] = useState('Signature');
+  const [selectedResourceId, setSelectedResourceId] = useState('');
+  const [isAddingStep, setIsAddingStep] = useState(false);
 
   // États formulaire "Ajouter un document"
   const [newDocName, setNewDocName] = useState('');
@@ -2485,6 +2655,9 @@ export default function App() {
 
     const { data: mdData, error: mdErr } = await supabase.from('module_documents').select('*');
     if (!mdErr && mdData) setModuleDocuments(mdData);
+
+    const { data: mstData, error: mstErr } = await supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
+    if (!mstErr && mstData) setModuleSessionTemplates(mstData);
   };
 
   const fetchSessions = async () => {
@@ -2799,36 +2972,64 @@ export default function App() {
     window._generatingSessionsFor.add(client.id);
 
     try {
-      // 1. Vérifier les séances existantes pour ce client + module (utilisant le UUID client.id)
-      const { data: existingSessions, error: checkError } = await supabase
-        .from('sessions')
-        .select('numero_seance')
-        .eq('client_id', client.id)
-        .eq('module_id', module.id);
+      // 1. Charger les templates pour ce module (bigint)
+      const { data: templates, error: tempError } = await supabase
+        .from('module_session_templates')
+        .select('*')
+        .eq('module_id', module.id)
+        .order('ordre', { ascending: true });
 
-      if (checkError) {
-        console.error('Erreur vérification séances existantes:', checkError);
-        // Suppression de l'alerte pour ne pas bloquer l'interface
+      if (tempError) {
+        console.error('Erreur fetch templates:', tempError);
         return;
       }
 
-      const existingNums = new Set((existingSessions || []).map(s => s.numero_seance));
+      // 2. Vérifier les séances existantes pour ce client (UUID)
+      const { data: existingSessions, error: checkError } = await supabase
+        .from('sessions')
+        .select('titre')
+        .eq('client_id', client.id);
+
+      if (checkError) {
+        console.error('Erreur vérification séances:', checkError);
+        return;
+      }
+
+      const existingTitles = new Set((existingSessions || []).map(s => s.titre));
       const sessionsToInsert = [];
 
-      for (let i = 1; i <= module.seances_prevues; i++) {
-        if (!existingNums.has(i)) {
-          sessionsToInsert.push({
-            client_id: client.id,
-            module_id: module.id,
-            numero_seance: i,
-            nom: `${module.nom} - Séance ${i}`,
-            statut: 'À venir'
-          });
+      // 3. Si templates existent, on les utilise. Sinon, fallback sur l'ancienne logique
+      if (templates && templates.length > 0) {
+        templates.forEach((t, idx) => {
+          if (!existingTitles.has(t.titre)) {
+            sessionsToInsert.push({
+              client_id: client.id,
+              module_id: module.id,
+              numero_seance: t.ordre || (idx + 1),
+              titre: t.titre,
+              type_activite: t.type_activite,
+              ressource_id: t.ressource_id,
+              statut: 'À venir'
+            });
+          }
+        });
+      } else {
+        // Fallback backward compatibility : génération par nombre de séances prévues
+        for (let i = 1; i <= module.seances_prevues; i++) {
+          const defaultTitle = `${module.nom} - Séance ${i}`;
+          if (!existingTitles.has(defaultTitle)) {
+            sessionsToInsert.push({
+              client_id: client.id,
+              module_id: module.id,
+              numero_seance: i,
+              titre: defaultTitle,
+              statut: 'À venir'
+            });
+          }
         }
       }
 
       if (sessionsToInsert.length === 0) {
-        console.log(`Les ${module.seances_prevues} séances existent déjà pour ${client.nom}.`);
         return;
       }
 
@@ -3582,8 +3783,10 @@ export default function App() {
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
             fetchUtilisateurs={fetchUtilisateurs}
-            fetchDocuments={fetchDocuments}
             setIsInviteModalOpen={setIsInviteModalOpen}
+            pedagogicalResources={pedagogicalResources}
+            fetchSessions={fetchSessions}
+            documents={documents}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -3642,6 +3845,7 @@ export default function App() {
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
             documentTemplates={documentTemplates}
+            pedagogicalResources={pedagogicalResources}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} />}
