@@ -887,7 +887,8 @@ const IngenierieView = ({
   modelingModuleId, setModelingModuleId, moduleSessionTemplates, moduleStepResources, fetchModules,
   newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
-  setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase
+  setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase, 
+  createSessionFolder
 }) => (
   <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
     <div className="flex justify-between items-start">
@@ -1082,19 +1083,7 @@ const IngenierieView = ({
                   <form 
                     onSubmit={async (e) => {
                       e.preventDefault();
-                      if (!newStepTitle.trim()) return;
-                      setIsAddingStep(true);
-                      const { error } = await supabase.from('module_session_templates').insert([{
-                        module_id: mod.id,
-                        titre: newStepTitle,
-                        ordre: moduleSessionTemplates.filter(t => t.module_id === mod.id).length + 1
-                      }]);
-                      if (!error) {
-                        setNewStepTitle('');
-                        // CRUCIAL: Re-fetch manually as the button fix requested
-                        fetchModules();
-                      }
-                      setIsAddingStep(false);
+                      await createSessionFolder(mod.id, newStepTitle);
                     }}
                     className="bg-indigo-900 p-4 rounded-2xl shadow-xl space-y-3"
                   >
@@ -3072,6 +3061,28 @@ export default function App() {
     }
   };
 
+  const createSessionFolder = async (moduleId, title) => {
+    console.log("Tentative d'ajout pour le module (ID converti en Number):", Number(moduleId));
+    if (!title.trim()) return;
+    
+    setIsAddingStep(true);
+    const { error } = await supabase.from('module_session_templates').insert([{
+      module_id: Number(moduleId),
+      titre: title,
+      ordre: moduleSessionTemplates.filter(t => String(t.module_id) === String(moduleId)).length + 1
+    }]);
+
+    if (error) {
+      console.error("Erreur création dossier Supabase:", error);
+      alert("Erreur lors de la création du dossier : " + error.message);
+    } else {
+      console.log("Dossier créé avec succès, lancement du rafraîchissement (fetchModules)");
+      setNewStepTitle('');
+      await fetchModules();
+    }
+    setIsAddingStep(false);
+  };
+
   const generateSessions = async (client) => {
     if (!client.module_id) return;
     const module = modules.find(m => m.id === client.module_id);
@@ -3973,6 +3984,7 @@ export default function App() {
             isAddingStepResource={isAddingStepResource}
             setIsAddingStepResource={setIsAddingStepResource}
             supabase={supabase}
+            createSessionFolder={createSessionFolder}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
