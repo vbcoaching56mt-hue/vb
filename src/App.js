@@ -969,8 +969,8 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           onBack={() => setSelectedFormateurId(null)}
           supabase={supabase}
           fetchUtilisateurs={fetchUtilisateurs}
-          modules={modules} // AJOUTER CETTE LIGNE
-          clients={clients} // AJOUTER AUSSI CELLE-LA pour voir les clients
+          modules={modules}
+          clients={clients}
         />
       );
     }
@@ -3294,7 +3294,7 @@ export default function App() {
       titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
       type: stepData.type,
       // On sépare l'UUID (ressource_id) du chemin texte (file_url)
-      ressource_id: (stepData.resourceId && stepData.resourceId.length > 20 && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
+      ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
@@ -3328,6 +3328,13 @@ export default function App() {
     const moduleId = Number(client.module_id);
     if (!moduleId || isNaN(moduleId)) {
       console.error("ID de module invalide:", client.module_id);
+      return;
+    }
+
+    // Récupérer l'objet module correspondant
+    const module = modules.find(m => Number(m.id) === moduleId);
+    if (!module) {
+      console.error("Module non trouvé pour l'ID:", moduleId);
       return;
     }
 
@@ -3377,7 +3384,7 @@ export default function App() {
             resources.forEach(res => {
               sessionsToInsert.push({
                 client_id: client.id,
-                module_id: module.id,
+                module_id: moduleId,
                 numero_seance: t.ordre,
                 nom: t.titre,
                 type_activite: res.type,
@@ -4497,6 +4504,39 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, m
             <Save size={20} />
             {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
           </button>
+        </div>
+      </div>
+
+      {/* Liste des clients assignés */}
+      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8">
+        <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+          <Users className="text-rose-500" /> Clients Assignés
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {clients.filter(c => c.formateur_id === formateur.id).map(client => {
+            const assignedModule = modules.find(m => String(m.id) === String(client.module_id));
+            return (
+              <div key={client.id} className="p-4 border border-gray-50 rounded-2xl bg-gray-50/50 hover:bg-white hover:border-rose-200 transition-all group">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-700 shadow-sm group-hover:bg-rose-50 transition-colors">
+                    {client.nom ? client.nom.charAt(0) : '?'}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-gray-900 text-sm">{client.nom}</h4>
+                    <p className="text-[10px] text-gray-500 font-medium">{client.email}</p>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
+                    {assignedModule ? assignedModule.nom : 'Pas de module assigné'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          {clients.filter(c => c.formateur_id === formateur.id).length === 0 && (
+            <p className="text-gray-400 italic text-sm py-4">Aucun client n'est encore assigné à ce formateur.</p>
+          )}
         </div>
       </div>
     </div>
