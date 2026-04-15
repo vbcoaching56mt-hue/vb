@@ -3211,7 +3211,6 @@ export default function App() {
     console.log('[handleModuleChange] Client mis à jour récupéré:', updatedClient);
 
     if (updatedClient && finalModuleId) {
-      console.log('[handleModuleChange] Préparation compatibleClient. IDs:', { clientId: updatedClient.id, moduleId: finalModuleId });
       // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
       const compatibleClient = {
         ...updatedClient,
@@ -3219,8 +3218,6 @@ export default function App() {
         id: updatedClient.id,
         module_id: finalModuleId
       };
-
-      console.log('[handleModuleChange] Appel de generateSessions avec:', compatibleClient);
 
       // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
@@ -3338,17 +3335,14 @@ export default function App() {
   };
 
   const generateSessions = async (client) => {
-    const cid = client.id;
-    const mid = client.module_id;
-    console.log(`[generateSessions] TYPES - client_id: ${cid} (${typeof cid}), module_id: ${mid} (${typeof mid})`);
-    
-    // Détection si les IDs sont numériques mais passés en String (pour éviter 22P02 sur bigint)
-    const finalClientId = (typeof cid === 'string' && !isNaN(cid) && cid.trim() !== '') ? Number(cid) : cid;
-    const finalModuleId = (typeof mid === 'string' && !isNaN(mid) && mid.trim() !== '') ? Number(mid) : mid;
+    // Client ID est systématiquement un UUID (String)
+    const finalClientId = client.id;
+    // Module ID est systématiquement un BigInt (Number)
+    const finalModuleId = Number(client.module_id);
 
     const moduleId = finalModuleId; 
-    if (!moduleId) {
-      console.error("[generateSessions] ID de module manquant pour le client:", finalClientId);
+    if (!moduleId || isNaN(moduleId)) {
+      console.error("[generateSessions] ID de module invalide pour le client:", finalClientId);
       return;
     }
 
