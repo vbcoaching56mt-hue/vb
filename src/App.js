@@ -3187,7 +3187,8 @@ export default function App() {
   };
 
   const handleModuleChange = async (clientId, moduleId) => {
-    const finalModuleId = moduleId ? Number(moduleId) : null;
+    console.log('[handleModuleChange] Début. clientId:', clientId, 'moduleId:', moduleId);
+    const finalModuleId = moduleId || null;
 
     // 1. Sauvegarde dans Supabase table 'clients'
     const { error: updateError } = await supabase
@@ -3196,22 +3197,29 @@ export default function App() {
       .eq('id', clientId);
 
     if (updateError) {
-      console.error("Erreur assignation module:", updateError);
+      console.error("[handleModuleChange] Erreur lors de l'update client:", updateError);
       alert("Erreur lors de l'assignation : " + updateError.message);
       return;
     }
 
-    // 2. Récupérer l'objet client frais pour Qualiopi (séances)
-    const { data: updatedClient } = await supabase.from('clients').select('*').eq('id', clientId).single();
+    const { data: updatedClient, error: fetchErr } = await supabase.from('clients').select('*').eq('id', clientId).single();
+    if (fetchErr) {
+      console.error("[handleModuleChange] Erreur lors de la récupération du client mis à jour:", fetchErr);
+      return;
+    }
+
+    console.log('[handleModuleChange] Client mis à jour récupéré:', updatedClient);
 
     if (updatedClient && finalModuleId) {
       // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
       const compatibleClient = {
         ...updatedClient,
-        nom: updatedClient.nom_complet,
+        nom: updatedClient.nom_complet || updatedClient.nom || updatedClient.email || 'Bénéficiaire',
         id: updatedClient.id,
         module_id: finalModuleId
       };
+
+      console.log('[handleModuleChange] Appel de generateSessions avec:', compatibleClient);
 
       // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
@@ -3366,7 +3374,7 @@ export default function App() {
       // 2. Vérifier les séances existantes pour ce client (UUID)
       const { data: existingSessions, error: checkError } = await supabase
         .from('sessions')
-        .select('titre')
+        .select('nom')
         .eq('client_id', client.id);
 
       if (checkError) {
@@ -3374,7 +3382,7 @@ export default function App() {
         return;
       }
 
-      const existingTitles = new Set((existingSessions || []).map(s => s.titre));
+      const existingTitles = new Set((existingSessions || []).map(s => s.nom));
       const sessionsToInsert = [];
 
       // 3. Si templates existent, on les utilise. Sinon, fallback sur l'ancienne logique
@@ -3434,7 +3442,8 @@ export default function App() {
         }
       }
 
-      console.log('[generateSessions] Tentative d\'insertion de', sessionsToInsert.length, 'lignes');
+      console.log('[generateSessions] Données prêtes à être insérées (sessionsToInsert):', JSON.stringify(sessionsToInsert, null, 2));
+
       if (sessionsToInsert.length === 0) {
         console.warn('[generateSessions] Aucune séance à insérer (liste vide).');
         return;
@@ -3451,7 +3460,7 @@ export default function App() {
         if (typeof fetchSessions === 'function') await fetchSessions();
       } else {
         console.error('[generateSessions] ERREUR insertion finale :', error);
-        console.error('[generateSessions] Data tentée:', JSON.stringify(sessionsToInsert));
+        console.error('[generateSessions] Payload tenté:', sessionsToInsert);
       }
     } finally {
       window._generatingSessionsFor.delete(client.id);
