@@ -1498,9 +1498,18 @@ const FormateurView = ({
                                     </td>
                                     <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
                                     <td className="px-4 py-3">
-                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                        {session.statut}
-                                      </span>
+                                    <td className="px-4 py-3">
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                        </div>
+                                      </div>
+                                    </td>
                                     </td>
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
@@ -1511,7 +1520,7 @@ const FormateurView = ({
                                           const metadata = session.metadata || {};
 
                                           if (session.type_activite === 'signature') {
-                                            const isSigned = session.statut === 'Signé';
+                                            const isSigned = session.statut_formateur === 'Signé';
                                             return (
                                               <button
                                                 disabled={isSigned || isDateLocked}
@@ -1539,7 +1548,7 @@ const FormateurView = ({
                                                     onClick={() => signSession(session)}
                                                     className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
                                                   >
-                                                    {session.statut === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                    {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
                                                   </button>
                                                 )}
                                               </div>
@@ -2204,9 +2213,16 @@ const SessionsView = ({
                           {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
                         </td>
                         <td className="py-4 text-center">
-                          <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${session.statut === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                            {session.statut === 'Signé' ? 'Signé ✓' : 'À signer'}
-                          </span>
+                          <div className="flex flex-col gap-1 items-center">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                            </div>
+                          </div>
                         </td>
                         <td className="py-4 text-right pr-4">
                           <div className="flex justify-end gap-2">
@@ -2219,11 +2235,11 @@ const SessionsView = ({
                               if (session.type_activite === 'signature') {
                                 return (
                                   <button
-                                    disabled={session.statut === 'Signé' || isDateLocked}
+                                    disabled={session.statut_client === 'Signé' || isDateLocked}
                                     onClick={() => signSession(session)}
-                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
                                   >
-                                    {session.statut === 'Signé' ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
+                                    {session.statut_client === 'Signé' ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
                                   </button>
                                 );
                               }
@@ -2240,11 +2256,11 @@ const SessionsView = ({
                                     </button>
                                     {isToSign && (
                                       <button
-                                        disabled={session.statut === 'Signé' || isDateLocked}
+                                        disabled={session.statut_client === 'Signé' || isDateLocked}
                                         onClick={() => signSession(session)}
-                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
                                       >
-                                        {session.statut === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                        {session.statut_client === 'Signé' ? 'Signé ✓' : 'Signer Document'}
                                       </button>
                                     )}
                                   </div>
@@ -3407,12 +3423,15 @@ export default function App() {
                 module_id: finalModuleId,
                 numero_seance: t.ordre,
                 nom: t.titre,
-                type_activite: res.type,
+                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' : 
+                               (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
                 ressource_id: res.ressource_id || null,
                 file_url: res.file_url || null,
                 ressource_titre: res.titre,
                 metadata: (typeof res.metadata === 'string' && res.metadata.startsWith('{')) ? JSON.parse(res.metadata) : (res.metadata || {}), // Propagate metadata
-                statut: 'À venir'
+                statut: 'À venir',
+                statut_client: 'À venir',
+                statut_formateur: 'À venir'
               });
             });
           } else {
@@ -3424,7 +3443,9 @@ export default function App() {
               nom: t.titre,
               type_activite: 'Dossier (Vide)',
               metadata: {},
-              statut: 'À venir'
+              statut: 'À venir',
+              statut_client: 'À venir',
+              statut_formateur: 'À venir'
             });
           }
         }
@@ -3440,7 +3461,9 @@ export default function App() {
               numero_seance: i,
               nom: defaultTitle,
               metadata: {},
-              statut: 'À venir'
+              statut: 'À venir',
+              statut_client: 'À venir',
+              statut_formateur: 'À venir'
             });
           }
         }
@@ -3483,7 +3506,9 @@ export default function App() {
       client_id: client.id,
       module_id: client.module_id,
       metadata: {},
-      statut: 'À venir'
+      statut: 'À venir',
+      statut_client: 'À venir',
+      statut_formateur: 'À venir'
     }]);
 
     if (!insError) {
@@ -3532,26 +3557,36 @@ export default function App() {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    const updateData = {
-      statut: 'Signé', // On marque comme signé si une signature intervient
-    };
+    const updateData = {};
 
-    if (userRole === 'formateur') {
+    if (userRole === 'formateur' || userRole === 'admin') {
       updateData.signature_formateur = signatureDataUrl;
       updateData.date_signature_formateur = new Date().toISOString();
+      updateData.statut_formateur = 'Signé';
+      // La session devient verte si les deux ont signé
+      if (session.statut_client === 'Signé') {
+        updateData.statut = 'Signé';
+      }
     } else {
       updateData.signature_image = signatureDataUrl;
       updateData.date_signature = new Date().toISOString();
+      updateData.statut_client = 'Signé';
+      // La session devient verte si les deux ont signé
+      if (session.statut_formateur === 'Signé') {
+        updateData.statut = 'Signé';
+      }
     }
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
 
     if (!error) {
-      const client = clients.find(c => c.id === session.client_id);
-      if (client) {
-        const newEffectuees = (client.seances_effectuees || 0) + 1;
-        await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
-        await fetchUtilisateurs();
+      if (updateData.statut === 'Signé') {
+        const client = clients.find(c => c.id === session.client_id);
+        if (client) {
+          const newEffectuees = (client.seances_effectuees || 0) + 1;
+          await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
+          await fetchUtilisateurs();
+        }
       }
       await fetchSessions();
       alert(`Séance émargée avec succès !`);
