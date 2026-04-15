@@ -964,13 +964,13 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
     if (formateur) {
       return (
-        <FormateurDetailView 
-        formateur={formateur}
-        onBack={() => setSelectedFormateurId(null)}
-        supabase={supabase}
-        fetchUtilisateurs={fetchUtilisateurs}
-        modules={modules} // AJOUTER CETTE LIGNE
-        clients={clients} // AJOUTER AUSSI CELLE-LA pour voir les clients
+        <FormateurDetailView
+          formateur={formateur}
+          onBack={() => setSelectedFormateurId(null)}
+          supabase={supabase}
+          fetchUtilisateurs={fetchUtilisateurs}
+          modules={modules} // AJOUTER CETTE LIGNE
+          clients={clients} // AJOUTER AUSSI CELLE-LA pour voir les clients
         />
       );
     }
@@ -3325,9 +3325,11 @@ export default function App() {
   };
 
   const generateSessions = async (client) => {
-    if (!client.module_id) return;
-    const module = modules.find(m => m.id === client.module_id);
-    if (!module) return;
+    const moduleId = Number(client.module_id);
+    if (!moduleId || isNaN(moduleId)) {
+      console.error("ID de module invalide:", client.module_id);
+      return;
+    }
 
     // Verrou de concurrence local pour empêcher que l'effet ne s'exécute plusieurs fois simultanément
     window._generatingSessionsFor = window._generatingSessionsFor || new Set();
@@ -3339,7 +3341,7 @@ export default function App() {
       const { data: templates, error: tempError } = await supabase
         .from('module_session_templates')
         .select('*')
-        .eq('module_id', module.id)
+        .eq('module_id', moduleId)
         .order('ordre', { ascending: true });
 
       if (tempError) {
@@ -3426,12 +3428,12 @@ export default function App() {
       });
 
       if (!error) { // Note le "!" devant error
-      console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
-      // On force l'application à recharger les séances pour les voir apparaître
-      if (typeof fetchSessions === 'function') await fetchSessions();
-     } else {
-      console.error('Erreur génération séances :', error);
-     }
+        console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
+        // On force l'application à recharger les séances pour les voir apparaître
+        if (typeof fetchSessions === 'function') await fetchSessions();
+      } else {
+        console.error('Erreur génération séances :', error);
+      }
     } finally {
       window._generatingSessionsFor.delete(client.id);
     }
