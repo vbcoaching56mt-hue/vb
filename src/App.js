@@ -3291,7 +3291,7 @@ export default function App() {
       template_id: templateId,
       titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
       type: stepData.type,
-      ressource_id: stepData.resourceId,
+      ressource_id: stepData.resourceId || null,
       metadata: stepData.metadata,
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
     }]);
@@ -3375,7 +3375,7 @@ export default function App() {
                 numero_seance: t.ordre,
                 nom: t.titre,
                 type_activite: res.type,
-                ressource_id: res.ressource_id,
+                ressource_id: res.ressource_id || null,
                 ressource_titre: res.titre,
                 metadata: res.metadata, // Propagate metadata (signatures, etc.)
                 statut: 'À venir'
