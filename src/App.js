@@ -3325,16 +3325,17 @@ export default function App() {
   };
 
   const generateSessions = async (client) => {
-    const moduleId = Number(client.module_id);
-    if (!moduleId || isNaN(moduleId)) {
-      console.error("ID de module invalide:", client.module_id);
+    console.log('[generateSessions] Début pour client:', client.id, 'nom:', client.nom);
+    const moduleId = client.module_id; 
+    if (!moduleId) {
+      console.error("[generateSessions] ID de module manquant pour le client:", client.id);
       return;
     }
 
     // Récupérer l'objet module correspondant
-    const module = modules.find(m => Number(m.id) === moduleId);
+    const module = modules.find(m => String(m.id) === String(moduleId));
     if (!module) {
-      console.error("Module non trouvé pour l'ID:", moduleId);
+      console.error("[generateSessions] Module non trouvé dans l'état local pour l'id:", moduleId, "Modules dispos:", modules.map(m => m.id));
       return;
     }
 
@@ -3351,8 +3352,10 @@ export default function App() {
         .eq('module_id', moduleId)
         .order('ordre', { ascending: true });
 
+      console.log('[generateSessions] Templates récupérés:', templates?.length || 0, 'Erreur:', tempError);
+
       if (tempError) {
-        console.error('Erreur fetch templates:', tempError);
+        console.error('[generateSessions] Erreur fetch templates:', tempError);
         return;
       }
 
@@ -3374,11 +3377,14 @@ export default function App() {
       if (templates && templates.length > 0) {
         // Nouvelle logique Imbriquée (Keyro)
         for (const t of templates) {
+          console.log('[generateSessions] Traitement template:', t.id, t.titre);
           const { data: resources } = await supabase
             .from('module_step_resources')
             .select('*')
             .eq('template_id', t.id)
             .order('ordre', { ascending: true });
+
+          console.log(`[generateSessions]   -> ${resources?.length || 0} ressources trouvées pour template ${t.id}`);
 
           if (resources && resources.length > 0) {
             resources.forEach(res => {
@@ -3424,7 +3430,9 @@ export default function App() {
         }
       }
 
+      console.log('[generateSessions] Tentative d\'insertion de', sessionsToInsert.length, 'lignes');
       if (sessionsToInsert.length === 0) {
+        console.warn('[generateSessions] Aucune séance à insérer (liste vide).');
         return;
       }
 
@@ -3434,12 +3442,12 @@ export default function App() {
         ignoreDuplicates: true
       });
 
-      if (!error) { // Note le "!" devant error
-        console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
-        // On force l'application à recharger les séances pour les voir apparaître
+      if (!error) {
+        console.log(`[generateSessions] SUCCÈS: ${sessionsToInsert.length} séance(s) traitées (insérées ou ignorées car déjà existantes).`);
         if (typeof fetchSessions === 'function') await fetchSessions();
       } else {
-        console.error('Erreur génération séances :', error);
+        console.error('[generateSessions] ERREUR insertion finale :', error);
+        console.error('[generateSessions] Data tentée:', JSON.stringify(sessionsToInsert));
       }
     } finally {
       window._generatingSessionsFor.delete(client.id);
