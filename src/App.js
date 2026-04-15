@@ -3380,6 +3380,7 @@ export default function App() {
                 nom: t.titre,
                 type_activite: res.type,
                 ressource_id: res.ressource_id || null,
+                file_url: res.file_url || null,
                 ressource_titre: res.titre,
                 metadata: res.metadata, // Propagate metadata (signatures, etc.)
                 statut: 'À venir'
@@ -3405,6 +3406,7 @@ export default function App() {
             sessionsToInsert.push({
               client_id: client.id,
               module_id: module.id,
+              file_url: null,
               numero_seance: i,
               nom: defaultTitle,
               statut: 'À venir'
@@ -3423,13 +3425,13 @@ export default function App() {
         ignoreDuplicates: true
       });
 
-      if (!error) {
-        await fetchSessions();
-        // Optionnel : console.log pour suivi silencieux
-        console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
-      } else {
-        console.error('Erreur génération séances :', error);
-      }
+      if (!error) { // Note le "!" devant error
+      console.log(`${sessionsToInsert.length} séance(s) générée(s) pour ${client.nom}.`);
+      // On force l'application à recharger les séances pour les voir apparaître
+      if (typeof fetchSessions === 'function') await fetchSessions();
+     } else {
+      console.error('Erreur génération séances :', error);
+     }
     } finally {
       window._generatingSessionsFor.delete(client.id);
     }
