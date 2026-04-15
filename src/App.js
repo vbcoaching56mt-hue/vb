@@ -964,11 +964,13 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
     if (formateur) {
       return (
-        <FormateurDetailView
-          formateur={formateur}
-          onBack={() => setSelectedFormateurId(null)}
-          supabase={supabase}
-          fetchUtilisateurs={fetchUtilisateurs}
+        <FormateurDetailView 
+        formateur={formateur}
+        onBack={() => setSelectedFormateurId(null)}
+        supabase={supabase}
+        fetchUtilisateurs={fetchUtilisateurs}
+        modules={modules} // AJOUTER CETTE LIGNE
+        clients={clients} // AJOUTER AUSSI CELLE-LA pour voir les clients
         />
       );
     }
@@ -1031,7 +1033,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                             </thead>
                             <tbody className="divide-y divide-gray-50 bg-white">
                               {sesClients.map(client => {
-                                const clientModule = modules.find(m => m.id === client.module_id);
+                                const clientModule = modules?.find(m => String(m.id) === String(client.module_id));
                                 return (
                                   <tr key={client.id} className="hover:bg-gray-50/50 transition-colors">
                                     <td className="p-3">
@@ -1339,7 +1341,7 @@ const FormateurView = ({
         {assignedClients.length > 0 ? assignedClients.map(client => {
           const clientSessions = sessions.filter(s => s.client_id === client.id);
           const isExpanded = expandedClientId === client.id;
-          const assignedModule = modules.find(m => m.id === client.module_id);
+          const assignedModule = modules?.find(m => String(m.id) === String(client.module_id));
           const progress = Math.min(100, Math.round(((client.seances_effectuees || 0) / (client.seances_totales || 10)) * 100));
 
           return (
@@ -4383,7 +4385,7 @@ export default function App() {
   );
 }
 
-const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs }) => {
+const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
     nom: formateur.nom || '',
