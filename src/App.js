@@ -3211,6 +3211,7 @@ export default function App() {
     console.log('[handleModuleChange] Client mis à jour récupéré:', updatedClient);
 
     if (updatedClient && finalModuleId) {
+      console.log('[handleModuleChange] Préparation compatibleClient. IDs:', { clientId: updatedClient.id, moduleId: finalModuleId });
       // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
       const compatibleClient = {
         ...updatedClient,
@@ -3337,10 +3338,17 @@ export default function App() {
   };
 
   const generateSessions = async (client) => {
-    console.log('[generateSessions] Début pour client:', client.id, 'nom:', client.nom);
-    const moduleId = client.module_id; 
+    const cid = client.id;
+    const mid = client.module_id;
+    console.log(`[generateSessions] TYPES - client_id: ${cid} (${typeof cid}), module_id: ${mid} (${typeof mid})`);
+    
+    // Détection si les IDs sont numériques mais passés en String (pour éviter 22P02 sur bigint)
+    const finalClientId = (typeof cid === 'string' && !isNaN(cid) && cid.trim() !== '') ? Number(cid) : cid;
+    const finalModuleId = (typeof mid === 'string' && !isNaN(mid) && mid.trim() !== '') ? Number(mid) : mid;
+
+    const moduleId = finalModuleId; 
     if (!moduleId) {
-      console.error("[generateSessions] ID de module manquant pour le client:", client.id);
+      console.error("[generateSessions] ID de module manquant pour le client:", finalClientId);
       return;
     }
 
@@ -3371,11 +3379,11 @@ export default function App() {
         return;
       }
 
-      // 2. Vérifier les séances existantes pour ce client (UUID)
+      // 2. Vérifier les séances existantes pour ce client (UUID ou BigInt)
       const { data: existingSessions, error: checkError } = await supabase
         .from('sessions')
         .select('nom')
-        .eq('client_id', client.id);
+        .eq('client_id', finalClientId);
 
       if (checkError) {
         console.error('Erreur vérification séances:', checkError);
@@ -3401,8 +3409,8 @@ export default function App() {
           if (resources && resources.length > 0) {
             resources.forEach(res => {
               sessionsToInsert.push({
-                client_id: client.id,
-                module_id: moduleId,
+                client_id: finalClientId,
+                module_id: finalModuleId,
                 numero_seance: t.ordre,
                 nom: t.titre,
                 type_activite: res.type,
@@ -3416,8 +3424,8 @@ export default function App() {
           } else {
             // Dossier vide
             sessionsToInsert.push({
-              client_id: client.id,
-              module_id: module.id,
+              client_id: finalClientId,
+              module_id: finalModuleId,
               numero_seance: t.ordre,
               nom: t.titre,
               type_activite: 'Dossier (Vide)',
@@ -3431,8 +3439,8 @@ export default function App() {
           const defaultTitle = `${module.nom} - Séance ${i}`;
           if (!existingTitles.has(defaultTitle)) {
             sessionsToInsert.push({
-              client_id: client.id,
-              module_id: module.id,
+              client_id: finalClientId,
+              module_id: finalModuleId,
               file_url: null,
               numero_seance: i,
               nom: defaultTitle,
