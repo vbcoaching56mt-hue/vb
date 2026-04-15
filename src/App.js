@@ -957,8 +957,9 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules }) => {
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
+  const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -975,6 +976,93 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
       );
     }
   }
+
+  // --- Modal de Résumé de Planning pour l'Admin ---
+  const renderClientSummary = () => {
+    if (!selectedClientSummary) return null;
+    const clientSessions = sessions.filter(s => s.client_id === selectedClientSummary.id).sort((a, b) => a.numero_seance - b.numero_seance);
+
+    return (
+      <div className="fixed inset-0 bg-gray-950/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-100">
+          <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-2xl flex items-center justify-center font-black text-xl">
+                {selectedClientSummary.nom?.charAt(0)}
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-gray-900 leading-none">Supervision : {selectedClientSummary.nom}</h3>
+                <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1.5">Planning & Émargements Qualiopi</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedClientSummary(null)}
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-600 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/30">
+            {clientSessions.length > 0 ? (
+              <table className="w-full text-left border-collapse bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 text-sm">
+                <thead>
+                  <tr className="bg-gray-100/50 text-[10px] font-black uppercase text-gray-400 tracking-widest">
+                    <th className="p-4">Séance</th>
+                    <th className="p-4">Date & Heures</th>
+                    <th className="p-4">Activité</th>
+                    <th className="p-4 text-center">Émargement Client</th>
+                    <th className="p-4 text-center">Émargement Coach</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {clientSessions.map(s => (
+                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="p-4">
+                        <span className="font-black text-gray-900">S{s.numero_seance}</span>
+                        <span className="ml-2 text-gray-500 font-medium">{s.nom}</span>
+                      </td>
+                      <td className="p-4">
+                        <div className="font-bold text-gray-700">{s.date ? new Date(s.date).toLocaleDateString() : 'Non planifié'}</div>
+                        <div className="text-[10px] text-gray-400 font-bold">{s.heure_debut || '--:--'} - {s.heure_fin || '--:--'}</div>
+                      </td>
+                      <td className="p-4">
+                        <span className="text-[10px] px-2 py-0.5 rounded-lg bg-gray-100 font-black uppercase text-gray-400 tracking-tighter">
+                          {s.type_activite}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="py-20 text-center bg-white rounded-3xl border border-dashed border-gray-200">
+                <p className="text-gray-400 italic">Aucune séance n'a été générée pour ce client.</p>
+              </div>
+            )}
+          </div>
+          <div className="p-4 border-t border-gray-100 bg-gray-50 text-right shrink-0">
+            <button
+               onClick={() => setSelectedClientSummary(null)}
+               className="bg-gray-900 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-black transition-all"
+            >
+              Fermer la supervision
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -1037,7 +1125,12 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                                 return (
                                   <tr key={client.id} className="hover:bg-gray-50/50 transition-colors">
                                     <td className="p-3">
-                                      <div className="font-bold text-sm text-gray-800">{client.nom || client.nomcomplet_client}</div>
+                                      <div 
+                                        className="font-bold text-sm text-indigo-600 hover:text-indigo-800 cursor-pointer underline underline-offset-2 transition-colors"
+                                        onClick={(e) => { e.stopPropagation(); setSelectedClientSummary(client); }}
+                                      >
+                                        {client.nom || client.nom_complet || "Client"}
+                                      </div>
                                       <div className="text-[10px] text-gray-400">{client.email}</div>
                                     </td>
                                     <td className="p-3">
@@ -1067,6 +1160,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           })}
         </ul>
       </div>
+      {renderClientSummary()}
     </div>
   );
 };
@@ -1394,29 +1488,9 @@ const FormateurView = ({
                     )}
                   </div>
 
-                  {/* Gestion Documentaire Dynamique */}
-                  <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Modèles Disponibles */}
-                    <div className="bg-indigo-50/30 border border-indigo-100 p-4 rounded-2xl col-span-full">
-                      <h4 className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest mb-3 flex items-center">
-                        <span className="w-1.5 h-3 bg-indigo-500 rounded-full mr-2"></span> Modèles Disponibles
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {Object.keys(documentTemplates).map(key => (
-                          <button
-                            key={key}
-                            onClick={() => handleGenerateDocx(client, key)}
-                            className="flex items-center justify-between text-[10px] font-bold py-2 px-3 rounded-lg border border-indigo-200 bg-white hover:bg-indigo-50 transition-all text-gray-700 shadow-sm"
-                          >
-                            <span className="truncate mr-2" title={key}>{key}</span>
-                            <DownloadIcon size={14} className="shrink-0 text-indigo-600" />
-                          </button>
-                        ))}
-                        {Object.keys(documentTemplates).length === 0 && (
-                          <span className="text-xs text-gray-400 italic py-2">Aucun modèle uploadé dans la modélothèque.</span>
-                        )}
-                      </div>
-                    </div>
+                  {/* Espace de génération des documents administratifs (Optionnel) */}
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {/* On pourra ajouter ici des boutons d'actions globales si nécessaire */}
                   </div>
 
 
@@ -1498,7 +1572,6 @@ const FormateurView = ({
                                     </td>
                                     <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
                                     <td className="px-4 py-3">
-                                    <td className="px-4 py-3">
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
@@ -1509,7 +1582,6 @@ const FormateurView = ({
                                           <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                       </div>
-                                    </td>
                                     </td>
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
@@ -2183,23 +2255,33 @@ const SessionsView = ({
                   return acc;
                 }, {});
 
-                return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
-                  <React.Fragment key={gIdx}>
-                    <tr className="bg-gray-50/50">
-                      <td colSpan="4" className="py-3 px-4 border-l-4 border-gray-900">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-lg bg-gray-900 text-white flex items-center justify-center mr-3 text-xs font-black">#{group.numero}</div>
-                            <span className="font-black text-gray-900 text-sm uppercase tracking-tighter">{group.nom}</span>
+                const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
+
+                return sortedGroups.map((group, gIdx) => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const isFuture = group.date && group.date > today;
+                  
+                  const previousGroupNotSigned = gIdx > 0 && sortedGroups[gIdx - 1].items.some(s => s.statut !== 'Signé');
+                  const isLocked = isFuture || previousGroupNotSigned;
+
+                  return (
+                    <React.Fragment key={gIdx}>
+                      <tr className={`bg-gray-50/50 ${isLocked ? 'opacity-50' : ''}`}>
+                        <td colSpan="4" className={`py-3 px-4 border-l-4 ${isLocked ? 'border-gray-300' : 'border-gray-900'}`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
+                              <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-gray-500">
+                              {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
+                              {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
+                            </div>
                           </div>
-                          <div className="text-[10px] font-bold text-gray-500">
-                            {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                    {group.items.map(session => (
-                      <tr key={session.id} className="hover:bg-gray-50/30 transition-colors">
+                        </td>
+                      </tr>
+                      {group.items.map(session => (
+                        <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
                         <td className="py-4 pl-12">
                           <div className="flex items-center gap-3">
                             <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
@@ -2302,8 +2384,9 @@ const SessionsView = ({
                         </td>
                       </tr>
                     ))}
-                  </React.Fragment>
-                ));
+                    </React.Fragment>
+                  );
+                });
               })()}
               {mySessions.length === 0 && (
                 <tr>
@@ -4312,6 +4395,8 @@ export default function App() {
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             modules={modules}
+            sessions={sessions}
+            handleDownloadResource={handleDownloadResource}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
