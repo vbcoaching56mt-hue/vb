@@ -3411,7 +3411,7 @@ export default function App() {
                 ressource_id: res.ressource_id || null,
                 file_url: res.file_url || null,
                 ressource_titre: res.titre,
-                metadata: res.metadata, // Propagate metadata (signatures, etc.)
+                metadata: (typeof res.metadata === 'string' && res.metadata.startsWith('{')) ? JSON.parse(res.metadata) : (res.metadata || {}), // Propagate metadata
                 statut: 'À venir'
               });
             });
@@ -3423,6 +3423,7 @@ export default function App() {
               numero_seance: t.ordre,
               nom: t.titre,
               type_activite: 'Dossier (Vide)',
+              metadata: {},
               statut: 'À venir'
             });
           }
@@ -3438,6 +3439,7 @@ export default function App() {
               file_url: null,
               numero_seance: i,
               nom: defaultTitle,
+              metadata: {},
               statut: 'À venir'
             });
           }
@@ -3480,6 +3482,7 @@ export default function App() {
       nom: `${moduleName} - Séance ${nextNum}`,
       client_id: client.id,
       module_id: client.module_id,
+      metadata: {},
       statut: 'À venir'
     }]);
 
