@@ -3291,10 +3291,9 @@ export default function App() {
       template_id: templateId,
       titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
       type: stepData.type,
-      // Si resourceId ressemble à un UUID, on le met dans ressource_id, sinon null
-      ressource_id: (stepData.resourceId && stepData.resourceId.length > 20) ? stepData.resourceId : null,
-      // Si on a un chemin de fichier (import direct), on le met dans file_url
-      file_url: stepData.fileUrl || null,
+      // On sépare l'UUID (ressource_id) du chemin texte (file_url)
+      ressource_id: (stepData.resourceId && stepData.resourceId.length > 20 && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
+      file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
     }]);
