@@ -3014,17 +3014,21 @@ export default function App() {
     const { data: docsData, error } = await supabase.from('documents').select('*');
     if (!error && docsData) setDocuments(docsData);
 
-    // 2. Charger les modèles maîtres depuis la nouvelle table modeles_documents
-    const { data: modsData, error: modErr } = await supabase.from('modeles_documents').select('*');
+    // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources
+    const { data: modsData, error: modErr } = await supabase.from('module_step_resources').select('*');
     if (!modErr && modsData) {
+      console.log(`[fetchDocuments] ${modsData.length} ressources récupérées avec succès dans module_step_resources.`);
       const templates = {};
       modsData.forEach(m => {
-        templates[m.nom] = { url: m.url, name: m.nom };
+        // Mapping schema : titre -> nom, file_url -> url
+        if (m.titre && m.file_url) {
+          templates[m.titre] = { url: m.file_url, name: m.titre };
+        }
       });
       setDocumentTemplates(templates);
     } else if (modErr) {
-      console.warn("Table modeles_documents inaccessible, fallback sur documents (Modèle Référence)");
-      // Fallback au cas où la table n'est pas encore créée
+      console.error("[fetchDocuments] Erreur lors de la récupération des ressources modèles :", modErr);
+      // Fallback
       const refs = docsData?.filter(d => d.type_document === 'Modèle Référence') || [];
       const templates = {};
       refs.forEach(r => {
@@ -3587,15 +3591,16 @@ export default function App() {
         [type]: { url: publicUrl, name: file.name }
       }));
 
-      // Sauvegarder dans modeles_documents
-      const { data: existing } = await supabase.from('modeles_documents').select('id').eq('nom', type);
+      // Sauvegarder dans module_step_resources (Source unifiée)
+      const { data: existing } = await supabase.from('module_step_resources').select('id').eq('titre', type);
 
       if (existing && existing.length > 0) {
-        await supabase.from('modeles_documents').update({ url: publicUrl }).eq('id', existing[0].id);
+        await supabase.from('module_step_resources').update({ file_url: publicUrl }).eq('id', existing[0].id);
       } else {
-        await supabase.from('modeles_documents').insert([{
-          nom: type,
-          url: publicUrl
+        await supabase.from('module_step_resources').insert([{
+          titre: type,
+          file_url: publicUrl,
+          type: 'document'
         }]);
       }
 
