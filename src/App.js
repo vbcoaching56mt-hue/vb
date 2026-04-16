@@ -573,7 +573,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -864,7 +864,7 @@ const AdminClientsView = ({
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -886,6 +886,7 @@ const AdminClientsView = ({
           pedagogicalResources={pedagogicalResources}
           handleDownloadResource={handleDownloadResource}
           handleUploadExerciseResponse={handleUploadExerciseResponse}
+          generateSessions={generateSessions}
         />
       );
     }
@@ -4397,6 +4398,7 @@ export default function App() {
             documents={documents}
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
+            generateSessions={generateSessions}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
