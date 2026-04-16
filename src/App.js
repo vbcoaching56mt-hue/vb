@@ -3,7 +3,7 @@ import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, 
 import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
-import { supabase } from './supabaseClient';
+import { supabase, supabaseAdmin } from './supabaseClient';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -14,12 +14,7 @@ import {
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 
-// Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
-const supabaseAdmin = createClient(
-  process.env.REACT_APP_SUPABASE_URL,
-  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } }
-);
+
 
 if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
