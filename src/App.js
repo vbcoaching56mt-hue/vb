@@ -619,13 +619,20 @@ const ClientDetailView = ({
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
+      module_id: client.module_id, // Préserver le module
       formateur_id: client.formateur_id // Hérité de l'assignation globale
     }, { onConflict: 'id' });
 
     if (error) {
+      console.error("[handleSaveClientInfo] Erreur upsert:", error);
       alert("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
+      // Déclenchement automatique des séances si un module est présent
+      if (client.module_id) {
+        console.log("[handleSaveClientInfo] Module détecté, lancement de generateSessions pour client:", client.id);
+        await generateSessions(client);
+      }
       alert("Informations personnelles sauvegardées avec succès !");
     }
     setIsSavingInfo(false);
@@ -3301,13 +3308,14 @@ export default function App() {
       return;
     }
 
+    console.log('[handleModuleChange] Update réussi. Récupération du client pour vérification...');
     const { data: updatedClient, error: fetchErr } = await supabase.from('clients').select('*').eq('id', clientId).single();
     if (fetchErr) {
       console.error("[handleModuleChange] Erreur lors de la récupération du client mis à jour:", fetchErr);
       return;
     }
 
-    console.log('[handleModuleChange] Client mis à jour récupéré:', updatedClient);
+    console.log('[handleModuleChange] Client mis à jour récupéré:', JSON.stringify(updatedClient, null, 2));
 
     if (updatedClient && finalModuleId) {
       // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
@@ -3318,8 +3326,11 @@ export default function App() {
         module_id: finalModuleId
       };
 
+      console.log('[handleModuleChange] Déclenchement de generateSessions...');
       // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
+    } else {
+      console.warn('[handleModuleChange] Conditions non remplies pour generateSessions:', { hasClient: !!updatedClient, hasModule: !!finalModuleId });
     }
 
     // 4. Rafraîchir l'UI globale
@@ -3436,12 +3447,16 @@ export default function App() {
   const generateSessions = async (client) => {
     // Client ID est systématiquement un UUID (String)
     const finalClientId = client.id;
+    console.log("Tentative de génération pour le client:", finalClientId);
+
     // Module ID est systématiquement un BigInt (Number)
     const finalModuleId = Number(client.module_id);
 
+    console.log(`[generateSessions] Début. ClientID: ${finalClientId}, ModuleID: ${finalModuleId}`);
+
     const moduleId = finalModuleId; 
     if (!moduleId || isNaN(moduleId)) {
-      console.error("[generateSessions] ID de module invalide pour le client:", finalClientId);
+      console.warn("[generateSessions] ID de module invalide ou absent pour le client:", finalClientId);
       return;
     }
 
