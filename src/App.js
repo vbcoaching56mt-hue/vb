@@ -17,7 +17,8 @@ import PizZip from 'pizzip';
 // Instance d'administration (Service Role) - EXPOSÉE CÔTÉ CLIENT (Risque de sécurité accepté par l'utilisateur)
 const supabaseAdmin = createClient(
   process.env.REACT_APP_SUPABASE_URL,
-  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY
+  process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { persistSession: false } }
 );
 
 if (typeof window !== 'undefined') {
@@ -2966,6 +2967,7 @@ export default function App() {
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
   const [currentUserId, setCurrentUserId] = useState(null);
   const [activeTab, setActiveTab] = useState('accueil');
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Détection synchrone au démarrage : lien invitation (token_hash ou access_token dans le hash)
   const [isSettingPassword, setIsSettingPassword] = useState(() => {
@@ -2989,6 +2991,32 @@ export default function App() {
   });
 
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
+
+  // --- Vérification initiale de la session ---
+  useEffect(() => {
+    const initSession = async () => {
+      setIsLoadingSession(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user?.email) {
+        console.log('[App] Session trouvée pour:', session.user.email);
+        
+        // Chercher le rôle
+        const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', session.user.email).single();
+        if (userData && userData.role) {
+          handleLogin(userData.role, userData.id);
+        } else {
+          // Chercher côté client
+          const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', session.user.email).single();
+          if (clientData) {
+            handleLogin('client', clientData.id);
+          }
+        }
+      }
+      setIsLoadingSession(false);
+    };
+    initSession();
+  }, []);
 
   // États de sélection et d'affichage centralisés
   const [signingSessionId, setSigningSessionId] = useState(null);
@@ -3242,7 +3270,8 @@ export default function App() {
     if (role === 'client') setActiveTab('accueil');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setUserRole(null);
     setCurrentUserId(null);
     setActiveTab('accueil');
@@ -4278,6 +4307,15 @@ export default function App() {
           setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.");
         }}
       />
+    );
+  }
+
+  if (isLoadingSession) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
+        <div className="w-12 h-12 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div>
+        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
+      </div>
     );
   }
 
