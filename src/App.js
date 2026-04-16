@@ -3568,25 +3568,44 @@ export default function App() {
         }
       }
 
-      console.log('[generateSessions] Données prêtes à être insérées (sessionsToInsert):', JSON.stringify(sessionsToInsert, null, 2));
+      // 2. Déduplication manuelle pour éviter l'erreur 42P10 (absence d'index unique ON CONFLICT)
+      console.log('[generateSessions] Récupération des séances existantes pour déduplication...');
+      const { data: alreadyInDb, error: fetchSessionsErr } = await supabase
+        .from('sessions')
+        .select('nom, ressource_titre')
+        .eq('client_id', finalClientId)
+        .eq('module_id', finalModuleId);
 
-      if (sessionsToInsert.length === 0) {
-        console.warn('[generateSessions] Aucune séance à insérer (liste vide).');
+      if (fetchSessionsErr) {
+        console.error('[generateSessions] Erreur lors de la récupération pour déduplication:', fetchSessionsErr);
+        // On continue quand même, au risque de créer des doublons si le fetch échoue
+      }
+
+      const finalSessionsToInsert = sessionsToInsert.filter(newSession => {
+        const isDuplicate = alreadyInDb?.some(existing => 
+          existing.nom === newSession.nom && 
+          (existing.ressource_titre === newSession.ressource_titre || (!existing.ressource_titre && !newSession.ressource_titre))
+        );
+        return !isDuplicate;
+      });
+
+      console.log(`[generateSessions] Après déduplication : ${finalSessionsToInsert.length} séances à insérer.`);
+
+      if (finalSessionsToInsert.length === 0) {
+        console.log('[generateSessions] Toutes les séances existent déjà. Pas d\'insertion nécessaire.');
+        if (typeof fetchSessions === 'function') await fetchSessions();
         return;
       }
 
-      // 2. Upsert : Empêche physiquement le doublon (via contrainte DB) 
-      const { error } = await supabase.from('sessions').upsert(sessionsToInsert, {
-        onConflict: 'client_id, module_id, nom, ressource_titre',
-        ignoreDuplicates: true
-      });
+      // 3. Insertion simple (sans ON CONFLICT)
+      const { error } = await supabase.from('sessions').insert(finalSessionsToInsert);
 
       if (!error) {
-        console.log(`[generateSessions] SUCCÈS: ${sessionsToInsert.length} séance(s) traitées (insérées ou ignorées car déjà existantes).`);
+        console.log(`[generateSessions] SUCCÈS: ${finalSessionsToInsert.length} séance(s) insérée(s).`);
         if (typeof fetchSessions === 'function') await fetchSessions();
       } else {
         console.error('[generateSessions] ERREUR insertion finale :', error);
-        console.error('[generateSessions] Payload tenté:', sessionsToInsert);
+        console.error('[generateSessions] Payload tenté:', finalSessionsToInsert);
       }
     } finally {
       window._generatingSessionsFor.delete(client.id);
