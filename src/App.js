@@ -1517,8 +1517,8 @@ const FormateurView = ({
                         <tbody className="divide-y divide-gray-100 bg-white">
                           {(() => {
                             const grouped = clientSessions.reduce((acc, s) => {
-                              const key = `${s.numero_seance}-${s.nom}`;
-                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                              const key = s.numero_seance;
+                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
                               acc[key].items.push(s);
                               return acc;
                             }, {});
@@ -2257,8 +2257,8 @@ const SessionsView = ({
             <tbody className="divide-y divide-gray-100">
               {(() => {
                 const grouped = mySessions.reduce((acc, s) => {
-                  const key = `${s.numero_seance}-${s.nom}`;
-                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                  const key = s.numero_seance;
+                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
                   acc[key].items.push(s);
                   return acc;
                 }, {});
@@ -3521,7 +3521,7 @@ export default function App() {
                 client_id: finalClientId,
                 module_id: finalModuleId,
                 numero_seance: t.ordre,
-                nom: t.titre,
+                nom: `${t.titre} - ${res.titre}`, // Rend le nom unique pour la DB
                 type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' : 
                                (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
                 ressource_id: res.ressource_id || null,
