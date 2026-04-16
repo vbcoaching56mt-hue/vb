@@ -592,7 +592,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions, handleDeleteClient
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
