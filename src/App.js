@@ -169,6 +169,29 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
   );
 };
 
+const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title = "Confirmation de suppression" }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full max-w-md border border-gray-100 animate-slide-up">
+        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mb-6">
+          <Trash2 size={32} />
+        </div>
+        <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
+        <p className="text-gray-500 mb-8">
+          Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ? 
+          Toutes les données associées seront supprimées et cette action est irréversible.
+        </p>
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
+          <button onClick={onConfirm} className="flex-1 px-5 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors shadow-lg shadow-red-100">Confirmer</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -573,6 +596,7 @@ const ClientDetailView = ({
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -737,7 +761,14 @@ const ClientDetailView = ({
             </div>
           </div>
 
-          <div className="flex justify-end pt-4 mb-4 border-b border-gray-100 pb-8">
+          <div className="flex justify-end items-center gap-3 pt-4 mb-4 border-b border-gray-100 pb-8">
+            <button
+              onClick={() => setIsConfirmDeleteOpen(true)}
+              className="px-6 py-3 text-red-600 font-bold hover:bg-red-50 rounded-xl transition-colors flex items-center"
+            >
+              <Trash2 size={18} className="mr-2" />
+              Supprimer le client
+            </button>
             <button
               onClick={handleSaveClientInfo}
               disabled={isSavingInfo}
@@ -747,6 +778,17 @@ const ClientDetailView = ({
               {isSavingInfo ? 'Enregistrement...' : 'Enregistrer les informations'}
             </button>
           </div>
+
+          <DeleteConfirmationModal
+            isOpen={isConfirmDeleteOpen}
+            onClose={() => setIsConfirmDeleteOpen(false)}
+            onConfirm={() => {
+              setIsConfirmDeleteOpen(false);
+              handleDeleteClient(client.id);
+            }}
+            itemName={clientInfo.nomcomplet_client || client.nom || "ce client"}
+            title="Supprimer ce client ?"
+          />
 
           <h3 className="text-lg font-bold text-gray-800 mt-2">Générateurs Automatiques</h3>
           <div className="flex gap-2 flex-wrap pt-2">
@@ -860,7 +902,8 @@ const AdminClientsView = ({
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions,
+  handleDeleteClient
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -883,6 +926,7 @@ const AdminClientsView = ({
           handleDownloadResource={handleDownloadResource}
           handleUploadExerciseResponse={handleUploadExerciseResponse}
           generateSessions={generateSessions}
+          handleDeleteClient={handleDeleteClient}
         />
       );
     }
@@ -961,7 +1005,7 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource }) => {
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource, handleDeleteFormateur }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
 
@@ -976,6 +1020,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           fetchUtilisateurs={fetchUtilisateurs}
           modules={modules}
           clients={clients}
+          handleDeleteFormateur={handleDeleteFormateur}
         />
       );
     }
@@ -3273,6 +3318,48 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
+  // --- Suppression Sécurisée (Cascade & Auth) ---
+  const handleDeleteClient = async (clientId) => {
+    try {
+      // 1. Supprimer les séances
+      await supabase.from('sessions').delete().eq('client_id', clientId);
+      // 2. Supprimer les documents
+      await supabase.from('documents').delete().eq('user_id', clientId);
+      // 3. Supprimer le client
+      await supabase.from('clients').delete().eq('id', clientId);
+      // 4. Supprimer le compte Auth (si possible)
+      await supabaseAdmin.auth.admin.deleteUser(clientId);
+      
+      alert("Client et toutes ses données supprimés avec succès.");
+      setExpandedClientId(null);
+      fetchUtilisateurs();
+      fetchSessions();
+      fetchDocuments();
+    } catch (err) {
+      console.error("Erreur suppression client:", err);
+      // On continue même si deleteUser échoue (ex: pas de compte auth)
+      setExpandedClientId(null);
+      fetchUtilisateurs();
+    }
+  };
+
+  const handleDeleteFormateur = async (formateurId) => {
+    try {
+      // 1. Désassigner les clients
+      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
+      // 2. Supprimer le formateur
+      await supabase.from('utilisateurs').delete().eq('id', formateurId);
+      // 3. Supprimer le compte Auth
+      await supabaseAdmin.auth.admin.deleteUser(formateurId);
+
+      alert("Formateur supprimé avec succès.");
+      fetchUtilisateurs();
+    } catch (err) {
+      console.error("Erreur suppression formateur:", err);
+      fetchUtilisateurs();
+    }
+  };
+
   // --- Actions Supabase : Utilisateurs ---
   const handleAddUser = async (e) => {
     e.preventDefault();
@@ -4451,6 +4538,7 @@ export default function App() {
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
             generateSessions={generateSessions}
+            handleDeleteClient={handleDeleteClient}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -4466,6 +4554,7 @@ export default function App() {
             modules={modules}
             sessions={sessions}
             handleDownloadResource={handleDownloadResource}
+            handleDeleteFormateur={handleDeleteFormateur}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
@@ -4612,8 +4701,9 @@ export default function App() {
   );
 }
 
-const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients }) => {
+const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients, handleDeleteFormateur }) => {
   const [isSaving, setIsSaving] = React.useState(false);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
     nom: formateur.nom || '',
     formateur_siret: formateur.formateur_siret || formateur.siret || '',
@@ -4715,12 +4805,31 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, m
           </div>
         </div>
 
-        <div className="mt-12 flex justify-end">
+        <div className="mt-12 flex justify-end items-center gap-4">
+          <button
+            onClick={() => setIsConfirmDeleteOpen(true)}
+            className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
+          >
+            <Trash2 size={20} />
+            Supprimer le formateur
+          </button>
           <button onClick={handleSave} disabled={isSaving} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
             <Save size={20} />
             {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
           </button>
         </div>
+
+        <DeleteConfirmationModal
+          isOpen={isConfirmDeleteOpen}
+          onClose={() => setIsConfirmDeleteOpen(false)}
+          onConfirm={() => {
+            setIsConfirmDeleteOpen(false);
+            handleDeleteFormateur(formateur.id);
+            onBack();
+          }}
+          itemName={legalInfo.nom || "ce formateur"}
+          title="Supprimer ce formateur ?"
+        />
       </div>
 
       {/* Liste des clients assignés */}
