@@ -3,7 +3,7 @@ import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, 
 import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
-import { supabase, supabaseAdmin } from './supabaseClient';
+import { supabase, supabaseAdmin } from './supabaseClientConfig';
 import { PDFDocument } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
