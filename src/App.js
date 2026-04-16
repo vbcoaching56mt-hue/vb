@@ -3561,7 +3561,7 @@ export default function App() {
 
       // 2. Upsert : Empêche physiquement le doublon (via contrainte DB) 
       const { error } = await supabase.from('sessions').upsert(sessionsToInsert, {
-        onConflict: 'client_id, module_id, nom',
+        onConflict: 'client_id, module_id, nom, ressource_titre',
         ignoreDuplicates: true
       });
 
