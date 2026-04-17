@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
-  Eye, EyeOff, Pencil, Check, X 
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -1059,7 +1059,13 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
   );
 };
 
-const ClientDetailView = ({ client, onBack, supabase, fetchUtilisateurs, modules, sessions, handleGenerateDocx, documentTemplates, pedagogicalResources, handleDeleteClient, fetchSessions, fetchDocuments, currentUserId, userRole }) => {
+const ClientDetailView = ({ 
+  client, onBack, supabase, fetchUtilisateurs, modules, sessions, 
+  handleGenerateDocx, documentTemplates, pedagogicalResources, 
+  handleDeleteClient, fetchSessions, fetchDocuments, currentUserId, 
+  userRole, documents, generateSessions, handleModuleChange, 
+  assignFormateur, formateurs 
+}) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
@@ -1576,7 +1582,13 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource, handleDeleteFormateur }) => {
+const AdminFormateursView = ({ 
+  clients, formateurs, documents, expandedClientId, 
+  setExpandedClientId, supabase, fetchUtilisateurs, 
+  fetchDocuments, activeTab, setActiveTab, modules, 
+  sessions, handleDownloadResource, handleDeleteFormateur,
+  documentTemplates, handleGenerateDocx
+}) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
 
@@ -1592,6 +1604,9 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           modules={modules}
           clients={clients}
           handleDeleteFormateur={handleDeleteFormateur}
+          documents={documents}
+          documentTemplates={documentTemplates}
+          handleGenerateDocx={handleGenerateDocx}
         />
       );
     }
@@ -5688,6 +5703,8 @@ export default function App() {
             sessions={sessions}
             handleDownloadResource={handleDownloadResource}
             handleDeleteFormateur={handleDeleteFormateur}
+            documentTemplates={documentTemplates}
+            handleGenerateDocx={handleGenerateDocx}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
@@ -5868,7 +5885,11 @@ export default function App() {
   );
 }
 
-const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients, handleDeleteFormateur }) => {
+const FormateurDetailView = ({ 
+  formateur, onBack, supabase, fetchUtilisateurs, modules, 
+  clients, handleDeleteFormateur, documents, 
+  documentTemplates, handleGenerateDocx 
+}) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
