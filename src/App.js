@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, Save, Trash2, Download, ChevronLeft, ChevronRight, Layout } from 'lucide-react';
+import { 
+  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
+  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
+  Eye, EyeOff, Pencil, Check, X 
+} from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
@@ -24,6 +29,24 @@ if (typeof window !== 'undefined') {
 // --- Icônes Simplifiées (Lucide déjà importé) ---
 const DownloadIcon = () => <FileText className="w-4 h-4 mr-2" />;
 
+// --- Résolution d'URL de fichier Supabase ---
+// Convertit un chemin relatif (ex: "modeling-imports/xxx.pdf") en URL publique complète
+// Buckets autorisés : 'documents', 'ressources-pedagogiques'
+const resolveFileUrl = (rawUrl) => {
+  if (!rawUrl) return null;
+  // Si c'est déjà une URL complète, on la retourne telle quelle
+  if (rawUrl.startsWith('http')) return rawUrl;
+  // Sinon on construit l'URL publique Supabase
+  const supabaseProjectUrl = process.env.REACT_APP_SUPABASE_URL;
+  if (!supabaseProjectUrl) return null;
+  
+  // LOGIQUE DE BUCKET CORRIGÉE :
+  // Les ressources modèles sont souvent préfixées par 'ressources' ou 'modeling-imports'
+  const isRessource = rawUrl.startsWith('ressources') || rawUrl.startsWith('modeling-imports');
+  const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
+  
+  return `${supabaseProjectUrl}/storage/v1/object/public/${bucket}/${rawUrl}`;
+};
 
 // --- Données du Graphique Ancres de Carrière ---
 const radarData = [
@@ -134,34 +157,296 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   );
 };
 
-const DocumentViewerModal = ({ isOpen, document, onClose }) => {
-  if (!isOpen || !document) return null;
+// Modale PDF polyvalente:
+// - mode "view" => lecture simple (iframe)
+// - mode "sign" => lecture obligatoire + canvas de signature en bas
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave }) => {
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasRead, setHasRead] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const scrollRef = useRef(null);
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState(null);
+
+  // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
+  const pdfUrl = resolveFileUrl(url || document?.url);
+  const pdfTitle = title || document?.nom || 'Document';
+  const isValidUrl = !!pdfUrl; // resolveFileUrl garantit une URL https si non null
+
+  // Nouvelle approche : signed URL → iframe directe (pas de fetch, pas de CORS)
+  // createSignedUrl génère un lien temporaire que l'iframe peut charger sans restriction
+  useEffect(() => {
+    let cancelled = false;
+
+    // Extrait bucket + path depuis une URL Supabase publique ou un chemin relatif
+    const extractBucketPath = (fullUrl) => {
+      if (!fullUrl) return null;
+      // Cas 1: URL complète Supabase (public ou sign)
+      const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
+      if (match) {
+        let bucket = match[1];
+        let path = decodeURIComponent(match[2]);
+        
+        // RECTIFICATION : Si le chemin contient 'modeling-imports' mais qu'on nous dit
+        // que c'est le bucket 'documents', on corrige car on sait qu'ils sont ailleurs.
+        if (path.startsWith('modeling-imports/') && bucket === 'documents') {
+          bucket = 'ressources-pedagogiques';
+        }
+        
+        return { bucket, path };
+      }
+      // Cas 2: Chemin relatif déjà connu (sans URL complète)
+      // On détecte le bucket selon le préfixe
+      const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
+      const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
+      return { bucket, path: fullUrl };
+    };
+
+    const loadSignedUrl = async () => {
+      if (!isOpen || !isValidUrl) return;
+      setLoadingPdf(true);
+      setPdfError(null);
+      setBlobUrl(null);
+      console.log('[DocumentViewerModal] Génération signed URL pour:', pdfUrl);
+
+      const extracted = extractBucketPath(pdfUrl);
+      if (!extracted) {
+        setPdfError('Chemin de fichier invalide');
+        setLoadingPdf(false);
+        return;
+      }
+
+      const { bucket, path } = extracted;
+      console.log('[DocumentViewerModal] bucket:', bucket, '| path:', path);
+
+      try {
+        const extracted = extractBucketPath(pdfUrl);
+        if (!extracted) throw new Error('Chemin de fichier invalide');
+
+        let { bucket, path } = extracted;
+        console.log(`[DocumentViewerModal] Tentative d'accès -> Bucket: ${bucket} | Path: ${path}`);
+
+        // STRATÉGIE DE RÉSOLUTION SMART :
+        // Si le chemin contient un "/" (ex: modeling-imports/xxx.pdf) mais que Supabase dit "Object not found",
+        // on essaiera aussi le nom du fichier seul (xxx.pdf) au cas où le dossier n'existerait pas physiquement.
+        
+        let { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
+
+        // Fallback si "Object not found" et qu'on a un préfixe suspect
+        if (error?.message?.includes('not found') && path.includes('/')) {
+          const alternativePath = path.split('/').pop();
+          console.warn(`[DocumentViewerModal] Objet non trouvé à "${path}". Tentative à la racine: "${alternativePath}"...`);
+          const fallbackResult = await supabase.storage.from(bucket).createSignedUrl(alternativePath, 3600);
+          data = fallbackResult.data;
+          error = fallbackResult.error;
+        }
+
+        if (cancelled) return;
+        if (error) throw new Error(error.message);
+        if (!data?.signedUrl) throw new Error('Aucune URL générée par Supabase');
+
+        console.log(`%c[DocumentViewerModal] ✅ Succès ! Testez le lien en direct :\n${data.signedUrl}`, 'color: #10b981; font-weight: bold;');
+        setBlobUrl(data.signedUrl);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[DocumentViewerModal] Erreur critique:', err.message);
+          setPdfError(err.message);
+        }
+      } finally {
+        if (!cancelled) setLoadingPdf(false);
+      }
+    };
+
+    if (isOpen) {
+      loadSignedUrl();
+    } else {
+      setHasRead(false);
+      setAgreed(false);
+      setBlobUrl(null);
+      setPdfError(null);
+    }
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, pdfUrl]);
+
+
+  const handleScroll = (e) => {
+    const el = e.target;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) setHasRead(true);
+  };
+
+  const getCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (e.touches && e.touches.length > 0) {
+      const rect = canvas.getBoundingClientRect();
+      return { offsetX: e.touches[0].clientX - rect.left, offsetY: e.touches[0].clientY - rect.top };
+    }
+    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
+  };
+
+  const startDrawing = (e) => {
+    if (!canvasRef.current) return;
+    setIsDrawing(true);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#0f172a';
+    const { offsetX, offsetY } = getCoordinates(e);
+    ctx.beginPath(); ctx.moveTo(offsetX, offsetY);
+  };
+  const draw = (e) => {
+    if (!isDrawing || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const { offsetX, offsetY } = getCoordinates(e);
+    ctx.lineTo(offsetX, offsetY); ctx.stroke();
+  };
+  const stopDrawing = () => setIsDrawing(false);
+  const clearCanvas = () => {
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+  };
+  const handleSave = () => {
+    if (!canvasRef.current) return;
+    onSave && onSave(canvasRef.current.toDataURL('image/png'));
+  };
+
+  if (!isOpen) return null;
+
+  const renderPdfZone = () => {
+    if (loadingPdf) return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
+        <div className="w-10 h-10 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+        <p className="text-sm font-medium">Chargement du document en cours…</p>
+      </div>
+    );
+    if (blobUrl) return (
+      <iframe
+        src={blobUrl + '#toolbar=0&navpanes=0'}
+        title={pdfTitle}
+        className="w-full h-full border-0"
+      />
+    );
+    // Erreur ou pas d'URL
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4 p-8">
+        <div className="text-5xl">📄</div>
+        <p className="font-semibold text-gray-600 text-center">
+          {pdfError ? 'Impossible de charger le document' : 'Aucun fichier joint à cette session.'}
+        </p>
+        {pdfError && <p className="text-xs text-red-400 font-mono bg-red-50 px-3 py-2 rounded-lg">{pdfError}</p>}
+        {isValidUrl && (
+          <button
+            onClick={() => window.open(pdfUrl, '_blank')}
+            className="flex items-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-colors shadow-lg"
+          >
+            <Download size={16} /> Ouvrir dans un nouvel onglet
+          </button>
+        )}
+        {mode === 'sign' && (
+          <p className="text-xs text-orange-500 font-medium text-center max-w-xs bg-orange-50 p-3 rounded-xl">
+            ⚠️ Vous pouvez néanmoins apposer votre signature ci-dessous.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="fixed inset-0 bg-gray-900/80 z-[100] flex items-center justify-center p-2 md:p-8 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col relative overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0">
-          <div className="flex items-center">
-            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mr-4 text-gray-600 font-bold">PDF</div>
-            <h3 className="font-extrabold text-lg text-gray-900">{document.nom}</h3>
+    <div className="fixed inset-0 bg-gray-900/80 z-[100] flex items-center justify-center p-2 md:p-6 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col relative" style={{ maxHeight: '95vh' }}>
+        {/* Header */}
+        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0 rounded-t-2xl">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 font-bold text-sm">PDF</div>
+            <div>
+              <h3 className="font-extrabold text-base text-gray-900">{pdfTitle}</h3>
+              {mode === 'sign' && (
+                <p className="text-[11px] font-bold" style={{ color: hasRead ? '#16a34a' : '#f97316' }}>
+                  {hasRead ? '✅ Document parcouru — vous pouvez maintenant signer.' : '⬇️ Faites défiler jusqu\'en bas pour déverrouiller la signature.'}
+                </p>
+              )}
+            </div>
           </div>
-          <button onClick={onClose} className="w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">✕</button>
+          <div className="flex items-center gap-2">
+            {isValidUrl && (
+              <button
+                onClick={() => window.open(pdfUrl, '_blank')}
+                className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                title="Ouvrir dans un nouvel onglet"
+              >
+                <Download size={14} /> Ouvrir ↗
+              </button>
+            )}
+            <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">✕</button>
+          </div>
         </div>
-        <div className="flex-1 bg-gray-100 p-2 md:p-6 overflow-hidden">
-          {document.url ? (
-            <iframe src={document.url} title={document.nom} className="w-full h-full rounded-xl border border-gray-200 shadow-sm bg-white" />
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-500 font-medium">Aucun fichier joint à ce document.</div>
+
+        {/* Scrollable content zone */}
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto bg-gray-50 p-3 md:p-4 flex flex-col gap-6"
+          onScroll={mode === 'sign' ? handleScroll : undefined}
+          style={{ minHeight: 0 }}
+        >
+          {/* PDF Zone */}
+          <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
+            {renderPdfZone()}
+          </div>
+
+          {/* Section signature (mode sign uniquement) */}
+          {mode === 'sign' && (
+            <div className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
+              <div className="p-5 border-b border-gray-100">
+                <h4 className="font-extrabold text-gray-900 mb-1">Signature électronique</h4>
+                <p className="text-sm text-gray-500">Signez lisiblement dans le cadre ci-dessous pour valider votre accord.</p>
+              </div>
+              <div className="p-5">
+                <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none mb-4 relative">
+                  <canvas
+                    ref={canvasRef}
+                    width={800}
+                    height={200}
+                    className="w-full h-[200px] cursor-crosshair"
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseOut={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                  />
+                  <div className="absolute bottom-3 right-3 opacity-30 text-xs font-bold uppercase tracking-widest text-gray-500">Zone de signature</div>
+                </div>
+                <label className="flex items-start gap-3 cursor-pointer mb-5 select-none">
+                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-rose-500 shrink-0" />
+                  <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
+                </label>
+                <div className="flex justify-between gap-3">
+                  <button onClick={clearCanvas} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Effacer</button>
+                  <div className="flex gap-3">
+                    <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
+                    <button
+                      onClick={handleSave}
+                      disabled={!agreed}
+                      className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${agreed ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    >
+                      Valider ma signature
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
-        {document.signe_par_client && (
-          <div className="bg-green-50 border-t border-green-200 p-4 shrink-0 flex items-center">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-green-600 mr-4 font-bold text-xl">✓</div>
-            <div className="flex-1">
-              <p className="font-bold text-green-800 text-lg">Document validé numériquement</p>
-              <p className="text-sm text-green-700 mt-0.5">Certifié signé le {document.date_signature_client ? new Date(document.date_signature_client).toLocaleString('fr-FR') : 'Date inconnue'} {document.signature_client_url ? '(Signature attachée)' : ''}</p>
-              {document.signature_client_url && <a href={document.signature_client_url} target="_blank" rel="noreferrer" className="text-xs text-green-600 underline font-medium mt-1 inline-block">Voir le tracé de la signature</a>}
-            </div>
+
+        {/* Footer view mode */}
+        {mode === 'view' && (
+          <div className="p-4 border-t border-gray-100 shrink-0 flex justify-between items-center rounded-b-2xl bg-white">
+            <span className="text-xs text-gray-400 italic">{isValidUrl ? pdfUrl.substring(0, 60) + '…' : 'Aucun fichier disponible'}</span>
+            <button onClick={onClose} className="px-5 py-2 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors text-sm">Fermer</button>
           </div>
         )}
       </div>
@@ -169,7 +454,11 @@ const DocumentViewerModal = ({ isOpen, document, onClose }) => {
   );
 };
 
+
+
+
 const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title = "Confirmation de suppression" }) => {
+
   if (!isOpen) return null;
 
   return (
@@ -317,13 +606,24 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
                   </div>
 
                   <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier (PDF, Word, Excel)'}
+                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier' + ((type === 'signature' || metadata.documentType === 'signature') ? ' (PDF uniquement)' : ' (PDF, Word, Excel)')}
                     <input
                       type="file"
                       className="hidden"
                       disabled={isUploading}
-                      accept=".pdf,.doc,.docx,.xls,.xlsx"
-                      onChange={(e) => e.target.files[0] && handleFileUpload(e.target.files[0])}
+                      accept={(type === 'signature' || metadata.documentType === 'signature') ? ".pdf" : ".pdf,.doc,.docx,.xls,.xlsx"}
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          const needsSignature = type === 'signature' || metadata.documentType === 'signature';
+                          if (needsSignature && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                            alert('Erreur : Seuls les fichiers PDF sont autorisés pour les documents nécessitant une signature.');
+                            e.target.value = '';
+                            return;
+                          }
+                          handleFileUpload(file);
+                        }
+                      }}
                     />
                   </label>
                   {selectedResourceId && !isUploading && (
@@ -383,6 +683,165 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
   );
 };
 
+// --- Composant Modal pour l'ajout d'éléments personnalisés par le Formateur ---
+const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
+  const [type, setType] = useState('signature');
+  const [title, setTitle] = useState('');
+  const [isToSign, setIsToSign] = useState(false);
+  const [selectedResourceId, setSelectedResourceId] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setType('signature');
+      setTitle('');
+      setIsToSign(false);
+      setSelectedResourceId('');
+      setIsUploading(false);
+    }
+  }, [isOpen]);
+
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `custom-session-items/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('ressources-pedagogiques')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('ressources-pedagogiques').getPublicUrl(filePath);
+
+      setSelectedResourceId(publicUrl);
+      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
+    } catch (err) {
+      toast.error('Erreur lors de l\'import du fichier.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-950/80 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 animate-slide-up">
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg"><Plus size={20} /></div>
+            <h3 className="text-xl font-black text-gray-900 leading-none">Nouvel Élément</h3>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-400">✕</button>
+        </div>
+
+        <div className="p-8 space-y-6">
+          <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
+            <input
+              autoFocus
+              className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-bold text-gray-800 transition-all"
+              placeholder="Ex: Compte-rendu mi-parcours"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Type d'activité</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'signature', label: 'Émargement', icon: '✍️' },
+                { id: 'document', label: 'Document', icon: '📄' },
+                { id: 'exercice', label: 'Exercice', icon: '⚙️' }
+              ].map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setType(t.id)}
+                  className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-1 transition-all ${type === t.id ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-50 bg-gray-50 text-gray-400 hover:border-gray-200'}`}
+                >
+                  <span className="text-xl">{t.icon}</span>
+                  <span className="text-[9px] font-black uppercase text-center">{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {(type === 'document' || type === 'exercice') && (
+            <div className="space-y-4">
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fichier / Ressource</label>
+              <div className="flex flex-col gap-3">
+                <input
+                  type="file"
+                  accept={(type === 'signature' || isToSign) ? ".pdf" : undefined}
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      if ((type === 'signature' || isToSign) && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+                        toast.error('Erreur : Seuls les fichiers PDF sont autorisés pour les documents nécessitant une signature.');
+                        e.target.value = '';
+                        return;
+                      }
+                      handleFileUpload(file);
+                    }
+                  }}
+                  className="w-full text-xs p-3 bg-gray-50 border border-dashed border-gray-300 rounded-2xl"
+                />
+                <div className="text-center font-bold text-gray-300 text-[10px]">OU SÉLECTIONNER DANS LA BIBLIOTHÈQUE</div>
+                <select
+                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl text-xs font-bold"
+                  value={selectedResourceId}
+                  onChange={e => setSelectedResourceId(e.target.value)}
+                >
+                  <option value="">-- Choisir une ressource existante --</option>
+                  {pedagogicalResources.map(res => (
+                    <option key={res.name} value={res.url}>{res.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {type === 'document' && (
+            <div className="flex items-center gap-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
+              <input
+                type="checkbox"
+                id="isToSignCustom"
+                checked={isToSign}
+                onChange={e => setIsToSign(e.target.checked)}
+                className="w-5 h-5 rounded-lg border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <label htmlFor="isToSignCustom" className="text-xs font-bold text-indigo-900 cursor-pointer">
+                Nécessite une signature du client / coach
+              </label>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 bg-gray-50 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-4 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">Annuler</button>
+          <button
+            disabled={!title || isUploading || ((type === 'document' || type === 'exercice') && !selectedResourceId)}
+            onClick={() => onSave({
+              title,
+              type,
+              url: selectedResourceId,
+              isToSign: type === 'signature' ? true : isToSign
+            })}
+            className="flex-[2] py-4 bg-indigo-600 text-white font-black text-sm rounded-2xl shadow-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95 transition-all"
+          >
+            {isUploading ? 'Chargement...' : 'Ajouter l\'élément'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ==========================================
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
@@ -394,6 +853,7 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
     return params.get('email') || '';
   });
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -562,14 +1022,24 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
                 Oublié ?
               </button>
             </div>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="Votre mot de passe"
-              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Votre mot de passe"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all pr-12"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                title={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
 
           {errorMsg && (
@@ -645,7 +1115,7 @@ const ClientDetailView = ({
 
     if (error) {
       console.error("[handleSaveClientInfo] Erreur upsert:", error);
-      alert("Erreur lors de la sauvegarde : " + error.message);
+      toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
       // Déclenchement automatique des séances si un module est présent
@@ -653,7 +1123,7 @@ const ClientDetailView = ({
         console.log("[handleSaveClientInfo] Module détecté, lancement de generateSessions pour client:", client.id);
         await generateSessions(client);
       }
-      alert("Informations personnelles sauvegardées avec succès !");
+      toast.success("Informations personnelles sauvegardées !");
     }
     setIsSavingInfo(false);
   };
@@ -699,10 +1169,11 @@ const ClientDetailView = ({
         </div>
       </div>
 
-      <div className="flex gap-4 border-b border-gray-200">
-        <button onClick={() => setActiveTab('infos')} className={`px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
-        <button onClick={() => setActiveTab('seances')} className={`px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
-        <button onClick={() => setActiveTab('docs')} className={`px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
+      <div className="flex gap-4 border-b border-gray-200 overflow-x-auto">
+        <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
+        <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
+        <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
+        <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
       </div>
 
       {activeTab === 'infos' && (
@@ -789,14 +1260,58 @@ const ClientDetailView = ({
             itemName={clientInfo.nomcomplet_client || client.nom || "ce client"}
             title="Supprimer ce client ?"
           />
+        </div>
+      )}
 
-          <h3 className="text-lg font-bold text-gray-800 mt-2">Générateurs Automatiques</h3>
-          <div className="flex gap-2 flex-wrap pt-2">
-            {Object.keys(documentTemplates || {}).map(key => (
-              <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
-                <FileText className="w-4 h-4 mr-2" /> Générer {key}
-              </button>
-            ))}
+      {activeTab === 'docs_signes' && (
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
+          <div className="grid grid-cols-1 gap-4">
+            {sessions
+              .filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed))
+              .map(session => {
+                const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
+                return (
+                  <div key={session.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-green-200 transition-all group">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-green-100 text-green-600 rounded-xl flex items-center justify-center">
+                        <FileCheck size={20} />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-sm">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</h4>
+                        <p className="text-[10px] text-gray-500 uppercase font-black">
+                          Signé le {new Date(session.updated_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => window.open(signedUrl, '_blank')}
+                      className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                    >
+                      <Download size={14} /> Télécharger le PDF signé
+                    </button>
+                  </div>
+                );
+              })}
+            {sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 && (
+              <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'docs' && (
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+          <div className="pt-6 border-gray-100">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Générateurs Automatiques</h3>
+            <div className="flex gap-2 flex-wrap pt-2">
+              {Object.keys(documentTemplates || {}).map(key => (
+                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
+                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -1226,10 +1741,13 @@ const IngenierieView = ({
   newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
-  createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource
+  createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
+  handleRenameFolder, handleRenameResource
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
+  const [editingId, setEditingId] = React.useState(null); // ID du dossier ou de la ressource en edition
+  const [editValue, setEditValue] = React.useState('');
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -1311,9 +1829,36 @@ const IngenierieView = ({
                           <div key={template.id} className="bg-white rounded-2xl border border-indigo-100 shadow-sm overflow-hidden">
                             <div className="bg-indigo-50/50 p-4 flex items-center justify-between border-b border-indigo-50">
                               <div className="flex items-center gap-3">
-                                <span className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-sm">{idx + 1}</span>
-                                <div>
-                                  <p className="font-bold text-gray-900">{template.titre}</p>
+                                <span className="w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-sm shrink-0">{idx + 1}</span>
+                                <div className="flex-1">
+                                  {editingId === template.id ? (
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        autoFocus
+                                        className="bg-white border border-indigo-300 rounded text-sm p-1 font-bold text-gray-900 w-full outline-none"
+                                        value={editValue}
+                                        onChange={e => setEditValue(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') {
+                                            handleRenameFolder(template.id, editValue);
+                                            setEditingId(null);
+                                          } else if (e.key === 'Escape') setEditingId(null);
+                                        }}
+                                      />
+                                      <button onClick={() => { handleRenameFolder(template.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={16} /></button>
+                                      <button onClick={() => setEditingId(null)} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 group/title">
+                                      <p className="font-bold text-gray-900">{template.titre}</p>
+                                      <button 
+                                        onClick={() => { setEditingId(template.id); setEditValue(template.titre); }}
+                                        className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/title:opacity-100 transition-opacity"
+                                      >
+                                        <Pencil size={12} />
+                                      </button>
+                                    </div>
+                                  )}
                                   <p className="text-[10px] text-gray-400 uppercase font-black">Dossier Séance</p>
                                 </div>
                               </div>
@@ -1330,8 +1875,34 @@ const IngenierieView = ({
                                     <span className="text-gray-400">
                                       {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : '⚙️'}
                                     </span>
-                                    <div className="flex flex-col">
-                                      <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <div className="flex flex-col flex-1">
+                                      {editingId === res.id ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            autoFocus
+                                            className="bg-white border border-indigo-200 rounded text-[11px] p-0.5 font-bold text-gray-800 w-full outline-none"
+                                            value={editValue}
+                                            onChange={e => setEditValue(e.target.value)}
+                                            onKeyDown={e => {
+                                              if (e.key === 'Enter') {
+                                                handleRenameResource(res.id, editValue);
+                                                setEditingId(null);
+                                              } else if (e.key === 'Escape') setEditingId(null);
+                                            }}
+                                          />
+                                          <button onClick={() => { handleRenameResource(res.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={12} /></button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2 group/restitle leading-none">
+                                          <span className="font-bold text-gray-800">{res.titre}</span>
+                                          <button 
+                                            onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
+                                            className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
+                                          >
+                                            <Pencil size={10} />
+                                          </button>
+                                        </div>
+                                      )}
                                       <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
                                     </div>
                                   </div>
@@ -1429,11 +2000,18 @@ const FormateurView = ({
   expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
+  setIsSessionItemModalOpen, setTargetSessionForAddition
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
+  const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
+
+  React.useEffect(() => {
+    // Reset tab when expanded client changes
+    setFormateurClientTab('seances');
+  }, [expandedClientId]);
 
   const onTimeChange = (sessionId, field, value) => {
     setEditedTimes(prev => ({
@@ -1520,6 +2098,73 @@ const FormateurView = ({
 
               {isExpanded && (
                 <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
+                  <div className="flex gap-4 border-b border-gray-200 mb-6 font-sans">
+                    <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
+                    <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
+                  </div>
+
+                  {formateurClientTab === 'docs_signes' && (
+                    <div className="mb-4">
+                      {(() => {
+                        const signedSessions = clientSessions.filter(s =>
+                          s.statut === 'Signé' && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
+                        );
+                        if (signedSessions.length === 0) return (
+                          <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+                            <p className="text-gray-400 text-sm italic">Aucun document signé validé pour ce client.</p>
+                          </div>
+                        );
+                        return (
+                          <div className="overflow-hidden rounded-2xl border border-gray-100">
+                            <table className="w-full text-left text-sm">
+                              <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                                <tr>
+                                  <th className="px-4 py-3">Nom du document</th>
+                                  <th className="px-4 py-3">Date de signature</th>
+                                  <th className="px-4 py-3 text-right">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50 bg-white">
+                                {signedSessions.map(session => {
+                                  const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
+                                  const dateSign = session.date_signature_formateur || session.date_signature || session.updated_at;
+                                  return (
+                                    <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-8 h-8 bg-green-100 text-green-600 rounded-lg flex items-center justify-center shrink-0">
+                                            <FileCheck size={16} />
+                                          </div>
+                                          <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-gray-500">
+                                        {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                                      </td>
+                                      <td className="px-4 py-3 text-right">
+                                        <a
+                                          href={signedUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                                        >
+                                          <Download size={13} /> Télécharger
+                                        </a>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {formateurClientTab === 'seances' && (
+                    <>
                   <div className="flex items-center gap-3">
                     <h4 className="font-bold text-gray-800 flex items-center">
                       <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
@@ -1537,11 +2182,7 @@ const FormateurView = ({
                     )}
                   </div>
 
-                  {/* Espace de génération des documents administratifs (Optionnel) */}
-                  <div className="mb-4 flex flex-wrap gap-2">
-                    {/* On pourra ajouter ici des boutons d'actions globales si nécessaire */}
-                  </div>
-
+                  <div className="mb-4 flex flex-wrap gap-2"></div>
 
                   {clientSessions.length > 0 ? (
                     <div className="overflow-hidden rounded-2xl border border-gray-100">
@@ -1640,6 +2281,18 @@ const FormateurView = ({
                                           const isDateLocked = sessionDate && today < sessionDate;
                                           const metadata = session.metadata || {};
 
+                                          if (session.metadata?.isCustom) {
+                                            return (
+                                              <button
+                                                onClick={() => handleDeleteSession(session)}
+                                                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                                                title="Supprimer cet élément personnalisé"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            );
+                                          }
+
                                           if (session.type_activite === 'signature') {
                                             const isSigned = session.statut_formateur === 'Signé';
                                             return (
@@ -1655,17 +2308,27 @@ const FormateurView = ({
 
                                           if (session.type_activite === 'document') {
                                             const isToSign = metadata.isToSign;
+                                            const signedUrl = session.file_url_signed || metadata.file_url_signed;
                                             return (
-                                              <div className="flex gap-2">
+                                              <div className="flex gap-2 items-center">
                                                 <button
-                                                  onClick={() => handleDownloadResource(session.file_url || session.ressource_url)}
-                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                                                  onClick={() => handleDownloadResource(signedUrl || session.file_url || session.ressource_url)}
+                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
                                                 >
-                                                  Consulter
+                                                  {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
                                                 </button>
+                                                {signedUrl && (
+                                                  <button
+                                                    onClick={() => handleDownloadResource(signedUrl)}
+                                                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                    title="Télécharger la preuve de signature"
+                                                  >
+                                                    <FileCheck size={16} />
+                                                  </button>
+                                                )}
                                                 {isToSign && (
                                                   <button
-                                                    disabled={session.statut === 'Signé' || isDateLocked}
+                                                    disabled={session.statut_client === 'Signé' || isDateLocked}
                                                     onClick={() => signSession(session)}
                                                     className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
                                                   >
@@ -1720,6 +2383,20 @@ const FormateurView = ({
                                     </td>
                                   </tr>
                                 ))}
+                                {/* Footer row with Add button */}
+                                <tr className="bg-gray-50/20">
+                                  <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
+                                    <button
+                                      onClick={() => {
+                                        setTargetSessionForAddition(group);
+                                        setIsSessionItemModalOpen(true);
+                                      }}
+                                      className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
+                                    >
+                                      <Plus size={12} /> Ajouter un élément
+                                    </button>
+                                  </td>
+                                </tr>
                               </React.Fragment>
                             ));
                           })()}
@@ -1731,6 +2408,8 @@ const FormateurView = ({
                       <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
                       {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
                     </div>
+                  )}
+                    </>
                   )}
                 </div>
               )}
@@ -2259,7 +2938,7 @@ const AccueilView = ({ setActiveTab, clientProgress }) => (
 
 const SessionsView = ({
   sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
 }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
 
@@ -2363,37 +3042,65 @@ const SessionsView = ({
                               const isDateLocked = sessionDate && today < sessionDate;
                               const metadata = session.metadata || {};
 
-                              if (session.type_activite === 'signature') {
+                              const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
+
+                              if (isSignatureCondition) {
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = session.file_url || session.ressource_url;
                                 return (
-                                  <button
-                                    disabled={session.statut_client === 'Signé' || isDateLocked}
-                                    onClick={() => signSession(session)}
-                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
-                                  >
-                                    {session.statut_client === 'Signé' ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
-                                  </button>
+                                  <div className="flex gap-2 items-center justify-end w-full">
+                                    {docUrl && (
+                                      <button
+                                        onClick={() => {
+                                          const fileUrl = signedUrl || docUrl;
+                                          console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
+                                          console.log('[Consulter] session:', session.id, session.ressource_titre);
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                        }}
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                                      >
+                                        Consulter
+                                      </button>
+                                    )}
+                                    <button
+                                      disabled={session.statut_client === 'Signé' || isDateLocked}
+                                      onClick={() => {
+                                        if (session.statut_client === 'Signé') return;
+                                        const fileUrl = docUrl || null;
+                                        console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
+                                        console.log('[Signer] session:', session.id, session.type_activite);
+                                        setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        session.statut_client === 'Signé'
+                                          ? 'bg-green-50 text-green-600 border-green-200'
+                                          : isDateLocked
+                                          ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                                          : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
+                                      }`}
+                                    >
+                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+                                    </button>
+                                  </div>
                                 );
                               }
 
                               if (session.type_activite === 'document') {
-                                const isToSign = metadata.isToSign;
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = signedUrl || session.file_url || session.ressource_url;
                                 return (
-                                  <div className="flex gap-2">
+                                  <div className="flex gap-2 items-center justify-end w-full">
                                     <button
-                                      onClick={() => handleDownloadResource(session.file_url || session.ressource_url)}
-                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                                      onClick={() => {
+                                        console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
+                                        setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                      }`}
                                     >
-                                      Consulter
+                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
                                     </button>
-                                    {isToSign && (
-                                      <button
-                                        disabled={session.statut_client === 'Signé' || isDateLocked}
-                                        onClick={() => signSession(session)}
-                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé' ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
-                                      >
-                                        {session.statut_client === 'Signé' ? 'Signé ✓' : 'Signer Document'}
-                                      </button>
-                                    )}
                                   </div>
                                 );
                               }
@@ -2547,10 +3254,10 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
       error = result.error;
     }
     if (!error) {
-      alert('Profil mis à jour avec succès !');
+      toast.success('Profil mis à jour avec succès !');
       fetchUtilisateurs();
     } else {
-      alert('Erreur lors de la mise à jour : ' + error.message);
+      toast.error('Erreur lors de la mise à jour : ' + error.message);
     }
   };
 
@@ -2621,7 +3328,7 @@ const RessourcesView = ({ pedagogicalResources, supabase }) => {
     if (!error && data) {
       window.open(data.signedUrl, '_blank');
     } else {
-      alert('Erreur lors du téléchargement : ' + error?.message);
+      toast.error('Erreur lors du téléchargement : ' + error?.message);
     }
   };
 
@@ -2808,6 +3515,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
 const ResetPasswordPage = ({ supabase, onComplete }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isVerifying, setIsVerifying] = useState(true);
@@ -2887,24 +3595,42 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
         <form onSubmit={handleUpdatePassword} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nouveau mot de passe</label>
-            <input
-              type="password"
-              required
-              minLength={8}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={8}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all pr-12"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Confirmer le mot de passe</label>
-            <input
-              type="password"
-              required
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all pr-12"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
           {errorMsg && (
             <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{errorMsg}</p>
@@ -3062,6 +3788,11 @@ export default function App() {
   const [signingSessionId, setSigningSessionId] = useState(null);
   const [signingDocId, setSigningDocId] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
+  const [viewingSession, setViewingSession] = useState(null); // { session, mode: 'view'|'sign' }
+  const [lastModifiedSessionId, setLastModifiedSessionId] = useState(null);
+  const [editedTimes, setEditedTimes] = useState({});
+  const [isSessionItemModalOpen, setIsSessionItemModalOpen] = useState(false);
+  const [targetSessionForAddition, setTargetSessionForAddition] = useState(null);
 
   // Modèles de Documents par défaut
   const [documentTemplates, setDocumentTemplates] = useState({});
@@ -3230,12 +3961,12 @@ export default function App() {
     const { error } = await supabase.storage.from('ressources-pedagogiques').upload(fileName, file);
 
     if (!error) {
-      alert('Ressource pédagogique ajoutée avec succès !');
+      toast.success('Ressource pédagogique ajoutée avec succès !');
       setNewResourceName('');
       fetchPedagogicalResources();
     } else {
       console.error("Erreur upload ressource:", error);
-      alert('Erreur lors de l\'upload : ' + error.message);
+      toast.error('Erreur lors de l\'upload : ' + error.message);
     }
     setIsUploadingResource(false);
   };
@@ -3247,7 +3978,7 @@ export default function App() {
     // 1. Créer un client admin avec la service_role_key
     const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
     if (!serviceKey) {
-      alert("Clé de service non configurée. Vérifiez REACT_APP_SUPABASE_SERVICE_ROLE_KEY dans Vercel.");
+      toast.error("Clé de service non configurée. Vérifiez REACT_APP_SUPABASE_SERVICE_ROLE_KEY dans Vercel.");
       setIsAddingUser(false);
       return;
     }
@@ -3264,7 +3995,7 @@ export default function App() {
 
     if (inviteError) {
       console.error("Erreur invitation Supabase:", inviteError);
-      alert(`L'invitation a échoué : ${inviteError.message}`);
+      toast.error(`L'invitation a échoué : ${inviteError.message}`);
       setIsAddingUser(false);
       return;
     }
@@ -3283,7 +4014,7 @@ export default function App() {
       }]);
       if (dbError) {
         console.error("Erreur DB clients après invitation:", dbError);
-        alert(`Erreur side-effect clients : ${dbError.message}`);
+        toast.error(`Erreur side-effect clients : ${dbError.message}`);
       }
     } else {
       // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
@@ -3295,7 +4026,7 @@ export default function App() {
       if (dbError) console.error("Erreur DB utilisateurs après invitation:", dbError);
     }
 
-    alert(`✅ Invitation envoyée par email à ${email} !`);
+    toast.success(`✅ Invitation envoyée par email à ${email} !`);
     setIsAddingUser(false);
     setIsInviteModalOpen(false);
     fetchUtilisateurs();
@@ -3330,7 +4061,7 @@ export default function App() {
       // 4. Supprimer le compte Auth (si possible)
       await supabaseAdmin.auth.admin.deleteUser(clientId);
       
-      alert("Client et toutes ses données supprimés avec succès.");
+      toast.success("Client et toutes ses données supprimés avec succès.");
       setExpandedClientId(null);
       fetchUtilisateurs();
       fetchSessions();
@@ -3348,12 +4079,16 @@ export default function App() {
       // 1. Désassigner les clients
       await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
       // 2. Supprimer le formateur
-      await supabase.from('utilisateurs').delete().eq('id', formateurId);
+      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId);
       // 3. Supprimer le compte Auth
       await supabaseAdmin.auth.admin.deleteUser(formateurId);
 
-      alert("Formateur supprimé avec succès.");
-      fetchUtilisateurs();
+      if (!error) {
+        await fetchUtilisateurs();
+        toast.success("Utilisateur supprimé.");
+      } else {
+        toast.error("Erreur lors de la suppression : " + error.message);
+      }
     } catch (err) {
       console.error("Erreur suppression formateur:", err);
       fetchUtilisateurs();
@@ -3391,9 +4126,9 @@ export default function App() {
 
     if (error) {
       console.error("Erreur ajout user", error);
-      alert('Erreur ajout serveur : ' + error?.message);
+      toast.error('Erreur ajout serveur : ' + error?.message);
     } else {
-      alert(`Utilisateur ${newUserName} ajouté avec succès !`);
+      toast.success(`Utilisateur ${newUserName} ajouté avec succès !`);
       await fetchUtilisateurs();
       await fetchDocuments();
       setNewUserName('');
@@ -3416,7 +4151,7 @@ export default function App() {
 
     if (updateError) {
       console.error("[handleModuleChange] Erreur lors de l'update client:", updateError);
-      alert("Erreur lors de l'assignation : " + updateError.message);
+      toast.error("Erreur lors de l'assignation : " + updateError.message);
       return;
     }
 
@@ -3455,13 +4190,17 @@ export default function App() {
     e.preventDefault();
     if (!newModuleName.trim()) return;
     const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances) }]);
-    if (!error) { await fetchModules(); setNewModuleName(''); setNewModuleSeances(1); }
-    else alert('Erreur Mod: ' + error.message);
+    if (!error) { 
+      await fetchModules(); 
+      setNewModuleName(''); 
+      setNewModuleSeances(1); 
+      toast.success("Module créé avec succès !");
+    }
+    else toast.error('Erreur lors de la création du module : ' + error.message);
   };
 
   const handleLinkDocument = async (e, selectedModule) => {
     e.preventDefault();
-    // AUCUNE VALIDATION LOCALE - On force l'envoi de l'ID actuel (BIGINT) vers le RPC
     const modId = selectedModule.id;
 
     if (!newModDocName.trim()) return;
@@ -3478,20 +4217,21 @@ export default function App() {
     }
 
     const { error } = await supabase.from('module_documents').insert([{
-      module_id: Number(modId), // Injection directe dans la table BIGINT (int8)
+      module_id: Number(modId),
       nom: newModDocName,
       type_document: newModDocType,
       url: finalUrl
     }]);
 
-    if (error) {
-      console.error("Détail de l'erreur RPC Supabase :", error);
-      alert('Erreur lors de la liaison du document additionnel : ' + error.message);
-    } else {
-      await fetchModules();
-      setNewModDocName('');
-      setNewModDocFile(null);
+    if (!error) {
       setAddingToModuleId(null);
+      setNewModDocName('');
+      setNewModDocType('Autre');
+      setNewModDocFile(null);
+      await fetchModules();
+      toast.success("Document lié au module !");
+    } else {
+      toast.error("Erreur liaison document : " + error.message);
     }
   };
 
@@ -3508,13 +4248,36 @@ export default function App() {
 
     if (error) {
       console.error("Erreur création dossier Supabase:", error);
-      alert("Erreur lors de la création du dossier : " + error.message);
+      toast.error("Erreur lors de la création du dossier : " + error.message);
     } else {
       console.log("Dossier créé avec succès, lancement du rafraîchissement (fetchModules)");
       setNewStepTitle('');
       await fetchModules();
+      toast.success("Dossier de séance créé !");
     }
     setIsAddingStep(false);
+  };
+
+  const handleRenameFolder = async (folderId, newTitle) => {
+    if (!newTitle.trim()) return;
+    const { error } = await supabase.from('module_session_templates').update({ titre: newTitle }).eq('id', folderId);
+    if (!error) {
+      await fetchModules();
+      toast.success("Séance renommée avec succès !");
+    } else {
+      toast.error("Erreur renommage : " + error.message);
+    }
+  };
+
+  const handleRenameResource = async (resourceId, newTitle) => {
+    if (!newTitle.trim()) return;
+    const { error } = await supabase.from('module_step_resources').update({ titre: newTitle }).eq('id', resourceId);
+    if (!error) {
+      await fetchModules();
+      toast.success("Élément renommé !");
+    } else {
+      toast.error("Erreur renommage : " + error.message);
+    }
   };
 
   const handleAddStepResource = async (templateId, stepData) => {
@@ -3534,7 +4297,7 @@ export default function App() {
 
     if (error) {
       console.error("Erreur ajout ressource:", error);
-      alert("Erreur lors de l'ajout : " + error.message);
+      toast.error("Erreur lors de l'ajout : " + error.message);
     } else {
       setIsResourceModalOpen(false);
       await fetchModules();
@@ -3546,14 +4309,14 @@ export default function App() {
     if (!window.confirm("Supprimer ce dossier et tout son contenu ?")) return;
     const { error } = await supabase.from('module_session_templates').delete().eq('id', folderId);
     if (!error) await fetchModules();
-    else alert("Erreur supression : " + error.message);
+    else toast.error("Erreur supression : " + error.message);
   };
 
   const handleDeleteStepResource = async (resourceId) => {
     if (!window.confirm("Supprimer cet élément ?")) return;
     const { error } = await supabase.from('module_step_resources').delete().eq('id', resourceId);
     if (!error) await fetchModules();
-    else alert("Erreur supression : " + error.message);
+    else toast.error("Erreur supression : " + error.message);
   };
 
   const generateSessions = async (client) => {
@@ -3723,9 +4486,255 @@ export default function App() {
     }
   };
 
+  const onTimeChange = (sessionId, field, value) => {
+    setEditedTimes(prev => ({
+      ...prev,
+      [sessionId]: { ...prev[sessionId], [field]: value }
+    }));
+  };
+
+  const onSaveTimes = async (sessionId) => {
+    const times = editedTimes[sessionId];
+    if (!times) return;
+    
+    setLastModifiedSessionId(sessionId);
+    const updates = {};
+    if (times.start) updates.heure_debut = times.start;
+    if (times.end) updates.heure_fin = times.end;
+
+    const { error } = await supabase.from('sessions').update(updates).eq('id', sessionId);
+    if (!error) {
+      await fetchSessions();
+      setEditedTimes(prev => {
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+    }
+  };
+
+  const updateSessionTime = async (sessionId, field, value) => {
+    setLastModifiedSessionId(sessionId);
+    const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
+    if (!error) await fetchSessions();
+  };
+
+  const updateSessionDate = async (sessionId, newDate) => {
+    setLastModifiedSessionId(sessionId);
+    const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
+    if (!error) await fetchSessions();
+  };
+
+  const signSession = (session) => {
+    setSigningSessionId(session.id);
+  };
+
+  /**
+   * Superpose la signature sur le PDF original et sauvegarde le résultat
+   */
+   // --- Fonctions utilitaires Archivage ---
+  const overlaySignatureOnPdf = async (session, client, signatureDataUrl, role) => {
+    try {
+      console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
+      
+      const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
+      if (!originalRelativePath) {
+        console.log("[SignatureProof] Pas de chemin de document pour apposer la signature.");
+        return null;
+      }
+
+      // 1. Obtenir une URL de lecture valide (signée si nécessaire) pour le fetch
+      console.log("[SignatureProof] Obtention URL signée pour original:", originalRelativePath);
+      
+      // Extraction du bucket/path
+      const extractBucketPath = (fullUrl) => {
+        if (!fullUrl) return null;
+        let bucket = 'documents';
+        let path = fullUrl;
+        
+        const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
+        if (match) {
+          bucket = match[1];
+          path = decodeURIComponent(match[2]);
+        } else {
+          const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
+          bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
+        }
+
+        // Rectification bucket
+        if (path.startsWith('modeling-imports/') && bucket === 'documents') {
+          bucket = 'ressources-pedagogiques';
+        }
+        return { bucket, path };
+      };
+
+      const extracted = extractBucketPath(originalRelativePath);
+      if (!extracted) return null;
+
+      const { data: signData, error: signErr } = await supabase.storage.from(extracted.bucket).createSignedUrl(extracted.path, 300);
+      if (signErr || !signData?.signedUrl) {
+        throw new Error(`Erreur signature URL pour archivage: ${signErr?.message}`);
+      }
+
+      // 2. Récupérer le PDF original via l'URL signée
+      const existingPdfBytes = await fetch(signData.signedUrl).then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status} lors de la lecture du PDF original`);
+        return res.arrayBuffer();
+      });
+      
+      const pdfDoc = await PDFDocument.load(existingPdfBytes);
+      
+      // 3. Préparer l'image de la signature
+      const signatureImageBytes = await fetch(signatureDataUrl).then(res => res.arrayBuffer());
+      const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
+      const sigDims = signatureImage.scale(0.25);
+
+      // 4. Ajouter la signature sur la dernière page
+      const pages = pdfDoc.getPages();
+      const lastPage = pages[pages.length - 1];
+      const { width } = lastPage.getSize();
+
+      const xPos = role === 'formateur' || role === 'admin' ? width - 50 - sigDims.width : 50;
+
+      lastPage.drawImage(signatureImage, {
+        x: xPos,
+        y: 50,
+        width: sigDims.width,
+        height: sigDims.height,
+      });
+
+      // 5. Ajouter une mention texte
+      const signerName = (role === 'formateur' || role === 'admin') ? 'Le Formateur' : (client.nom_complet || client.nom || 'Le Client');
+      lastPage.drawText(`Signé numériquement par ${signerName}`, {
+        x: xPos,
+        y: 35,
+        size: 8,
+      });
+
+      lastPage.drawText(`Le ${new Date().toLocaleString('fr-FR')}`, {
+        x: xPos,
+        y: 25,
+        size: 8,
+      });
+
+      // 6. Exporter le PDF
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const file = new File([blob], `signed_${session.id}_${role}.pdf`, { type: 'application/pdf' });
+
+      // 7. Upload sur Supabase Storage
+      const fileName = `signed_${session.id}_${role}_${Date.now()}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('signed_documents')
+        .upload(fileName, file);
+
+      if (uploadError) {
+        console.error("[SignatureProof] Erreur upload:", uploadError);
+        return null;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('signed_documents')
+        .getPublicUrl(fileName);
+
+      console.log("[SignatureProof] SUCCÈS - Document généré:", publicUrl);
+      return publicUrl;
+    } catch (err) {
+      console.error("[SignatureProof] Erreur globale lors de la superposition:", err);
+      return null;
+    }
+  };
+
+  const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    setLastModifiedSessionId(sessionId);
+    const updateData = {};
+    const client = clients.find(c => c.id === session.client_id);
+
+    if (userRole === 'formateur' || userRole === 'admin') {
+      updateData.signature_formateur = signatureDataUrl;
+      updateData.date_signature_formateur = new Date().toISOString();
+      updateData.statut_formateur = 'Signé';
+      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
+    } else {
+      updateData.signature_image = signatureDataUrl;
+      updateData.date_signature = new Date().toISOString();
+      updateData.statut_client = 'Signé';
+      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
+    }
+
+    // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
+    if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
+      const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
+      if (signedUrl) {
+        updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
+        updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
+      }
+    }
+
+    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
+
+    if (!error) {
+      if (updateData.statut === 'Signé') {
+        const client = clients.find(c => c.id === session.client_id);
+        if (client) {
+          const newEffectuees = (client.seances_effectuees || 0) + 1;
+          await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
+          await fetchUtilisateurs();
+        }
+      }
+      await fetchSessions();
+      toast.success(`Émargement enregistré avec succès !`);
+      setSigningSessionId(null);
+      if (userRole === 'client') setActiveTab('mes_seances');
+    } else {
+      console.error("Erreur signature session:", error);
+      toast.error("Erreur lors de la signature : " + error.message);
+    }
+  };
+
+  const handleAddSessionItem = async (data) => {
+    if (!targetSessionForAddition) return;
+    
+    setIsSessionItemModalOpen(false);
+    setLastModifiedSessionId(targetSessionForAddition.items[0]?.id);
+
+    const { error } = await supabase.from('sessions').insert([{
+      client_id: targetSessionForAddition.items[0]?.client_id,
+      module_id: targetSessionForAddition.items[0]?.module_id,
+      numero_seance: targetSessionForAddition.numero,
+      nom: data.title,
+      ressource_titre: data.title,
+      type_activite: data.type,
+      file_url: data.url,
+      ressource_url: data.url,
+      metadata: { 
+        isCustom: true, 
+        isToSign: data.isToSign,
+        documentType: data.type === 'signature' ? 'signature' : 'info'
+      },
+      statut: 'À venir',
+      statut_client: 'À venir',
+      statut_formateur: 'À venir',
+      date: targetSessionForAddition.date,
+      heure_debut: targetSessionForAddition.debut,
+      heure_fin: targetSessionForAddition.fin
+    }]);
+
+    if (!error) {
+      await fetchSessions();
+      toast.success("Élément ajouté avec succès !");
+    } else {
+      console.error("Erreur ajout item:", error);
+      toast.error("Erreur lors de l'ajout.");
+    }
+  };
+
   const handleAddSession = async (client) => {
     const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
-    const nextNum = clientSessions.length + 1;
+    const nextNum = clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance)) + 1 : 1;
     const module = modules.find(m => m.id === client.module_id);
     const moduleName = module ? module.nom : "Séance";
 
@@ -3746,102 +4755,42 @@ export default function App() {
       await fetchUtilisateurs();
       await fetchSessions();
     } else {
-      alert("Erreur lors de l'ajout de la séance: " + insError.message);
+      toast.error("Erreur lors de l'ajout de la séance: " + insError.message);
     }
   };
 
-  const handleDeleteSession = async (session) => {
-    const client = clients.find(c => c.id === session.client_id);
-    if (!client) return;
+  const handleDeleteSession = async (sessionOrId) => {
+    const session = typeof sessionOrId === 'object' ? sessionOrId : sessions.find(s => s.id === sessionOrId);
+    if (!session) return;
 
-    if (!window.confirm(`Supprimer la séance N°${session.numero_seance} de ${client.nom} ?`)) return;
+    const isCustom = session.metadata?.isCustom === true;
+    const confirmMsg = isCustom ? "Supprimer cet élément personnalisé ?" : `Supprimer la séance N°${session.numero_seance} ?`;
+    
+    if (!window.confirm(confirmMsg)) return;
 
     const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
 
     if (!delError) {
-      const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
-      await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
-      await fetchUtilisateurs();
-      await fetchSessions();
-    } else {
-      alert("Erreur suppression: " + delError.message);
-    }
-  };
-
-  const updateSessionTime = async (sessionId, field, value) => {
-    const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
-    if (!error) await fetchSessions();
-  };
-
-  const updateSessionDate = async (sessionId, newDate) => {
-    const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
-    if (!error) await fetchSessions();
-  };
-
-  const signSession = (session) => {
-    setSigningSessionId(session.id);
-  };
-
-  const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (!session) return;
-
-    const updateData = {};
-
-    if (userRole === 'formateur' || userRole === 'admin') {
-      updateData.signature_formateur = signatureDataUrl;
-      updateData.date_signature_formateur = new Date().toISOString();
-      updateData.statut_formateur = 'Signé';
-      // La session devient verte si les deux ont signé
-      if (session.statut_client === 'Signé') {
-        updateData.statut = 'Signé';
-      }
-    } else {
-      updateData.signature_image = signatureDataUrl;
-      updateData.date_signature = new Date().toISOString();
-      updateData.statut_client = 'Signé';
-      // La session devient verte si les deux ont signé
-      if (session.statut_formateur === 'Signé') {
-        updateData.statut = 'Signé';
-      }
-    }
-
-    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
-
-    if (!error) {
-      if (updateData.statut === 'Signé') {
+      if (!isCustom) {
         const client = clients.find(c => c.id === session.client_id);
         if (client) {
-          const newEffectuees = (client.seances_effectuees || 0) + 1;
-          await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', client.id);
+          const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
+          await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
           await fetchUtilisateurs();
         }
       }
       await fetchSessions();
-      alert(`Séance émargée avec succès !`);
     } else {
-      console.error("Erreur signature session:", error);
-      alert("Erreur lors de la signature : " + error.message);
+      toast.error("Erreur suppression: " + delError.message);
     }
   };
 
   const assignFormateur = async (userId, formateurId) => {
-    const userIdParsed = userId;
-    const formateurIdParsed = formateurId || null;
-
-    // Validation simple pour UUID (string non vide)
-    if (!userIdParsed) return;
-
-    const { error } = await supabase
-      .from('clients')
-      .update({ formateur_id: formateurIdParsed })
-      .eq('id', userIdParsed);
-
+    const { error } = await supabase.from('clients').update({ formateur_id: formateurId || null }).eq('id', userId);
     if (!error) {
-      setClients(clients.map(c => c.id === userIdParsed ? { ...c, formateur_id: formateurIdParsed } : c));
+      setClients(clients.map(c => c.id === userId ? { ...c, formateur_id: formateurId } : c));
     } else {
-      console.error("Erreur assignation", error);
-      alert("Erreur: " + error.message);
+      toast.error("Erreur assignation: " + error.message);
     }
   };
 
@@ -3851,11 +4800,11 @@ export default function App() {
       const type = typeArg || newTemplateName;
 
       if (!file) {
-        alert("Veuillez sélectionner un fichier .docx d'abord.");
+        toast.error("Veuillez sélectionner un fichier .docx d'abord.");
         return;
       }
       if (!type) {
-        alert("Veuillez saisir un nom pour ce type de modèle.");
+        toast.error("Veuillez saisir un nom pour ce type de modèle.");
         return;
       }
 
@@ -3897,10 +4846,10 @@ export default function App() {
       }
 
       await fetchDocuments();
-      alert(`Modèle Word pour "${type}" enregistré avec succès.`);
+      toast.success(`Modèle Word pour "${type}" enregistré avec succès.`);
     } catch (err) {
       console.error("Upload Template Error:", err);
-      alert("Erreur lors de l'upload: " + (err.message || 'Erreur inconnue'));
+      toast.error("Erreur lors de l'upload: " + (err.message || 'Erreur inconnue'));
     }
   };
 
@@ -3921,7 +4870,7 @@ export default function App() {
       window.open(data.signedUrl, '_blank');
     } catch (err) {
       console.error("Erreur téléchargement:", err);
-      alert('Erreur lors du téléchargement : ' + (err.message || 'Fichier introuvable'));
+      toast.error('Erreur lors du téléchargement : ' + (err.message || 'Fichier introuvable'));
     }
   };
 
@@ -3950,10 +4899,10 @@ export default function App() {
       if (updateError) throw updateError;
 
       await fetchSessions();
-      alert('Réponse envoyée avec succès !');
+      toast.success('Réponse envoyée avec succès !');
     } catch (error) {
       console.error('Erreur upload exercice:', error);
-      alert('Erreur lors de l\'envoi : ' + error.message);
+      toast.error('Erreur lors de l\'envoi : ' + error.message);
     }
   };
 
@@ -3961,7 +4910,7 @@ export default function App() {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
-        alert(`Aucun modèle .docx trouvé pour "${type}". Veuillez l'uploader dans l'onglet Ingénierie.`);
+        toast.error(`Aucun modèle .docx trouvé pour "${type}". Veuillez l'uploader dans l'onglet Ingénierie.`);
         return;
       }
 
@@ -3977,7 +4926,7 @@ export default function App() {
       }
 
       if (!finalClient.module_id && !clientRow.module_id) {
-        alert("Veuillez d'abord assigner un module à ce client.");
+        toast.error("Veuillez d'abord assigner un module à ce client.");
         return;
       }
 
@@ -4054,11 +5003,11 @@ export default function App() {
         }]);
 
         await fetchDocuments();
-        alert(`Document "${finalFileName}" généré et archivé.`);
+        toast.success(`Document "${finalFileName}" généré et archivé.`);
       }
     } catch (error) {
       console.error("Docx Error:", error);
-      alert("Erreur lors de la génération du document Word.");
+      toast.error("Erreur lors de la génération du document Word.");
     }
   };
   const handleAddDocument = async (e) => {
@@ -4076,7 +5025,7 @@ export default function App() {
 
       if (uploadError) {
         console.error("Erreur upload:", uploadError);
-        alert("Erreur upload: " + uploadError.message);
+        toast.error("Erreur upload: " + uploadError.message);
         setIsAddingDoc(false);
         return;
       }
@@ -4111,7 +5060,7 @@ export default function App() {
       setNewDocVisFormateur(true);
     } else {
       console.error("Erreur ajout doc", error);
-      alert('Erreur Doc : ' + error.message);
+      toast.error('Erreur Doc : ' + error.message);
     }
     setIsAddingDoc(false);
   };
@@ -4152,7 +5101,7 @@ export default function App() {
       .eq('id', docId);
 
     if (error) {
-      alert("Erreur signature: " + error.message);
+      toast.error("Erreur signature: " + error.message);
       // rollback state en cas d'erreur
       await fetchDocuments();
     }
@@ -4163,7 +5112,7 @@ export default function App() {
     const { error } = await supabase.from('documents').update({ date_seance: date }).eq('id', docId);
     if (error) {
       console.error("Erreur update date seance", error);
-      alert("Erreur lors de l'enregistrement de la date.");
+      toast.error("Erreur lors de l'enregistrement de la date.");
       await fetchDocuments();
     }
   };
@@ -4177,7 +5126,7 @@ export default function App() {
   const handleDownloadPDF = async (doc) => {
     if (doc && doc.id) {
       const urlToDownload = doc.url_signed_pdf || doc.url;
-      if (!urlToDownload) return alert("Aucun fichier à télécharger");
+      if (!urlToDownload) return toast.error("Aucun fichier à télécharger");
 
       const fetchBase64Image = async (url) => {
         if (!url) return null;
@@ -4304,10 +5253,10 @@ export default function App() {
 
       } catch (error) {
         console.error('Erreur de génération du PDF final :', error);
-        alert('Impossible de générer le PDF signé. Vérifiez la console.');
+        toast.error('Impossible de générer le PDF signé. Vérifiez la console.');
       }
     } else {
-      alert('Simulation : Téléchargement du bilan...');
+      toast.success('Simulation : Téléchargement du bilan...');
     }
   };
 
@@ -4347,18 +5296,17 @@ export default function App() {
           await new Promise(r => setTimeout(r, 500));
 
           // Récupérer l'utilisateur authentifié
-          const { data: { user }, error: authError } = await supabase.auth.getUser();
-          console.log('Auth user après SetPassword:', user, authError);
+          const { data: { user } } = await supabase.auth.getUser();
 
           if (user && user.email) {
-            // Chercher le rôle dans la base de données
-            const { data: userData, error: dbError } = await supabase
+            // Chercher le rôle dans la base de données (admin/formateur)
+            const { data: userData } = await supabase
               .from('utilisateurs')
               .select('role, id')
               .eq('email', user.email)
               .single();
 
-            console.log('DB user data:', userData, dbError);
+            console.log('DB user data:', userData);
 
             if (userData && userData.role) {
               // ⚡ D'ABORD définir le rôle, PUIS masquer le formulaire de mot de passe
@@ -4381,12 +5329,30 @@ export default function App() {
       <ResetPasswordPage
         supabase={supabase}
         onComplete={async () => {
-          // On ne fait pas de log out car l'utilisateur est nouvellement authentifié
-          // mais on peut signer la session out pour forcer un vrain login, ou juste le renvoyer
+          // Auto login process
+          const { data: { user } } = await supabase.auth.getUser();
+          
+          if (user && user.email) {
+            const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
+            if (userData && userData.role) {
+              handleLogin(userData.role, userData.id);
+              setIsResetPassword(false);
+              return;
+            }
+            
+            const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
+            if (clientData && clientData.id) {
+               handleLogin('client', clientData.id);
+               setIsResetPassword(false);
+               return;
+            }
+          }
+          
+          // Fallback if role not found
           await supabase.auth.signOut();
           window.history.replaceState(null, '', '/');
           setIsResetPassword(false);
-          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.");
+          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
         }}
       />
     );
@@ -4605,6 +5571,8 @@ export default function App() {
             handleDeleteFolder={handleDeleteFolder}
             handleDeleteStepResource={handleDeleteStepResource}
             handleAddStepResource={handleAddStepResource}
+            handleRenameFolder={handleRenameFolder}
+            handleRenameResource={handleRenameResource}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
@@ -4628,9 +5596,15 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
+            setIsSessionItemModalOpen={setIsSessionItemModalOpen}
+            setTargetSessionForAddition={setTargetSessionForAddition}
+            onTimeChange={onTimeChange}
+            onSaveTimes={onSaveTimes}
+            setLastModifiedSessionId={setLastModifiedSessionId}
+            lastModifiedSessionId={lastModifiedSessionId}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
+          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
           {activeTab === 'modélothèque' && <DocumentsView
@@ -4677,16 +5651,41 @@ export default function App() {
         onSave={handleSignatureSave}
       />
 
-      <SignatureModal
-        isOpen={signingSessionId !== null}
-        onClose={() => setSigningSessionId(null)}
-        onSave={(signature) => handleSessionSignatureSave(signingSessionId, signature)}
+      <SessionItemModal
+        isOpen={isSessionItemModalOpen}
+        onClose={() => setIsSessionItemModalOpen(false)}
+        pedagogicalResources={pedagogicalResources}
+        supabase={supabase}
+        onSave={handleAddSessionItem}
       />
 
+      {/* Visionneuse PDF pour docs de la modélothèque */}
       <DocumentViewerModal
         isOpen={viewingDocId !== null}
         document={documents.find(d => d.id === viewingDocId)}
         onClose={() => setViewingDocId(null)}
+        mode="view"
+      />
+
+      {/* Visionneuse PDF pour sessions (lecture + signature obligatoire) */}
+      <DocumentViewerModal
+        isOpen={viewingSession !== null}
+        url={resolveFileUrl(
+          viewingSession?.session
+            ? (viewingSession.session.signed_pdf_url || viewingSession.session.file_url || viewingSession.session.ressource_url || null)
+            : null
+        )}
+        title={viewingSession?.session
+          ? (viewingSession.session.ressource_titre || viewingSession.session.nom || 'Document')
+          : ''
+        }
+        mode={viewingSession?.mode || 'view'}
+        onClose={() => setViewingSession(null)}
+        onSave={viewingSession?.mode === 'sign' ? async (signature) => {
+          const sessionId = viewingSession.session.id;
+          setViewingSession(null);
+          await handleSessionSignatureSave(sessionId, signature);
+        } : undefined}
       />
 
       <InviteModal
@@ -4697,6 +5696,7 @@ export default function App() {
         formateurs={formateurs}
       />
 
+      <Toaster />
     </div>
   );
 }
@@ -4728,10 +5728,10 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, m
       .eq('id', formateur.id);
 
     if (error) {
-      alert("Erreur lors de la sauvegarde : " + error.message);
+      toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
-      alert("Informations légales enregistrées !");
+      toast.success("Informations légales enregistrées !");
     }
     setIsSaving(false);
   };
