@@ -2070,6 +2070,7 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
+  handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
   viewingDocId, setViewingDocId
@@ -5782,6 +5783,7 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
+            setIsSessionItemModalOpen={setIsSessionItemModalOpen}
             setTargetSessionForAddition={setTargetSessionForAddition}
             onTimeChange={onTimeChange}
             onSaveTimes={onSaveTimes}
