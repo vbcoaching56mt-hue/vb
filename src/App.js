@@ -5155,7 +5155,7 @@ export default function App() {
       });
 
       // Save as file for manual check, then upload
-      const safeNomClient = (finalClient.nom_complet || clientRow.nom || 'Client').replace(/\s+/g, '_');
+      const safeNomClient = (finalClient?.nom_complet || clientRow?.nom || theCoach?.nom || 'Document').replace(/\s+/g, '_');
       const finalFileName = `${type}_${safeNomClient}_final.docx`;
       saveAs(out, finalFileName);
 
