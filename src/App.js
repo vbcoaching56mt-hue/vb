@@ -340,14 +340,19 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         {isValidUrl && (
           <button
             onClick={() => window.open(pdfUrl, '_blank')}
-            className="flex items-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-colors shadow-lg"
+            className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shadow-lg"
           >
-            <Download size={16} /> Ouvrir dans un nouvel onglet
+            <Download size={16} /> Télécharger pour lire le document
           </button>
+        )}
+        {pdfUrl?.toLowerCase().endsWith('.docx') && (
+           <p className="text-[11px] text-indigo-500 font-bold bg-indigo-50 px-4 py-2 rounded-lg mt-2">
+             ℹ️ Format Word détecté : Cliquez sur le bouton ci-dessus pour le lire avant de signer.
+           </p>
         )}
         {mode === 'sign' && (
           <p className="text-xs text-orange-500 font-medium text-center max-w-xs bg-orange-50 p-3 rounded-xl">
-            ⚠️ Vous pouvez néanmoins apposer votre signature ci-dessous.
+            ⚠️ Une fois le document lu, vous pouvez apposer votre signature ci-dessous.
           </p>
         )}
       </div>
@@ -5164,8 +5169,13 @@ export default function App() {
       const finalFileName = `${type}_${safeNomClient}_final.docx`;
       saveAs(out, finalFileName);
 
-      // Auto-upload the result too
-      const storagePath = `${Date.now()}_${finalFileName}`;
+      // Auto-upload the result too - Sanitisation du chemin (retrait accents et espaces)
+      const sanitizedName = finalFileName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9._-]/g, "_");
+        
+      const storagePath = `${Date.now()}_${sanitizedName}`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(storagePath, out);
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
