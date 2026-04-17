@@ -306,9 +306,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                   await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
                   setBlobUrl(data.signedUrl);
                   setLoadingPdf(false);
-                } else if (checks > 20) {
+                } else if (checks > 40) { // On passe à 8 secondes avant abandon
                   clearInterval(interval);
-                  setPdfError("Moteur de rendu Word long à charger. Veuillez rafraîchir.");
+                  console.warn("[DocumentViewerModal] Timeout docx-preview. Passage au lecteur de secours.");
+                  // Fallback vers Microsoft Office Online si le rendu natif échoue
+                  setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(data.signedUrl)}`);
                   setLoadingPdf(false);
                 }
               }, 200);
@@ -399,6 +401,18 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       
       // Si c'est un Word, on affiche le conteneur de rendu local
       if (isWord) {
+        // Si on a une URL Office Online (fallback), on l'affiche en iframe
+        if (blobUrl.includes('officeapps.live.com')) {
+          return (
+            <iframe
+              src={blobUrl}
+              title={pdfTitle}
+              className="w-full h-full border-0"
+              allowFullScreen
+            />
+          );
+        }
+        
         return (
           <div className="w-full h-full overflow-auto bg-white p-4 docx-container text-left">
             <div ref={docxContainerRef} />
