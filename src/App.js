@@ -5249,28 +5249,96 @@ export default function App() {
       const finalFileName = `${type}_${safeNomClient}_final.docx`;
       saveAs(out, finalFileName);
 
-      // Auto-upload the result too - Sanitisation du chemin (retrait accents et espaces)
+      // Sanitisation du chemin (retrait accents et espaces)
       const sanitizedName = finalFileName
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9._-]/g, "_");
-        
-      const storagePath = `${Date.now()}_${sanitizedName}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(storagePath, out);
-      if (uploadError) {
-        console.error("Upload Error:", uploadError);
-        toast.error(`Erreur d'upload : ${uploadError.message}`);
+
+      // --- ÉTAPE DOUBLE FORMAT : Upload du Word ET Conversion PDF ---
+      
+      // 1. Upload du Word original (pour l'admin)
+      const storagePathWord = `${Date.now()}_${sanitizedName}.docx`;
+      const { error: uploadWordError } = await supabase.storage.from('documents').upload(storagePathWord, out);
+      if (uploadWordError) {
+        console.error("Word Upload Error:", uploadWordError);
+        toast.error(`Erreur upload Word : ${uploadWordError.message}`);
         return;
       }
 
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
+      // 2. Génération de la version PDF pour le formateur
+      let publicUrlToSave = '';
+      try {
+        toast.info("Génération de la version PDF pour signature...");
+        
+        // On utilise docx-preview pour transformer le Word en HTML (invisible)
+        const tempDiv = document.createElement('div');
+        tempDiv.style.width = '794px';
+        tempDiv.style.position = 'fixed';
+        tempDiv.style.left = '-9999px';
+        tempDiv.style.top = '0';
+        tempDiv.style.background = 'white';
+        document.body.appendChild(tempDiv);
+        
+        const arrayBuffer = await out.arrayBuffer();
+        if (!window.docx) {
+          // Chargement manuel si non présent
+          await new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
+            script.onload = resolve;
+            document.body.appendChild(script);
+          });
+        }
+        
+        await window.docx.renderAsync(arrayBuffer, tempDiv);
+        await new Promise(r => setTimeout(r, 800)); // Pause pour rendu images
+        
+        const canvas = await html2canvas(tempDiv, { scale: 1.5, useCORS: true });
+        document.body.removeChild(tempDiv);
+        
+        const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+        const imgData = canvas.toDataURL('image/jpeg', 0.85);
+        const pageWidth = 595.28;
+        const pageHeight = 841.89;
+        const imgWidth = pageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        // Gérer le multi-page si le document est long
+        let heightLeft = imgHeight;
+        let position = 0;
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+        
+        while (heightLeft >= 0) {
+          position = heightLeft - imgHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+          heightLeft -= pageHeight;
+        }
+
+        const pdfBlob = pdf.output('blob');
+        const storagePathPdf = `${Date.now()}_${sanitizedName}.pdf`;
+        
+        const { error: uploadPdfError } = await supabase.storage.from('documents').upload(storagePathPdf, pdfBlob);
+        if (uploadPdfError) throw uploadPdfError;
+        
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathPdf);
+        publicUrlToSave = publicUrl;
+        
+      } catch (pdfConvError) {
+        console.error("PDF Conversion/Upload Error:", pdfConvError);
+        toast.warn("La conversion PDF a échoué, le formateur verra la version Word native.");
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathWord);
+        publicUrlToSave = publicUrl;
+      }
       
       const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
       
       const { error: insertError } = await supabase.from('documents').insert([{
         nom: docName,
         type_document: type,
-        url: publicUrl,
+        url: publicUrlToSave, // URL du PDF (ou Word fallback)
         user_id: clientRow?.id || null,
         assigned_formateur_id: coachId || null,
         visible_client: !withWorkflow,
