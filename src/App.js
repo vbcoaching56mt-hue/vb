@@ -5836,9 +5836,11 @@ export default function App() {
       </div>
 
       {/* Modals Qualiopi */}
-      <SignatureModal
+      <DocumentViewerModal
         isOpen={signingDocId !== null}
+        document={documents.find(d => d.id === signingDocId)}
         onClose={() => setSigningDocId(null)}
+        mode="sign"
         onSave={handleSignatureSave}
       />
 
