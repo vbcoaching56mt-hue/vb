@@ -172,16 +172,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [debugInfo, setDebugInfo] = useState(null);
   const docxContainerRef = useRef(null);
 
-  // Chargement dynamique du moteur de rendu Word
-  useEffect(() => {
-    if (!window.document.getElementById('docx-preview-script')) {
-      const script = window.document.createElement('script');
-      script.id = 'docx-preview-script';
-      script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
-      script.async = true;
-      window.document.body.appendChild(script);
-    }
-  }, []);
+  // Suppression du useEffect local, maintenant géré au niveau de l'App pour plus de réactivité
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -288,33 +279,44 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           try {
             const response = await fetch(data.signedUrl);
             const arrayBuffer = await response.arrayBuffer();
+            // Tentative de rendu immédiat (puisque la lib est pré-chargée au niveau App)
             if (window.docx && docxContainerRef.current) {
-              await window.docx.renderAsync(arrayBuffer, docxContainerRef.current, null, {
-                className: "docx",
-                inWrapper: false,
-                ignoreWidth: false,
-                ignoreHeight: false,
-              });
-              setBlobUrl(data.signedUrl); 
+              try {
+                await window.docx.renderAsync(arrayBuffer, docxContainerRef.current, null, {
+                  className: "docx",
+                  inWrapper: false,
+                  ignoreWidth: false,
+                  ignoreHeight: false,
+                });
+                setBlobUrl(data.signedUrl);
+                setLoadingPdf(false);
+              } catch (renderErr) {
+                console.error("Erreur rendu natif:", renderErr);
+                // Basculement immédiat vers Office Online si le rendu natif échoue
+                setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(data.signedUrl)}`);
+                setLoadingPdf(false);
+              }
             } else {
-              // On attend que la lib soit dispo
+              // Si vraiment pas encore là, on attend très brièvement
               let checks = 0;
               const interval = setInterval(async () => {
                 checks++;
                 if (window.docx && docxContainerRef.current) {
                   clearInterval(interval);
-                  await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
-                  setBlobUrl(data.signedUrl);
+                  try {
+                    await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
+                    setBlobUrl(data.signedUrl);
+                  } catch (e) {
+                    setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(data.signedUrl)}`);
+                  }
                   setLoadingPdf(false);
-                } else if (checks > 40) { // On passe à 8 secondes avant abandon
+                } else if (checks > 15) {
                   clearInterval(interval);
-                  console.warn("[DocumentViewerModal] Timeout docx-preview. Passage au lecteur de secours.");
-                  // Fallback vers Microsoft Office Online si le rendu natif échoue
                   setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(data.signedUrl)}`);
                   setLoadingPdf(false);
                 }
-              }, 200);
-              return; // L'intervalle gère la suite
+              }, 100);
+              return;
             }
           } catch (fetchErr) {
             console.error("[DocumentViewerModal] Erreur de pré-chargement Word:", fetchErr);
@@ -486,15 +488,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isValidUrl && (
-              <button
-                onClick={() => window.open(pdfUrl, '_blank')}
-                className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-                title="Ouvrir dans un nouvel onglet"
-              >
-                <Download size={14} /> Ouvrir ↗
-              </button>
-            )}
+            {/* Bouton "Ouvrir" supprimé pour éviter la confusion (le doc doit apparaître automatiquement) */}
             <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">✕</button>
           </div>
         </div>
@@ -4045,6 +4039,16 @@ export default function App() {
   useEffect(() => {
     const initSession = async () => {
       setIsLoadingSession(true);
+
+      // Pré-chargement global du moteur de rendu Word pour un affichage instantané ultérieur
+      if (typeof window !== 'undefined' && !window.document.getElementById('docx-preview-script')) {
+        const script = window.document.createElement('script');
+        script.id = 'docx-preview-script';
+        script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
+        script.async = true;
+        window.document.body.appendChild(script);
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user?.email) {
