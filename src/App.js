@@ -167,8 +167,20 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [agreed, setAgreed] = useState(false);
   const scrollRef = useRef(null);
   const [blobUrl, setBlobUrl] = useState(null);
-  const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
+  const [debugInfo, setDebugInfo] = useState(null);
+  const docxContainerRef = useRef(null);
+
+  // Chargement dynamique du moteur de rendu Word
+  useEffect(() => {
+    if (!window.document.getElementById('docx-preview-script')) {
+      const script = window.document.createElement('script');
+      script.id = 'docx-preview-script';
+      script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
+      script.async = true;
+      window.document.body.appendChild(script);
+    }
+  }, []);
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -258,11 +270,40 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         }
 
         if (cancelled) return;
-        if (error) throw new Error(error.message);
+        if (error) {
+          setDebugInfo({ bucket, path, error: error.message });
+          throw new Error(error.message);
+        }
         if (!data?.signedUrl) throw new Error('Aucune URL générée par Supabase');
 
         console.log(`%c[DocumentViewerModal] ✅ Succès ! Testez le lien en direct :\n${data.signedUrl}`, 'color: #10b981; font-weight: bold;');
-        setBlobUrl(data.signedUrl);
+        
+        // Si c'est un Word, on le télécharge et on le rend localement
+        const isWord = path.toLowerCase().endsWith('.docx') || path.toLowerCase().endsWith('.doc');
+        if (isWord) {
+          try {
+            const response = await fetch(data.signedUrl);
+            const arrayBuffer = await response.arrayBuffer();
+            if (window.docx && docxContainerRef.current) {
+              docxContainerRef.current.innerHTML = '';
+              await window.docx.renderAsync(arrayBuffer, docxContainerRef.current, null, {
+                className: "docx",
+                inWrapper: false,
+                ignoreWidth: false,
+                ignoreHeight: false,
+              });
+              setBlobUrl(data.signedUrl); // Gardé pour téléchargement
+            } else {
+              // Si la lib n'est pas encore chargée on réessaie dans 500ms
+              setTimeout(() => loadSignedUrl(), 500);
+            }
+          } catch (fetchErr) {
+            console.error("[DocumentViewerModal] Erreur de pré-chargement Word:", fetchErr);
+            setBlobUrl(data.signedUrl); // Fallback vers MS Viewer
+          }
+        } else {
+          setBlobUrl(data.signedUrl);
+        }
       } catch (err) {
         if (!cancelled) {
           console.error('[DocumentViewerModal] Erreur critique:', err.message);
@@ -338,13 +379,19 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     );
     if (blobUrl) {
       const isWord = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
-      const finalSrc = isWord 
-        ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(blobUrl)}`
-        : `${blobUrl}#toolbar=0&navpanes=0`;
+      
+      // Si c'est un Word, on affiche le conteneur de rendu local
+      if (isWord) {
+        return (
+          <div className="w-full h-full overflow-auto bg-white p-4 docx-container text-left">
+            <div ref={docxContainerRef} />
+          </div>
+        );
+      }
 
       return (
         <iframe
-          src={finalSrc}
+          src={`${blobUrl}#toolbar=0&navpanes=0`}
           title={pdfTitle}
           className="w-full h-full border-0"
           allowFullScreen
@@ -355,9 +402,19 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4 p-8">
         <div className="text-5xl">📄</div>
-        <p className="font-semibold text-gray-600 text-center">
-          {pdfError ? 'Impossible de charger le document' : 'Aucun fichier joint à cette session.'}
-        </p>
+        <div className="text-center">
+          <p className="font-semibold text-gray-600">
+            {pdfError ? 'Impossible de charger le document' : 'Aucun fichier joint à cette session.'}
+          </p>
+          {debugInfo && (
+            <div className="mt-4 p-3 bg-gray-100 rounded-lg text-[10px] font-mono text-left overflow-auto max-w-xs mx-auto border border-gray-200">
+              <p className="text-gray-500 uppercase font-bold mb-1 border-b border-gray-200 pb-1">Diagnostic Technique</p>
+              <p><span className="text-rose-600">Bucket:</span> {debugInfo.bucket}</p>
+              <p className="break-all"><span className="text-rose-600">Path:</span> {debugInfo.path}</p>
+              <p className="text-rose-500 mt-1 italic">{debugInfo.error}</p>
+            </div>
+          )}
+        </div>
         {pdfError && <p className="text-xs text-red-400 font-mono bg-red-50 px-3 py-2 rounded-lg">{pdfError}</p>}
         {isValidUrl && (
           <button
@@ -369,7 +426,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         )}
         {pdfUrl?.toLowerCase().endsWith('.docx') && (
            <p className="text-[11px] text-indigo-500 font-bold bg-indigo-50 px-4 py-2 rounded-lg mt-2">
-             ℹ️ Format Word détecté : Cliquez sur le bouton ci-dessus pour le lire avant de signer.
+             ℹ️ Format Word : Lecture native activée. Si le rendu ne s'affiche pas, utilisez le bouton Télécharger.
            </p>
         )}
         {mode === 'sign' && (
@@ -5383,6 +5440,29 @@ export default function App() {
         if (blob.type === 'application/pdf' || urlToDownload.toLowerCase().includes('.pdf')) {
           const pdfBytes = await blob.arrayBuffer();
           pdfDoc = await PDFDocument.load(pdfBytes);
+        } else if (urlToDownload.toLowerCase().endsWith('.docx') || urlToDownload.toLowerCase().endsWith('.doc')) {
+          // Conversion Word -> Image -> PDF (via rendu temporaire)
+          pdfDoc = await PDFDocument.create();
+          const arrayBuffer = await blob.arrayBuffer();
+          const tempDiv = document.createElement('div');
+          tempDiv.style.width = '794px';
+          tempDiv.style.position = 'fixed';
+          tempDiv.style.left = '-9999px';
+          document.body.appendChild(tempDiv);
+          
+          if (window.docx) {
+            await window.docx.renderAsync(arrayBuffer, tempDiv);
+            await new Promise(r => setTimeout(r, 500));
+            const canvas = await html2canvas(tempDiv, { scale: 1.5 });
+            const imgData = canvas.toDataURL('image/png');
+            document.body.removeChild(tempDiv);
+            
+            const page = pdfDoc.addPage([canvas.width * 0.75, canvas.height * 0.75]);
+            const img = await pdfDoc.embedPng(imgData);
+            page.drawImage(img, { x: 0, y: 0, width: canvas.width * 0.75, height: canvas.height * 0.75 });
+          } else {
+            throw new Error("Moteur de conversion Word non chargé. Réessayez dans un instant.");
+          }
         } else {
           pdfDoc = await PDFDocument.create();
           const page = pdfDoc.addPage([595.28, 841.89]);
