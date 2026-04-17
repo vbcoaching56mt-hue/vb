@@ -5165,9 +5165,10 @@ export default function App() {
       saveAs(out, finalFileName);
 
       // Auto-upload the result too
-      const { error: uploadError } = await supabase.storage.from('documents').upload(`${Date.now()}_${finalFileName}`, out);
+      const storagePath = `${Date.now()}_${finalFileName}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(storagePath, out);
       if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
         
         const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
         
