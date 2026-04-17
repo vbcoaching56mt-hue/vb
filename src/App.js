@@ -203,7 +203,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
       if (match) {
         let bucket = match[1];
-        let path = decodeURIComponent(match[2]);
+        let rawPath = match[2];
+        
+        // On décode pour avoir le nom réel, mais on garde une version brute si besoin
+        let path = decodeURIComponent(rawPath);
         
         // Nettoyage : si le path commence par le nom du bucket (redondance parfois constatée)
         if (path.startsWith(`${bucket}/`)) {
@@ -286,17 +289,30 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             const response = await fetch(data.signedUrl);
             const arrayBuffer = await response.arrayBuffer();
             if (window.docx && docxContainerRef.current) {
-              docxContainerRef.current.innerHTML = '';
               await window.docx.renderAsync(arrayBuffer, docxContainerRef.current, null, {
                 className: "docx",
                 inWrapper: false,
                 ignoreWidth: false,
                 ignoreHeight: false,
               });
-              setBlobUrl(data.signedUrl); // Gardé pour téléchargement
+              setBlobUrl(data.signedUrl); 
             } else {
-              // Si la lib n'est pas encore chargée on réessaie dans 500ms
-              setTimeout(() => loadSignedUrl(), 500);
+              // On attend que la lib soit dispo
+              let checks = 0;
+              const interval = setInterval(async () => {
+                checks++;
+                if (window.docx && docxContainerRef.current) {
+                  clearInterval(interval);
+                  await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
+                  setBlobUrl(data.signedUrl);
+                  setLoadingPdf(false);
+                } else if (checks > 20) {
+                  clearInterval(interval);
+                  setPdfError("Moteur de rendu Word long à charger. Veuillez rafraîchir.");
+                  setLoadingPdf(false);
+                }
+              }, 200);
+              return; // L'intervalle gère la suite
             }
           } catch (fetchErr) {
             console.error("[DocumentViewerModal] Erreur de pré-chargement Word:", fetchErr);
@@ -5257,98 +5273,24 @@ export default function App() {
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9._-]/g, "_");
 
-      // --- ÉTAPE DOUBLE FORMAT : Upload du Word ET Conversion PDF ---
+      // --- ÉTAPE GÉNÉRATION WORD ET UPLOAD ---
       
-      // 1. Upload du Word original (pour l'admin)
       const storagePathWord = `${Date.now()}_${sanitizedName}.docx`;
       const { error: uploadWordError } = await supabase.storage.from('documents').upload(storagePathWord, out);
       if (uploadWordError) {
         console.error("Word Upload Error:", uploadWordError);
-        toast.error(`Erreur upload Word : ${uploadWordError.message}`);
+        toast.error(`Erreur upload : ${uploadWordError.message}`);
         return;
       }
 
-      // 2. Génération de la version PDF pour le formateur
-      let publicUrlToSave = '';
-      try {
-        toast("Génération de la version PDF pour signature...");
-        
-        // On utilise docx-preview pour transformer le Word en HTML (invisible)
-        const tempDiv = document.createElement('div');
-        tempDiv.style.width = '794px';
-        tempDiv.style.position = 'fixed';
-        tempDiv.style.left = '-9999px';
-        tempDiv.style.top = '0';
-        tempDiv.style.background = 'white';
-        document.body.appendChild(tempDiv);
-        
-        const docxArrayBuffer = await new Response(out).arrayBuffer();
-        if (!window.docx) {
-          // Chargement manuel si non présent
-          await new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
-            script.onload = resolve;
-            script.onerror = () => reject(new Error("Échec du chargement du moteur Word-to-PDF"));
-            document.body.appendChild(script);
-          });
-        }
-        
-        await window.docx.renderAsync(docxArrayBuffer, tempDiv);
-        await new Promise(r => setTimeout(r, 1500)); // Plus de temps pour le rendu
-        
-        // Sécurisation de l'appel html2canvas
-        const html2canvasLib = typeof html2canvas === 'function' ? html2canvas : html2canvas.default || html2canvas;
-        const canvas = await html2canvasLib(tempDiv, { 
-          scale: 1.5, 
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff'
-        });
-        document.body.removeChild(tempDiv);
-        
-        const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-        const imgData = canvas.toDataURL('image/jpeg', 0.85);
-        const pageWidth = 595.28;
-        const pageHeight = 841.89;
-        const imgWidth = pageWidth;
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
-        
-        // Gérer le multi-page si le document est long
-        let heightLeft = imgHeight;
-        let position = 0;
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-        
-        while (heightLeft >= 0) {
-          position = heightLeft - imgHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-          heightLeft -= pageHeight;
-        }
-
-        const pdfBlob = pdf.output('blob');
-        const storagePathPdf = `${Date.now()}_${sanitizedName}.pdf`;
-        
-        const { error: uploadPdfError } = await supabase.storage.from('documents').upload(storagePathPdf, pdfBlob);
-        if (uploadPdfError) throw uploadPdfError;
-        
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathPdf);
-        publicUrlToSave = publicUrl;
-        
-      } catch (pdfConvError) {
-        console.error("PDF Conversion/Upload Error:", pdfConvError);
-        toast("Note : La conversion PDF a échoué (affichage Word activé).");
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathWord);
-        publicUrlToSave = publicUrl;
-      }
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathWord);
       
       const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
       
       const { error: insertError } = await supabase.from('documents').insert([{
         nom: docName,
         type_document: type,
-        url: publicUrlToSave, // URL du PDF (ou Word fallback)
+        url: publicUrl,
         user_id: clientRow?.id || null,
         assigned_formateur_id: coachId || null,
         visible_client: !withWorkflow,
