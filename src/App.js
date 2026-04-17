@@ -5244,10 +5244,12 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
-      // Save as file for manual check, then upload
+      // Préparation des noms de fichiers
       const safeNomClient = (finalClient?.nom_complet || clientRow?.nom || theCoach?.nom || 'Document').replace(/\s+/g, '_');
       const finalFileName = `${type}_${safeNomClient}_final.docx`;
-      saveAs(out, finalFileName);
+
+      // On ne télécharge plus le fichier sur l'ordi de l'admin par défaut (pour éviter les doublons)
+      // saveAs(out, finalFileName);
 
       // Sanitisation du chemin (retrait accents et espaces)
       const sanitizedName = finalFileName
