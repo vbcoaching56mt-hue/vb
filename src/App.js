@@ -5280,21 +5280,27 @@ export default function App() {
         tempDiv.style.background = 'white';
         document.body.appendChild(tempDiv);
         
-        const arrayBuffer = await out.arrayBuffer();
+        const docxArrayBuffer = await new Response(out).arrayBuffer();
         if (!window.docx) {
           // Chargement manuel si non présent
-          await new Promise((resolve) => {
+          await new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
             script.onload = resolve;
+            script.onerror = () => reject(new Error("Échec du chargement du moteur Word-to-PDF"));
             document.body.appendChild(script);
           });
         }
         
-        await window.docx.renderAsync(arrayBuffer, tempDiv);
-        await new Promise(r => setTimeout(r, 800)); // Pause pour rendu images
+        await window.docx.renderAsync(docxArrayBuffer, tempDiv);
+        await new Promise(r => setTimeout(r, 1200)); // Pause accrue pour rendu images/polices
         
-        const canvas = await html2canvas(tempDiv, { scale: 1.5, useCORS: true });
+        const canvas = await html2canvas(tempDiv, { 
+          scale: 1.5, 
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
         document.body.removeChild(tempDiv);
         
         const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -5356,7 +5362,7 @@ export default function App() {
       toast.success(withWorkflow ? `Document "${finalFileName}" envoyé au formateur pour signature.` : `Document "${finalFileName}" généré et archivé.`);
     } catch (error) {
       console.error("Docx Error:", error);
-      toast.error("Erreur lors de la génération du document Word.");
+      toast.error(`Erreur de génération : ${error.message || "Erreur inconnue"}`);
     }
   };
   const handleAddDocument = async (e) => {
