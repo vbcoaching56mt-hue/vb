@@ -2070,9 +2070,9 @@ const FormateurView = ({
   updateSessionDate, signSession, modules, currentUserId,
   expandedClientId, setExpandedClientId, userRole,
   handleAddSession, handleDeleteSession, updateSessionTime,
-  handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
-  setIsSessionItemModalOpen, setTargetSessionForAddition, setSigningDocId
+  setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
+  viewingDocId, setViewingDocId
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2536,7 +2536,11 @@ const FormateurView = ({
                       </div>
                       <div>
                         <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
-                        <p className="text-[10px] text-amber-600 font-black uppercase">Émis le {new Date(doc.created_at).toLocaleDateString()}</p>
+                        <p className="text-[10px] text-amber-600 font-black uppercase">
+                          Émis le {doc.created_at && !isNaN(new Date(doc.created_at).getTime()) 
+                            ? new Date(doc.created_at).toLocaleDateString('fr-FR') 
+                            : new Date().toLocaleDateString('fr-FR')}
+                        </p>
                       </div>
                     </div>
                     <button 
@@ -5778,12 +5782,15 @@ export default function App() {
             pedagogicalResources={pedagogicalResources}
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
-            setIsSessionItemModalOpen={setIsSessionItemModalOpen}
             setTargetSessionForAddition={setTargetSessionForAddition}
             onTimeChange={onTimeChange}
             onSaveTimes={onSaveTimes}
             setLastModifiedSessionId={setLastModifiedSessionId}
             lastModifiedSessionId={lastModifiedSessionId}
+            signingDocId={signingDocId}
+            setSigningDocId={setSigningDocId}
+            viewingDocId={viewingDocId}
+            setViewingDocId={setViewingDocId}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
