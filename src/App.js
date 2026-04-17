@@ -1059,14 +1059,11 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
   );
 };
 
-const ClientDetailView = ({
-  client, formateurs, assignFormateur, handleModuleChange, modules,
-  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions, handleDeleteClient
-}) => {
+const ClientDetailView = ({ client, onBack, supabase, fetchUtilisateurs, modules, sessions, handleGenerateDocx, documentTemplates, pedagogicalResources, handleDeleteClient, fetchSessions, fetchDocuments, currentUserId, userRole }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+  const [isWorkflowEnabled, setIsWorkflowEnabled] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -1304,13 +1301,50 @@ const ClientDetailView = ({
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <div className="pt-6 border-gray-100">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Générateurs Automatiques</h3>
-            <div className="flex gap-2 flex-wrap pt-2">
-              {Object.keys(documentTemplates || {}).map(key => (
-                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
-                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
-                </button>
-              ))}
+            <h3 className="text-lg font-bold text-gray-800 mb-2">Générateurs Automatiques</h3>
+            <p className="text-xs text-gray-500 mb-6 italic">Générez des documents pré-remplis à partir de vos modèles Word (.docx).</p>
+
+            {/* Sécurité Formateur Assigné */}
+            {!client.formateur_id && (
+              <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-4 text-amber-800">
+                <AlertCircle className="shrink-0 mt-0.5" size={18} />
+                <div className="text-sm">
+                  <p className="font-bold">Aucun formateur assigné</p>
+                  <p>L'assignation d'un formateur est requise pour générer des documents administratifs (le formateur doit apparaître sur les contrats).</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-6">
+              <label className={`flex items-center gap-3 p-4 rounded-2xl border transition-all cursor-pointer ${isWorkflowEnabled ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-100 hover:border-gray-300'} ${!client.formateur_id ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <input 
+                  type="checkbox" 
+                  className="w-5 h-5 accent-indigo-600 rounded" 
+                  checked={isWorkflowEnabled}
+                  onChange={(e) => setIsWorkflowEnabled(e.target.checked)}
+                  disabled={!client.formateur_id}
+                />
+                <div className="flex-1">
+                  <p className="font-bold text-gray-900 text-sm">Activer le flux de signature formateur</p>
+                  <p className="text-[10px] text-gray-500 uppercase font-black">Envoie le document généré directement au formateur pour signature</p>
+                </div>
+                <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-tighter ${isWorkflowEnabled ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                  {isWorkflowEnabled ? 'Flux Actif' : 'Désactivé'}
+                </div>
+              </label>
+
+              <div className="flex gap-2 flex-wrap pt-2">
+                {Object.keys(documentTemplates || {}).map(key => (
+                  <button 
+                    key={key} 
+                    onClick={() => handleGenerateDocx(client, key, isWorkflowEnabled)} 
+                    disabled={!client.formateur_id}
+                    className={`flex items-center px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${!client.formateur_id ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-indigo-50 text-indigo-700 border-indigo-100 hover:bg-indigo-600 hover:text-white shadow-sm'}`}
+                  >
+                    <FileText className="w-4 h-4 mr-2" /> Générer {key}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -1389,15 +1423,37 @@ const ClientDetailView = ({
           <h3 className="text-lg font-bold text-gray-800 mb-6">Documents Uploadés</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {clientDocs.length > 0 ? clientDocs.map(doc => (
-              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-300">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-600 flex items-center justify-center rounded-xl"><FileText size={20} /></div>
-                  <div>
-                    <p className="font-bold text-gray-900 text-sm truncate max-w-[150px]">{doc.nom}</p>
-                    <p className="text-[10px] text-gray-500">{doc.type}</p>
+              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col gap-3 group hover:border-indigo-300 bg-white relative">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-50 text-blue-600 flex items-center justify-center rounded-xl"><FileText size={20} /></div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-sm truncate max-w-[150px]">{doc.nom}</p>
+                      <p className="text-[10px] text-gray-500 font-medium">{doc.type_document || doc.type || 'Document'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg transition-colors"><Download size={18} /></a>
                   </div>
                 </div>
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg"><Download size={18} /></a>
+
+                {/* Badge de statut Workflow */}
+                {doc.workflow_status && doc.workflow_status !== 'FINAL' && (
+                  <div className="mt-1 pt-3 border-t border-gray-50 flex items-center justify-between">
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight flex items-center gap-1.5 ${
+                      doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      {doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? (
+                        <><Clock size={12} /> Signature Formateur Attendue</>
+                      ) : (
+                        <><CheckCircle size={12} /> Signé et Archivé</>
+                      )}
+                    </span>
+                    {doc.workflow_status === 'SIGNE_ET_ARCHIVE' && (
+                      <span className="text-[10px] text-gray-400 font-bold italic">Signé le {doc.date_signature_formateur ? new Date(doc.date_signature_formateur).toLocaleDateString() : '??'}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
           </div>
@@ -2001,12 +2057,17 @@ const FormateurView = ({
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
-  setIsSessionItemModalOpen, setTargetSessionForAddition
+  setIsSessionItemModalOpen, setTargetSessionForAddition, setSigningDocId
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
+  const [activeMainTab, setActiveMainTab] = React.useState('clients'); // 'clients' or 'admin'
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
+
+  const pendingAdminDocs = (documents || []).filter(d => 
+    d.assigned_formateur_id === currentUserId && d.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR'
+  );
 
   React.useEffect(() => {
     // Reset tab when expanded client changes
@@ -2049,16 +2110,38 @@ const FormateurView = ({
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Clients Assignés</h1>
-          <p className="text-gray-500 text-lg mt-1">Suivez l'avancement et gérez les émargements des sessions.</p>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Formateur</h1>
+          <p className="text-gray-500 text-lg mt-1">Gérez vos clients et vos documents administratifs.</p>
+        </div>
+        <div className="flex bg-gray-100 p-1.5 rounded-2xl w-full md:w-auto">
+          <button 
+            onClick={() => setActiveMainTab('clients')}
+            className={`flex-1 md:flex-none px-6 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${activeMainTab === 'clients' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <Users size={18} /> Mes Clients
+          </button>
+          <button 
+            onClick={() => setActiveMainTab('admin')}
+            className={`flex-1 md:flex-none px-6 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 relative ${activeMainTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <Archive size={18} /> Administratif
+            {pendingAdminDocs.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                {pendingAdminDocs.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
-
-
-      <div className="grid grid-cols-1 gap-6">
+      {activeMainTab === 'clients' ? (
+        <div className="grid grid-cols-1 gap-6">
+          <div className="flex items-center gap-2 mb-2">
+            <h2 className="text-xl font-bold text-gray-800">Assignations en cours</h2>
+            <span className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">{assignedClients.length}</span>
+          </div>
         {assignedClients.length > 0 ? assignedClients.map(client => {
           const clientSessions = sessions.filter(s => s.client_id === client.id);
           const isExpanded = expandedClientId === client.id;
@@ -2414,13 +2497,78 @@ const FormateurView = ({
                 </div>
               )}
             </div>
-          )
+          );
         }) : (
           <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-gray-200">
             <p className="text-gray-400 font-medium italic">Aucun client ne vous est assigné actuellement.</p>
           </div>
         )}
       </div>
+      ) : (
+        <div className="space-y-8 animate-slide-up">
+          {/* Section Urgente : Documents à signer */}
+          {pendingAdminDocs.length > 0 && (
+            <div className="bg-amber-50 rounded-3xl p-8 border border-amber-200 shadow-sm">
+              <h2 className="text-xl font-bold text-amber-900 mb-6 flex items-center gap-2">
+                <AlertCircle className="text-amber-500" /> Documents en attente de signature ({pendingAdminDocs.length})
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingAdminDocs.map(doc => (
+                  <div key={doc.id} className="bg-white p-6 rounded-2xl border border-amber-100 flex items-center justify-between shadow-sm group hover:border-amber-400 transition-all">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-all">
+                        <FileText size={24} />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
+                        <p className="text-[10px] text-amber-600 font-black uppercase">Émis le {new Date(doc.created_at).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setSigningDocId(doc.id)}
+                      className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-amber-100 transition-all flex items-center gap-2"
+                    >
+                      <PenTool size={14} /> Signer maintenant
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section Archives Administratives */}
+          <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm">
+            <h2 className="text-xl font-bold text-gray-800 mb-8 flex items-center gap-2">
+              <Archive className="text-indigo-500" /> Archives Administratives & Contrats
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.workflow_status === 'SIGNE_ET_ARCHIVE').map(doc => (
+                <div key={doc.id} className="p-5 bg-gray-50 border border-gray-200 rounded-3xl group hover:bg-white hover:border-indigo-300 transition-all relative">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center font-bold shadow-sm group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                      <FileCheck size={24} />
+                    </div>
+                    <button onClick={() => handleDownloadResource(doc.url)} className="text-gray-400 hover:text-indigo-600 transition-colors">
+                      <Download size={20} />
+                    </button>
+                  </div>
+                  <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={doc.nom}>{doc.nom}</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase">Archivé</span>
+                    <p className="text-[10px] text-gray-400 font-medium">Signé le {doc.date_signature_formateur ? new Date(doc.date_signature_formateur).toLocaleDateString() : '??'}</p>
+                  </div>
+                </div>
+              ))}
+              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.workflow_status === 'SIGNE_ET_ARCHIVE').length === 0 && (
+                <div className="col-span-full py-12 text-center border-2 border-dashed border-gray-100 rounded-3xl">
+                  <p className="text-gray-400 italic text-sm">Aucun contrat ou document administratif archivé pour le moment.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -4906,7 +5054,7 @@ export default function App() {
     }
   };
 
-  const handleGenerateDocx = async (clientRow, type) => {
+  const handleGenerateDocx = async (clientRow, type, withWorkflow = false, providedFormateurId = null) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -4914,38 +5062,47 @@ export default function App() {
         return;
       }
 
-      // 1. Récupération depuis la table ciblée 'clients'
-      const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
-      const finalClient = theClient || clientRow; // fallback
+      // 1. Récupération client (si fourni)
+      let finalClient = clientRow;
+      if (clientRow?.id) {
+        const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
+        if (theClient) finalClient = theClient;
+      }
 
-      // 2. Récupération formateur dans 'utilisateurs'
+      // 2. Récupération formateur
       let theCoach = { nom: 'Non assigné' };
-      if (finalClient.formateur_id) {
-        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', finalClient.formateur_id).single();
+      const coachId = providedFormateurId || finalClient?.formateur_id;
+
+      if (coachId) {
+        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', coachId).single();
         if (coachData) theCoach = coachData;
       }
 
-      if (!finalClient.module_id && !clientRow.module_id) {
-        toast.error("Veuillez d'abord assigner un module à ce client.");
-        return;
+      if (finalClient && !finalClient.module_id && !clientRow?.module_id) {
+        // Optionnel : on continue même sans module si c'est un document admin hors client
+        if (clientRow?.id) {
+          toast.error("Veuillez d'abord assigner un module à ce client.");
+          return;
+        }
       }
 
       const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
 
-      // Extraction impérative des dates via requête sur sessions
-      const { data: sessionDates, error: dateError } = await supabase
-        .from('sessions')
-        .select('date')
-        .eq('client_id', clientRow.id)
-        .not('date', 'is', null)
-        .order('date', { ascending: true });
-
       let dateDebut = '[Date non définie]';
       let dateFin = '[Date non définie]';
 
-      if (!dateError && sessionDates && sessionDates.length > 0) {
-        dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
-        dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
+      if (clientRow?.id) {
+        const { data: sessionDates, error: dateError } = await supabase
+          .from('sessions')
+          .select('date')
+          .eq('client_id', clientRow.id)
+          .not('date', 'is', null)
+          .order('date', { ascending: true });
+
+        if (!dateError && sessionDates && sessionDates.length > 0) {
+          dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
+          dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
+        }
       }
 
 
@@ -4993,17 +5150,22 @@ export default function App() {
       const { error: uploadError } = await supabase.storage.from('documents').upload(`${Date.now()}_${finalFileName}`, out);
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
+        
+        const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
+        
         await supabase.from('documents').insert([{
-          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${finalClient.nom_complet || finalClient.nomcomplet_client || clientRow.nom}`,
-          type_document: 'Autre',
+          nom: docName,
+          type_document: type,
           url: publicUrl,
-          user_id: clientRow.id,
-          visible_client: true,
-          visible_formateur: true
+          user_id: clientRow?.id || null,
+          assigned_formateur_id: coachId || null,
+          visible_client: !withWorkflow, // Masqué par défaut si workflow actif jusqu'à signature? Ou selon besoin
+          visible_formateur: true,
+          workflow_status: withWorkflow ? 'EN_ATTENTE_SIGNATURE_FORMATEUR' : 'FINAL'
         }]);
 
         await fetchDocuments();
-        toast.success(`Document "${finalFileName}" généré et archivé.`);
+        toast.success(withWorkflow ? `Document "${finalFileName}" envoyé au formateur pour signature.` : `Document "${finalFileName}" généré et archivé.`);
       }
     } catch (error) {
       console.error("Docx Error:", error);
@@ -5078,6 +5240,11 @@ export default function App() {
       // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
       if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
       else updateColumn.signature_formateur = signatureDataUrl;
+    }
+
+    // SIGNE_ET_ARCHIVE si c'est un document admin du workflow
+    if (signerType === 'formateur' && doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR') {
+      updateColumn.workflow_status = 'SIGNE_ET_ARCHIVE';
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
@@ -5736,6 +5903,10 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, m
     setIsSaving(false);
   };
 
+  const formateurDocs = (documents || []).filter(d => 
+    d.assigned_formateur_id === formateur.id && !d.user_id
+  );
+
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
@@ -5830,6 +6001,57 @@ const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, m
           itemName={legalInfo.nom || "ce formateur"}
           title="Supprimer ce formateur ?"
         />
+      </div>
+
+      {/* NOUVEL ESPACE DOCS ADMINISTRATIFS (HORS CLIENT) */}
+      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8 animate-slide-up">
+        <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-100">
+          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <Archive className="text-blue-500" /> Documents Administratifs (Contrats / NDA...)
+          </h3>
+          <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">Communication Admin-Formateur</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div>
+            <h4 className="text-sm font-bold text-gray-500 uppercase mb-4 tracking-widest">Générateurs Word</h4>
+            <div className="flex flex-wrap gap-2">
+              {Object.keys(documentTemplates || {}).map(key => (
+                <button 
+                  key={key} 
+                  onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
+                  className="inline-flex items-center gap-2 bg-gray-50 text-blue-700 px-4 py-2.5 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                >
+                  <FileText size={14} /> Générer {key}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-gray-500 uppercase mb-4 tracking-widest">Historique ({formateurDocs.length})</h4>
+            <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+              {formateurDocs.length > 0 ? formateurDocs.map(doc => (
+                <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group bg-gray-50/50 hover:bg-white hover:border-blue-200 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 text-blue-600 flex items-center justify-center rounded-lg"><FileText size={16} /></div>
+                    <div>
+                      <p className="font-bold text-gray-800 text-xs truncate max-w-[180px]">{doc.nom}</p>
+                      <div className="flex gap-2 items-center">
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${
+                          doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'bg-amber-100 text-amber-600' : 'bg-green-100 text-green-600'
+                        }`}>
+                          {doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'À signer' : 'Signé'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-blue-600 bg-white rounded-lg shadow-sm"><Download size={16} /></a>
+                </div>
+              )) : <p className="text-gray-400 text-xs italic">Aucun document administratif enregistré.</p>}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Liste des clients assignés */}
