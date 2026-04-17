@@ -5269,7 +5269,7 @@ export default function App() {
       // 2. Génération de la version PDF pour le formateur
       let publicUrlToSave = '';
       try {
-        toast.info("Génération de la version PDF pour signature...");
+        toast("Génération de la version PDF pour signature...");
         
         // On utilise docx-preview pour transformer le Word en HTML (invisible)
         const tempDiv = document.createElement('div');
@@ -5293,9 +5293,11 @@ export default function App() {
         }
         
         await window.docx.renderAsync(docxArrayBuffer, tempDiv);
-        await new Promise(r => setTimeout(r, 1200)); // Pause accrue pour rendu images/polices
+        await new Promise(r => setTimeout(r, 1500)); // Plus de temps pour le rendu
         
-        const canvas = await html2canvas(tempDiv, { 
+        // Sécurisation de l'appel html2canvas
+        const html2canvasLib = typeof html2canvas === 'function' ? html2canvas : html2canvas.default || html2canvas;
+        const canvas = await html2canvasLib(tempDiv, { 
           scale: 1.5, 
           useCORS: true,
           logging: false,
@@ -5334,7 +5336,7 @@ export default function App() {
         
       } catch (pdfConvError) {
         console.error("PDF Conversion/Upload Error:", pdfConvError);
-        toast.warn("La conversion PDF a échoué, le formateur verra la version Word native.");
+        toast("Note : La conversion PDF a échoué (affichage Word activé).");
         const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathWord);
         publicUrlToSave = publicUrl;
       }
