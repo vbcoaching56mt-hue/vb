@@ -183,25 +183,39 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     // Extrait bucket + path depuis une URL Supabase publique ou un chemin relatif
     const extractBucketPath = (fullUrl) => {
       if (!fullUrl) return null;
+      console.log('[DocumentViewerModal] Extraction depuis:', fullUrl);
+      
       // Cas 1: URL complète Supabase (public ou sign)
-      const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
+      // On élargit la regex pour capturer plus de variantes possibles d'URL Supabase
+      const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
       if (match) {
         let bucket = match[1];
         let path = decodeURIComponent(match[2]);
         
-        // RECTIFICATION : Si le chemin contient 'modeling-imports' mais qu'on nous dit
-        // que c'est le bucket 'documents', on corrige car on sait qu'ils sont ailleurs.
+        // Nettoyage : si le path commence par le nom du bucket (redondance parfois constatée)
+        if (path.startsWith(`${bucket}/`)) {
+          console.warn(`[DocumentViewerModal] Nettoyage du path: retrait du bucket préfixe "${bucket}/"`);
+          path = path.substring(bucket.length + 1);
+        }
+
         if (path.startsWith('modeling-imports/') && bucket === 'documents') {
           bucket = 'ressources-pedagogiques';
         }
         
+        console.log(`[DocumentViewerModal] Extrait : Bucket=${bucket}, Path=${path}`);
         return { bucket, path };
       }
-      // Cas 2: Chemin relatif déjà connu (sans URL complète)
-      // On détecte le bucket selon le préfixe
-      const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
-      const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
-      return { bucket, path: fullUrl };
+      
+      // Cas 2: Chemin relatif (détecté par l'absence de protocole/domaine complexe)
+      if (!fullUrl.startsWith('http')) {
+        const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
+        const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
+        console.log(`[DocumentViewerModal] Chemin relatif détecté. Bucket auto: ${bucket}, Path: ${fullUrl}`);
+        return { bucket, path: fullUrl };
+      }
+
+      console.error('[DocumentViewerModal] Format d\'URL non reconnu pour extraction Storage');
+      return null;
     };
 
     const loadSignedUrl = async () => {
@@ -322,13 +336,21 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         <p className="text-sm font-medium">Chargement du document en cours…</p>
       </div>
     );
-    if (blobUrl) return (
-      <iframe
-        src={blobUrl + '#toolbar=0&navpanes=0'}
-        title={pdfTitle}
-        className="w-full h-full border-0"
-      />
-    );
+    if (blobUrl) {
+      const isWord = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
+      const finalSrc = isWord 
+        ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(blobUrl)}`
+        : `${blobUrl}#toolbar=0&navpanes=0`;
+
+      return (
+        <iframe
+          src={finalSrc}
+          title={pdfTitle}
+          className="w-full h-full border-0"
+          allowFullScreen
+        />
+      );
+    }
     // Erreur ou pas d'URL
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4 p-8">
@@ -5177,25 +5199,35 @@ export default function App() {
         
       const storagePath = `${Date.now()}_${sanitizedName}`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(storagePath, out);
-      if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
-        
-        const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
-        
-        await supabase.from('documents').insert([{
-          nom: docName,
-          type_document: type,
-          url: publicUrl,
-          user_id: clientRow?.id || null,
-          assigned_formateur_id: coachId || null,
-          visible_client: !withWorkflow, // Masqué par défaut si workflow actif jusqu'à signature? Ou selon besoin
-          visible_formateur: true,
-          workflow_status: withWorkflow ? 'EN_ATTENTE_SIGNATURE_FORMATEUR' : 'FINAL'
-        }]);
-
-        await fetchDocuments();
-        toast.success(withWorkflow ? `Document "${finalFileName}" envoyé au formateur pour signature.` : `Document "${finalFileName}" généré et archivé.`);
+      if (uploadError) {
+        console.error("Upload Error:", uploadError);
+        toast.error(`Erreur d'upload : ${uploadError.message}`);
+        return;
       }
+
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
+      
+      const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
+      
+      const { error: insertError } = await supabase.from('documents').insert([{
+        nom: docName,
+        type_document: type,
+        url: publicUrl,
+        user_id: clientRow?.id || null,
+        assigned_formateur_id: coachId || null,
+        visible_client: !withWorkflow,
+        visible_formateur: true,
+        workflow_status: withWorkflow ? 'EN_ATTENTE_SIGNATURE_FORMATEUR' : 'FINAL'
+      }]);
+
+      if (insertError) {
+        console.error("Insert Error:", insertError);
+        toast.error(`Erreur base de données : ${insertError.message}`);
+        return;
+      }
+
+      await fetchDocuments();
+      toast.success(withWorkflow ? `Document "${finalFileName}" envoyé au formateur pour signature.` : `Document "${finalFileName}" généré et archivé.`);
     } catch (error) {
       console.error("Docx Error:", error);
       toast.error("Erreur lors de la génération du document Word.");
