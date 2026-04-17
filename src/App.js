@@ -5898,7 +5898,9 @@ const FormateurDetailView = ({
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     email: formateur.email || '',
-    telephone: formateur.telephone || ''
+    telephone: formateur.telephone || '',
+    compagnie_assurance: formateur.compagnie_assurance || '',
+    numero_assurance_rcp: formateur.numero_assurance_rcp || ''
   });
 
   const handleSave = async () => {
@@ -5911,7 +5913,9 @@ const FormateurDetailView = ({
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
         email: legalInfo.email,
-        telephone: legalInfo.telephone
+        telephone: legalInfo.telephone,
+        compagnie_assurance: legalInfo.compagnie_assurance,
+        numero_assurance_rcp: legalInfo.numero_assurance_rcp
       })
       .eq('id', formateur.id);
 
@@ -5993,6 +5997,33 @@ const FormateurDetailView = ({
                     value={legalInfo.telephone} onChange={e => setLegalInfo({ ...legalInfo, telephone: e.target.value })} placeholder="06..." />
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section Assurance RCP */}
+        <div className="mt-8 pt-8 border-t border-gray-100">
+          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-6">
+            <CheckCircle className="text-emerald-500" size={24} /> Informations d'Assurance RCP
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Compagnie d'assurance</label>
+              <input 
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+                value={legalInfo.compagnie_assurance} 
+                onChange={e => setLegalInfo({ ...legalInfo, compagnie_assurance: e.target.value })} 
+                placeholder="Ex: MMA, AXA, HISCOX..." 
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Numéro de contrat RCP</label>
+              <input 
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+                value={legalInfo.numero_assurance_rcp} 
+                onChange={e => setLegalInfo({ ...legalInfo, numero_assurance_rcp: e.target.value })} 
+                placeholder="Ex: 123456789/ABC" 
+              />
             </div>
           </div>
         </div>
