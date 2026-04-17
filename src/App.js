@@ -167,6 +167,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [agreed, setAgreed] = useState(false);
   const scrollRef = useRef(null);
   const [blobUrl, setBlobUrl] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
   const docxContainerRef = useRef(null);
