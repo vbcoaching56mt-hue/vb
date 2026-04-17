@@ -5093,15 +5093,11 @@ export default function App() {
         if (coachData) theCoach = coachData;
       }
 
-      if (finalClient && !finalClient.module_id && !clientRow?.module_id) {
+      if (finalClient && !finalClient.module_id && !clientRow?.id) {
         // Optionnel : on continue même sans module si c'est un document admin hors client
-        if (clientRow?.id) {
-          toast.error("Veuillez d'abord assigner un module à ce client.");
-          return;
-        }
       }
 
-      const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
+      const module = (finalClient || clientRow) ? modules.find(m => m.id === (finalClient?.module_id || clientRow?.module_id)) : null;
 
       let dateDebut = '[Date non définie]';
       let dateFin = '[Date non définie]';
@@ -5138,12 +5134,14 @@ export default function App() {
         formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
         email_formateur: theCoach.email || '',
         tel_formateur: theCoach.telephone || '',
-        nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
-        client_phone: finalClient.telephone || finalClient.client_phone || '',
-        client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
-        prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
-        adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
-        modalite_formation: finalClient.modalite_formation || 'Mixte',
+        compagnie_assurance: theCoach.compagnie_assurance || '',
+        numero_assurance_rcp: theCoach.numero_assurance_rcp || '',
+        nomcomplet_client: finalClient?.nom_complet || finalClient?.nomcomplet_client || (finalClient ? `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim() : ''),
+        client_phone: finalClient?.telephone || finalClient?.client_phone || '',
+        client_email: finalClient?.email_contact || finalClient?.client_email || finalClient?.email || '',
+        prix_prestation: finalClient?.montant_prestation || module?.prix_prestation || '',
+        adresse_session: finalClient?.adresse_postale || finalClient?.adresse_session || finalClient?.adresse_client || '',
+        modalite_formation: finalClient?.modalite_formation || 'Mixte',
         date_debut: dateDebut,
         date_fin: dateFin,
         date_signature: new Date().toLocaleDateString('fr-FR'),
