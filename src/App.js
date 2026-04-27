@@ -1189,6 +1189,7 @@ const ClientDetailView = ({
     modalite_formation: client.modalite_formation || 'Mixte',
     montant_prestation: client.montant_prestation || ''
   });
+  const [signaturePreview, setSignaturePreview] = React.useState(null); // { url, name }
 
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
@@ -1231,11 +1232,6 @@ const ClientDetailView = ({
       toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
-      // Déclenchement automatique des séances si un module est présent
-      if (client.module_id) {
-        console.log("[handleSaveClientInfo] Module détecté, lancement de generateSessions pour client:", client.id);
-        await generateSessions(client);
-      }
       toast.success("Informations personnelles sauvegardées !");
     }
     setIsSavingInfo(false);
@@ -1474,68 +1470,158 @@ const ClientDetailView = ({
 
       {activeTab === 'seances' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-gray-800">Calendrier des Séances</h3>
-            <button onClick={handleAddCustomSession} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm transition-all">
-              <Plus size={14} /> Ajouter une étape personnalisée
-            </button>
+          <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8">
+            <div>
+              <h3 className="text-xl font-bold text-gray-800">Supervision du Planning</h3>
+              <p className="text-sm text-gray-500">Gérez les dates, heures et suivez l'avancement des signatures.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => handleGenerateAttendanceSheet(client)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg hover:shadow-emerald-100 transition-all"
+              >
+                <Download size={16} /> 📥 Télécharger le Récapitulatif
+              </button>
+              <button
+                onClick={handleAddCustomSession}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg hover:shadow-indigo-100 transition-all"
+              >
+                <Plus size={16} /> Ajouter une étape
+              </button>
+            </div>
           </div>
-          <div className="space-y-4">
-            {clientSessions.length > 0 ? clientSessions.map(session => (
-              <div key={session.id} className="p-5 border border-gray-100 rounded-2xl bg-gray-50 flex flex-col gap-4 relative group">
-                <button onClick={() => handleDeleteSession(session.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                  <Trash2 size={16} />
-                </button>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Titre de la séance / étape</label>
-                    <input
-                      type="text"
-                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 font-bold text-gray-800"
-                      defaultValue={session.titre}
-                      onBlur={(e) => updateSession(session.id, { titre: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type d'Activité</label>
-                    <select
-                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 bg-white"
-                      defaultValue={session.type_activite || 'Signature'}
-                      onChange={(e) => updateSession(session.id, { type_activite: e.target.value })}
+          <div className="space-y-8">
+            {(() => {
+              const grouped = clientSessions.reduce((acc, s) => {
+                const key = s.numero_seance;
+                if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || s.titre || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                acc[key].items.push(s);
+                return acc;
+              }, {});
+
+              const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
+
+              if (sortedGroups.length === 0) {
+                return (
+                  <div className="text-center py-16 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
+                    <p className="text-gray-400 font-bold italic mb-4">Aucune séance générée pour ce client.</p>
+                    <button 
+                      onClick={() => generateSessions(client)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-2xl text-xs font-bold shadow-lg transition-all"
                     >
-                      <option value="Signature">Signature Présence</option>
-                      <option value="Document PDF">Document PDF</option>
-                      <option value="Exercice">Exercice / Outil</option>
-                    </select>
+                      Générer le parcours maintenant
+                    </button>
+                  </div>
+                )
+              }
+
+              return sortedGroups.map((group, gIdx) => (
+                <div key={gIdx} className="border border-gray-100 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all">
+                  <div className="bg-indigo-50/50 p-5 border-b border-gray-100 flex flex-col lg:flex-row justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-md">
+                        {group.numero}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 leading-tight uppercase tracking-tight text-sm">Séance {group.numero} : {group.nom}</h4>
+                        <p className="text-[10px] text-indigo-600 font-black uppercase tracking-tighter">{group.items.length} Étapes d'accompagnement</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4 mt-2 lg:mt-0">
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">📅 Date</label>
+                        <input
+                          type="date"
+                          defaultValue={group.date || ''}
+                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { date: e.target.value }))}
+                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">🕒 Début</label>
+                        <input
+                          type="time"
+                          defaultValue={group.debut || ''}
+                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { heure_debut: e.target.value }))}
+                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">🕒 Fin</label>
+                        <input
+                          type="time"
+                          defaultValue={group.fin || ''}
+                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { heure_fin: e.target.value }))}
+                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-0 bg-white overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="text-[9px] text-gray-400 uppercase font-black tracking-widest border-b border-gray-50 bg-gray-50/20">
+                          <th className="py-4 px-6">Étape / Activité</th>
+                          <th className="py-4 px-2 text-center w-24">Bénéficiaire</th>
+                          <th className="py-4 px-2 text-center w-24">Coach</th>
+                          <th className="py-4 px-6 text-right w-24">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {group.items.map(session => (
+                          <tr key={session.id} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="py-4 px-6">
+                              <div className="flex items-center gap-4">
+                                <div className={`w-9 h-9 ${session.type_activite === 'signature' ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-600'} rounded-xl flex items-center justify-center shadow-sm`}>
+                                  {session.type_activite === 'signature' ? <PenTool size={16} /> : <FileText size={16} />}
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-bold text-gray-800 text-[13px]">{session.ressource_titre || session.nom || session.titre || 'Étape'}</span>
+                                  <span className="text-[9px] text-gray-400 font-bold tracking-wider uppercase">{session.type_activite}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4 px-2">
+                              <div className="flex justify-center">
+                                <button
+                                  onClick={() => session.signature_image && setSignaturePreview({ url: session.signature_image, name: `Signature Bénéficiaire - ${session.nom}` })}
+                                  className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${session.signature_image ? 'bg-emerald-100 text-emerald-600 shadow-sm cursor-pointer hover:scale-110 active:scale-95' : 'bg-rose-50 text-rose-300'}`}
+                                  title={session.signature_image ? "Voir la signature" : "Signature manquante"}
+                                >
+                                  {session.signature_image ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-4 px-2">
+                              <div className="flex justify-center">
+                                <button
+                                  onClick={() => session.signature_formateur && setSignaturePreview({ url: session.signature_formateur, name: `Signature Coach - ${session.nom}` })}
+                                  className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${session.signature_formateur ? 'bg-emerald-100 text-emerald-600 shadow-sm cursor-pointer hover:scale-110 active:scale-95' : 'bg-rose-50 text-rose-300'}`}
+                                  title={session.signature_formateur ? "Voir la signature" : "Signature manquante"}
+                                >
+                                  {session.signature_formateur ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-4 px-6 text-right">
+                              <button
+                                onClick={() => handleDeleteSession(session.id)}
+                                className="p-2.5 text-gray-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-gray-200/50">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Date</label>
-                    <input type="date" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.date || ''} onBlur={(e) => updateSession(session.id, { date: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Heure</label>
-                    <input type="time" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.heure_debut || ''} onBlur={(e) => updateSession(session.id, { heure_debut: e.target.value })} />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ressource Pédagogique (Modélothèque)</label>
-                    <select
-                      className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none bg-white"
-                      defaultValue={session.ressource_id || ''}
-                      onChange={(e) => updateSession(session.id, { ressource_id: e.target.value })}
-                    >
-                      <option value="">Aucune ressource liée</option>
-                      {pedagogicalResources.map(res => (
-                        <option key={res.name} value={res.name}>{res.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )) : <p className="text-gray-500 italic text-sm text-center py-8">Aucune séance n'est encore programmée pour ce client.</p>}
+              ));
+            })()}
           </div>
         </div>
       )}
@@ -1578,6 +1664,29 @@ const ClientDetailView = ({
                 )}
               </div>
             )) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
+          </div>
+        </div>
+      )}
+
+      {signaturePreview && (
+        <div className="fixed inset-0 bg-gray-900/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSignaturePreview(null)}>
+          <div className="bg-white p-7 rounded-[40px] shadow-2xl max-w-sm w-full border border-white/20 text-center relative" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <div className="text-left">
+                <h4 className="font-extrabold text-gray-900 text-base">{signaturePreview.name.split(' - ')[0]}</h4>
+                <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">{signaturePreview.name.split(' - ')[1]}</p>
+              </div>
+              <button onClick={() => setSignaturePreview(null)} className="w-10 h-10 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900 rounded-2xl flex items-center justify-center transition-all"><X size={20} /></button>
+            </div>
+            <div className="bg-gray-50 rounded-[32px] p-8 border border-indigo-50 shadow-inner mb-6">
+              <img src={signaturePreview.url} alt="Signature Preview" className="max-w-full h-auto mx-auto drop-shadow-sm" />
+            </div>
+            <button
+              onClick={() => setSignaturePreview(null)}
+              className="w-full py-4 bg-gray-900 text-white font-black rounded-2xl hover:bg-gray-800 transition-all shadow-lg active:scale-95"
+            >
+              C'est tout bon
+            </button>
           </div>
         </div>
       )}
