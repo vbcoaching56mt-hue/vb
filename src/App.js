@@ -1269,14 +1269,23 @@ const ClientDetailView = ({
       if (!formData.titre) throw new Error("Veuillez saisir un titre");
       
       // Sécurité anti-doublon pour la contrainte unique_session_per_client_module_nom
-      let finalTitle = formData.titre;
-      const isDuplicate = sessions.some(s => 
-        s.client_id === client.id && 
-        (s.module_id === client.module_id || (s.module_id === null && client.module_id === null)) && 
-        s.nom === finalTitle
-      );
-      if (isDuplicate) {
-        finalTitle = `${formData.titre} (${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })})`;
+      let baseTitle = formData.titre;
+      let finalTitle = baseTitle;
+      let counter = 2;
+      let isDuplicate = true;
+
+      while (isDuplicate) {
+        const exists = sessions.some(s => 
+          s.client_id === client.id && 
+          (s.module_id === client.module_id || (s.module_id === null && client.module_id === null)) && 
+          s.nom === finalTitle
+        );
+        if (exists) {
+          finalTitle = `${baseTitle} (${counter})`;
+          counter++;
+        } else {
+          isDuplicate = false;
+        }
       }
 
       const { error } = await supabase.from('sessions').insert([{
@@ -1291,10 +1300,11 @@ const ClientDetailView = ({
         file_url: formData.file_url || null,
         statut: 'À venir'
       }]);
+      
       if (error) throw error;
       if (fetchSessions) await fetchSessions();
-      toast.success("✅ Élément ajouté au planning !", { id: loadingToast });
       setIsAddStepOpen(false);
+      toast.success("✅ Élément ajouté au planning !", { id: loadingToast });
     } catch (err) {
       console.error("Erreur ajout étape:", err);
       toast.error(err.message || "❌ Erreur lors de l'ajout", { id: loadingToast });
@@ -5988,6 +5998,10 @@ export default function App() {
                 doc.setFontSize(6);
                 doc.setTextColor(148, 163, 184);
                 doc.text("Signé Bénéficiaire", 100, y + 6);
+                if (item.signed_at) {
+                  const d = new Date(item.signed_at);
+                  doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 100, y + 8.5);
+                }
               } catch(e) { console.error("Err PDF sign client", e); }
             }
             if (hasCoachSign) {
@@ -5996,6 +6010,10 @@ export default function App() {
                 doc.setFontSize(6);
                 doc.setTextColor(148, 163, 184);
                 doc.text("Signé Coach", 140, y + 6);
+                if (item.signed_at_formateur) {
+                  const d = new Date(item.signed_at_formateur);
+                  doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 140, y + 8.5);
+                }
               } catch(e) { console.error("Err PDF sign coach", e); }
             }
           } else {
