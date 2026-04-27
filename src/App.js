@@ -1174,7 +1174,7 @@ const ClientDetailView = ({
   handleDeleteClient, fetchSessions, fetchDocuments, currentUserId, 
   userRole, documents, generateSessions, handleModuleChange, 
   assignFormateur, formateurs,
-  handleGenerateAttendanceSheet
+  generatePDF
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -1970,7 +1970,7 @@ const AdminClientsView = ({
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions,
-  handleGenerateAttendanceSheet,
+  generatePDF,
   handleDeleteClient
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
@@ -1994,7 +1994,7 @@ const AdminClientsView = ({
           handleDownloadResource={handleDownloadResource}
           handleUploadExerciseResponse={handleUploadExerciseResponse}
           generateSessions={generateSessions}
-          handleGenerateAttendanceSheet={handleGenerateAttendanceSheet}
+          generatePDF={generatePDF}
           handleDeleteClient={handleDeleteClient}
         />
       );
@@ -2565,7 +2565,7 @@ const FormateurView = ({
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
-  handleGenerateAttendanceSheet,
+  generatePDF,
   viewingDocId, setViewingDocId
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
@@ -2768,7 +2768,7 @@ const FormateurView = ({
                     {(userRole === 'admin' || userRole === 'formateur') && (
                       <div className="flex gap-2 ml-auto">
                         <button
-                          onClick={() => handleGenerateAttendanceSheet(client)}
+                          onClick={() => generatePDF(client)}
                           className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-emerald-100 flex items-center shadow-sm"
                         >
                           <FileText size={14} className="mr-1.5" /> Attestation de Présence
@@ -6446,6 +6446,7 @@ export default function App() {
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
             generateSessions={generateSessions}
+            generatePDF={generatePDF}
             handleDeleteClient={handleDeleteClient}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
@@ -6533,7 +6534,7 @@ export default function App() {
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
-            handleGenerateAttendanceSheet={handleGenerateAttendanceSheet}
+            generatePDF={generatePDF}
             handleGenerateDocx={handleGenerateDocx}
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
