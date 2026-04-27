@@ -1276,6 +1276,7 @@ const ClientDetailView = ({
         date: formData.date,
         heure_debut: formData.heure_debut,
         heure_fin: formData.heure_fin,
+        file_url: formData.file_url || null,
         statut: 'À venir'
       }]);
       if (error) throw error;
@@ -1730,21 +1731,83 @@ const ClientDetailView = ({
         onClose={() => setIsAddStepOpen(false)} 
         onSave={handleAddStepSave}
         lastSessionNum={clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance || 0)) : 1}
+        sessions={clientSessions}
+        supabase={supabase}
       />
     </div>
   );
 };
 
 /* --- Composant Modale Ajout Étape --- */
-const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum }) => {
+const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum, sessions, supabase }) => {
   const [formData, setFormData] = React.useState({
     titre: '',
     type_activite: 'Émargement',
     date: new Date().toISOString().split('T')[0],
     heure_debut: '09:00',
     heure_fin: '10:00',
-    numero_seance: lastSessionNum || 1
+    numero_seance: lastSessionNum || 1,
+    file_url: null
   });
+  const [isUploading, setIsUploading] = React.useState(false);
+  const [isNewSession, setIsNewSession] = React.useState(false);
+
+  // Récupérer les numéros de séance uniques existants
+  const existingSessionNums = Array.from(new Set(sessions.map(s => s.numero_seance))).sort((a, b) => a - b);
+
+  const handleSessionNumChange = (val) => {
+    if (val === 'new') {
+      setIsNewSession(true);
+      const nextNum = (lastSessionNum || 0) + 1;
+      setFormData({ 
+        ...formData, 
+        numero_seance: nextNum,
+        date: new Date().toISOString().split('T')[0],
+        heure_debut: '09:00',
+        heure_fin: '10:00'
+      });
+    } else {
+      setIsNewSession(false);
+      const num = parseInt(val);
+      const firstMatch = sessions.find(s => s.numero_seance === num);
+      if (firstMatch) {
+        setFormData({
+          ...formData,
+          numero_seance: num,
+          date: firstMatch.date || '',
+          heure_debut: firstMatch.heure_debut || '',
+          heure_fin: firstMatch.heure_fin || ''
+        });
+      } else {
+        setFormData({ ...formData, numero_seance: num });
+      }
+    }
+  };
+
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `documents/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      setFormData({ ...formData, file_url: filePath });
+      if (!formData.titre) setFormData(prev => ({ ...prev, titre: file.name.replace(/\.[^/.]+$/, "") }));
+      toast.success("Fichier PDF lié avec succès");
+    } catch (err) {
+      console.error('Error uploading file:', err);
+      toast.error("Erreur lors de l'import du fichier.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -1763,6 +1826,20 @@ const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum }) => {
 
         <div className="space-y-5">
           <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Séance N°</label>
+            <select
+              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
+              value={isNewSession ? 'new' : formData.numero_seance}
+              onChange={e => handleSessionNumChange(e.target.value)}
+            >
+              {existingSessionNums.map(num => (
+                <option key={num} value={num}>Séance {num}</option>
+              ))}
+              <option value="new">+ Nouvelle Séance</option>
+            </select>
+          </div>
+
+          <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de l'étape</label>
             <input
               type="text"
@@ -1773,67 +1850,80 @@ const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum }) => {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type</label>
-              <select
-                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
-                value={formData.type_activite}
-                onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
-              >
-                <option value="Émargement">Émargement</option>
-                <option value="document">Document</option>
-                <option value="Exercice">Exercice</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Séance N°</label>
-              <input
-                type="number"
-                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                value={formData.numero_seance}
-                onChange={e => setFormData({ ...formData, numero_seance: e.target.value })}
-              />
-            </div>
-          </div>
-
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Date</label>
-            <input
-              type="date"
-              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-              value={formData.date}
-              onChange={e => setFormData({ ...formData, date: e.target.value })}
-            />
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type d'activité</label>
+            <select
+              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
+              value={formData.type_activite}
+              onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
+            >
+              <option value="Émargement">Émargement</option>
+              <option value="document">Document</option>
+              <option value="Exercice">Exercice</option>
+            </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Début</label>
-              <input
-                type="time"
-                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                value={formData.heure_debut}
-                onChange={e => setFormData({ ...formData, heure_debut: e.target.value })}
-              />
+          {formData.type_activite === 'document' && (
+            <div className="animate-slide-up">
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Fichier PDF</label>
+              <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                {isUploading ? 'Importation...' : formData.file_url ? '✓ Fichier prêt' : '📁 Importer un PDF'}
+                <input
+                  type="file"
+                  className="hidden"
+                  disabled={isUploading}
+                  accept=".pdf"
+                  onChange={(e) => handleFileUpload(e.target.files[0])}
+                />
+              </label>
+              {formData.file_url && (
+                <p className="text-[9px] text-green-600 font-bold mt-1 truncate">Fichier : {formData.file_url.split('/').pop()}</p>
+              )}
             </div>
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Fin</label>
-              <input
-                type="time"
-                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                value={formData.heure_fin}
-                onChange={e => setFormData({ ...formData, heure_fin: e.target.value })}
-              />
+          )}
+
+          {isNewSession && (
+            <div className="space-y-5 animate-slide-up">
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Date de la séance</label>
+                <input
+                  type="date"
+                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                  value={formData.date}
+                  onChange={e => setFormData({ ...formData, date: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Heure Début</label>
+                  <input
+                    type="time"
+                    className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                    value={formData.heure_debut}
+                    onChange={e => setFormData({ ...formData, heure_debut: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Heure Fin</label>
+                  <input
+                    type="time"
+                    className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                    value={formData.heure_fin}
+                    onChange={e => setFormData({ ...formData, heure_fin: e.target.value })}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <button
           onClick={() => onSave(formData)}
-          className="w-full mt-8 py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+          disabled={isUploading || !formData.titre}
+          className="w-full mt-8 py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          <Plus size={20} /> Valider l'ajout
+          {isUploading ? 'Veuillez patienter...' : <><Plus size={20} /> Valider l'ajout</>}
         </button>
       </div>
     </div>
@@ -5768,101 +5858,136 @@ export default function App() {
   };
 
   const handleGenerateAttendanceSheet = async (client) => {
-    const loadingToast = toast.loading("📄 Génération de l'attestation...");
+    const loadingToast = toast.loading("📄 Génération du récapitulatif Qualiopi...");
     try {
       const doc = new jsPDF();
-      const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
-
-      // Titre
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(22);
-      doc.setTextColor(15, 23, 42); // slate-900
-      doc.text("FEUILLE D'ÉMARGEMENT", 105, 25, { align: "center" });
-
-      // Infos Client
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(100, 116, 139); // slate-500
-      doc.text(`Bénéficiaire : ${client.nom_complet || client.nom || client.nomcomplet_client}`, 20, 40);
-      doc.text(`Dossier N° : ${client.numero_dossier || '--'}`, 20, 46);
-      doc.text(`Document généré le : ${new Date().toLocaleDateString('fr-FR')}`, 190, 40, { align: "right" });
-
-      // Tableau
-      let y = 60;
-      const drawRow = (session, yPos) => {
-        doc.setDrawColor(226, 232, 240); // slate-200
-        doc.setFontSize(9);
-        doc.setTextColor(30, 41, 59); // slate-800
-        doc.text(session.nom || session.titre || `Séance ${session.numero_seance}`, 22, yPos + 8);
-        doc.text(`${session.date || '--'} à ${session.heure_debut || '--'}`, 75, yPos + 8);
-
-        // Signature Client
-        if (session.signature_image) {
-          try { 
-            doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 10);
-            doc.setFontSize(5);
-            doc.setTextColor(150);
-            const dateStr = session.date_signature ? new Date(session.date_signature).toLocaleString('fr-FR') : '--';
-            doc.text(`Signé le: ${dateStr}`, 125, yPos + 13);
-          } catch (e) {
-            console.error("Erreur signature client PDF", e);
-          }
-        } else {
-          doc.setFontSize(7);
-          doc.setTextColor(200);
-          doc.text("Non signé", 130, yPos + 8);
-        }
-
-        // Signature Coach
-        if (session.signature_formateur) {
-          try { 
-            doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 10);
-            doc.setFontSize(5);
-            doc.setTextColor(150);
-            const dateStr = session.date_signature_formateur ? new Date(session.date_signature_formateur).toLocaleString('fr-FR') : '--';
-            doc.text(`Signé le: ${dateStr}`, 160, yPos + 13);
-          } catch (e) {
-            console.error("Erreur signature coach PDF", e);
-          }
-        } else {
-          doc.setFontSize(7);
-          doc.setTextColor(200);
-          doc.text("Non signé", 165, yPos + 8);
-        }
-
-        doc.line(20, yPos + 15, 190, yPos + 15);
-        return yPos + 15;
-      };
-
-      // Header Tableau
-      doc.setFillColor(248, 250, 252); // slate-50
-      doc.rect(20, y, 170, 10, 'F');
-      doc.setDrawColor(226, 232, 240);
-      doc.line(20, y, 190, y);
-      doc.line(20, y + 10, 190, y + 10);
-      
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(100, 116, 139);
-      doc.text("Séance / Contenu", 22, y + 6);
-      doc.text("Planification", 75, y + 6);
-      doc.text("Signature Client", 125, y + 6);
-      doc.text("Signature Coach", 160, y + 6);
-      y += 10;
-
-      clientSessions.forEach((s) => {
-        if (y > 260) {
-          doc.addPage();
-          y = 20;
-        }
-        y = drawRow(s, y);
+      const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => {
+        if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
+        return new Date(a.date) - new Date(b.date);
       });
 
-      doc.save(`Emargement_${client.nom || 'Client'}.pdf`);
-      toast.success("✅ Attestation générée avec succès", { id: loadingToast });
+      // --- Header Design ---
+      doc.setFillColor(15, 23, 42); // Navy
+      doc.rect(0, 0, 210, 40, 'F');
+      
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(22);
+      doc.setTextColor(255, 255, 255);
+      doc.text("RÉCAPITULATIF DE FORMATION", 105, 20, { align: "center" });
+      
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text("Document de suivi pédagogique & Émargements Qualiopi", 105, 28, { align: "center" });
+
+      // --- Infos Section ---
+      let y = 55;
+      doc.setTextColor(30, 41, 59);
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("INFORMATIONS DU BÉNÉFICIAIRE", 20, y);
+      
+      y += 8;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(20, y, 190, y);
+      
+      y += 10;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold"); doc.text("Nom :", 20, y);
+      doc.setFont("helvetica", "normal"); doc.text(`${client.nom_complet || client.nom || client.nomcomplet_client}`, 60, y);
+      
+      y += 6;
+      doc.setFont("helvetica", "bold"); doc.text("Dossier N° :", 20, y);
+      doc.setFont("helvetica", "normal"); doc.text(`${client.numero_dossier || '--'}`, 60, y);
+      
+      y += 6;
+      doc.setFont("helvetica", "bold"); doc.text("Date d'édition :", 20, y);
+      doc.setFont("helvetica", "normal"); doc.text(`${new Date().toLocaleDateString('fr-FR')}`, 60, y);
+
+      y += 15;
+
+      // --- Groupement par séance ---
+      const groupedBySeance = clientSessions.reduce((acc, s) => {
+        const key = s.numero_seance || 0;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(s);
+        return acc;
+      }, {});
+
+      const sortedSeances = Object.keys(groupedBySeance).sort((a, b) => parseInt(a) - parseInt(b));
+
+      sortedSeances.forEach((num) => {
+        const group = groupedBySeance[num];
+        const first = group[0];
+
+        // Header Séance
+        if (y > 240) { doc.addPage(); y = 20; }
+        
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(20, y, 170, 10, 2, 2, 'F');
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.setTextColor(79, 70, 229); // Indigo
+        doc.text(`SÉANCE ${num} : ${first.date || '--'} (${first.heure_debut || '--'} à ${first.heure_fin || '--'})`, 25, y + 6.5);
+        
+        y += 18;
+
+        group.forEach((item) => {
+          if (y > 250) { doc.addPage(); y = 20; }
+
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(15, 23, 42);
+          doc.text(`${item.nom || item.type_activite}`, 25, y);
+
+          // Signatures
+          const hasClientSign = item.signature_image;
+          const hasCoachSign = item.signature_formateur;
+
+          if (hasClientSign || hasCoachSign) {
+            if (hasClientSign) {
+              try {
+                doc.addImage(item.signature_image, 'PNG', 100, y - 6, 25, 10);
+                doc.setFontSize(6);
+                doc.setTextColor(148, 163, 184);
+                doc.text("Signé Bénéficiaire", 100, y + 6);
+              } catch(e) { console.error("Err PDF sign client", e); }
+            }
+            if (hasCoachSign) {
+              try {
+                doc.addImage(item.signature_formateur, 'PNG', 140, y - 6, 25, 10);
+                doc.setFontSize(6);
+                doc.setTextColor(148, 163, 184);
+                doc.text("Signé Coach", 140, y + 6);
+              } catch(e) { console.error("Err PDF sign coach", e); }
+            }
+          } else {
+            doc.setFontSize(8);
+            doc.setTextColor(203, 213, 225);
+            doc.text("(En attente d'émargement)", 100, y);
+          }
+
+          y += 12;
+          doc.setDrawColor(241, 245, 249);
+          doc.line(25, y - 4, 185, y - 4);
+        });
+
+        y += 10;
+      });
+
+      // Footer pagination
+      const pageCount = doc.internal.getNumberOfPages();
+      for(let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Page ${i} / ${pageCount} - Document généré par Logiciel VB`, 105, 285, { align: "center" });
+      }
+
+      doc.save(`Recap_Qualiopi_${client.nom || 'Client'}.pdf`);
+      toast.success("✅ Récapitulatif généré avec succès", { id: loadingToast });
     } catch (err) {
-      console.error("Erreur génération PDF:", err);
-      toast.error("❌ Erreur lors de la génération", { id: loadingToast });
+      console.error("Erreur PDF:", err);
+      toast.error("Échec de la génération du PDF", { id: loadingToast });
     }
   };
 
@@ -6036,8 +6161,16 @@ export default function App() {
     fetchSessions();
     fetchPedagogicalResources();
 
+    // --- Synchronisation Temps Réel (Sessions) ---
+    const channel = supabase
+      .channel('sessions-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, () => {
+        fetchSessions();
+      })
+      .subscribe();
+
     // Détection des liens d'invitation ou de récupération de mot de passe
-    supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (
         event === 'PASSWORD_RECOVERY' ||
         (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
@@ -6046,6 +6179,11 @@ export default function App() {
         setIsSettingPassword(true);
       }
     });
+
+    return () => {
+      supabase.removeChannel(channel);
+      subscription.unsubscribe();
+    };
   }, [userRole]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
