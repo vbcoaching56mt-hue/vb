@@ -1237,9 +1237,25 @@ const ClientDetailView = ({
     setIsSavingInfo(false);
   };
 
-  const updateSession = async (id, payload) => {
-    await supabase.from('sessions').update(payload).eq('id', id);
-    if (fetchSessions) fetchSessions();
+  const updateSession = async (id, payload, isBulk = false, sessionNum = null) => {
+    try {
+      if (isBulk && sessionNum) {
+        // Mise à jour de toutes les étapes du même numéro de séance
+        const { error } = await supabase.from('sessions')
+          .update(payload)
+          .eq('client_id', client.id)
+          .eq('numero_seance', sessionNum);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('sessions').update(payload).eq('id', id);
+        if (error) throw error;
+      }
+      if (fetchSessions) fetchSessions();
+      toast.success("💾 Planning mis à jour");
+    } catch (err) {
+      console.error("Erreur mise à jour séance:", err);
+      toast.error("Erreur lors de la mise à jour");
+    }
   };
 
   const handleAddCustomSession = async () => {
@@ -1535,7 +1551,7 @@ const ClientDetailView = ({
                         <input
                           type="date"
                           defaultValue={group.date || ''}
-                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { date: e.target.value }))}
+                          onBlur={(e) => updateSession(null, { date: e.target.value }, true, group.numero)}
                           className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
                         />
                       </div>
@@ -1544,7 +1560,7 @@ const ClientDetailView = ({
                         <input
                           type="time"
                           defaultValue={group.debut || ''}
-                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { heure_debut: e.target.value }))}
+                          onBlur={(e) => updateSession(null, { heure_debut: e.target.value }, true, group.numero)}
                           className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
                         />
                       </div>
@@ -1553,7 +1569,7 @@ const ClientDetailView = ({
                         <input
                           type="time"
                           defaultValue={group.fin || ''}
-                          onBlur={(e) => group.items.forEach(s => updateSession(s.id, { heure_fin: e.target.value }))}
+                          onBlur={(e) => updateSession(null, { heure_fin: e.target.value }, true, group.numero)}
                           className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
                         />
                       </div>
@@ -4940,18 +4956,25 @@ export default function App() {
   const updateSessionTime = async (sessionId, field, value) => {
     setLastModifiedSessionId(sessionId);
     const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
-    if (!error) await fetchSessions();
+    if (!error) {
+      await fetchSessions();
+      toast.success("🕒 Heure mise à jour");
+    }
   };
 
   const updateSessionDate = async (sessionId, newDate) => {
     setLastModifiedSessionId(sessionId);
     const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
-    if (!error) await fetchSessions();
+    if (!error) {
+      await fetchSessions();
+      toast.success("📅 Date mise à jour");
+    }
   };
 
   const signSession = (session) => {
-    // Si c'est un émargement pur sans document, on ouvre le PAD directement
-    if (session.type_activite === 'signature' || session.type_activite === 'Émargement') {
+    // Si c'est un émargement pur OU si aucun fichier n'est joint, on ouvre le PAD directement
+    const hasFile = session.file_url || session.ressource_url || session.signed_pdf_url || (session.metadata && session.metadata.file_url);
+    if (session.type_activite === 'signature' || session.type_activite === 'Émargement' || !hasFile) {
       setSigningSessionId(session.id);
     } else {
       // Sinon on passe par le visualiseur (qui permet de lire avant de signer)
@@ -5079,41 +5102,43 @@ export default function App() {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    setLastModifiedSessionId(sessionId);
-    const updateData = {};
-    const client = clients.find(c => c.id === session.client_id);
+    const signingToast = toast.loading("✍️ Enregistrement de la signature...");
+    try {
+      setLastModifiedSessionId(sessionId);
+      const updateData = {};
+      const client = clients.find(c => c.id === session.client_id);
 
-    if (userRole === 'formateur' || userRole === 'admin') {
-      updateData.signature_formateur = signatureDataUrl;
-      updateData.date_signature_formateur = new Date().toISOString();
-      updateData.statut_formateur = 'Signé';
-      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
-    } else {
-      updateData.signature_image = signatureDataUrl;
-      updateData.date_signature = new Date().toISOString();
-      updateData.statut_client = 'Signé';
-      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
-    }
-
-    // Gestion du statut 'Complet' si les deux ont signé
-    const isNowFullySigned = (updateData.signature_formateur || session.signature_formateur) && (updateData.signature_image || session.signature_image);
-    if (isNowFullySigned) {
-      updateData.statut = 'Complet';
-    }
-
-    // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
-    if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
-      const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
-      if (signedUrl) {
-        updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
-        updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
+      if (userRole === 'formateur' || userRole === 'admin') {
+        updateData.signature_formateur = signatureDataUrl;
+        updateData.date_signature_formateur = new Date().toISOString();
+        updateData.statut_formateur = 'Signé';
+        updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
+      } else {
+        updateData.signature_image = signatureDataUrl;
+        updateData.date_signature = new Date().toISOString();
+        updateData.statut_client = 'Signé';
+        updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
       }
-    }
 
-    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
+      // Gestion du statut 'Complet' si les deux ont signé
+      const isNowFullySigned = (updateData.signature_formateur || session.signature_formateur) && (updateData.signature_image || session.signature_image);
+      if (isNowFullySigned) {
+        updateData.statut = 'Complet';
+      }
 
-    if (!error) {
-      if (updateData.statut === 'Signé') {
+      // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
+      if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
+        const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
+        if (signedUrl) {
+          updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
+          updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
+        }
+      }
+
+      const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
+      if (error) throw error;
+
+      if (updateData.statut === 'Signé' || updateData.statut === 'Complet') {
         const client = clients.find(c => c.id === session.client_id);
         if (client) {
           const newEffectuees = (client.seances_effectuees || 0) + 1;
@@ -5123,12 +5148,12 @@ export default function App() {
       }
       await fetchSessions();
       await fetchDocuments();
-      toast.success(`Émargement enregistré avec succès !`);
+      toast.success(`✅ Émargement enregistré !`, { id: signingToast });
       setSigningSessionId(null);
       if (userRole === 'client') setActiveTab('mes_seances');
-    } else {
+    } catch (error) {
       console.error("Erreur signature session:", error);
-      toast.error("Erreur lors de la signature : " + error.message);
+      toast.error("❌ Erreur lors de la signature", { id: signingToast });
     }
   };
 
@@ -5613,83 +5638,90 @@ export default function App() {
   };
 
   const handleGenerateAttendanceSheet = async (client) => {
-    const doc = new jsPDF();
-    const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
+    const loadingToast = toast.loading("📄 Génération de l'attestation...");
+    try {
+      const doc = new jsPDF();
+      const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
 
-    // Titre
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(22);
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.text("FEUILLE D'ÉMARGEMENT", 105, 25, { align: "center" });
+      // Titre
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(22);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("FEUILLE D'ÉMARGEMENT", 105, 25, { align: "center" });
 
-    // Infos Client
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(100, 116, 139); // slate-500
-    doc.text(`Bénéficiaire : ${client.nom_complet || client.nom || client.nomcomplet_client}`, 20, 40);
-    doc.text(`Dossier N° : ${client.numero_dossier || '--'}`, 20, 46);
-    doc.text(`Document généré le : ${new Date().toLocaleDateString('fr-FR')}`, 190, 40, { align: "right" });
+      // Infos Client
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text(`Bénéficiaire : ${client.nom_complet || client.nom || client.nomcomplet_client}`, 20, 40);
+      doc.text(`Dossier N° : ${client.numero_dossier || '--'}`, 20, 46);
+      doc.text(`Document généré le : ${new Date().toLocaleDateString('fr-FR')}`, 190, 40, { align: "right" });
 
-    // Tableau
-    let y = 60;
-    const drawRow = (session, yPos) => {
-      doc.setDrawColor(226, 232, 240); // slate-200
+      // Tableau
+      let y = 60;
+      const drawRow = (session, yPos) => {
+        doc.setDrawColor(226, 232, 240); // slate-200
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59); // slate-800
+        doc.text(session.nom || session.titre || `Séance ${session.numero_seance}`, 22, yPos + 8);
+        doc.text(`${session.date || '--'} à ${session.heure_debut || '--'}`, 75, yPos + 8);
+
+        // Signature Client
+        if (session.signature_image) {
+          try { doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 12); } catch (e) {
+            console.error("Erreur signature client PDF", e);
+          }
+        } else {
+          doc.setFontSize(7);
+          doc.setTextColor(200);
+          doc.text("Non signé", 130, yPos + 8);
+        }
+
+        // Signature Coach
+        if (session.signature_formateur) {
+          try { doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 12); } catch (e) {
+            console.error("Erreur signature coach PDF", e);
+          }
+        } else {
+          doc.setFontSize(7);
+          doc.setTextColor(200);
+          doc.text("Non signé", 165, yPos + 8);
+        }
+
+        doc.line(20, yPos + 15, 190, yPos + 15);
+        return yPos + 15;
+      };
+
+      // Header Tableau
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.rect(20, y, 170, 10, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.line(20, y, 190, y);
+      doc.line(20, y + 10, 190, y + 10);
+      
+      doc.setFont("helvetica", "bold");
       doc.setFontSize(9);
-      doc.setTextColor(30, 41, 59); // slate-800
-      doc.text(session.nom || session.titre || `Séance ${session.numero_seance}`, 22, yPos + 8);
-      doc.text(`${session.date || '--'} à ${session.heure_debut || '--'}`, 75, yPos + 8);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Séance / Contenu", 22, y + 6);
+      doc.text("Planification", 75, y + 6);
+      doc.text("Signature Client", 125, y + 6);
+      doc.text("Signature Coach", 160, y + 6);
+      y += 10;
 
-      // Signature Client
-      if (session.signature_image) {
-        try { doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 12); } catch (e) {
-          console.error("Erreur signature client PDF", e);
+      clientSessions.forEach((s) => {
+        if (y > 260) {
+          doc.addPage();
+          y = 20;
         }
-      } else {
-        doc.setFontSize(7);
-        doc.setTextColor(200);
-        doc.text("Non signé", 130, yPos + 8);
-      }
+        y = drawRow(s, y);
+      });
 
-      // Signature Coach
-      if (session.signature_formateur) {
-        try { doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 12); } catch (e) {
-          console.error("Erreur signature coach PDF", e);
-        }
-      } else {
-        doc.setFontSize(7);
-        doc.setTextColor(200);
-        doc.text("Non signé", 165, yPos + 8);
-      }
-
-      doc.line(20, yPos + 15, 190, yPos + 15);
-      return yPos + 15;
-    };
-
-    // Header Tableau
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.rect(20, y, 170, 10, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.line(20, y, 190, y);
-    doc.line(20, y + 10, 190, y + 10);
-    
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Séance / Contenu", 22, y + 6);
-    doc.text("Planification", 75, y + 6);
-    doc.text("Signature Client", 125, y + 6);
-    doc.text("Signature Coach", 160, y + 6);
-    y += 10;
-
-    clientSessions.forEach((s) => {
-      if (y > 260) {
-        doc.addPage();
-        y = 20;
-      }
-      y = drawRow(s, y);
-    });
-
-    doc.save(`Emargement_${client.nom || 'Client'}.pdf`);
+      doc.save(`Emargement_${client.nom || 'Client'}.pdf`);
+      toast.success("✅ Attestation générée avec succès", { id: loadingToast });
+    } catch (err) {
+      console.error("Erreur génération PDF:", err);
+      toast.error("❌ Erreur lors de la génération", { id: loadingToast });
+    }
   };
 
   const handleDownloadPDF = async (doc) => {
