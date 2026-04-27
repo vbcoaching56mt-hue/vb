@@ -1173,7 +1173,8 @@ const ClientDetailView = ({
   handleGenerateDocx, documentTemplates, pedagogicalResources, 
   handleDeleteClient, fetchSessions, fetchDocuments, currentUserId, 
   userRole, documents, generateSessions, handleModuleChange, 
-  assignFormateur, formateurs 
+  assignFormateur, formateurs,
+  handleGenerateAttendanceSheet
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -1274,7 +1275,13 @@ const ClientDetailView = ({
           <h2 className="text-2xl font-bold text-gray-900">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
           <p className="text-gray-500">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
         </div>
-        <div className="mt-4 md:mt-0">
+        <div className="mt-4 md:mt-0 flex gap-3 items-center">
+          <button
+            onClick={() => handleGenerateAttendanceSheet(client)}
+            className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-2xl text-xs font-bold border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+          >
+            <FileText size={16} /> Attestation de Présence
+          </button>
           <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
             {client.status || 'Actif'}
           </span>
@@ -1589,6 +1596,7 @@ const AdminClientsView = ({
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions,
+  handleGenerateAttendanceSheet,
   handleDeleteClient
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
@@ -1612,6 +1620,7 @@ const AdminClientsView = ({
           handleDownloadResource={handleDownloadResource}
           handleUploadExerciseResponse={handleUploadExerciseResponse}
           generateSessions={generateSessions}
+          handleGenerateAttendanceSheet={handleGenerateAttendanceSheet}
           handleDeleteClient={handleDeleteClient}
         />
       );
@@ -2182,6 +2191,7 @@ const FormateurView = ({
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
+  handleGenerateAttendanceSheet,
   viewingDocId, setViewingDocId
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
@@ -2382,13 +2392,21 @@ const FormateurView = ({
                     </h4>
 
                     {(userRole === 'admin' || userRole === 'formateur') && (
-                      <button
-                        onClick={() => handleAddSession(client)}
-                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
-                        title="Ajouter une séance"
-                      >
-                        <span className="mr-1.5">➕</span> Ajouter une séance
-                      </button>
+                      <div className="flex gap-2 ml-auto">
+                        <button
+                          onClick={() => handleGenerateAttendanceSheet(client)}
+                          className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-emerald-100 flex items-center shadow-sm"
+                        >
+                          <FileText size={14} className="mr-1.5" /> Attestation de Présence
+                        </button>
+                        <button
+                          onClick={() => handleAddSession(client)}
+                          className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center shadow-sm"
+                          title="Ajouter une séance"
+                        >
+                          <span className="mr-1.5">➕</span> Ajouter une séance
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -3348,7 +3366,11 @@ const SessionsView = ({
                                         const fileUrl = docUrl || null;
                                         console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
                                         console.log('[Signer] session:', session.id, session.type_activite);
-                                        setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        if (session.type_activite === 'signature') {
+                                          signSession(session);
+                                        } else {
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        }
                                       }}
                                       className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
                                         session.statut_client === 'Signé'
@@ -3358,7 +3380,11 @@ const SessionsView = ({
                                           : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
                                       }`}
                                     >
-                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+                                      {session.statut_client === 'Signé' 
+                                        ? (session.type_activite === 'signature' ? 'Émargé ✓' : 'Signé ✓') 
+                                        : isDateLocked 
+                                          ? 'Indisponible' 
+                                          : (session.type_activite === 'signature' ? 'Émarger' : 'Signer le document')}
                                     </button>
                                   </div>
                                 );
@@ -4815,7 +4841,13 @@ export default function App() {
   };
 
   const signSession = (session) => {
-    setSigningSessionId(session.id);
+    // Si c'est un émargement pur sans document, on ouvre le PAD directement
+    if (session.type_activite === 'signature' || session.type_activite === 'Émargement') {
+      setSigningSessionId(session.id);
+    } else {
+      // Sinon on passe par le visualiseur (qui permet de lire avant de signer)
+      setViewingSession({ session, mode: 'sign' });
+    }
   };
 
   /**
@@ -4952,6 +4984,12 @@ export default function App() {
       updateData.date_signature = new Date().toISOString();
       updateData.statut_client = 'Signé';
       updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
+    }
+
+    // Gestion du statut 'Complet' si les deux ont signé
+    const isNowFullySigned = (updateData.signature_formateur || session.signature_formateur) && (updateData.signature_image || session.signature_image);
+    if (isNowFullySigned) {
+      updateData.statut = 'Complet';
     }
 
     // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
@@ -5465,6 +5503,86 @@ export default function App() {
     setSigningDocId(null);
   };
 
+  const handleGenerateAttendanceSheet = async (client) => {
+    const doc = new jsPDF();
+    const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
+
+    // Titre
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text("FEUILLE D'ÉMARGEMENT", 105, 25, { align: "center" });
+
+    // Infos Client
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 116, 139); // slate-500
+    doc.text(`Bénéficiaire : ${client.nom_complet || client.nom || client.nomcomplet_client}`, 20, 40);
+    doc.text(`Dossier N° : ${client.numero_dossier || '--'}`, 20, 46);
+    doc.text(`Document généré le : ${new Date().toLocaleDateString('fr-FR')}`, 190, 40, { align: "right" });
+
+    // Tableau
+    let y = 60;
+    const drawRow = (session, yPos) => {
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59); // slate-800
+      doc.text(session.nom || session.titre || `Séance ${session.numero_seance}`, 22, yPos + 8);
+      doc.text(`${session.date || '--'} à ${session.heure_debut || '--'}`, 75, yPos + 8);
+
+      // Signature Client
+      if (session.signature_image) {
+        try { doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 12); } catch (e) {
+          console.error("Erreur signature client PDF", e);
+        }
+      } else {
+        doc.setFontSize(7);
+        doc.setTextColor(200);
+        doc.text("Non signé", 130, yPos + 8);
+      }
+
+      // Signature Coach
+      if (session.signature_formateur) {
+        try { doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 12); } catch (e) {
+          console.error("Erreur signature coach PDF", e);
+        }
+      } else {
+        doc.setFontSize(7);
+        doc.setTextColor(200);
+        doc.text("Non signé", 165, yPos + 8);
+      }
+
+      doc.line(20, yPos + 15, 190, yPos + 15);
+      return yPos + 15;
+    };
+
+    // Header Tableau
+    doc.setFillColor(248, 250, 252); // slate-50
+    doc.rect(20, y, 170, 10, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.line(20, y, 190, y);
+    doc.line(20, y + 10, 190, y + 10);
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Séance / Contenu", 22, y + 6);
+    doc.text("Planification", 75, y + 6);
+    doc.text("Signature Client", 125, y + 6);
+    doc.text("Signature Coach", 160, y + 6);
+    y += 10;
+
+    clientSessions.forEach((s) => {
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+      y = drawRow(s, y);
+    });
+
+    doc.save(`Emargement_${client.nom || 'Client'}.pdf`);
+  };
+
   const handleDownloadPDF = async (doc) => {
     if (doc && doc.id) {
       const urlToDownload = doc.url_signed_pdf || doc.url;
@@ -5956,6 +6074,7 @@ export default function App() {
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
+            handleGenerateAttendanceSheet={handleGenerateAttendanceSheet}
             handleGenerateDocx={handleGenerateDocx}
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
@@ -6059,6 +6178,17 @@ export default function App() {
           setViewingSession(null);
           await handleSessionSignatureSave(sessionId, signature);
         } : undefined}
+      />
+
+      {/* Pad de signature direct (Émargement rapide) */}
+      <SignatureModal
+        isOpen={signingSessionId !== null}
+        onClose={() => setSigningSessionId(null)}
+        onSave={async (signature) => {
+          const sessionId = signingSessionId;
+          setSigningSessionId(null);
+          await handleSessionSignatureSave(sessionId, signature);
+        }}
       />
 
       <InviteModal
