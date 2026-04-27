@@ -1190,6 +1190,7 @@ const ClientDetailView = ({
     montant_prestation: client.montant_prestation || ''
   });
   const [signaturePreview, setSignaturePreview] = React.useState(null); // { url, name }
+  const [isAddStepOpen, setIsAddStepOpen] = React.useState(false);
 
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
@@ -1258,16 +1259,33 @@ const ClientDetailView = ({
     }
   };
 
-  const handleAddCustomSession = async () => {
-    const nextNum = clientSessions.length + 1;
-    const { error } = await supabase.from('sessions').insert([{
-      client_id: client.id,
-      module_id: client.module_id,
-      numero_seance: nextNum,
-      titre: `Séance personnalisée ${nextNum}`,
-      statut: 'À venir'
-    }]);
-    if (!error && fetchSessions) fetchSessions();
+  const handleAddCustomSession = () => {
+    setIsAddStepOpen(true);
+  };
+
+  const handleAddStepSave = async (formData) => {
+    const loadingToast = toast.loading("📁 Ajout de l'étape...");
+    try {
+      if (!formData.titre) throw new Error("Veuillez saisir un titre");
+      const { error } = await supabase.from('sessions').insert([{
+        client_id: client.id,
+        module_id: client.module_id || null,
+        numero_seance: parseInt(formData.numero_seance),
+        nom: formData.titre,
+        type_activite: formData.type_activite,
+        date: formData.date,
+        heure_debut: formData.heure_debut,
+        heure_fin: formData.heure_fin,
+        statut: 'À venir'
+      }]);
+      if (error) throw error;
+      if (fetchSessions) await fetchSessions();
+      toast.success("✅ Étape ajoutée au planning !", { id: loadingToast });
+      setIsAddStepOpen(false);
+    } catch (err) {
+      console.error("Erreur ajout étape:", err);
+      toast.error(err.message || "❌ Erreur lors de l'ajout", { id: loadingToast });
+    }
   };
 
   const handleDeleteSession = async (id) => {
@@ -1706,6 +1724,118 @@ const ClientDetailView = ({
           </div>
         </div>
       )}
+
+      <AddStepModal 
+        isOpen={isAddStepOpen} 
+        onClose={() => setIsAddStepOpen(false)} 
+        onSave={handleAddStepSave}
+        lastSessionNum={clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance || 0)) : 1}
+      />
+    </div>
+  );
+};
+
+/* --- Composant Modale Ajout Étape --- */
+const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum }) => {
+  const [formData, setFormData] = React.useState({
+    titre: '',
+    type_activite: 'Émargement',
+    date: new Date().toISOString().split('T')[0],
+    heure_debut: '09:00',
+    heure_fin: '10:00',
+    numero_seance: lastSessionNum || 1
+  });
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/60 z-[120] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white p-8 rounded-[40px] shadow-2xl max-w-md w-full border border-white/20" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h4 className="font-extrabold text-gray-900 text-xl">Ajouter une étape</h4>
+            <p className="text-xs text-indigo-600 font-bold uppercase tracking-widest mt-1">Nouveau contenu au planning</p>
+          </div>
+          <button onClick={onClose} className="w-10 h-10 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900 rounded-2xl flex items-center justify-center transition-all">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de l'étape</label>
+            <input
+              type="text"
+              placeholder="Ex: Entretien de démarrage..."
+              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
+              value={formData.titre}
+              onChange={e => setFormData({ ...formData, titre: e.target.value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type</label>
+              <select
+                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
+                value={formData.type_activite}
+                onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
+              >
+                <option value="Émargement">Émargement</option>
+                <option value="document">Document</option>
+                <option value="Exercice">Exercice</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Séance N°</label>
+              <input
+                type="number"
+                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                value={formData.numero_seance}
+                onChange={e => setFormData({ ...formData, numero_seance: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Date</label>
+            <input
+              type="date"
+              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+              value={formData.date}
+              onChange={e => setFormData({ ...formData, date: e.target.value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Début</label>
+              <input
+                type="time"
+                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                value={formData.heure_debut}
+                onChange={e => setFormData({ ...formData, heure_debut: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Fin</label>
+              <input
+                type="time"
+                className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
+                value={formData.heure_fin}
+                onChange={e => setFormData({ ...formData, heure_fin: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={() => onSave(formData)}
+          className="w-full mt-8 py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2"
+        >
+          <Plus size={20} /> Valider l'ajout
+        </button>
+      </div>
     </div>
   );
 };
@@ -5668,7 +5798,13 @@ export default function App() {
 
         // Signature Client
         if (session.signature_image) {
-          try { doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 12); } catch (e) {
+          try { 
+            doc.addImage(session.signature_image, 'PNG', 125, yPos + 1, 25, 10);
+            doc.setFontSize(5);
+            doc.setTextColor(150);
+            const dateStr = session.date_signature ? new Date(session.date_signature).toLocaleString('fr-FR') : '--';
+            doc.text(`Signé le: ${dateStr}`, 125, yPos + 13);
+          } catch (e) {
             console.error("Erreur signature client PDF", e);
           }
         } else {
@@ -5679,7 +5815,13 @@ export default function App() {
 
         // Signature Coach
         if (session.signature_formateur) {
-          try { doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 12); } catch (e) {
+          try { 
+            doc.addImage(session.signature_formateur, 'PNG', 160, yPos + 1, 25, 10);
+            doc.setFontSize(5);
+            doc.setTextColor(150);
+            const dateStr = session.date_signature_formateur ? new Date(session.date_signature_formateur).toLocaleString('fr-FR') : '--';
+            doc.text(`Signé le: ${dateStr}`, 160, yPos + 13);
+          } catch (e) {
             console.error("Erreur signature coach PDF", e);
           }
         } else {
