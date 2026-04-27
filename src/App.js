@@ -2191,7 +2191,9 @@ const FormateurView = ({
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   const pendingAdminDocs = (documents || []).filter(d => 
-    d.assigned_formateur_id === currentUserId && d.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR'
+    d.assigned_formateur_id === currentUserId && 
+    d.statut_formateur !== 'Signé' && 
+    !d.signe_par_formateur
   );
 
   React.useEffect(() => {
@@ -2536,11 +2538,11 @@ const FormateurView = ({
                                                 )}
                                                 {isToSign && (
                                                   <button
-                                                    disabled={session.statut_client === 'Signé' || isDateLocked}
-                                                    onClick={() => signSession(session)}
-                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                                    disabled={isDateLocked}
+                                                    onClick={() => session.statut_formateur === 'Signé' ? handleDownloadResource(signedUrl || session.file_url || session.ressource_url) : signSession(session)}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_formateur === 'Signé' ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
                                                   >
-                                                    {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                    {session.statut_formateur === 'Signé' ? 'Consulter Signé' : 'Signer Document'}
                                                   </button>
                                                 )}
                                               </div>
@@ -2672,7 +2674,7 @@ const FormateurView = ({
             </h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.workflow_status === 'SIGNE_ET_ARCHIVE').map(doc => (
+              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && (d.workflow_status === 'SIGNE_ET_ARCHIVE' || d.statut_formateur === 'Signé' || d.signe_par_formateur)).map(doc => (
                 <div key={doc.id} className="p-5 bg-gray-50 border border-gray-200 rounded-3xl group hover:bg-white hover:border-indigo-300 transition-all relative">
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center font-bold shadow-sm group-hover:bg-indigo-600 group-hover:text-white transition-all">
@@ -2689,7 +2691,7 @@ const FormateurView = ({
                   </div>
                 </div>
               ))}
-              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.workflow_status === 'SIGNE_ET_ARCHIVE').length === 0 && (
+              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && (d.workflow_status === 'SIGNE_ET_ARCHIVE' || d.statut_formateur === 'Signé' || d.signe_par_formateur)).length === 0 && (
                 <div className="col-span-full py-12 text-center border-2 border-dashed border-gray-100 rounded-3xl">
                   <p className="text-gray-400 italic text-sm">Aucun contrat ou document administratif archivé pour le moment.</p>
                 </div>
@@ -4824,7 +4826,7 @@ export default function App() {
     try {
       console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
       
-      const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
+      const originalRelativePath = session.file_url || session.ressource_url || session.url || session.file_url_signed || session.metadata?.file_url_signed;
       if (!originalRelativePath) {
         console.log("[SignatureProof] Pas de chemin de document pour apposer la signature.");
         return null;
@@ -4973,6 +4975,7 @@ export default function App() {
         }
       }
       await fetchSessions();
+      await fetchDocuments();
       toast.success(`Émargement enregistré avec succès !`);
       setSigningSessionId(null);
       if (userRole === 'client') setActiveTab('mes_seances');
@@ -5390,17 +5393,28 @@ export default function App() {
 
     // signerType = 'client' ou 'formateur'
     const updateColumn = signerType === 'client'
-      ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
-      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() }; // Ajout de la date formateur utile
+      ? { signe_par_client: true, date_signature_client: new Date().toISOString(), statut_client: 'Signé' }
+      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString(), statut_formateur: 'Signé' }; // Ajout de la date formateur utile
 
     if (signatureDataUrl) {
       // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
       if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
       else updateColumn.signature_formateur = signatureDataUrl;
+
+      // Automatisation de l'archivage pour les documents administratifs (Table DOCUMENTS)
+      const client = clients.find(c => c.id === doc.user_id);
+      if (client) {
+        console.log("[handleSignDocument] Tentative d'archivage PDF pour document admin:", doc.nom);
+        const signedUrl = await overlaySignatureOnPdf(doc, client, signatureDataUrl, signerType);
+        if (signedUrl) {
+          updateColumn.url_signed_pdf = signedUrl;
+          updateColumn.signed_pdf_url = signedUrl;
+        }
+      }
     }
 
     // SIGNE_ET_ARCHIVE si c'est un document admin du workflow
-    if (signerType === 'formateur' && doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR') {
+    if (signerType === 'formateur' && (doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' || doc.statut_formateur !== 'Signé')) {
       updateColumn.workflow_status = 'SIGNE_ET_ARCHIVE';
     }
 
@@ -5426,9 +5440,13 @@ export default function App() {
 
     if (error) {
       toast.error("Erreur signature: " + error.message);
-      // rollback state en cas d'erreur
-      await fetchDocuments();
+    } else {
+      toast.success("Document signé et archivé !");
     }
+    
+    // Rafraîchissement systématique pour synchroniser les onglets
+    await fetchDocuments();
+    await fetchSessions();
   };
 
   const updateDateSeance = async (docId, date) => {
