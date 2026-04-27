@@ -1267,11 +1267,23 @@ const ClientDetailView = ({
     const loadingToast = toast.loading("📁 Ajout de l'étape...");
     try {
       if (!formData.titre) throw new Error("Veuillez saisir un titre");
+      
+      // Sécurité anti-doublon pour la contrainte unique_session_per_client_module_nom
+      let finalTitle = formData.titre;
+      const isDuplicate = sessions.some(s => 
+        s.client_id === client.id && 
+        (s.module_id === client.module_id || (s.module_id === null && client.module_id === null)) && 
+        s.nom === finalTitle
+      );
+      if (isDuplicate) {
+        finalTitle = `${formData.titre} (${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })})`;
+      }
+
       const { error } = await supabase.from('sessions').insert([{
         client_id: client.id,
         module_id: client.module_id || null,
         numero_seance: parseInt(formData.numero_seance),
-        nom: formData.titre,
+        nom: finalTitle,
         type_activite: formData.type_activite,
         date: formData.date,
         heure_debut: formData.heure_debut,
@@ -1281,7 +1293,7 @@ const ClientDetailView = ({
       }]);
       if (error) throw error;
       if (fetchSessions) await fetchSessions();
-      toast.success("✅ Étape ajoutée au planning !", { id: loadingToast });
+      toast.success("✅ Élément ajouté au planning !", { id: loadingToast });
       setIsAddStepOpen(false);
     } catch (err) {
       console.error("Erreur ajout étape:", err);
@@ -1308,7 +1320,7 @@ const ClientDetailView = ({
         </div>
         <div className="mt-4 md:mt-0 flex gap-3 items-center">
           <button
-            onClick={() => handleGenerateAttendanceSheet(client)}
+            onClick={() => generatePDF(client)}
             className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-2xl text-xs font-bold border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
           >
             <FileText size={16} /> Attestation de Présence
@@ -1512,7 +1524,7 @@ const ClientDetailView = ({
             </div>
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={() => handleGenerateAttendanceSheet(client)}
+                onClick={() => generatePDF(client)}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg hover:shadow-emerald-100 transition-all"
               >
                 <Download size={16} /> 📥 Télécharger le Récapitulatif
@@ -1839,51 +1851,20 @@ const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum, sessions, supab
             </select>
           </div>
 
-          <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de l'étape</label>
-            <input
-              type="text"
-              placeholder="Ex: Entretien de démarrage..."
-              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
-              value={formData.titre}
-              onChange={e => setFormData({ ...formData, titre: e.target.value })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type d'activité</label>
-            <select
-              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
-              value={formData.type_activite}
-              onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
-            >
-              <option value="Émargement">Émargement</option>
-              <option value="document">Document</option>
-              <option value="Exercice">Exercice</option>
-            </select>
-          </div>
-
-          {formData.type_activite === 'document' && (
-            <div className="animate-slide-up">
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Fichier PDF</label>
-              <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                {isUploading ? 'Importation...' : formData.file_url ? '✓ Fichier prêt' : '📁 Importer un PDF'}
-                <input
-                  type="file"
-                  className="hidden"
-                  disabled={isUploading}
-                  accept=".pdf"
-                  onChange={(e) => handleFileUpload(e.target.files[0])}
-                />
-              </label>
-              {formData.file_url && (
-                <p className="text-[9px] text-green-600 font-bold mt-1 truncate">Fichier : {formData.file_url.split('/').pop()}</p>
-              )}
-            </div>
-          )}
-
-          {isNewSession && (
+          {/* Si Nouvelle Séance : On demande le Titre de la Séance, Date et Horaires */}
+          {isNewSession ? (
             <div className="space-y-5 animate-slide-up">
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de la séance</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Séance 3 - Coaching de mi-parcours"
+                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
+                  value={formData.titre}
+                  onChange={e => setFormData({ ...formData, titre: e.target.value })}
+                />
+              </div>
+
               <div>
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Date de la séance</label>
                 <input
@@ -1914,6 +1895,54 @@ const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum, sessions, supab
                   />
                 </div>
               </div>
+            </div>
+          ) : (
+            /* Si Séance Existante : On demande Titre de l'activité, Type et Fichier */
+            <div className="space-y-5 animate-slide-up">
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de l'activité</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Analyse de la situation..."
+                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
+                  value={formData.titre}
+                  onChange={e => setFormData({ ...formData, titre: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type d'activité</label>
+                <select
+                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
+                  value={formData.type_activite}
+                  onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
+                >
+                  <option value="Émargement">Émargement (Présence)</option>
+                  <option value="document">Document (Lecture)</option>
+                  <option value="Exercice">Exercice (Travail)</option>
+                </select>
+              </div>
+
+              {(formData.type_activite === 'document' || formData.type_activite === 'Exercice') && (
+                <div className="animate-slide-up">
+                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
+                    Support / Énoncé (PDF, Word, Excel)
+                  </label>
+                  <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    {isUploading ? 'Importation...' : formData.file_url ? '✓ Fichier prêt' : '📁 Importer un fichier'}
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={isUploading}
+                      accept=".pdf,.doc,.docx,.xls,.xlsx"
+                      onChange={(e) => handleFileUpload(e.target.files[0])}
+                    />
+                  </label>
+                  {formData.file_url && (
+                    <p className="text-[9px] text-green-600 font-bold mt-1 truncate">Fichier lié : {formData.file_url.split('/').pop()}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -5857,17 +5886,26 @@ export default function App() {
     setSigningDocId(null);
   };
 
-  const handleGenerateAttendanceSheet = async (client) => {
+  const generatePDF = async (client) => {
     const loadingToast = toast.loading("📄 Génération du récapitulatif Qualiopi...");
     try {
       const doc = new jsPDF();
-      const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => {
-        if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
-        return new Date(a.date) - new Date(b.date);
-      });
+      const clientSessions = sessions
+        .filter(s => s.client_id === client.id)
+        .sort((a, b) => {
+          const numA = parseInt(a.numero_seance) || 0;
+          const numB = parseInt(b.numero_seance) || 0;
+          if (numA !== numB) return numA - numB;
+          return new Date(a.date) - new Date(b.date);
+        });
+
+      if (clientSessions.length === 0) {
+        toast.error("Aucune donnée de séance trouvée pour ce client.", { id: loadingToast });
+        return;
+      }
 
       // --- Header Design ---
-      doc.setFillColor(15, 23, 42); // Navy
+      doc.setFillColor(15, 23, 42); 
       doc.rect(0, 0, 210, 40, 'F');
       
       doc.setFont("helvetica", "bold");
@@ -5920,13 +5958,13 @@ export default function App() {
         const first = group[0];
 
         // Header Séance
-        if (y > 240) { doc.addPage(); y = 20; }
+        if (y > 230) { doc.addPage(); y = 20; }
         
         doc.setFillColor(248, 250, 252);
         doc.roundedRect(20, y, 170, 10, 2, 2, 'F');
         doc.setFont("helvetica", "bold");
         doc.setFontSize(11);
-        doc.setTextColor(79, 70, 229); // Indigo
+        doc.setTextColor(79, 70, 229); 
         doc.text(`SÉANCE ${num} : ${first.date || '--'} (${first.heure_debut || '--'} à ${first.heure_fin || '--'})`, 25, y + 6.5);
         
         y += 18;
