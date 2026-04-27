@@ -1275,10 +1275,11 @@ const ClientDetailView = ({
       let isDuplicate = true;
 
       while (isDuplicate) {
+        const titleToCheck = finalTitle.trim().toLowerCase();
         const exists = sessions.some(s => 
           s.client_id === client.id && 
-          (s.module_id === client.module_id || (s.module_id === null && client.module_id === null)) && 
-          s.nom === finalTitle
+          (s.module_id === (client.module_id || null)) && 
+          (s.nom || '').trim().toLowerCase() === titleToCheck
         );
         if (exists) {
           finalTitle = `${baseTitle} (${counter})`;
@@ -5998,8 +5999,8 @@ export default function App() {
                 doc.setFontSize(6);
                 doc.setTextColor(148, 163, 184);
                 doc.text("Signé Bénéficiaire", 100, y + 6);
-                if (item.signed_at) {
-                  const d = new Date(item.signed_at);
+                if (item.date_signature) {
+                  const d = new Date(item.date_signature);
                   doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 100, y + 8.5);
                 }
               } catch(e) { console.error("Err PDF sign client", e); }
@@ -6010,8 +6011,8 @@ export default function App() {
                 doc.setFontSize(6);
                 doc.setTextColor(148, 163, 184);
                 doc.text("Signé Coach", 140, y + 6);
-                if (item.signed_at_formateur) {
-                  const d = new Date(item.signed_at_formateur);
+                if (item.date_signature_formateur) {
+                  const d = new Date(item.date_signature_formateur);
                   doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 140, y + 8.5);
                 }
               } catch(e) { console.error("Err PDF sign coach", e); }
