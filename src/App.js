@@ -5417,6 +5417,7 @@ export default function App() {
       let targetId = null;
       let targetName = "Document";
       let uploadBucket = 'documents';
+      let finalClient = null;
 
       if (isForFormateur || formateurId) {
         const fId = formateurId || (clientRow ? clientRow.id : null);
@@ -5439,7 +5440,7 @@ export default function App() {
       } else {
         // 1. Récupération depuis la table ciblée 'clients'
         const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
-        const finalClient = theClient || clientRow; // fallback
+        finalClient = theClient || clientRow; // fallback
 
         // 2. Récupération formateur dans 'utilisateurs'
         let theCoach = { nom: 'Non assigné' };
@@ -5528,7 +5529,7 @@ export default function App() {
           docToInsert.visible_client = true;
           docToInsert.visible_formateur = true;
           // Si on génère pour un client, on lie aussi le formateur assigné s'il existe
-          if (finalClient.formateur_id) {
+          if (finalClient && finalClient.formateur_id) {
             docToInsert.assigned_formateur_id = finalClient.formateur_id;
           }
         }
