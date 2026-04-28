@@ -5641,6 +5641,9 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
+      const safeName = targetName.replace(/\s+/g, '_');
+      const finalFileName = `${type}_${safeName}_${Date.now()}.docx`;
+
       // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
       const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
       if (!isMissionLetter && !isForFormateur && !formateurId) {
