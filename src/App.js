@@ -36,16 +36,14 @@ const resolveFileUrl = (rawUrl) => {
   if (!rawUrl) return null;
   // Si c'est déjà une URL complète, on la retourne telle quelle
   if (rawUrl.startsWith('http')) return rawUrl;
-  // Sinon on construit l'URL publique Supabase
-  const supabaseProjectUrl = process.env.REACT_APP_SUPABASE_URL;
-  if (!supabaseProjectUrl) return null;
   
   // LOGIQUE DE BUCKET CORRIGÉE :
   // Les ressources modèles sont souvent préfixées par 'ressources' ou 'modeling-imports'
   const isRessource = rawUrl.startsWith('ressources') || rawUrl.startsWith('modeling-imports');
   const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
   
-  return `${supabaseProjectUrl}/storage/v1/object/public/${bucket}/${rawUrl}`;
+  const { data } = supabase.storage.from(bucket).getPublicUrl(rawUrl);
+  return data?.publicUrl || null;
 };
 
 // --- Données du Graphique Ancres de Carrière ---
@@ -437,7 +435,9 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         <div className="text-5xl">📄</div>
         <div className="text-center">
           <p className="font-semibold text-gray-600">
-            {pdfError ? 'Impossible de charger le document' : 'Aucun fichier joint à cette session.'}
+            {pdfError 
+              ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document') 
+              : 'Aucun fichier joint à cette session.'}
           </p>
           {debugInfo && (
             <div className="mt-4 p-3 bg-gray-100 rounded-lg text-[10px] font-mono text-left overflow-auto max-w-xs mx-auto border border-gray-200">
@@ -2577,7 +2577,7 @@ const FormateurView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
   generatePDF,
-  viewingDocId, setViewingDocId
+  viewingDocId, setViewingDocId, setViewingSession
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2925,7 +2925,10 @@ const FormateurView = ({
                                             return (
                                               <div className="flex gap-2 items-center">
                                                 <button
-                                                  onClick={() => handleDownloadResource(signedUrl || session.file_url || session.ressource_url)}
+                                                  onClick={() => {
+                                                    const fileUrl = signedUrl || session.file_url || session.ressource_url;
+                                                    setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                                  }}
                                                   className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
                                                 >
                                                   {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
@@ -2942,7 +2945,14 @@ const FormateurView = ({
                                                 {isToSign && (
                                                   <button
                                                     disabled={isDateLocked}
-                                                    onClick={() => session.statut_formateur === 'Signé' ? handleDownloadResource(signedUrl || session.file_url || session.ressource_url) : signSession(session)}
+                                                    onClick={() => {
+                                                      const fileUrl = signedUrl || session.file_url || session.ressource_url;
+                                                      if (session.statut_formateur === 'Signé') {
+                                                        setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                                      } else {
+                                                        setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                                      }
+                                                    }}
                                                     className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_formateur === 'Signé' ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
                                                   >
                                                     {session.statut_formateur === 'Signé' ? 'Consulter Signé' : 'Signer Document'}
@@ -6565,12 +6575,11 @@ export default function App() {
             setTargetSessionForAddition={setTargetSessionForAddition}
             onTimeChange={onTimeChange}
             onSaveTimes={onSaveTimes}
-            setLastModifiedSessionId={setLastModifiedSessionId}
-            lastModifiedSessionId={lastModifiedSessionId}
+            setViewingDocId={setViewingDocId}
+            setViewingSession={setViewingSession}
             signingDocId={signingDocId}
             setSigningDocId={setSigningDocId}
             viewingDocId={viewingDocId}
-            setViewingDocId={setViewingDocId}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
