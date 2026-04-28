@@ -6608,7 +6608,6 @@ export default function App() {
             signingDocId={signingDocId}
             setSigningDocId={setSigningDocId}
             viewingDocId={viewingDocId}
-            setViewingDocId={setViewingDocId}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
