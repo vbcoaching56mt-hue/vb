@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
-  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
+import {
+  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
+  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
   Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
@@ -201,22 +201,22 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     const extractBucketPath = (fullUrl) => {
       if (!fullUrl) return null;
       console.log('[DocumentViewerModal] Extraction depuis:', fullUrl);
-      
+
       // Cas 1: URL complète Supabase (public ou sign|authenticated)
       const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
       if (match) {
         let bucket = match[1];
         let rawPath = match[2];
         let path = decodeURIComponent(rawPath);
-        
+
         // Nettoyage : si le path commence par le nom du bucket (redondance parfois constatée)
         if (path.startsWith(`${bucket}/`)) {
           path = path.substring(bucket.length + 1);
         }
-        
+
         return { bucket, path };
       }
-      
+
       // Cas 2: Chemin relatif
       if (!fullUrl.startsWith('http')) {
         const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
@@ -298,7 +298,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             }
           } catch (fetchErr) {
             console.error("[DocumentViewerModal] Erreur Word:", fetchErr);
-            setBlobUrl(finalSignedUrl); 
+            setBlobUrl(finalSignedUrl);
           }
         } else {
           setBlobUrl(finalSignedUrl);
@@ -323,7 +323,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     }
 
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, pdfUrl]);
 
 
@@ -400,8 +400,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         <div className="text-5xl">📄</div>
         <div className="text-center">
           <p className="font-semibold text-gray-600">
-            {pdfError 
-              ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document') 
+            {pdfError
+              ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document')
               : 'Aucun fichier joint à cette session.'}
           </p>
           {debugInfo && (
@@ -541,7 +541,7 @@ const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title =
         </div>
         <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
         <p className="text-gray-500 mb-8">
-          Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ? 
+          Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ?
           Toutes les données associées seront supprimées et cette action est irréversible.
         </p>
         <div className="flex gap-3">
@@ -599,7 +599,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
         const { error: fallbackError } = await supabase.storage
           .from('ressources-pedagogiques')
           .upload(filePath, file, { cacheControl: '3600', upsert: true });
-        
+
         if (fallbackError) {
           throw fallbackError;
         }
@@ -1145,8 +1145,11 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
-  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions, handleDeleteClient
+  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents,
+  handleGenerateDocx, documentTemplates, pedagogicalResources,
+  handleDownloadResource, handleUploadExerciseResponse, generateSessions,
+  handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition,
+  setViewingSession
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -1401,69 +1404,123 @@ const ClientDetailView = ({
       )}
 
       {activeTab === 'seances' && (
-        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-gray-800">Calendrier des Séances</h3>
-            <button onClick={handleAddCustomSession} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm transition-all">
-              <Plus size={14} /> Ajouter une étape personnalisée
+        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+          <div className="flex justify-between items-center mb-8 px-2">
+            <div>
+              <h3 className="text-xl font-black text-gray-900">Planning & Supervision</h3>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">Étapes pédagogiques et émargements</p>
+            </div>
+            <button
+              onClick={() => {
+                setTargetSessionForAddition({ clientId: client.id, nextNum: clientSessions.length + 1 });
+                setIsSessionItemModalOpen(true);
+              }}
+              className="bg-indigo-600 hover:bg-black text-white text-xs font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-lg shadow-indigo-100 transition-all transform active:scale-95"
+            >
+              <Plus size={16} /> Ajouter une étape
             </button>
           </div>
-          <div className="space-y-4">
-            {clientSessions.length > 0 ? clientSessions.map(session => (
-              <div key={session.id} className="p-5 border border-gray-100 rounded-2xl bg-gray-50 flex flex-col gap-4 relative group">
-                <button onClick={() => handleDeleteSession(session.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                  <Trash2 size={16} />
-                </button>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Titre de la séance / étape</label>
-                    <input
-                      type="text"
-                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 font-bold text-gray-800"
-                      defaultValue={session.titre}
-                      onBlur={(e) => updateSession(session.id, { titre: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type d'Activité</label>
-                    <select
-                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 bg-white"
-                      defaultValue={session.type_activite || 'Signature'}
-                      onChange={(e) => updateSession(session.id, { type_activite: e.target.value })}
-                    >
-                      <option value="Signature">Signature Présence</option>
-                      <option value="Document PDF">Document PDF</option>
-                      <option value="Exercice">Exercice / Outil</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-gray-200/50">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Date</label>
-                    <input type="date" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.date || ''} onBlur={(e) => updateSession(session.id, { date: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Heure</label>
-                    <input type="time" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.heure_debut || ''} onBlur={(e) => updateSession(session.id, { heure_debut: e.target.value })} />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ressource Pédagogique (Modélothèque)</label>
-                    <select
-                      className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none bg-white"
-                      defaultValue={session.ressource_id || ''}
-                      onChange={(e) => updateSession(session.id, { ressource_id: e.target.value })}
-                    >
-                      <option value="">Aucune ressource liée</option>
-                      {pedagogicalResources.map(res => (
-                        <option key={res.name} value={res.name}>{res.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )) : <p className="text-gray-500 italic text-sm text-center py-8">Aucune séance n'est encore programmée pour ce client.</p>}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse bg-white text-sm">
+              <thead>
+                <tr className="bg-gray-50/50 text-[10px] font-black uppercase text-gray-400 tracking-widest border-b border-gray-100">
+                  <th className="p-4">Étape</th>
+                  <th className="p-4">Date & Horaires</th>
+                  <th className="p-4">Activité</th>
+                  <th className="p-4 text-center">Client</th>
+                  <th className="p-4 text-center">Coach</th>
+                  <th className="p-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {clientSessions.length > 0 ? clientSessions.map(s => (
+                  <tr key={s.id} className="hover:bg-gray-50/50 transition-colors group">
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center font-black text-[10px]">
+                          S{s.numero_seance}
+                        </div>
+                        <span className="font-bold text-gray-800">{s.titre || s.nom || 'Séance'}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="font-bold text-gray-700 text-xs">{s.date ? new Date(s.date).toLocaleDateString() : 'Non planifiée'}</div>
+                      <div className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">{s.heure_debut || '--:--'} - {s.heure_fin || '--:--'}</div>
+                    </td>
+                    <td className="p-4">
+                      <span className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase tracking-wider ${s.type_activite === 'Exercice' ? 'bg-amber-100 text-amber-700' :
+                          s.type_activite === 'Document PDF' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'
+                        }`}>
+                        {s.type_activite || 'Signature'}
+                      </span>
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="flex justify-center">
+                        {s.statut_client === 'Signé' ? (
+                          <div className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-green-100">
+                            <Check size={10} strokeWidth={4} /> OK
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 bg-orange-50 text-orange-600 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-orange-100 opacity-60">
+                            <Clock size={10} strokeWidth={4} /> Attente
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="flex justify-center">
+                        {s.statut_formateur === 'Signé' ? (
+                          <div className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-green-100">
+                            <Check size={10} strokeWidth={4} /> OK
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 bg-orange-50 text-orange-600 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-orange-100 opacity-60">
+                            <Clock size={10} strokeWidth={4} /> Attente
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => {
+                            const docUrl = s.file_url || s.ressource_url;
+                            if (docUrl) {
+                              setViewingSession({ session: { ...s, file_url: docUrl }, mode: 'view' });
+                            } else {
+                              toast.error("Aucun document lié à cette étape.");
+                            }
+                          }}
+                          className="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                          title="Consulter le document"
+                        >
+                          <Eye size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSession(s.id)}
+                          className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          title="Supprimer l'étape"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan="6" className="py-20 text-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-16 h-16 bg-gray-50 rounded-3xl flex items-center justify-center text-gray-300">
+                          <History size={32} />
+                        </div>
+                        <p className="text-gray-400 italic text-sm">Aucune séance n'est encore programmée pour ce client.</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1501,8 +1558,9 @@ const AdminClientsView = ({
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions,
-  handleDeleteClient
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
+  generateSessions, handleDeleteClient, setIsSessionItemModalOpen,
+  setTargetSessionForAddition, setViewingSession
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -1526,6 +1584,9 @@ const AdminClientsView = ({
           handleUploadExerciseResponse={handleUploadExerciseResponse}
           generateSessions={generateSessions}
           handleDeleteClient={handleDeleteClient}
+          setIsSessionItemModalOpen={setIsSessionItemModalOpen}
+          setTargetSessionForAddition={setTargetSessionForAddition}
+          setViewingSession={setViewingSession}
         />
       );
     }
@@ -1604,7 +1665,12 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource, handleDeleteFormateur }) => {
+const AdminFormateursView = ({
+  clients, formateurs, documents, expandedClientId, setExpandedClientId,
+  supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab,
+  modules, sessions, handleDownloadResource, handleDeleteFormateur,
+  documentTemplates, handleGenerateDocx, setViewingDocId
+}) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
 
@@ -1620,6 +1686,10 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           modules={modules}
           clients={clients}
           handleDeleteFormateur={handleDeleteFormateur}
+          documents={documents}
+          documentTemplates={documentTemplates}
+          handleGenerateDocx={handleGenerateDocx}
+          setViewingDocId={setViewingDocId}
         />
       );
     }
@@ -1701,8 +1771,8 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
           </div>
           <div className="p-4 border-t border-gray-100 bg-gray-50 text-right shrink-0">
             <button
-               onClick={() => setSelectedClientSummary(null)}
-               className="bg-gray-900 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-black transition-all"
+              onClick={() => setSelectedClientSummary(null)}
+              className="bg-gray-900 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-black transition-all"
             >
               Fermer la supervision
             </button>
@@ -1773,7 +1843,7 @@ const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId,
                                 return (
                                   <tr key={client.id} className="hover:bg-gray-50/50 transition-colors">
                                     <td className="p-3">
-                                      <div 
+                                      <div
                                         className="font-bold text-sm text-indigo-600 hover:text-indigo-800 cursor-pointer underline underline-offset-2 transition-colors"
                                         onClick={(e) => { e.stopPropagation(); setSelectedClientSummary(client); }}
                                       >
@@ -1935,7 +2005,7 @@ const IngenierieView = ({
                                   ) : (
                                     <div className="flex items-center gap-2 group/title">
                                       <p className="font-bold text-gray-900">{template.titre}</p>
-                                      <button 
+                                      <button
                                         onClick={() => { setEditingId(template.id); setEditValue(template.titre); }}
                                         className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/title:opacity-100 transition-opacity"
                                       >
@@ -1979,7 +2049,7 @@ const IngenierieView = ({
                                       ) : (
                                         <div className="flex items-center gap-2 group/restitle leading-none">
                                           <span className="font-bold text-gray-800">{res.titre}</span>
-                                          <button 
+                                          <button
                                             onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
                                             className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
                                           >
@@ -2085,7 +2155,7 @@ const FormateurView = ({
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
-  setIsSessionItemModalOpen, setTargetSessionForAddition
+  setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
@@ -2249,250 +2319,253 @@ const FormateurView = ({
 
                   {formateurClientTab === 'seances' && (
                     <>
-                  <div className="flex items-center gap-3">
-                    <h4 className="font-bold text-gray-800 flex items-center">
-                      <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
-                      Planning des Séances - {assignedModule?.nom || 'Sans module'}
-                    </h4>
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-bold text-gray-800 flex items-center">
+                          <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
+                          Planning des Séances - {assignedModule?.nom || 'Sans module'}
+                        </h4>
 
-                    {(userRole === 'admin' || userRole === 'formateur') && (
-                      <button
-                        onClick={() => handleAddSession(client)}
-                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
-                        title="Ajouter une séance"
-                      >
-                        <span className="mr-1.5">➕</span> Ajouter une séance
-                      </button>
-                    )}
-                  </div>
+                        {(userRole === 'admin' || userRole === 'formateur') && (
+                          <button
+                            onClick={() => handleAddSession(client)}
+                            className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
+                            title="Ajouter une séance"
+                          >
+                            <span className="mr-1.5">➕</span> Ajouter une séance
+                          </button>
+                        )}
+                      </div>
 
-                  <div className="mb-4 flex flex-wrap gap-2"></div>
+                      <div className="mb-4 flex flex-wrap gap-2"></div>
 
-                  {clientSessions.length > 0 ? (
-                    <div className="overflow-hidden rounded-2xl border border-gray-100">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
-                          <tr>
-                            <th className="px-4 py-3 text-left">N° & Séance</th>
-                            <th className="px-4 py-3 text-left">Date</th>
-                            <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
-                            <th className="px-4 py-3 text-left">Statut</th>
-                            <th className="px-4 py-3 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 bg-white">
-                          {(() => {
-                            const grouped = clientSessions.reduce((acc, s) => {
-                              const key = s.numero_seance;
-                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-                              acc[key].items.push(s);
-                              return acc;
-                            }, {});
+                      {clientSessions.length > 0 ? (
+                        <div className="overflow-hidden rounded-2xl border border-gray-100">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                              <tr>
+                                <th className="px-4 py-3 text-left">N° & Séance</th>
+                                <th className="px-4 py-3 text-left">Date</th>
+                                <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
+                                <th className="px-4 py-3 text-left">Statut</th>
+                                <th className="px-4 py-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                              {(() => {
+                                const grouped = clientSessions.reduce((acc, s) => {
+                                  const key = s.numero_seance;
+                                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                                  acc[key].items.push(s);
+                                  return acc;
+                                }, {});
 
-                            return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
-                              <React.Fragment key={gIdx}>
-                                {/* Folder Header Row */}
-                                <tr className="bg-indigo-50/30">
-                                  <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
-                                    <div className="flex items-center gap-2 text-xs">
-                                      <Layout size={12} className="text-indigo-600" />
-                                      <span>SÉANCE {group.numero} : {group.nom}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <input
-                                      type="date"
-                                      value={group.date || ''}
-                                      onChange={(e) => {
-                                        group.items.forEach(s => updateSessionDate(s.id, e.target.value));
-                                      }}
-                                      className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
-                                    />
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex flex-col gap-0.5">
-                                        <input
-                                          type="time"
-                                          value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
-                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
-                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                        />
-                                        <input
-                                          type="time"
-                                          value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
-                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
-                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                        />
-                                      </div>
-                                      <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
-                                        <Save size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td colSpan="2" className="px-4 py-3 text-right">
-                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
-                                  </td>
-                                </tr>
-
-                                {/* Nested Items */}
-                                {group.items.map(session => (
-                                  <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
-                                    <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
-                                      <span className="text-[14px]">
-                                        {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
-                                      </span>
-                                      <span className="truncate">{session.ressource_titre || session.nom}</span>
-                                    </td>
-                                    <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
-                                    <td className="px-4 py-3">
-                                      <div className="flex flex-col gap-1">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                                  <React.Fragment key={gIdx}>
+                                    {/* Folder Header Row */}
+                                    <tr className="bg-indigo-50/30">
+                                      <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <Layout size={12} className="text-indigo-600" />
+                                          <span>SÉANCE {group.numero} : {group.nom}</span>
                                         </div>
-                                        <div className="flex items-center gap-1.5">
-                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <input
+                                          type="date"
+                                          value={group.date || ''}
+                                          onChange={(e) => {
+                                            group.items.forEach(s => updateSessionDate(s.id, e.target.value));
+                                          }}
+                                          className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
+                                        />
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                          <div className="flex flex-col gap-0.5">
+                                            <input
+                                              type="time"
+                                              value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
+                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                            />
+                                            <input
+                                              type="time"
+                                              value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
+                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                            />
+                                          </div>
+                                          <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
+                                            <Save size={14} />
+                                          </button>
                                         </div>
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                      <div className="flex justify-end items-center gap-2">
-                                        {(() => {
-                                          const today = new Date().toISOString().split('T')[0];
-                                          const sessionDate = session.date || group.date;
-                                          const isDateLocked = sessionDate && today < sessionDate;
-                                          const metadata = session.metadata || {};
+                                      </td>
+                                      <td colSpan="2" className="px-4 py-3 text-right">
+                                        <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+                                      </td>
+                                    </tr>
 
-                                          if (session.metadata?.isCustom) {
-                                            return (
-                                              <button
-                                                onClick={() => handleDeleteSession(session)}
-                                                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
-                                                title="Supprimer cet élément personnalisé"
-                                              >
-                                                <Trash2 size={14} />
-                                              </button>
-                                            );
-                                          }
+                                    {/* Nested Items */}
+                                    {group.items.map(session => (
+                                      <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
+                                        <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
+                                          <span className="text-[14px]">
+                                            {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
+                                          </span>
+                                          <span className="truncate">{session.ressource_titre || session.nom}</span>
+                                        </td>
+                                        <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
+                                        <td className="px-4 py-3">
+                                          <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-1.5">
+                                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                              <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                              <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                          <div className="flex justify-end items-center gap-2">
+                                            {(() => {
+                                              const today = new Date().toISOString().split('T')[0];
+                                              const sessionDate = session.date || group.date;
+                                              const isDateLocked = sessionDate && today < sessionDate;
+                                              const metadata = session.metadata || {};
 
-                                          if (session.type_activite === 'signature') {
-                                            const isSigned = session.statut_formateur === 'Signé';
-                                            return (
-                                              <button
-                                                disabled={isSigned || isDateLocked}
-                                                onClick={() => signSession(session)}
-                                                className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
-                                              >
-                                                {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
-                                              </button>
-                                            );
-                                          }
-
-                                          if (session.type_activite === 'document') {
-                                            const isToSign = metadata.isToSign;
-                                            const signedUrl = session.file_url_signed || metadata.file_url_signed;
-                                            return (
-                                              <div className="flex gap-2 items-center">
-                                                <button
-                                                  onClick={() => handleDownloadResource(signedUrl || session.file_url || session.ressource_url)}
-                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
-                                                >
-                                                  {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                                </button>
-                                                {signedUrl && (
+                                              if (session.metadata?.isCustom) {
+                                                return (
                                                   <button
-                                                    onClick={() => handleDownloadResource(signedUrl)}
-                                                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                                    title="Télécharger la preuve de signature"
+                                                    onClick={() => handleDeleteSession(session)}
+                                                    className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                                                    title="Supprimer cet élément personnalisé"
                                                   >
-                                                    <FileCheck size={16} />
+                                                    <Trash2 size={14} />
                                                   </button>
-                                                )}
-                                                {isToSign && (
+                                                );
+                                              }
+
+                                              if (session.type_activite === 'signature') {
+                                                const isSigned = session.statut_formateur === 'Signé';
+                                                return (
                                                   <button
-                                                    disabled={session.statut_client === 'Signé' || isDateLocked}
+                                                    disabled={isSigned || isDateLocked}
                                                     onClick={() => signSession(session)}
-                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
                                                   >
-                                                    {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                    {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
                                                   </button>
-                                                )}
-                                              </div>
-                                            );
-                                          }
+                                                );
+                                              }
 
-                                          if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                            return (
-                                              <div className="flex gap-2">
+                                              if (session.type_activite === 'document') {
+                                                const isToSign = metadata.isToSign;
+                                                const signedUrl = session.file_url_signed || metadata.file_url_signed;
+                                                return (
+                                                  <div className="flex gap-2 items-center">
+                                                    <button
+                                                      onClick={() => {
+                                                        const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                                        setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                                      }}
+                                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
+                                                    >
+                                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                                    </button>
+                                                    {signedUrl && (
+                                                      <button
+                                                        onClick={() => handleDownloadResource(signedUrl)}
+                                                        className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                        title="Télécharger la preuve de signature"
+                                                      >
+                                                        <FileCheck size={16} />
+                                                      </button>
+                                                    )}
+                                                    {isToSign && (
+                                                      <button
+                                                        disabled={session.statut_client === 'Signé' || isDateLocked}
+                                                        onClick={() => signSession(session)}
+                                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                                      >
+                                                        {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+
+                                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                                return (
+                                                  <div className="flex gap-2">
+                                                    <button
+                                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                                    >
+                                                      Télécharger
+                                                    </button>
+                                                    {userRole === 'client' && (
+                                                      <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                        Soumettre Réponse
+                                                        <input
+                                                          type="file"
+                                                          className="hidden"
+                                                          onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                                        />
+                                                      </label>
+                                                    )}
+                                                    {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
+                                                      <button
+                                                        onClick={() => window.open(session.reponse_url, '_blank')}
+                                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                      >
+                                                        Voir Réponse
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                );
+                                              }
+
+                                              return (
                                                 <button
-                                                  onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                                  onClick={() => handleDeleteSession(session)}
+                                                  className="text-gray-300 hover:text-red-500 transition-colors p-1"
                                                 >
-                                                  Télécharger
+                                                  <Trash2 size={14} />
                                                 </button>
-                                                {userRole === 'client' && (
-                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                                    Soumettre Réponse
-                                                    <input
-                                                      type="file"
-                                                      className="hidden"
-                                                      onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                                    />
-                                                  </label>
-                                                )}
-                                                {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                  <button
-                                                    onClick={() => window.open(session.reponse_url, '_blank')}
-                                                    className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
-                                                  >
-                                                    Voir Réponse
-                                                  </button>
-                                                )}
-                                              </div>
-                                            );
-                                          }
-
-                                          return (
-                                            <button
-                                              onClick={() => handleDeleteSession(session)}
-                                              className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
-                                          );
-                                        })()}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                                {/* Footer row with Add button */}
-                                <tr className="bg-gray-50/20">
-                                  <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
-                                    <button
-                                      onClick={() => {
-                                        setTargetSessionForAddition(group);
-                                        setIsSessionItemModalOpen(true);
-                                      }}
-                                      className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
-                                    >
-                                      <Plus size={12} /> Ajouter un élément
-                                    </button>
-                                  </td>
-                                </tr>
-                              </React.Fragment>
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                      <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
-                      {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
-                    </div>
-                  )}
+                                              );
+                                            })()}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {/* Footer row with Add button */}
+                                    <tr className="bg-gray-50/20">
+                                      <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
+                                        <button
+                                          onClick={() => {
+                                            setTargetSessionForAddition(group);
+                                            setIsSessionItemModalOpen(true);
+                                          }}
+                                          className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
+                                        >
+                                          <Plus size={12} /> Ajouter un élément
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  </React.Fragment>
+                                ));
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                          <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
+                          {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -3072,7 +3145,7 @@ const SessionsView = ({
                 return sortedGroups.map((group, gIdx) => {
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
-                  
+
                   const previousGroupNotSigned = gIdx > 0 && sortedGroups[gIdx - 1].items.some(s => s.statut !== 'Signé');
                   const isLocked = isFuture || previousGroupNotSigned;
 
@@ -3094,136 +3167,134 @@ const SessionsView = ({
                       </tr>
                       {group.items.map(session => (
                         <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
-                        <td className="py-4 pl-12">
-                          <div className="flex items-center gap-3">
-                            <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                              <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                          <td className="py-4 pl-12">
+                            <div className="flex items-center gap-3">
+                              <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                              <div className="flex flex-col">
+                                <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                                <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-4 text-xs italic text-gray-400">
-                          {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
-                        </td>
-                        <td className="py-4 text-center">
-                          <div className="flex flex-col gap-1 items-center">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                              <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                          </td>
+                          <td className="py-4 text-xs italic text-gray-400">
+                            {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
+                          </td>
+                          <td className="py-4 text-center">
+                            <div className="flex flex-col gap-1 items-center">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                              <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-4 text-right pr-4">
-                          <div className="flex justify-end gap-2">
-                            {(() => {
-                              const today = new Date().toISOString().split('T')[0];
-                              const sessionDate = session.date || group.date;
-                              const isDateLocked = sessionDate && today < sessionDate;
-                              const metadata = session.metadata || {};
+                          </td>
+                          <td className="py-4 text-right pr-4">
+                            <div className="flex justify-end gap-2">
+                              {(() => {
+                                const today = new Date().toISOString().split('T')[0];
+                                const sessionDate = session.date || group.date;
+                                const isDateLocked = sessionDate && today < sessionDate;
+                                const metadata = session.metadata || {};
 
-                              const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
+                                const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
 
-                              if (isSignatureCondition) {
-                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                const docUrl = session.file_url || session.ressource_url;
-                                return (
-                                  <div className="flex gap-2 items-center justify-end w-full">
-                                    {docUrl && (
+                                if (isSignatureCondition) {
+                                  const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                  const docUrl = session.file_url || session.ressource_url;
+                                  return (
+                                    <div className="flex gap-2 items-center justify-end w-full">
+                                      {docUrl && (
+                                        <button
+                                          onClick={() => {
+                                            const fileUrl = signedUrl || docUrl;
+                                            console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
+                                            console.log('[Consulter] session:', session.id, session.ressource_titre);
+                                            setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                          }}
+                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                                        >
+                                          Consulter
+                                        </button>
+                                      )}
+                                      <button
+                                        disabled={session.statut_client === 'Signé' || isDateLocked}
+                                        onClick={() => {
+                                          if (session.statut_client === 'Signé') return;
+                                          const fileUrl = docUrl || null;
+                                          console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
+                                          console.log('[Signer] session:', session.id, session.type_activite);
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        }}
+                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé'
+                                            ? 'bg-green-50 text-green-600 border-green-200'
+                                            : isDateLocked
+                                              ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                                              : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
+                                          }`}
+                                      >
+                                        {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+                                      </button>
+                                    </div>
+                                  );
+                                }
+
+                                if (session.type_activite === 'document') {
+                                  const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                  const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                  return (
+                                    <div className="flex gap-2 items-center justify-end w-full">
                                       <button
                                         onClick={() => {
-                                          const fileUrl = signedUrl || docUrl;
-                                          console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
-                                          console.log('[Consulter] session:', session.id, session.ressource_titre);
-                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                          console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
                                         }}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                          }`}
                                       >
-                                        Consulter
+                                        {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
                                       </button>
-                                    )}
-                                    <button
-                                      disabled={session.statut_client === 'Signé' || isDateLocked}
-                                      onClick={() => {
-                                        if (session.statut_client === 'Signé') return;
-                                        const fileUrl = docUrl || null;
-                                        console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
-                                        console.log('[Signer] session:', session.id, session.type_activite);
-                                        setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
-                                      }}
-                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                        session.statut_client === 'Signé'
-                                          ? 'bg-green-50 text-green-600 border-green-200'
-                                          : isDateLocked
-                                          ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                                          : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
-                                      }`}
-                                    >
-                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
-                                    </button>
-                                  </div>
-                                );
-                              }
+                                    </div>
+                                  );
+                                }
 
-                              if (session.type_activite === 'document') {
-                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                const docUrl = signedUrl || session.file_url || session.ressource_url;
-                                return (
-                                  <div className="flex gap-2 items-center justify-end w-full">
-                                    <button
-                                      onClick={() => {
-                                        console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
-                                        setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-                                      }}
-                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                        signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                      }`}
-                                    >
-                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                    </button>
-                                  </div>
-                                );
-                              }
-
-                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                return (
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                    >
-                                      Télécharger
-                                    </button>
-                                    <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                      {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
-                                      <input
-                                        type="file"
-                                        className="hidden"
-                                        onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                      />
-                                    </label>
-                                    {session.reponse_url && (
+                                if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                  return (
+                                    <div className="flex gap-2">
                                       <button
-                                        onClick={() => window.open(session.reponse_url, '_blank')}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
+                                        onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
                                       >
-                                        Ma Réponse ↗
+                                        Télécharger
                                       </button>
-                                    )}
-                                  </div>
-                                );
-                              }
+                                      <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                        {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
+                                        <input
+                                          type="file"
+                                          className="hidden"
+                                          onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                        />
+                                      </label>
+                                      {session.reponse_url && (
+                                        <button
+                                          onClick={() => window.open(session.reponse_url, '_blank')}
+                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
+                                        >
+                                          Ma Réponse ↗
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                }
 
-                              return null;
-                            })()}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                                return null;
+                              })()}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </React.Fragment>
                   );
                 });
@@ -3847,10 +3918,10 @@ export default function App() {
     const initSession = async () => {
       setIsLoadingSession(true);
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (session?.user?.email) {
         console.log('[App] Session trouvée pour:', session.user.email);
-        
+
         // Chercher le rôle
         const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', session.user.email).single();
         if (userData && userData.role) {
@@ -4144,7 +4215,7 @@ export default function App() {
       await supabase.from('clients').delete().eq('id', clientId);
       // 4. Supprimer le compte Auth (si possible)
       await supabaseAdmin.auth.admin.deleteUser(clientId);
-      
+
       toast.success("Client et toutes ses données supprimés avec succès.");
       setExpandedClientId(null);
       fetchUtilisateurs();
@@ -4274,10 +4345,10 @@ export default function App() {
     e.preventDefault();
     if (!newModuleName.trim()) return;
     const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances) }]);
-    if (!error) { 
-      await fetchModules(); 
-      setNewModuleName(''); 
-      setNewModuleSeances(1); 
+    if (!error) {
+      await fetchModules();
+      setNewModuleName('');
+      setNewModuleSeances(1);
       toast.success("Module créé avec succès !");
     }
     else toast.error('Erreur lors de la création du module : ' + error.message);
@@ -4413,7 +4484,7 @@ export default function App() {
 
     console.log(`[generateSessions] Début. ClientID: ${finalClientId}, ModuleID: ${finalModuleId}`);
 
-    const moduleId = finalModuleId; 
+    const moduleId = finalModuleId;
     if (!moduleId || isNaN(moduleId)) {
       console.warn("[generateSessions] ID de module invalide ou absent pour le client:", finalClientId);
       return;
@@ -4480,8 +4551,8 @@ export default function App() {
                 module_id: finalModuleId,
                 numero_seance: t.ordre,
                 nom: `${t.titre} - ${res.titre}`, // Rend le nom unique pour la DB
-                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' : 
-                               (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
+                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' :
+                  (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
                 ressource_id: res.ressource_id || null,
                 file_url: res.file_url || null,
                 ressource_titre: res.titre,
@@ -4540,8 +4611,8 @@ export default function App() {
       }
 
       const finalSessionsToInsert = sessionsToInsert.filter(newSession => {
-        const isDuplicate = alreadyInDb?.some(existing => 
-          existing.nom === newSession.nom && 
+        const isDuplicate = alreadyInDb?.some(existing =>
+          existing.nom === newSession.nom &&
           (existing.ressource_titre === newSession.ressource_titre || (!existing.ressource_titre && !newSession.ressource_titre))
         );
         return !isDuplicate;
@@ -4580,7 +4651,7 @@ export default function App() {
   const onSaveTimes = async (sessionId) => {
     const times = editedTimes[sessionId];
     if (!times) return;
-    
+
     setLastModifiedSessionId(sessionId);
     const updates = {};
     if (times.start) updates.heure_debut = times.start;
@@ -4616,11 +4687,11 @@ export default function App() {
   /**
    * Superpose la signature sur le PDF original et sauvegarde le résultat
    */
-   // --- Fonctions utilitaires Archivage ---
+  // --- Fonctions utilitaires Archivage ---
   const overlaySignatureOnPdf = async (session, client, signatureDataUrl, role) => {
     try {
       console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
-      
+
       const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
       if (!originalRelativePath) {
         console.log("[SignatureProof] Pas de chemin de document pour apposer la signature.");
@@ -4629,13 +4700,13 @@ export default function App() {
 
       // 1. Obtenir une URL de lecture valide (signée si nécessaire) pour le fetch
       console.log("[SignatureProof] Obtention URL signée pour original:", originalRelativePath);
-      
+
       // Extraction du bucket/path
       const extractBucketPath = (fullUrl) => {
         if (!fullUrl) return null;
         let bucket = 'documents';
         let path = fullUrl;
-        
+
         const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
         if (match) {
           bucket = match[1];
@@ -4665,9 +4736,9 @@ export default function App() {
         if (!res.ok) throw new Error(`HTTP ${res.status} lors de la lecture du PDF original`);
         return res.arrayBuffer();
       });
-      
+
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
-      
+
       // 3. Préparer l'image de la signature
       const signatureImageBytes = await fetch(signatureDataUrl).then(res => res.arrayBuffer());
       const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
@@ -4746,7 +4817,7 @@ export default function App() {
       updateData.signature_image = signatureDataUrl;
       updateData.date_signature = new Date().toISOString();
       updateData.statut_client = 'Signé';
-      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
+      updateData.statut = 'Signé';
     }
 
     // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
@@ -4771,8 +4842,7 @@ export default function App() {
       }
       await fetchSessions();
       toast.success(`Émargement enregistré avec succès !`);
-      setSigningSessionId(null);
-      if (userRole === 'client') setActiveTab('mes_seances');
+      setViewingSession(null); // Close viewer if open
     } else {
       console.error("Erreur signature session:", error);
       toast.error("Erreur lors de la signature : " + error.message);
@@ -4781,31 +4851,39 @@ export default function App() {
 
   const handleAddSessionItem = async (data) => {
     if (!targetSessionForAddition) return;
-    
+
     setIsSessionItemModalOpen(false);
-    setLastModifiedSessionId(targetSessionForAddition.items[0]?.id);
+
+    const clientId = targetSessionForAddition.clientId || targetSessionForAddition.items?.[0]?.client_id;
+    const moduleId = targetSessionForAddition.moduleId || targetSessionForAddition.items?.[0]?.module_id;
+    const numero = targetSessionForAddition.nextNum || targetSessionForAddition.numero;
+    const date = targetSessionForAddition.date || targetSessionForAddition.items?.[0]?.date;
+    const debut = targetSessionForAddition.debut || targetSessionForAddition.items?.[0]?.heure_debut;
+    const fin = targetSessionForAddition.fin || targetSessionForAddition.items?.[0]?.heure_fin;
 
     const { error } = await supabase.from('sessions').insert([{
-      client_id: targetSessionForAddition.items[0]?.client_id,
-      module_id: targetSessionForAddition.items[0]?.module_id,
-      numero_seance: targetSessionForAddition.numero,
+      client_id: clientId,
+      module_id: moduleId,
+      numero_seance: numero,
       nom: data.title,
       ressource_titre: data.title,
       type_activite: data.type,
-      file_url: data.url,
-      ressource_url: data.url,
-      metadata: { 
-        isCustom: true, 
-        isToSign: data.isToSign,
-        documentType: data.type === 'signature' ? 'signature' : 'info'
+      file_url: data.resourceId,
+      ressource_url: data.resourceId,
+      metadata: {
+        ...data.metadata,
+        isCustom: true,
+        documentType: data.type === 'signature' ? 'signature' : (data.metadata?.documentType || 'info')
       },
       statut: 'À venir',
       statut_client: 'À venir',
       statut_formateur: 'À venir',
-      date: targetSessionForAddition.date,
-      heure_debut: targetSessionForAddition.debut,
-      heure_fin: targetSessionForAddition.fin
+      date: date,
+      heure_debut: debut,
+      heure_fin: fin
     }]);
+
+
 
     if (!error) {
       await fetchSessions();
@@ -4849,7 +4927,7 @@ export default function App() {
 
     const isCustom = session.metadata?.isCustom === true;
     const confirmMsg = isCustom ? "Supprimer cet élément personnalisé ?" : `Supprimer la séance N°${session.numero_seance} ?`;
-    
+
     if (!window.confirm(confirmMsg)) return;
 
     const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
@@ -4956,7 +5034,7 @@ export default function App() {
         const secondTry = await supabase.storage
           .from('documents')
           .createSignedUrl(fileName, 3600);
-        
+
         data = secondTry.data;
         error = secondTry.error;
       }
@@ -5001,7 +5079,7 @@ export default function App() {
     }
   };
 
-  const handleGenerateDocx = async (clientRow, type) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -5009,40 +5087,82 @@ export default function App() {
         return;
       }
 
-      // 1. Récupération depuis la table ciblée 'clients'
-      const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
-      const finalClient = theClient || clientRow; // fallback
+      let dataToMerge = {};
+      let targetId = null;
+      let targetName = "Document";
+      let uploadBucket = 'documents';
 
-      // 2. Récupération formateur dans 'utilisateurs'
-      let theCoach = { nom: 'Non assigné' };
-      if (finalClient.formateur_id) {
-        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', finalClient.formateur_id).single();
-        if (coachData) theCoach = coachData;
+      if (isForFormateur || formateurId) {
+        const fId = formateurId || (clientRow ? clientRow.id : null);
+        const { data: theFormateur } = await supabase.from('utilisateurs').select('*').eq('id', fId).single();
+        if (!theFormateur) throw new Error("Formateur non trouvé");
+
+        dataToMerge = {
+          nom: theFormateur.nom || '',
+          nom_formateur: theFormateur.nom || '',
+          raison_sociale: theFormateur.nom || '',
+          adresse_formateur: theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse_client || theFormateur.adresse || '',
+          formateur_nda: theFormateur.formateur_nda || theFormateur.nda || '',
+          formateur_siret: theFormateur.formateur_siret || theFormateur.siret || '',
+          email_formateur: theFormateur.email || '',
+          tel_formateur: theFormateur.telephone || '',
+          date_signature: new Date().toLocaleDateString('fr-FR')
+        };
+        targetId = fId;
+        targetName = theFormateur.nom || "Formateur";
+      } else {
+        // 1. Récupération depuis la table ciblée 'clients'
+        const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
+        const finalClient = theClient || clientRow; // fallback
+
+        // 2. Récupération formateur dans 'utilisateurs'
+        let theCoach = { nom: 'Non assigné' };
+        if (finalClient.formateur_id) {
+          const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', finalClient.formateur_id).single();
+          if (coachData) theCoach = coachData;
+        }
+
+        const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
+
+        // Extraction impérative des dates via requête sur sessions
+        const { data: sessionDates, error: dateError } = await supabase
+          .from('sessions')
+          .select('date')
+          .eq('client_id', clientRow.id)
+          .not('date', 'is', null)
+          .order('date', { ascending: true });
+
+        let dateDebut = '[Date non définie]';
+        let dateFin = '[Date non définie]';
+
+        if (!dateError && sessionDates && sessionDates.length > 0) {
+          dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
+          dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
+        }
+
+        dataToMerge = {
+          nom: theCoach.nom || 'Coach',
+          nom_formateur: theCoach.nom || 'Coach',
+          raison_sociale: theCoach.nom || 'Coach',
+          adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
+          formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
+          formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
+          email_formateur: theCoach.email || '',
+          tel_formateur: theCoach.telephone || '',
+          nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
+          client_phone: finalClient.telephone || finalClient.client_phone || '',
+          client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
+          prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+          adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
+          modalite_formation: finalClient.modalite_formation || 'Mixte',
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          date_signature: new Date().toLocaleDateString('fr-FR'),
+          formation_nom: module?.nom || 'Formation'
+        };
+        targetId = clientRow.id;
+        targetName = finalClient.nom_complet || clientRow.nom || "Client";
       }
-
-      if (!finalClient.module_id && !clientRow.module_id) {
-        toast.error("Veuillez d'abord assigner un module à ce client.");
-        return;
-      }
-
-      const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
-
-      // Extraction impérative des dates via requête sur sessions
-      const { data: sessionDates, error: dateError } = await supabase
-        .from('sessions')
-        .select('date')
-        .eq('client_id', clientRow.id)
-        .not('date', 'is', null)
-        .order('date', { ascending: true });
-
-      let dateDebut = '[Date non définie]';
-      let dateFin = '[Date non définie]';
-
-      if (!dateError && sessionDates && sessionDates.length > 0) {
-        dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
-        dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
-      }
-
 
       const response = await fetch(templateInfo.url);
       if (!response.ok) throw new Error(`Fetch template error: ${response.statusText}`);
@@ -5051,252 +5171,241 @@ export default function App() {
       const zip = new PizZip(arrayBuffer);
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
-      const fallbackNomFormateur = 'Nom du formateur non renseigné';
-      doc.setData({
-        nom: theCoach.nom || fallbackNomFormateur,
-        nom_formateur: theCoach.nom || fallbackNomFormateur,
-        raison_sociale: theCoach.nom || fallbackNomFormateur,
-        adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
-        formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
-        formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
-        email_formateur: theCoach.email || '',
-        tel_formateur: theCoach.telephone || '',
-        nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
-        client_phone: finalClient.telephone || finalClient.client_phone || '',
-        client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
-        prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
-        adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
-        modalite_formation: finalClient.modalite_formation || 'Mixte',
-        date_debut: dateDebut,
-        date_fin: dateFin,
-        date_signature: new Date().toLocaleDateString('fr-FR'),
-        formation_nom: module?.nom || 'Formation'
-      });
-
+      doc.setData(dataToMerge);
       doc.render();
+
       const out = doc.getZip().generate({
         type: 'blob',
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
-      // Save as file for manual check, then upload
-      const safeNomClient = (finalClient.nom_complet || clientRow.nom || 'Client').replace(/\s+/g, '_');
-      const finalFileName = `${type}_${safeNomClient}_final.docx`;
+      const safeName = targetName.replace(/\s+/g, '_');
+      const finalFileName = `${type}_${safeName}_${Date.now()}.docx`;
       saveAs(out, finalFileName);
 
-      // Auto-upload the result too
-      const { error: uploadError } = await supabase.storage.from('documents').upload(`${Date.now()}_${finalFileName}`, out);
+      // Auto-upload
+      const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, out);
       if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
-        await supabase.from('documents').insert([{
-          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${finalClient.nom_complet || finalClient.nomcomplet_client || clientRow.nom}`,
+        const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
+
+        const docToInsert = {
+          nom: `${type} - ${targetName}`,
           type_document: 'Autre',
           url: publicUrl,
-          user_id: clientRow.id,
-          visible_client: true,
-          visible_formateur: true
-        }]);
+          file_url: publicUrl
+        };
 
+        if (isForFormateur || formateurId) {
+          docToInsert.assigned_formateur_id = targetId;
+        } else {
+          docToInsert.user_id = targetId;
+          docToInsert.visible_client = true;
+          docToInsert.visible_formateur = true;
+        }
+
+        await supabase.from('documents').insert([docToInsert]);
         await fetchDocuments();
-        toast.success(`Document "${finalFileName}" généré et archivé.`);
+        toast.success(`Document généré et archivé.`);
+      } else {
+        throw uploadError;
       }
     } catch (error) {
       console.error("Docx Error:", error);
-      toast.error("Erreur lors de la génération du document Word.");
+      toast.error("Erreur lors de la génération : " + error.message);
     }
-  };
-  const handleAddDocument = async (e) => {
-    e.preventDefault();
-    if (!newDocName.trim() || !newDocClientId) return;
-    setIsAddingDoc(true);
 
-    let finalUrl = newDocUrl;
-    if (newDocFile) {
-      const fileExt = newDocFile.name.split('.').pop();
-      const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(fileName, newDocFile);
+    const handleAddDocument = async (e) => {
+      e.preventDefault();
+      if (!newDocName.trim() || !newDocClientId) return;
+      setIsAddingDoc(true);
 
-      if (uploadError) {
-        console.error("Erreur upload:", uploadError);
-        toast.error("Erreur upload: " + uploadError.message);
-        setIsAddingDoc(false);
-        return;
+      let finalUrl = newDocUrl;
+      if (newDocFile) {
+        const fileExt = newDocFile.name.split('.').pop();
+        const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(fileName, newDocFile);
+
+        if (uploadError) {
+          console.error("Erreur upload:", uploadError);
+          toast.error("Erreur upload: " + uploadError.message);
+          setIsAddingDoc(false);
+          return;
+        }
+        const { data: { publicUrl } } = supabase.storage
+          .from('documents')
+          .getPublicUrl(fileName);
+        finalUrl = publicUrl;
       }
-      const { data: { publicUrl } } = supabase.storage
+
+      const { error } = await supabase
         .from('documents')
-        .getPublicUrl(fileName);
-      finalUrl = publicUrl;
-    }
+        .insert([{
+          nom: newDocName,
+          type_document: newDocType,
+          url: finalUrl,
+          user_id: newDocClientId,
+          visible_client: newDocVisClient,
+          visible_formateur: newDocVisFormateur,
+          signe_par_client: false,
+          signe_par_formateur: false
+        }]);
 
-    const { error } = await supabase
-      .from('documents')
-      .insert([{
-        nom: newDocName,
-        type_document: newDocType,
-        url: finalUrl,
-        user_id: newDocClientId,
-        visible_client: newDocVisClient,
-        visible_formateur: newDocVisFormateur,
-        signe_par_client: false,
-        signe_par_formateur: false
-      }]);
-
-    if (!error) {
-      // Rechargement immédiat pour récupérer le document dans l'UI
-      await fetchDocuments();
-      setNewDocName('');
-      setNewDocType('Autre');
-      setNewDocUrl('');
-      setNewDocFile(null);
-      setNewDocClientId('');
-      setNewDocVisClient(true);
-      setNewDocVisFormateur(true);
-    } else {
-      console.error("Erreur ajout doc", error);
-      toast.error('Erreur Doc : ' + error.message);
-    }
-    setIsAddingDoc(false);
-  };
-
-  const handleSignDocument = async (docId, signerType, signatureDataUrl = null) => {
-    const doc = documents.find(d => d.id === docId);
-    if (!doc) return;
-
-    // signerType = 'client' ou 'formateur'
-    const updateColumn = signerType === 'client'
-      ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
-      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() }; // Ajout de la date formateur utile
-
-    if (signatureDataUrl) {
-      // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
-      if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
-      else updateColumn.signature_formateur = signatureDataUrl;
-    }
-
-    const simulatedDoc = { ...doc, ...updateColumn };
-
-    // Met à jour Supabase, mais aussi on empêche les clics multiples
-    setDocuments(documents.map(d => d.id === docId ? simulatedDoc : d));
-
-    // Progression : Chaque signature doit faire avancer la barre (demande)
-    if (signerType === 'client') {
-      const client = clients.find(c => c.id === simulatedDoc.user_id);
-      if (client) {
-        const newSeances = (client.seances_effectuees || 0) + 1;
-        setClients(clients.map(c => c.id === client.id ? { ...c, seances_effectuees: newSeances } : c));
-        await supabase.from('utilisateurs').update({ seances_effectuees: newSeances }).eq('id', client.id);
+      if (!error) {
+        // Rechargement immédiat pour récupérer le document dans l'UI
+        await fetchDocuments();
+        setNewDocName('');
+        setNewDocType('Autre');
+        setNewDocUrl('');
+        setNewDocFile(null);
+        setNewDocClientId('');
+        setNewDocVisClient(true);
+        setNewDocVisFormateur(true);
+      } else {
+        console.error("Erreur ajout doc", error);
+        toast.error('Erreur Doc : ' + error.message);
       }
-    }
+      setIsAddingDoc(false);
+    };
 
-    const { error } = await supabase
-      .from('documents')
-      .update(updateColumn)
-      .eq('id', docId);
+    const handleSignDocument = async (docId, signerType, signatureDataUrl = null) => {
+      const doc = documents.find(d => d.id === docId);
+      if (!doc) return;
 
-    if (error) {
-      toast.error("Erreur signature: " + error.message);
-      // rollback state en cas d'erreur
-      await fetchDocuments();
-    }
-  };
+      // signerType = 'client' ou 'formateur'
+      const updateColumn = signerType === 'client'
+        ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
+        : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() }; // Ajout de la date formateur utile
 
-  const updateDateSeance = async (docId, date) => {
-    setDocuments(documents.map(d => d.id === docId ? { ...d, date_seance: date } : d));
-    const { error } = await supabase.from('documents').update({ date_seance: date }).eq('id', docId);
-    if (error) {
-      console.error("Erreur update date seance", error);
-      toast.error("Erreur lors de l'enregistrement de la date.");
-      await fetchDocuments();
-    }
-  };
+      if (signatureDataUrl) {
+        // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
+        if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
+        else updateColumn.signature_formateur = signatureDataUrl;
+      }
 
-  const handleSignatureSave = async (dataUrl) => {
-    if (!signingDocId) return;
-    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl);
-    setSigningDocId(null);
-  };
+      const simulatedDoc = { ...doc, ...updateColumn };
 
-  const handleDownloadPDF = async (doc) => {
-    if (doc && doc.id) {
-      const urlToDownload = doc.url_signed_pdf || doc.url;
-      if (!urlToDownload) return toast.error("Aucun fichier à télécharger");
+      // Met à jour Supabase, mais aussi on empêche les clics multiples
+      setDocuments(documents.map(d => d.id === docId ? simulatedDoc : d));
 
-      const fetchBase64Image = async (url) => {
-        if (!url) return null;
-        if (url.startsWith('data:image')) return url; // Already base64
+      // Progression : Chaque signature doit faire avancer la barre (demande)
+      if (signerType === 'client') {
+        const client = clients.find(c => c.id === simulatedDoc.user_id);
+        if (client) {
+          const newSeances = (client.seances_effectuees || 0) + 1;
+          setClients(clients.map(c => c.id === client.id ? { ...c, seances_effectuees: newSeances } : c));
+          await supabase.from('utilisateurs').update({ seances_effectuees: newSeances }).eq('id', client.id);
+        }
+      }
+
+      const { error } = await supabase
+        .from('documents')
+        .update(updateColumn)
+        .eq('id', docId);
+
+      if (error) {
+        toast.error("Erreur signature: " + error.message);
+        // rollback state en cas d'erreur
+        await fetchDocuments();
+      }
+    };
+
+    const updateDateSeance = async (docId, date) => {
+      setDocuments(documents.map(d => d.id === docId ? { ...d, date_seance: date } : d));
+      const { error } = await supabase.from('documents').update({ date_seance: date }).eq('id', docId);
+      if (error) {
+        console.error("Erreur update date seance", error);
+        toast.error("Erreur lors de l'enregistrement de la date.");
+        await fetchDocuments();
+      }
+    };
+
+    const handleSignatureSave = async (dataUrl) => {
+      if (!signingDocId) return;
+      await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl);
+      setSigningDocId(null);
+    };
+
+    const handleDownloadPDF = async (doc) => {
+      if (doc && doc.id) {
+        const urlToDownload = doc.url_signed_pdf || doc.url;
+        if (!urlToDownload) return toast.error("Aucun fichier à télécharger");
+
+        const fetchBase64Image = async (url) => {
+          if (!url) return null;
+          if (url.startsWith('data:image')) return url; // Already base64
+          try {
+            const res = await fetch(url);
+            const blobImg = await res.blob();
+            return await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blobImg);
+            });
+          } catch (e) {
+            console.error("Erreur téléchargement image :", e);
+            return null;
+          }
+        };
+
         try {
-          const res = await fetch(url);
-          const blobImg = await res.blob();
-          return await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.readAsDataURL(blobImg);
-          });
-        } catch (e) {
-          console.error("Erreur téléchargement image :", e);
-          return null;
-        }
-      };
+          const res = await fetch(urlToDownload);
+          if (!res.ok) throw new Error(`Impossible de récupérer le document (${res.status})`);
 
-      try {
-        const res = await fetch(urlToDownload);
-        if (!res.ok) throw new Error(`Impossible de récupérer le document (${res.status})`);
+          const blob = await res.blob();
+          let pdfDoc;
 
-        const blob = await res.blob();
-        let pdfDoc;
+          if (blob.type === 'application/pdf' || urlToDownload.toLowerCase().includes('.pdf')) {
+            const pdfBytes = await blob.arrayBuffer();
+            pdfDoc = await PDFDocument.load(pdfBytes);
+          } else {
+            pdfDoc = await PDFDocument.create();
+            const page = pdfDoc.addPage([595.28, 841.89]);
+            const imageBytes = await blob.arrayBuffer();
+            const img = blob.type === 'image/png'
+              ? await pdfDoc.embedPng(imageBytes)
+              : await pdfDoc.embedJpg(imageBytes);
+            const { width, height } = img.scaleToFit(500, 700);
+            page.drawImage(img, { x: 47, y: 841.89 - height - 80, width, height });
+          }
 
-        if (blob.type === 'application/pdf' || urlToDownload.toLowerCase().includes('.pdf')) {
-          const pdfBytes = await blob.arrayBuffer();
-          pdfDoc = await PDFDocument.load(pdfBytes);
-        } else {
-          pdfDoc = await PDFDocument.create();
-          const page = pdfDoc.addPage([595.28, 841.89]);
-          const imageBytes = await blob.arrayBuffer();
-          const img = blob.type === 'image/png'
-            ? await pdfDoc.embedPng(imageBytes)
-            : await pdfDoc.embedJpg(imageBytes);
-          const { width, height } = img.scaleToFit(500, 700);
-          page.drawImage(img, { x: 47, y: 841.89 - height - 80, width, height });
-        }
+          const client = clients.find(c => c.id === doc.user_id);
+          const clientName = client ? client.nom : 'Bénéficiaire';
 
-        const client = clients.find(c => c.id === doc.user_id);
-        const clientName = client ? client.nom : 'Bénéficiaire';
+          const formateur = formateurs.find(f => f.id === client?.formateur_id);
+          const formateurName = formateur ? formateur.nom : 'Formateur';
 
-        const formateur = formateurs.find(f => f.id === client?.formateur_id);
-        const formateurName = formateur ? formateur.nom : 'Formateur';
+          const now = new Date();
+          const dateText = now.toLocaleDateString('fr-FR');
+          const timeText = now.toLocaleTimeString('fr-FR');
 
-        const now = new Date();
-        const dateText = now.toLocaleDateString('fr-FR');
-        const timeText = now.toLocaleTimeString('fr-FR');
+          const signatureClientUrl = doc.signature_client || doc.signature_client_url || null;
+          const signatureFormateurUrl = doc.signature_formateur || doc.signature_formateur_url || null;
 
-        const signatureClientUrl = doc.signature_client || doc.signature_client_url || null;
-        const signatureFormateurUrl = doc.signature_formateur || doc.signature_formateur_url || null;
+          console.log('Signature Client:', signatureClientUrl);
+          console.log('Signature Formateur:', signatureFormateurUrl);
 
-        console.log('Signature Client:', signatureClientUrl);
-        console.log('Signature Formateur:', signatureFormateurUrl);
+          const clientImageBase64 = await fetchBase64Image(signatureClientUrl);
+          const formateurImageBase64 = await fetchBase64Image(signatureFormateurUrl);
 
-        const clientImageBase64 = await fetchBase64Image(signatureClientUrl);
-        const formateurImageBase64 = await fetchBase64Image(signatureFormateurUrl);
+          const certEl = document.createElement('div');
+          certEl.style.width = '794px';
+          certEl.style.minHeight = '1123px';
+          certEl.style.padding = '40px';
+          certEl.style.fontFamily = 'Arial, Helvetica, sans-serif';
+          certEl.style.background = '#ffffff';
+          certEl.style.color = '#1f2937';
+          certEl.style.position = 'fixed';
+          certEl.style.left = '-9999px';
+          certEl.style.top = '-9999px';
 
-        const certEl = document.createElement('div');
-        certEl.style.width = '794px';
-        certEl.style.minHeight = '1123px';
-        certEl.style.padding = '40px';
-        certEl.style.fontFamily = 'Arial, Helvetica, sans-serif';
-        certEl.style.background = '#ffffff';
-        certEl.style.color = '#1f2937';
-        certEl.style.position = 'fixed';
-        certEl.style.left = '-9999px';
-        certEl.style.top = '-9999px';
+          const renderSigBlock = (role, imageBase64, name) => {
+            const imageHtml = imageBase64
+              ? `<img src="${imageBase64}" style="max-width: 280px; height: auto; border: 1px solid #d1d5db;" />`
+              : '<div style="width:280px;height:120px;border:1px dashed #9ca3af;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:12px;">Aucune signature attachée</div>';
 
-        const renderSigBlock = (role, imageBase64, name) => {
-          const imageHtml = imageBase64
-            ? `<img src="${imageBase64}" style="max-width: 280px; height: auto; border: 1px solid #d1d5db;" />`
-            : '<div style="width:280px;height:120px;border:1px dashed #9ca3af;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:12px;">Aucune signature attachée</div>';
-
-          return `
+            return `
             <div style="flex:1; min-width:280px; padding: 14px; border: 1px solid #d1d5db; border-radius: 12px; margin: 8px;">
               <h3 style="font-size: 16px; margin-bottom: 10px;">${role}</h3>
               <p style="font-size: 12px; margin-bottom: 8px; font-weight: bold;">${name}</p>
@@ -5304,9 +5413,9 @@ export default function App() {
               ${imageHtml}
             </div>
           `;
-        };
+          };
 
-        certEl.innerHTML = `
+          certEl.innerHTML = `
           <div style="padding: 20px; border: 1px solid #d1d5db; border-radius: 12px;">
             <h1 style="font-size: 24px; margin-bottom: 16px;">Certificat de signature électronique</h1>
             <p style="font-size: 14px; margin-bottom: 16px;"><strong>Document :</strong> ${doc.nom || 'Document'}</p>
@@ -5318,650 +5427,737 @@ export default function App() {
           </div>
         `;
 
-        document.body.appendChild(certEl);
+          document.body.appendChild(certEl);
 
-        // Petite pause pour être sûr que le rendu image (Base64) est bien injecté
-        await new Promise((resolve) => setTimeout(resolve, 500));
+          // Petite pause pour être sûr que le rendu image (Base64) est bien injecté
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
-        const canvas = await html2canvas(certEl, { scale: 2, backgroundColor: '#ffffff' });
-        document.body.removeChild(certEl);
+          const canvas = await html2canvas(certEl, { scale: 2, backgroundColor: '#ffffff' });
+          document.body.removeChild(certEl);
 
-        const certPdf = new jsPDF({ unit: 'pt', format: 'a4' });
-        const imgData = canvas.toDataURL('image/png');
-        certPdf.addImage(imgData, 'PNG', 0, 0, 595.28, 841.89);
+          const certPdf = new jsPDF({ unit: 'pt', format: 'a4' });
+          const imgData = canvas.toDataURL('image/png');
+          certPdf.addImage(imgData, 'PNG', 0, 0, 595.28, 841.89);
 
-        const certPdfBytes = certPdf.output('arraybuffer');
-        const certPageDoc = await PDFDocument.load(certPdfBytes);
-        const [certPage] = await pdfDoc.copyPages(certPageDoc, [0]);
-        pdfDoc.addPage(certPage);
+          const certPdfBytes = certPdf.output('arraybuffer');
+          const certPageDoc = await PDFDocument.load(certPdfBytes);
+          const [certPage] = await pdfDoc.copyPages(certPageDoc, [0]);
+          pdfDoc.addPage(certPage);
 
-        const finalPdfBytes = await pdfDoc.save();
-        const finalBlob = new Blob([finalPdfBytes], { type: 'application/pdf' });
+          const finalPdfBytes = await pdfDoc.save();
+          const finalBlob = new Blob([finalPdfBytes], { type: 'application/pdf' });
 
-        const downloadLink = document.createElement('a');
-        downloadLink.href = URL.createObjectURL(finalBlob);
-        downloadLink.download = `certificat_signature_${doc.id}_${Date.now()}.pdf`;
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-        URL.revokeObjectURL(downloadLink.href);
+          const downloadLink = document.createElement('a');
+          downloadLink.href = URL.createObjectURL(finalBlob);
+          downloadLink.download = `certificat_signature_${doc.id}_${Date.now()}.pdf`;
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+          URL.revokeObjectURL(downloadLink.href);
 
-      } catch (error) {
-        console.error('Erreur de génération du PDF final :', error);
-        toast.error('Impossible de générer le PDF signé. Vérifiez la console.');
-      }
-    } else {
-      toast.success('Simulation : Téléchargement du bilan...');
-    }
-  };
-
-
-
-  // --- Chargement des données au lancement (Supabase) ---
-  useEffect(() => {
-    fetchUtilisateurs();
-    fetchDocuments();
-    fetchModules();
-    fetchSessions();
-    fetchPedagogicalResources();
-
-    // Détection des liens d'invitation ou de récupération de mot de passe
-    supabase.auth.onAuthStateChange((event, session) => {
-      if (
-        event === 'PASSWORD_RECOVERY' ||
-        (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
-        window.location.pathname === '/set-password'
-      ) {
-        setIsSettingPassword(true);
-      }
-    });
-  }, [userRole]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
-  // Les séances sont désormais générées uniquement via le bouton manuel dans la vue Formateur.
-
-  // Affichage du simulateur de connexion ou de la page de mot de passe
-  if (isSettingPassword) {
-    return (
-      <SetPasswordView
-        supabase={supabase}
-        onComplete={async () => {
-          // Attendre que Supabase finalise la session
-          await new Promise(r => setTimeout(r, 500));
-
-          // Récupérer l'utilisateur authentifié
-          const { data: { user } } = await supabase.auth.getUser();
-
-          if (user && user.email) {
-            // Chercher le rôle dans la base de données (admin/formateur)
-            const { data: userData } = await supabase
-              .from('utilisateurs')
-              .select('role, id')
-              .eq('email', user.email)
-              .single();
-
-            console.log('DB user data:', userData);
-
-            if (userData && userData.role) {
-              // ⚡ D'ABORD définir le rôle, PUIS masquer le formulaire de mot de passe
-              handleLogin(userData.role, userData.id);
-              setIsSettingPassword(false);
-              return;
-            }
-          }
-
-          // Fallback: pas de rôle trouvé
-          console.warn('Impossible de déterminer le rôle automatiquement.');
-          setIsSettingPassword(false);
-        }}
-      />
-    );
-  }
-
-  if (isResetPassword) {
-    return (
-      <ResetPasswordPage
-        supabase={supabase}
-        onComplete={async () => {
-          // Auto login process
-          const { data: { user } } = await supabase.auth.getUser();
-          
-          if (user && user.email) {
-            const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
-            if (userData && userData.role) {
-              handleLogin(userData.role, userData.id);
-              setIsResetPassword(false);
-              return;
-            }
-            
-            const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
-            if (clientData && clientData.id) {
-               handleLogin('client', clientData.id);
-               setIsResetPassword(false);
-               return;
-            }
-          }
-          
-          // Fallback if role not found
-          await supabase.auth.signOut();
-          window.history.replaceState(null, '', '/');
-          setIsResetPassword(false);
-          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
-        }}
-      />
-    );
-  }
-
-  if (isLoadingSession) {
-    return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
-        <div className="w-12 h-12 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div>
-        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
-      </div>
-    );
-  }
-
-  if (!userRole) {
-    return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} />;
-  }
-
-  return (
-    <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
-      {/* Sidebar Mobile Overlay */}
-      <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
-
-      {/* Navigation Sidebar (Dynamic par Rôle) */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-gray-300 transition-transform transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex-shrink-0 flex flex-col`}>
-        <div className="flex items-center justify-between h-20 px-6 border-b border-gray-800 bg-gray-950">
-          <div className="flex items-center">
-            <div className="w-8 h-8 rounded-lg bg-rose-500 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]">VB</div>
-            <span className="text-xl font-bold text-white tracking-widest">ERP</span>
-          </div>
-          <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
-          {userRole === 'admin' && (
-            <>
-              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <Users className="w-5 h-5 mr-3" /> Clients
-              </button>
-              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <Users className="w-5 h-5 mr-3" /> Formateurs
-              </button>
-              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FileText className="w-5 h-5 mr-3" /> Modélothèque
-              </button>
-              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <Settings className="w-5 h-5 mr-3" /> Modules
-              </button>
-            </>
-          )}
-
-          {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <Users className="w-5 h-5 mr-3" /> Mes Clients
-            </button>
-          )}
-
-          {userRole === 'client' && (
-            <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
-            </>
-          )}
-
-
-          {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('ressources'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ressources' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <FileText className="w-5 h-5 mr-3" /> Ressources
-            </button>
-          )}
-        </nav>
-
-        <div className="p-4 bg-gray-950 border-t border-gray-800">
-          <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
-            <LogOut className="w-5 h-5 mr-3" /> Déconnexion
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden relative">
-        <header className="md:hidden bg-white border-b border-gray-200 px-4 py-4 flex items-center justify-between z-10 w-full shrink-0">
-          <button onClick={() => setMobileMenuOpen(true)} className="text-gray-500">
-            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
-          </button>
-          <div className="font-bold text-gray-900 border border-gray-200 px-3 py-1 rounded capitalize">{userRole}</div>
-        </header>
-
-        <header className="hidden md:flex bg-white px-10 py-5 border-b border-gray-100 shadow-sm z-10 justify-between items-center w-full shrink-0">
-          <div className="flex items-center space-x-3">
-            <h2 className="text-xl font-bold text-gray-800 capitalize">Espace {userRole}</h2>
-            <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <div className="text-right mr-2">
-              <p className="text-sm font-bold text-gray-800 leading-tight">
-                {userRole === 'admin' && "Profil Admin"}
-                {userRole === 'formateur' && (formateurs.find(f => f.id === currentUserId)?.nom || "Coach")}
-                {userRole === 'client' && (clients.find(c => c.id === currentUserId)?.nom || "Bénéficiaire")}
-              </p>
-            </div>
-            <div
-              onClick={() => setActiveTab('profil')}
-              className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105"
-            >
-              {userRole === 'admin' ? "AD" : (userRole === 'formateur' ? "CH" : "CL")}
-            </div>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
-          {activeTab === 'profil' && <ProfileView
-            currentUserId={currentUserId}
-            supabase={supabase}
-            fetchUtilisateurs={fetchUtilisateurs}
-            formateurs={formateurs}
-            clients={clients}
-            userRole={userRole}
-          />}
-          {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
-            handleAddUser={handleAddUser}
-            newUserName={newUserName} setNewUserName={setNewUserName}
-            newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
-            newUserRole={newUserRole} setNewUserRole={setNewUserRole}
-            clientPhone={clientPhone} setClientPhone={setClientPhone}
-            clientEmail={clientEmail} setClientEmail={setClientEmail}
-            isAddingUser={isAddingUser}
-            clients={clients}
-            formateurs={formateurs}
-            assignFormateur={assignFormateur}
-            handleModuleChange={handleModuleChange}
-            modules={modules}
-            handleGenerateDocx={handleGenerateDocx}
-            sessions={sessions}
-            documentTemplates={documentTemplates}
-            supabase={supabase}
-            expandedClientId={expandedClientId}
-            setExpandedClientId={setExpandedClientId}
-            fetchUtilisateurs={fetchUtilisateurs}
-            setIsInviteModalOpen={setIsInviteModalOpen}
-            pedagogicalResources={pedagogicalResources}
-            fetchSessions={fetchSessions}
-            documents={documents}
-            handleDownloadResource={handleDownloadResource}
-            handleUploadExerciseResponse={handleUploadExerciseResponse}
-            generateSessions={generateSessions}
-            handleDeleteClient={handleDeleteClient}
-          />}
-          {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
-            clients={clients}
-            formateurs={formateurs}
-            documents={documents}
-            expandedClientId={expandedClientId}
-            setExpandedClientId={setExpandedClientId}
-            supabase={supabase}
-            fetchUtilisateurs={fetchUtilisateurs}
-            fetchDocuments={fetchDocuments}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            modules={modules}
-            sessions={sessions}
-            handleDownloadResource={handleDownloadResource}
-            handleDeleteFormateur={handleDeleteFormateur}
-          />}
-          {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
-            modules={modules}
-            moduleDocuments={moduleDocuments}
-            handleAddModule={handleAddModule}
-            handleLinkDocument={handleLinkDocument}
-            newModuleName={newModuleName}
-            setNewModuleName={setNewModuleName}
-            newModuleSeances={newModuleSeances}
-            setNewModuleSeances={setNewModuleSeances}
-            newModDocName={newModDocName}
-            setNewModDocName={setNewModDocName}
-            newModDocType={newModDocType}
-            setNewModDocType={setNewModDocType}
-            newModDocFile={newModDocFile}
-            setNewModDocFile={setNewModDocFile}
-            addingToModuleId={addingToModuleId}
-            setAddingToModuleId={setAddingToModuleId}
-            handleUploadDocxTemplate={handleUploadDocxTemplate}
-            newTemplateName={newTemplateName}
-            setNewTemplateName={setNewTemplateName}
-            handleUploadResource={handleUploadResource}
-            newResourceName={newResourceName}
-            setNewResourceName={setNewResourceName}
-            isUploadingResource={isUploadingResource}
-            modelingModuleId={modelingModuleId}
-            setModelingModuleId={setModelingModuleId}
-            moduleSessionTemplates={moduleSessionTemplates}
-            moduleStepResources={moduleStepResources}
-            fetchModules={fetchModules}
-            newStepTitle={newStepTitle}
-            setNewStepTitle={setNewStepTitle}
-            newStepActivity={newStepActivity}
-            setNewStepActivity={setNewStepActivity}
-            selectedResourceId={selectedResourceId}
-            setSelectedResourceId={setSelectedResourceId}
-            pedagogicalResources={pedagogicalResources}
-            isAddingStep={isAddingStep}
-            setIsAddingStep={setIsAddingStep}
-            isAddingStepResource={isAddingStepResource}
-            setIsAddingStepResource={setIsAddingStepResource}
-            supabase={supabase}
-            createSessionFolder={createSessionFolder}
-            isResourceModalOpen={isResourceModalOpen}
-            setIsResourceModalOpen={setIsResourceModalOpen}
-            activeFolderId={activeFolderId}
-            setActiveFolderId={setActiveFolderId}
-            handleDeleteFolder={handleDeleteFolder}
-            handleDeleteStepResource={handleDeleteStepResource}
-            handleAddStepResource={handleAddStepResource}
-            handleRenameFolder={handleRenameFolder}
-            handleRenameResource={handleRenameResource}
-          />}
-          {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
-            clients={clients}
-            formateurs={formateurs}
-            sessions={sessions}
-            generateSessions={generateSessions}
-            updateSessionDate={updateSessionDate}
-            signSession={signSession}
-            modules={modules}
-            userRole={userRole}
-            currentUserId={currentUserId}
-            expandedClientId={expandedClientId}
-            setExpandedClientId={setExpandedClientId}
-            handleAddSession={handleAddSession}
-            handleDeleteSession={handleDeleteSession}
-            updateSessionTime={updateSessionTime}
-            handleGenerateDocx={handleGenerateDocx}
-            documents={documents}
-            fetchUtilisateurs={fetchUtilisateurs}
-            documentTemplates={documentTemplates}
-            pedagogicalResources={pedagogicalResources}
-            handleDownloadResource={handleDownloadResource}
-            handleUploadExerciseResponse={handleUploadExerciseResponse}
-            setIsSessionItemModalOpen={setIsSessionItemModalOpen}
-            setTargetSessionForAddition={setTargetSessionForAddition}
-            onTimeChange={onTimeChange}
-            onSaveTimes={onSaveTimes}
-            setLastModifiedSessionId={setLastModifiedSessionId}
-            lastModifiedSessionId={lastModifiedSessionId}
-          />}
-          {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
-          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
-          {activeTab === 'modélothèque' && <DocumentsView
-            sessions={sessions}
-            documents={documents}
-            clients={clients}
-            formateurs={formateurs}
-            userRole={userRole}
-            currentUserId={currentUserId}
-            handleSignDocument={handleSignDocument}
-            handleDownloadPDF={handleDownloadPDF}
-            handleAddDocument={handleAddDocument}
-            updateDateSeance={updateDateSeance}
-            newDocName={newDocName} setNewDocName={setNewDocName}
-            newDocType={newDocType} setNewDocType={setNewDocType}
-            newDocUrl={newDocUrl} setNewDocUrl={setNewDocUrl}
-            newDocFile={newDocFile} setNewDocFile={setNewDocFile}
-            newDocClientId={newDocClientId} setNewDocClientId={setNewDocClientId}
-            newDocVisClient={newDocVisClient} setNewDocVisClient={setNewDocVisClient}
-            newDocVisFormateur={newDocVisFormateur} setNewDocVisFormateur={setNewDocVisFormateur}
-            isAddingDoc={isAddingDoc}
-            selectedClientForDocs={selectedClientForDocs}
-            setSelectedClientForDocs={setSelectedClientForDocs}
-            signingDocId={signingDocId}
-            setSigningDocId={setSigningDocId}
-            viewingDocId={viewingDocId}
-            setViewingDocId={setViewingDocId}
-            handleSignatureSave={handleSignatureSave}
-            documentTemplates={documentTemplates}
-            handleUploadDocxTemplate={handleUploadDocxTemplate}
-            newTemplateName={newTemplateName}
-            setNewTemplateName={setNewTemplateName}
-          />}
-          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
-
-          {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
-        </main>
-      </div>
-
-      {/* Modals Qualiopi */}
-      <SignatureModal
-        isOpen={signingDocId !== null}
-        onClose={() => setSigningDocId(null)}
-        onSave={handleSignatureSave}
-      />
-
-      <SessionItemModal
-        isOpen={isSessionItemModalOpen}
-        onClose={() => setIsSessionItemModalOpen(false)}
-        pedagogicalResources={pedagogicalResources}
-        supabase={supabase}
-        onSave={handleAddSessionItem}
-      />
-
-      {/* Visionneuse PDF pour docs de la modélothèque */}
-      <DocumentViewerModal
-        isOpen={viewingDocId !== null}
-        document={documents.find(d => d.id === viewingDocId)}
-        onClose={() => setViewingDocId(null)}
-        supabase={supabase}
-        mode="view"
-      />
-
-      {/* Visionneuse PDF pour sessions (lecture + signature obligatoire) */}
-      <DocumentViewerModal
-        isOpen={viewingSession !== null}
-        url={resolveFileUrl(
-          viewingSession?.session
-            ? (viewingSession.session.signed_pdf_url || viewingSession.session.file_url || viewingSession.session.ressource_url || null)
-            : null
-        )}
-        title={viewingSession?.session
-          ? (viewingSession.session.ressource_titre || viewingSession.session.nom || 'Document')
-          : ''
+        } catch (error) {
+          console.error('Erreur de génération du PDF final :', error);
+          toast.error('Impossible de générer le PDF signé. Vérifiez la console.');
         }
-        supabase={supabase}
-        mode={viewingSession?.mode || 'view'}
-        onClose={() => setViewingSession(null)}
-        onSave={viewingSession?.mode === 'sign' ? async (signature) => {
-          const sessionId = viewingSession.session.id;
-          setViewingSession(null);
-          await handleSessionSignatureSave(sessionId, signature);
-        } : undefined}
-      />
+      } else {
+        toast.success('Simulation : Téléchargement du bilan...');
+      }
+    };
 
-      <InviteModal
-        isOpen={isInviteModalOpen}
-        onClose={() => setIsInviteModalOpen(false)}
-        onInvite={handleInviteUser}
-        isAddingUser={isAddingUser}
-        formateurs={formateurs}
-      />
 
-      <Toaster />
-    </div>
-  );
-}
 
-const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients, handleDeleteFormateur }) => {
-  const [isSaving, setIsSaving] = React.useState(false);
-  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
-  const [legalInfo, setLegalInfo] = React.useState({
-    nom: formateur.nom || '',
-    formateur_siret: formateur.formateur_siret || formateur.siret || '',
-    formateur_nda: formateur.formateur_nda || formateur.nda || '',
-    adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
-    email: formateur.email || '',
-    telephone: formateur.telephone || ''
-  });
+    // --- Chargement des données au lancement (Supabase) ---
+    useEffect(() => {
+      fetchUtilisateurs();
+      fetchDocuments();
+      fetchModules();
+      fetchSessions();
+      fetchPedagogicalResources();
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    const { error } = await supabase
-      .from('utilisateurs')
-      .update({
-        nom: legalInfo.nom,
-        formateur_siret: legalInfo.formateur_siret,
-        formateur_nda: legalInfo.formateur_nda,
-        adresse_formateur: legalInfo.adresse_formateur,
-        email: legalInfo.email,
-        telephone: legalInfo.telephone
-      })
-      .eq('id', formateur.id);
+      // Détection des liens d'invitation ou de récupération de mot de passe
+      supabase.auth.onAuthStateChange((event, session) => {
+        if (
+          event === 'PASSWORD_RECOVERY' ||
+          (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
+          window.location.pathname === '/set-password'
+        ) {
+          setIsSettingPassword(true);
+        }
+      });
+    }, [userRole]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
 
-    if (error) {
-      toast.error("Erreur lors de la sauvegarde : " + error.message);
-    } else {
-      await fetchUtilisateurs();
-      toast.success("Informations légales enregistrées !");
-    }
-    setIsSaving(false);
-  };
+    // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
+    // Les séances sont désormais générées uniquement via le bouton manuel dans la vue Formateur.
 
-  return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
-      <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
-        <ChevronLeft className="w-5 h-5 mr-1" /> Retour à la liste des formateurs
-      </button>
+    // Affichage du simulateur de connexion ou de la page de mot de passe
+    if (isSettingPassword) {
+      return (
+        <SetPasswordView
+          supabase={supabase}
+          onComplete={async () => {
+            // Attendre que Supabase finalise la session
+            await new Promise(r => setTimeout(r, 500));
 
-      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
-        <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
-          <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center font-bold text-3xl shadow-inner">
-            {formateur.nom ? formateur.nom.charAt(0) : '?'}
-          </div>
-          <div>
-            <h2 className="text-3xl font-bold text-gray-900">{formateur.nom}</h2>
-            <p className="text-gray-500 text-lg">Profil Formateur & Informations Légales</p>
-          </div>
-        </div>
+            // Récupérer l'utilisateur authentifié
+            const { data: { user } } = await supabase.auth.getUser();
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="space-y-6">
-            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <FileText className="text-rose-500" /> Identité Professionnelle
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Raison Sociale / Nom complet</label>
-                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all font-medium"
-                  value={legalInfo.nom} onChange={e => setLegalInfo({ ...legalInfo, nom: e.target.value })} placeholder="Ex: Matthys Coaching EURL" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                    value={legalInfo.formateur_siret} onChange={e => setLegalInfo({ ...legalInfo, formateur_siret: e.target.value })} placeholder="14 chiffres" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Qualiopi)</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                    value={legalInfo.formateur_nda} onChange={e => setLegalInfo({ ...legalInfo, formateur_nda: e.target.value })} placeholder="N° Déclaration" />
-                </div>
-              </div>
-            </div>
-          </div>
+            if (user && user.email) {
+              // Chercher le rôle dans la base de données (admin/formateur)
+              const { data: userData } = await supabase
+                .from('utilisateurs')
+                .select('role, id')
+                .eq('email', user.email)
+                .single();
 
-          <div className="space-y-6">
-            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <Plus className="text-indigo-500" /> Coordonnées & Contact
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Professionnelle</label>
-                <textarea rows="2" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                  value={legalInfo.adresse_formateur} onChange={e => setLegalInfo({ ...legalInfo, adresse_formateur: e.target.value })} placeholder="Adresse complète du siège" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                    value={legalInfo.email} onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })} placeholder="Email pro" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                    value={legalInfo.telephone} onChange={e => setLegalInfo({ ...legalInfo, telephone: e.target.value })} placeholder="06..." />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+              console.log('DB user data:', userData);
 
-        <div className="mt-12 flex justify-end items-center gap-4">
-          <button
-            onClick={() => setIsConfirmDeleteOpen(true)}
-            className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
-          >
-            <Trash2 size={20} />
-            Supprimer le formateur
-          </button>
-          <button onClick={handleSave} disabled={isSaving} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
-            <Save size={20} />
-            {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
-          </button>
-        </div>
+              if (userData && userData.role) {
+                // ⚡ D'ABORD définir le rôle, PUIS masquer le formulaire de mot de passe
+                handleLogin(userData.role, userData.id);
+                setIsSettingPassword(false);
+                return;
+              }
+            }
 
-        <DeleteConfirmationModal
-          isOpen={isConfirmDeleteOpen}
-          onClose={() => setIsConfirmDeleteOpen(false)}
-          onConfirm={() => {
-            setIsConfirmDeleteOpen(false);
-            handleDeleteFormateur(formateur.id);
-            onBack();
+            // Fallback: pas de rôle trouvé
+            console.warn('Impossible de déterminer le rôle automatiquement.');
+            setIsSettingPassword(false);
           }}
-          itemName={legalInfo.nom || "ce formateur"}
-          title="Supprimer ce formateur ?"
         />
-      </div>
+      );
+    }
 
-      {/* Liste des clients assignés */}
-      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8">
-        <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-          <Users className="text-rose-500" /> Clients Assignés
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {clients.filter(c => c.formateur_id === formateur.id).map(client => {
-            const assignedModule = modules.find(m => String(m.id) === String(client.module_id));
-            return (
-              <div key={client.id} className="p-4 border border-gray-50 rounded-2xl bg-gray-50/50 hover:bg-white hover:border-rose-200 transition-all group">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-700 shadow-sm group-hover:bg-rose-50 transition-colors">
-                    {client.nom ? client.nom.charAt(0) : '?'}
+    if (isResetPassword) {
+      return (
+        <ResetPasswordPage
+          supabase={supabase}
+          onComplete={async () => {
+            // Auto login process
+            const { data: { user } } = await supabase.auth.getUser();
+
+            if (user && user.email) {
+              const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
+              if (userData && userData.role) {
+                handleLogin(userData.role, userData.id);
+                setIsResetPassword(false);
+                return;
+              }
+
+              const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
+              if (clientData && clientData.id) {
+                handleLogin('client', clientData.id);
+                setIsResetPassword(false);
+                return;
+              }
+            }
+
+            // Fallback if role not found
+            await supabase.auth.signOut();
+            window.history.replaceState(null, '', '/');
+            setIsResetPassword(false);
+            setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
+          }}
+        />
+      );
+    }
+
+    if (isLoadingSession) {
+      return (
+        <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
+          <div className="w-12 h-12 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div>
+          <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
+        </div>
+      );
+    }
+
+    if (!userRole) {
+      return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} />;
+    }
+
+    return (
+      <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
+        {/* Sidebar Mobile Overlay */}
+        <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
+
+        {/* Navigation Sidebar (Dynamic par Rôle) */}
+        <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-gray-300 transition-transform transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex-shrink-0 flex flex-col`}>
+          <div className="flex items-center justify-between h-20 px-6 border-b border-gray-800 bg-gray-950">
+            <div className="flex items-center">
+              <div className="w-8 h-8 rounded-lg bg-rose-500 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]">VB</div>
+              <span className="text-xl font-bold text-white tracking-widest">ERP</span>
+            </div>
+            <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
+            {userRole === 'admin' && (
+              <>
+                <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                  <Users className="w-5 h-5 mr-3" /> Clients
+                </button>
+                <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                  <Users className="w-5 h-5 mr-3" /> Formateurs
+                </button>
+                <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                  <FileText className="w-5 h-5 mr-3" /> Modélothèque
+                </button>
+                <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                  <Settings className="w-5 h-5 mr-3" /> Modules
+                </button>
+              </>
+            )}
+
+            {userRole === 'formateur' && (
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Users className="w-5 h-5 mr-3" /> Mes Clients
+              </button>
+            )}
+
+            {userRole === 'client' && (
+              <>
+                <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
+                <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+                <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
+                <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
+              </>
+            )}
+
+
+            {userRole === 'formateur' && (
+              <button onClick={() => { setActiveTab('ressources'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ressources' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FileText className="w-5 h-5 mr-3" /> Ressources
+              </button>
+            )}
+          </nav>
+
+          <div className="p-4 bg-gray-950 border-t border-gray-800">
+            <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
+              <LogOut className="w-5 h-5 mr-3" /> Déconnexion
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          <header className="md:hidden bg-white border-b border-gray-200 px-4 py-4 flex items-center justify-between z-10 w-full shrink-0">
+            <button onClick={() => setMobileMenuOpen(true)} className="text-gray-500">
+              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
+            <div className="font-bold text-gray-900 border border-gray-200 px-3 py-1 rounded capitalize">{userRole}</div>
+          </header>
+
+          <header className="hidden md:flex bg-white px-10 py-5 border-b border-gray-100 shadow-sm z-10 justify-between items-center w-full shrink-0">
+            <div className="flex items-center space-x-3">
+              <h2 className="text-xl font-bold text-gray-800 capitalize">Espace {userRole}</h2>
+              <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <div className="text-right mr-2">
+                <p className="text-sm font-bold text-gray-800 leading-tight">
+                  {userRole === 'admin' && "Profil Admin"}
+                  {userRole === 'formateur' && (formateurs.find(f => f.id === currentUserId)?.nom || "Coach")}
+                  {userRole === 'client' && (clients.find(c => c.id === currentUserId)?.nom || "Bénéficiaire")}
+                </p>
+              </div>
+              <div
+                onClick={() => setActiveTab('profil')}
+                className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105"
+              >
+                {userRole === 'admin' ? "AD" : (userRole === 'formateur' ? "CH" : "CL")}
+              </div>
+            </div>
+          </header>
+
+          <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
+            {activeTab === 'profil' && <ProfileView
+              currentUserId={currentUserId}
+              supabase={supabase}
+              fetchUtilisateurs={fetchUtilisateurs}
+              formateurs={formateurs}
+              clients={clients}
+              userRole={userRole}
+            />}
+            {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
+              handleAddUser={handleAddUser}
+              newUserName={newUserName} setNewUserName={setNewUserName}
+              newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
+              newUserRole={newUserRole} setNewUserRole={setNewUserRole}
+              clientPhone={clientPhone} setClientPhone={setClientPhone}
+              clientEmail={clientEmail} setClientEmail={setClientEmail}
+              isAddingUser={isAddingUser}
+              clients={clients}
+              formateurs={formateurs}
+              assignFormateur={assignFormateur}
+              handleModuleChange={handleModuleChange}
+              modules={modules}
+              handleGenerateDocx={handleGenerateDocx}
+              sessions={sessions}
+              documentTemplates={documentTemplates}
+              supabase={supabase}
+              expandedClientId={expandedClientId}
+              setExpandedClientId={setExpandedClientId}
+              fetchUtilisateurs={fetchUtilisateurs}
+              fetchDocuments={fetchDocuments}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              setIsInviteModalOpen={setIsInviteModalOpen}
+              pedagogicalResources={pedagogicalResources}
+              fetchSessions={fetchSessions}
+              documents={documents}
+              handleDownloadResource={handleDownloadResource}
+              handleUploadExerciseResponse={handleUploadExerciseResponse}
+              generateSessions={generateSessions}
+              handleDeleteClient={handleDeleteClient}
+              setIsSessionItemModalOpen={setIsSessionItemModalOpen}
+              setTargetSessionForAddition={setTargetSessionForAddition}
+              setViewingSession={setViewingSession}
+            />}
+            {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
+              clients={clients}
+              formateurs={formateurs}
+              documents={documents}
+              expandedClientId={expandedClientId}
+              setExpandedClientId={setExpandedClientId}
+              supabase={supabase}
+              fetchUtilisateurs={fetchUtilisateurs}
+              fetchDocuments={fetchDocuments}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              modules={modules}
+              sessions={sessions}
+              handleDownloadResource={handleDownloadResource}
+              handleDeleteFormateur={handleDeleteFormateur}
+              documentTemplates={documentTemplates}
+              handleGenerateDocx={handleGenerateDocx}
+              setViewingDocId={setViewingDocId}
+            />}
+            {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
+              modules={modules}
+              moduleDocuments={moduleDocuments}
+              handleAddModule={handleAddModule}
+              handleLinkDocument={handleLinkDocument}
+              newModuleName={newModuleName}
+              setNewModuleName={setNewModuleName}
+              newModuleSeances={newModuleSeances}
+              setNewModuleSeances={setNewModuleSeances}
+              newModDocName={newModDocName}
+              setNewModDocName={setNewModDocName}
+              newModDocType={newModDocType}
+              setNewModDocType={setNewModDocType}
+              newModDocFile={newModDocFile}
+              setNewModDocFile={setNewModDocFile}
+              addingToModuleId={addingToModuleId}
+              setAddingToModuleId={setAddingToModuleId}
+              handleUploadDocxTemplate={handleUploadDocxTemplate}
+              newTemplateName={newTemplateName}
+              setNewTemplateName={setNewTemplateName}
+              handleUploadResource={handleUploadResource}
+              newResourceName={newResourceName}
+              setNewResourceName={setNewResourceName}
+              isUploadingResource={isUploadingResource}
+              modelingModuleId={modelingModuleId}
+              setModelingModuleId={setModelingModuleId}
+              moduleSessionTemplates={moduleSessionTemplates}
+              moduleStepResources={moduleStepResources}
+              fetchModules={fetchModules}
+              newStepTitle={newStepTitle}
+              setNewStepTitle={setNewStepTitle}
+              newStepActivity={newStepActivity}
+              setNewStepActivity={setNewStepActivity}
+              selectedResourceId={selectedResourceId}
+              setSelectedResourceId={setSelectedResourceId}
+              pedagogicalResources={pedagogicalResources}
+              isAddingStep={isAddingStep}
+              setIsAddingStep={setIsAddingStep}
+              isAddingStepResource={isAddingStepResource}
+              setIsAddingStepResource={setIsAddingStepResource}
+              supabase={supabase}
+              createSessionFolder={createSessionFolder}
+              isResourceModalOpen={isResourceModalOpen}
+              setIsResourceModalOpen={setIsResourceModalOpen}
+              activeFolderId={activeFolderId}
+              setActiveFolderId={setActiveFolderId}
+              handleDeleteFolder={handleDeleteFolder}
+              handleDeleteStepResource={handleDeleteStepResource}
+              handleAddStepResource={handleAddStepResource}
+              handleRenameFolder={handleRenameFolder}
+              handleRenameResource={handleRenameResource}
+            />}
+            {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
+              clients={clients}
+              formateurs={formateurs}
+              sessions={sessions}
+              generateSessions={generateSessions}
+              updateSessionDate={updateSessionDate}
+              signSession={signSession}
+              modules={modules}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              expandedClientId={expandedClientId}
+              setExpandedClientId={setExpandedClientId}
+              handleAddSession={handleAddSession}
+              handleDeleteSession={handleDeleteSession}
+              updateSessionTime={updateSessionTime}
+              handleGenerateDocx={handleGenerateDocx}
+              documents={documents}
+              fetchUtilisateurs={fetchUtilisateurs}
+              documentTemplates={documentTemplates}
+              pedagogicalResources={pedagogicalResources}
+              handleDownloadResource={handleDownloadResource}
+              handleUploadExerciseResponse={handleUploadExerciseResponse}
+              setIsSessionItemModalOpen={setIsSessionItemModalOpen}
+              setTargetSessionForAddition={setTargetSessionForAddition}
+              onTimeChange={onTimeChange}
+              onSaveTimes={onSaveTimes}
+              setLastModifiedSessionId={setLastModifiedSessionId}
+              lastModifiedSessionId={lastModifiedSessionId}
+              setViewingSession={setViewingSession}
+            />}
+            {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
+            {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
+            {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
+            {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
+            {activeTab === 'modélothèque' && <DocumentsView
+              sessions={sessions}
+              documents={documents}
+              clients={clients}
+              formateurs={formateurs}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              handleSignDocument={handleSignDocument}
+              handleDownloadPDF={handleDownloadPDF}
+              handleAddDocument={handleAddDocument}
+              updateDateSeance={updateDateSeance}
+              newDocName={newDocName} setNewDocName={setNewDocName}
+              newDocType={newDocType} setNewDocType={setNewDocType}
+              newDocUrl={newDocUrl} setNewDocUrl={setNewDocUrl}
+              newDocFile={newDocFile} setNewDocFile={setNewDocFile}
+              newDocClientId={newDocClientId} setNewDocClientId={setNewDocClientId}
+              newDocVisClient={newDocVisClient} setNewDocVisClient={setNewDocVisClient}
+              newDocVisFormateur={newDocVisFormateur} setNewDocVisFormateur={setNewDocVisFormateur}
+              isAddingDoc={isAddingDoc}
+              selectedClientForDocs={selectedClientForDocs}
+              setSelectedClientForDocs={setSelectedClientForDocs}
+              signingDocId={signingDocId}
+              setSigningDocId={setSigningDocId}
+              viewingDocId={viewingDocId}
+              setViewingDocId={setViewingDocId}
+              handleSignatureSave={handleSignatureSave}
+              documentTemplates={documentTemplates}
+              handleUploadDocxTemplate={handleUploadDocxTemplate}
+              newTemplateName={newTemplateName}
+              setNewTemplateName={setNewTemplateName}
+            />}
+            {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
+
+            {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
+          </main>
+        </div>
+
+        {/* Modals Qualiopi */}
+        <SignatureModal
+          isOpen={signingDocId !== null}
+          onClose={() => setSigningDocId(null)}
+          onSave={handleSignatureSave}
+        />
+
+        <SessionItemModal
+          isOpen={isSessionItemModalOpen}
+          onClose={() => setIsSessionItemModalOpen(false)}
+          pedagogicalResources={pedagogicalResources}
+          supabase={supabase}
+          onSave={handleAddSessionItem}
+        />
+
+        {/* Visionneuse PDF pour docs de la modélothèque */}
+        <DocumentViewerModal
+          isOpen={viewingDocId !== null}
+          document={documents.find(d => d.id === viewingDocId)}
+          onClose={() => setViewingDocId(null)}
+          supabase={supabase}
+          mode="view"
+        />
+
+        {/* Visionneuse PDF pour sessions (lecture + signature obligatoire) */}
+        <DocumentViewerModal
+          isOpen={viewingSession !== null}
+          url={resolveFileUrl(
+            viewingSession?.session
+              ? (viewingSession.session.signed_pdf_url || viewingSession.session.file_url || viewingSession.session.ressource_url || null)
+              : null
+          )}
+          title={viewingSession?.session
+            ? (viewingSession.session.ressource_titre || viewingSession.session.nom || 'Document')
+            : ''
+          }
+          supabase={supabase}
+          mode={viewingSession?.mode || 'view'}
+          onClose={() => setViewingSession(null)}
+          onSave={viewingSession?.mode === 'sign' ? async (signature) => {
+            const sessionId = viewingSession.session.id;
+            setViewingSession(null);
+            await handleSessionSignatureSave(sessionId, signature);
+          } : undefined}
+        />
+
+        <InviteModal
+          isOpen={isInviteModalOpen}
+          onClose={() => setIsInviteModalOpen(false)}
+          onInvite={handleInviteUser}
+          isAddingUser={isAddingUser}
+          formateurs={formateurs}
+        />
+
+        <Toaster />
+      </div>
+    );
+  }
+
+  const FormateurDetailView = ({
+    formateur, onBack, supabase, fetchUtilisateurs, modules, clients,
+    handleDeleteFormateur, documents, documentTemplates, handleGenerateDocx,
+    setViewingDocId
+  }) => {
+    const [isSaving, setIsSaving] = React.useState(false);
+    const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+    const [legalInfo, setLegalInfo] = React.useState({
+      nom: formateur.nom || '',
+      formateur_siret: formateur.formateur_siret || formateur.siret || '',
+      formateur_nda: formateur.formateur_nda || formateur.nda || '',
+      adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
+      email: formateur.email || '',
+      telephone: formateur.telephone || ''
+    });
+
+    const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id) : [];
+
+    const handleSave = async () => {
+      setIsSaving(true);
+      const { error } = await supabase
+        .from('utilisateurs')
+        .update({
+          nom: legalInfo.nom,
+          formateur_siret: legalInfo.formateur_siret,
+          formateur_nda: legalInfo.formateur_nda,
+          adresse_formateur: legalInfo.adresse_formateur,
+          email: legalInfo.email,
+          telephone: legalInfo.telephone
+        })
+        .eq('id', formateur.id);
+
+      if (error) {
+        toast.error("Erreur lors de la sauvegarde : " + error.message);
+      } else {
+        await fetchUtilisateurs();
+        toast.success("Informations légales enregistrées !");
+      }
+      setIsSaving(false);
+    };
+
+    return (
+      <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+        <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
+          <ChevronLeft className="w-5 h-5 mr-1" /> Retour à la liste des formateurs
+        </button>
+
+        <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+          <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
+            <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center font-bold text-3xl shadow-inner">
+              {formateur.nom ? formateur.nom.charAt(0) : '?'}
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-gray-900">{formateur.nom}</h2>
+              <p className="text-gray-500 text-lg">Profil Formateur & Informations Légales</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-6">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <FileText className="text-rose-500" /> Identité Professionnelle
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Raison Sociale / Nom complet</label>
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all font-medium"
+                    value={legalInfo.nom} onChange={e => setLegalInfo({ ...legalInfo, nom: e.target.value })} placeholder="Ex: Matthys Coaching EURL" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
+                    <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                      value={legalInfo.formateur_siret} onChange={e => setLegalInfo({ ...legalInfo, formateur_siret: e.target.value })} placeholder="14 chiffres" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-gray-900 text-sm">{client.nom}</h4>
-                    <p className="text-[10px] text-gray-500 font-medium">{client.email}</p>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Qualiopi)</label>
+                    <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                      value={legalInfo.formateur_nda} onChange={e => setLegalInfo({ ...legalInfo, formateur_nda: e.target.value })} placeholder="N° Déclaration" />
                   </div>
                 </div>
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
-                    {assignedModule ? assignedModule.nom : 'Pas de module assigné'}
-                  </span>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <Plus className="text-indigo-500" /> Coordonnées & Contact
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Professionnelle</label>
+                  <textarea rows="2" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                    value={legalInfo.adresse_formateur} onChange={e => setLegalInfo({ ...legalInfo, adresse_formateur: e.target.value })} placeholder="Adresse complète du siège" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
+                    <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                      value={legalInfo.email} onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })} placeholder="Email pro" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
+                    <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                      value={legalInfo.telephone} onChange={e => setLegalInfo({ ...legalInfo, telephone: e.target.value })} placeholder="06..." />
+                  </div>
                 </div>
               </div>
-            );
-          })}
-          {clients.filter(c => c.formateur_id === formateur.id).length === 0 && (
-            <p className="text-gray-400 italic text-sm py-4">Aucun client n'est encore assigné à ce formateur.</p>
-          )}
+            </div>
+          </div>
+
+          <div className="mt-12 flex justify-end items-center gap-4">
+            <button
+              onClick={() => setIsConfirmDeleteOpen(true)}
+              className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
+            >
+              <Trash2 size={20} />
+              Supprimer le formateur
+            </button>
+            <button onClick={handleSave} disabled={isSaving} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
+              <Save size={20} />
+              {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
+            </button>
+          </div>
+
+          <DeleteConfirmationModal
+            isOpen={isConfirmDeleteOpen}
+            onClose={() => setIsConfirmDeleteOpen(false)}
+            onConfirm={() => {
+              setIsConfirmDeleteOpen(false);
+              handleDeleteFormateur(formateur.id);
+              onBack();
+            }}
+            itemName={legalInfo.nom || "ce formateur"}
+            title="Supprimer ce formateur ?"
+          />
+          <div className="mt-12 pt-12 border-t border-gray-100">
+            <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <Archive className="text-rose-500" /> Documents Administratifs (Contrats / NDA...)
+            </h3>
+
+            <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100">
+              <div className="flex flex-wrap gap-3 mb-8">
+                {Object.keys(documentTemplates || {}).filter(k => k.toLowerCase().includes('formateur') || k.toLowerCase().includes('mission') || k.toLowerCase().includes('traitance')).map(key => (
+                  <button
+                    key={key}
+                    onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
+                    className="bg-white hover:bg-rose-600 hover:text-white text-rose-600 border border-rose-100 px-5 py-3 rounded-2xl text-sm font-bold shadow-sm transition-all flex items-center gap-2"
+                  >
+                    <PenTool size={16} /> Générer {key}
+                  </button>
+                ))}
+                {Object.keys(documentTemplates || {}).length === 0 && (
+                  <p className="text-xs text-gray-400 italic">Aucun modèle de document formateur disponible.</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {trainerDocs.map(doc => (
+                  <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-rose-200 transition-all shadow-sm">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                        <FileText size={20} />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-sm">{doc.nom}</h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.workflow_status === 'SIGNE_ET_ARCHIVE' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {doc.workflow_status === 'SIGNE_ET_ARCHIVE' ? 'Archivé' : 'À signer'}
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-medium">
+                            {new Date(doc.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setViewingDocId(doc.id)}
+                        className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                        title="Voir le document"
+                      >
+                        <Eye size={20} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          // Use resolveFileUrl for direct download if needed, 
+                          // but viewer is safer for now.
+                          setViewingDocId(doc.id);
+                        }}
+                        className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                        title="Télécharger"
+                      >
+                        <Download size={20} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {trainerDocs.length === 0 && (
+                  <div className="md:col-span-2 py-10 text-center border-2 border-dashed border-gray-100 rounded-[24px]">
+                    <p className="text-gray-400 text-sm italic">Aucun document administratif généré pour ce formateur.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Liste des clients assignés */}
+        <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8">
+          <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <Users className="text-rose-500" /> Clients Assignés
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clients.filter(c => c.formateur_id === formateur.id).map(client => {
+              const assignedModule = modules.find(m => String(m.id) === String(client.module_id));
+              return (
+                <div key={client.id} className="p-4 border border-gray-50 rounded-2xl bg-gray-50/50 hover:bg-white hover:border-rose-200 transition-all group">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-700 shadow-sm group-hover:bg-rose-50 transition-colors">
+                      {client.nom ? client.nom.charAt(0) : '?'}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">{client.nom}</h4>
+                      <p className="text-[10px] text-gray-500 font-medium">{client.email}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
+                      {assignedModule ? assignedModule.nom : 'Pas de module assigné'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            {clients.filter(c => c.formateur_id === formateur.id).length === 0 && (
+              <p className="text-gray-400 italic text-sm py-4">Aucun client n'est encore assigné à ce formateur.</p>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
-};
-
+    );
+  };
+}
