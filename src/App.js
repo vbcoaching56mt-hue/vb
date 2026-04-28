@@ -768,20 +768,32 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
 };
 
 // --- Composant Modal pour l'ajout d'éléments personnalisés par le Formateur ---
-const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
+const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, clientSessions = [] }) => {
+  const [choice, setChoice] = useState('existing'); // 'existing' or 'new'
+  const [selectedSessionId, setSelectedSessionId] = useState('');
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [isToSign, setIsToSign] = useState(false);
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  
+  // States for 'new' choice
+  const [newDate, setNewDate] = useState('');
+  const [newStart, setNewStart] = useState('');
+  const [newEnd, setNewEnd] = useState('');
 
   React.useEffect(() => {
     if (isOpen) {
+      setChoice('existing');
       setType('signature');
       setTitle('');
       setIsToSign(false);
       setSelectedResourceId('');
       setIsUploading(false);
+      setSelectedSessionId('');
+      setNewDate('');
+      setNewStart('');
+      setNewEnd('');
     }
   }, [isOpen]);
 
@@ -811,6 +823,12 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
   if (!isOpen) return null;
 
+  const groupedSessions = clientSessions.reduce((acc, s) => {
+    if (!acc[s.numero_seance]) acc[s.numero_seance] = s;
+    return acc;
+  }, {});
+  const uniqueSessionOptions = Object.values(groupedSessions).sort((a, b) => a.numero_seance - b.numero_seance);
+
   return (
     <div className="fixed inset-0 bg-gray-950/80 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
       <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100 animate-slide-up">
@@ -822,7 +840,73 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-400">✕</button>
         </div>
 
-        <div className="p-8 space-y-6">
+        <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+          {/* Choix de la destination */}
+          <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
+            <button 
+              onClick={() => setChoice('existing')}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'existing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Séance Existante
+            </button>
+            <button 
+              onClick={() => setChoice('new')}
+              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'new' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Nouvelle Séance
+            </button>
+          </div>
+
+          {choice === 'existing' ? (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
+              <select 
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
+                value={selectedSessionId}
+                onChange={e => setSelectedSessionId(e.target.value)}
+              >
+                <option value="">-- Sélectionner --</option>
+                {uniqueSessionOptions.map(s => (
+                  <option key={s.id} value={s.id}>SÉANCE {s.numero_seance} {s.nom ? `(${s.nom.split(' - ')[0]})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="space-y-4 animate-fade-in">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
+                  <input 
+                    type="date"
+                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                    value={newDate}
+                    onChange={e => setNewDate(e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
+                    <input 
+                      type="time"
+                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                      value={newStart}
+                      onChange={e => setNewStart(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
+                    <input 
+                      type="time"
+                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                      value={newEnd}
+                      onChange={e => setNewEnd(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
             <input
@@ -909,13 +993,22 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
         <div className="p-6 bg-gray-50 flex gap-3">
           <button onClick={onClose} className="flex-1 py-4 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">Annuler</button>
           <button
-            disabled={!title || isUploading || ((type === 'document' || type === 'exercice') && !selectedResourceId)}
-            onClick={() => onSave({
-              title,
-              type,
-              url: selectedResourceId,
-              isToSign: type === 'signature' ? true : isToSign
-            })}
+            disabled={!title || isUploading || ((type === 'document' || type === 'exercice') && !selectedResourceId) || (choice === 'existing' && !selectedSessionId)}
+            onClick={() => {
+              const sessionData = choice === 'existing' 
+                ? clientSessions.find(s => s.id === selectedSessionId) 
+                : { date: newDate, heure_debut: newStart, heure_fin: newEnd, isNewSession: true };
+
+              onSave({
+                title,
+                type,
+                resourceId: selectedResourceId,
+                isToSign: type === 'signature' ? true : isToSign,
+                sessionChoice: choice,
+                sessionData
+              });
+              onClose();
+            }}
             className="flex-[2] py-4 bg-indigo-600 text-white font-black text-sm rounded-2xl shadow-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95 transition-all"
           >
             {isUploading ? 'Chargement...' : 'Ajouter l\'élément'}
@@ -1355,6 +1448,7 @@ const ClientDetailView = ({
       {activeTab === 'docs_signes' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
           <div className="grid grid-cols-1 gap-4">
+            {/* Sessions signées */}
             {sessions
               .filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed))
               .map(session => {
@@ -1376,12 +1470,39 @@ const ClientDetailView = ({
                       onClick={() => window.open(signedUrl, '_blank')}
                       className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                     >
-                      <Download size={14} /> Télécharger le PDF signé
+                      <Download size={14} /> Télécharger
                     </button>
                   </div>
                 );
               })}
-            {sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 && (
+            
+            {/* Documents administratifs signés */}
+            {documents
+              .filter(d => d.user_id === client.id && d.statut === 'Signé')
+              .map(doc => (
+                <div key={doc.id} className="flex items-center justify-between p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100 hover:border-emerald-300 transition-all group">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <FileCheck size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">{doc.nom}</h4>
+                      <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">
+                        Document Administratif Signé
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => window.open(doc.url || doc.file_url, '_blank')}
+                    className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                  >
+                    <Download size={14} /> Télécharger
+                  </button>
+                </div>
+              ))}
+
+            {(sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 &&
+              documents.filter(d => d.user_id === client.id && d.statut === 'Signé').length === 0) && (
               <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                 <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
               </div>
@@ -5180,16 +5301,31 @@ export default function App() {
     
     setIsSessionItemModalOpen(false);
     
-    const clientId = targetSessionForAddition.clientId || targetSessionForAddition.items?.[0]?.client_id;
-    const moduleId = targetSessionForAddition.moduleId || targetSessionForAddition.items?.[0]?.module_id;
-    const numero = targetSessionForAddition.nextNum || targetSessionForAddition.numero;
-    const date = targetSessionForAddition.date || targetSessionForAddition.items?.[0]?.date;
-    const debut = targetSessionForAddition.debut || targetSessionForAddition.items?.[0]?.heure_debut;
-    const fin = targetSessionForAddition.fin || targetSessionForAddition.items?.[0]?.heure_fin;
+    const clientId = targetSessionForAddition.clientId;
+    const { sessionChoice, sessionData } = data;
+
+    let numero = 1;
+    let date = null;
+    let debut = null;
+    let fin = null;
+
+    if (sessionChoice === 'existing') {
+      numero = sessionData.numero_seance;
+      date = sessionData.date;
+      debut = sessionData.heure_debut;
+      fin = sessionData.heure_fin;
+    } else {
+      // Nouvelle séance
+      const clientSessions = sessions.filter(s => s.client_id === clientId);
+      numero = clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance)) + 1 : 1;
+      date = sessionData.date;
+      debut = sessionData.heure_debut;
+      fin = sessionData.heure_fin;
+    }
 
     const { error } = await supabase.from('sessions').insert([{
       client_id: clientId,
-      module_id: moduleId,
+      module_id: clients.find(c => c.id === clientId)?.module_id,
       numero_seance: numero,
       nom: data.title,
       ressource_titre: data.title,
@@ -5197,9 +5333,8 @@ export default function App() {
       file_url: data.resourceId,
       ressource_url: data.resourceId,
       metadata: { 
-        ...data.metadata,
         isCustom: true,
-        documentType: data.type === 'signature' ? 'signature' : (data.metadata?.documentType || 'info')
+        documentType: data.type === 'signature' ? 'signature' : (data.isToSign ? 'signature' : 'info')
       },
       statut: 'À venir',
       statut_client: 'À venir',
@@ -5506,9 +5641,11 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
-      const safeName = targetName.replace(/\s+/g, '_');
-      const finalFileName = `${type}_${safeName}_${Date.now()}.docx`;
-      saveAs(out, finalFileName);
+      // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
+      const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
+      if (!isMissionLetter && !isForFormateur && !formateurId) {
+        saveAs(out, finalFileName);
+      }
 
       // Auto-upload
       const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, out);
@@ -5517,9 +5654,10 @@ export default function App() {
         
         const docToInsert = {
           nom: `${type} - ${targetName}`,
-          type_document: 'Autre',
+          type_document: isMissionLetter ? 'Administratif' : 'Autre',
           url: publicUrl,
-          file_url: publicUrl
+          file_url: publicUrl,
+          statut: 'En attente'
         };
 
         if (isForFormateur || formateurId) {
@@ -5633,7 +5771,11 @@ export default function App() {
 
     const { error } = await supabase
       .from('documents')
-      .update(updateColumn)
+      .update({
+        ...updateColumn,
+        statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur) ? 'Signé' : doc.statut,
+        visible_admin: true // S'assurer que l'admin le voit dans "Documents Signés"
+      })
       .eq('id', docId);
 
     if (error) {
@@ -5661,6 +5803,96 @@ export default function App() {
 
   const handleDownloadPDF = async (doc) => {
     if (doc && doc.id) {
+      // Détection : Si doc n'a pas d'URL mais a un rôle ou email, c'est un client -> Générer Récapitulatif
+      const isClientRecap = (doc.role || doc.email) && !doc.url && !doc.url_signed_pdf;
+
+      if (isClientRecap) {
+        try {
+          toast.loading("Génération du récapitulatif...", { id: 'recap' });
+          const clientSessions = sessions.filter(s => s.client_id === doc.id).sort((a, b) => {
+            if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
+            return new Date(a.created_at) - new Date(b.created_at);
+          });
+
+          const recapEl = document.createElement('div');
+          recapEl.style.width = '800px';
+          recapEl.style.padding = '40px';
+          recapEl.style.background = '#fff';
+          recapEl.style.fontFamily = 'Arial, sans-serif';
+          recapEl.style.position = 'fixed';
+          recapEl.style.left = '-9999px';
+
+          let sessionsHtml = clientSessions.map(s => `
+            <tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 10px; font-size: 11px;">${s.numero_seance}</td>
+              <td style="padding: 10px; font-size: 11px; font-weight: bold;">${s.nom}</td>
+              <td style="padding: 10px; font-size: 11px;">${s.date ? new Date(s.date).toLocaleDateString() : '-'}</td>
+              <td style="padding: 10px; font-size: 11px;">${s.heure_debut || ''} - ${s.heure_fin || ''}</td>
+              <td style="padding: 10px; font-size: 11px;">
+                <span style="color: ${s.statut === 'Signé' ? '#059669' : '#6b7280'}; font-weight: bold;">
+                  ${s.statut}
+                </span>
+              </td>
+              <td style="padding: 10px; font-size: 10px;">
+                ${s.signature_image || s.signature_formateur ? '✓ Signé' : 'Non signé'}
+              </td>
+            </tr>
+          `).join('');
+
+          recapEl.innerHTML = `
+            <div style="border: 2px solid #4f46e5; border-radius: 20px; padding: 30px;">
+              <div style="display: flex; justify-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #f3f4f6; padding-bottom: 20px;">
+                <div>
+                  <h1 style="color: #4f46e5; margin: 0; font-size: 24px;">RÉCAPITULATIF DE FORMATION</h1>
+                  <p style="color: #6b7280; font-size: 12px; margin-top: 5px;">Document généré le ${new Date().toLocaleDateString()}</p>
+                </div>
+                <div style="text-align: right;">
+                  <h2 style="margin: 0; font-size: 16px;">${doc.nomcomplet_client || doc.nom}</h2>
+                  <p style="font-size: 12px; color: #6b7280;">Dossier : ${doc.numero_dossier || 'N/A'}</p>
+                </div>
+              </div>
+
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: #f9fafb; text-align: left; border-bottom: 2px solid #e5e7eb;">
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">N°</th>
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Activité</th>
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Date</th>
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Horaires</th>
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Statut</th>
+                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Signatures</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sessionsHtml}
+                </tbody>
+              </table>
+
+              <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #9ca3af; text-align: center;">
+                Ce document récapitule l'ensemble des activités et émargements réalisés dans le cadre de la formation Qualiopi.
+              </div>
+            </div>
+          `;
+
+          document.body.appendChild(recapEl);
+          await new Promise(r => setTimeout(r, 500));
+          const canvas = await html2canvas(recapEl, { scale: 2 });
+          document.body.removeChild(recapEl);
+
+          const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+          const imgData = canvas.toDataURL('image/png');
+          pdf.addImage(imgData, 'PNG', 40, 40, 515, (canvas.height * 515) / canvas.width);
+          pdf.save(`Recapitulatif_${doc.nom || 'Client'}_${Date.now()}.pdf`);
+          
+          toast.success("Récapitulatif généré !", { id: 'recap' });
+          return;
+        } catch (err) {
+          console.error("Recap Error:", err);
+          toast.error("Erreur lors de la génération du récapitulatif", { id: 'recap' });
+          return;
+        }
+      }
+
       const urlToDownload = doc.url_signed_pdf || doc.url;
       if (!urlToDownload) return toast.error("Aucun fichier à télécharger");
 
@@ -6210,6 +6442,7 @@ export default function App() {
         pedagogicalResources={pedagogicalResources}
         supabase={supabase}
         onSave={handleAddSessionItem}
+        clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId)}
       />
 
       {/* Visionneuse PDF pour docs de la modélothèque */}
