@@ -1184,6 +1184,7 @@ const ClientDetailView = ({
   }, [client.id, supabase]);
 
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
+  const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
 
   const handleSaveClientInfo = async () => {
     setIsSavingInfo(true);
@@ -1584,7 +1585,9 @@ const AdminClientsView = ({
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, 
   generateSessions, handleDeleteClient, setIsSessionItemModalOpen, 
-  setTargetSessionForAddition, setViewingSession
+  setTargetSessionForAddition, setViewingSession,
+  handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
+  editedTimes, lastModifiedSessionId
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -5974,6 +5977,13 @@ export default function App() {
             setIsSessionItemModalOpen={setIsSessionItemModalOpen}
             setTargetSessionForAddition={setTargetSessionForAddition}
             setViewingSession={setViewingSession}
+            handleDownloadPDF={handleDownloadPDF}
+            updateSessionDate={updateSessionDate}
+            updateSessionTime={updateSessionTime}
+            onTimeChange={onTimeChange}
+            onSaveTimes={onSaveTimes}
+            editedTimes={editedTimes}
+            lastModifiedSessionId={lastModifiedSessionId}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
