@@ -2880,86 +2880,55 @@ const FormateurView = ({
                                           const isDateLocked = sessionDate && today < sessionDate;
                                           const metadata = session.metadata || {};
 
-                                          if (session.metadata?.isCustom) {
-                                            return (
-                                              <button
-                                                onClick={() => handleDeleteSession(session)}
-                                                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
-                                                title="Supprimer cet élément personnalisé"
-                                              >
-                                                <Trash2 size={14} />
-                                              </button>
-                                            );
-                                          }
-
-                                          if (session.type_activite === 'signature') {
-                                            const isSigned = session.statut_formateur === 'Signé';
-                                            return (
-                                              <button
-                                                disabled={isSigned || isDateLocked}
-                                                onClick={() => signSession(session)}
-                                                className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
-                                              >
-                                                {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
-                                              </button>
-                                            );
-                                          }
-
-                                          if (session.type_activite === 'document') {
-                                            const isToSign = metadata.isToSign;
+                                          // Actions for documents/exercices
+                                          const renderCommonActions = () => {
                                             const signedUrl = session.file_url_signed || metadata.file_url_signed;
+                                            const isToSign = metadata.isToSign || session.type_activite === 'signature';
+                                            const isSigned = session.statut_formateur === 'Signé' || session.statut === 'Signé';
+
                                             return (
                                               <div className="flex gap-2 items-center">
-                                                <button
-                                                  onClick={() => {
-                                                    const docUrl = signedUrl || session.file_url || session.ressource_url;
-                                                    setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-                                                  }}
-                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
-                                                >
-                                                  {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                                </button>
+                                                {(session.type_activite === 'document' || session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                                  <button
+                                                    onClick={() => {
+                                                      const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                                      setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                                    }}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
+                                                  >
+                                                    {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                                  </button>
+                                                )}
+
+                                                {isToSign && (
+                                                  <button
+                                                    disabled={isSigned || isDateLocked}
+                                                    onClick={() => signSession(session)}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                                  >
+                                                    {isSigned ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer'}
+                                                  </button>
+                                                )}
+
                                                 {signedUrl && (
                                                   <button
                                                     onClick={() => handleDownloadResource(signedUrl)}
                                                     className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                                    title="Télécharger la preuve de signature"
+                                                    title="Télécharger"
                                                   >
                                                     <FileCheck size={16} />
                                                   </button>
                                                 )}
-                                                {isToSign && (
-                                                  <button
-                                                    disabled={session.statut_client === 'Signé' || isDateLocked}
-                                                    onClick={() => signSession(session)}
-                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
-                                                  >
-                                                    {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
-                                                  </button>
-                                                )}
-                                              </div>
-                                            );
-                                          }
-
-                                          if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                            return (
-                                              <div className="flex gap-2">
-                                                <button
-                                                  onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                                >
-                                                  Télécharger
-                                                </button>
-                                                {userRole === 'client' && (
-                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                                    Soumettre Réponse
-                                                    <input
-                                                      type="file"
-                                                      className="hidden"
-                                                      onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                                    />
-                                                  </label>
-                                                )}
+                                                 {userRole === 'client' && (
+                                                   <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                     Soumettre Réponse
+                                                     <input
+                                                       type="file"
+                                                       className="hidden"
+                                                       onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                                     />
+                                                   </label>
+                                                 )}
                                                 {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
                                                   <button
                                                     onClick={() => window.open(session.reponse_url, '_blank')}
@@ -5817,62 +5786,95 @@ export default function App() {
             return new Date(a.created_at) - new Date(b.created_at);
           });
 
+          // Group sessions by numero_seance
+          const grouped = clientSessions.reduce((acc, s) => {
+            if (!acc[s.numero_seance]) acc[s.numero_seance] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+            acc[s.numero_seance].items.push(s);
+            return acc;
+          }, {});
+
           const recapEl = document.createElement('div');
           recapEl.style.width = '800px';
-          recapEl.style.padding = '40px';
+          recapEl.style.padding = '50px';
           recapEl.style.background = '#fff';
           recapEl.style.fontFamily = 'Arial, sans-serif';
           recapEl.style.position = 'fixed';
           recapEl.style.left = '-9999px';
 
-          let sessionsHtml = clientSessions.map(s => `
-            <tr style="border-bottom: 1px solid #eee;">
-              <td style="padding: 10px; font-size: 11px;">${s.numero_seance}</td>
-              <td style="padding: 10px; font-size: 11px; font-weight: bold;">${s.nom}</td>
-              <td style="padding: 10px; font-size: 11px;">${s.date ? new Date(s.date).toLocaleDateString() : '-'}</td>
-              <td style="padding: 10px; font-size: 11px;">${s.heure_debut || ''} - ${s.heure_fin || ''}</td>
-              <td style="padding: 10px; font-size: 11px;">
-                <span style="color: ${s.statut === 'Signé' ? '#059669' : '#6b7280'}; font-weight: bold;">
-                  ${s.statut}
-                </span>
-              </td>
-              <td style="padding: 10px; font-size: 10px;">
-                ${s.signature_image || s.signature_formateur ? '✓ Signé' : 'Non signé'}
-              </td>
-            </tr>
-          `).join('');
+          let sessionsContent = Object.values(grouped).sort((a, b) => a.numero - b.numero).map(g => {
+            const itemsHtml = g.items.map(item => {
+              const sigClient = item.signature_image || item.signature_client || null;
+              const sigCoach = item.signature_formateur || null;
+              const dateSigClient = item.date_signature_client ? new Date(item.date_signature_client).toLocaleString('fr-FR') : (item.statut === 'Signé' ? 'Horodatage certifié' : null);
+              const dateSigCoach = item.date_signature_formateur ? new Date(item.date_signature_formateur).toLocaleString('fr-FR') : (item.statut_formateur === 'Signé' ? 'Horodatage certifié' : null);
+
+              return `
+                <div style="margin-bottom: 25px; padding-left: 20px; border-left: 3px solid #f3f4f6;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: bold; font-size: 14px; color: #1f2937;">${item.type_activite === 'signature' ? '✍️' : '📄'} ${item.ressource_titre || item.nom}</span>
+                    <span style="font-size: 11px; font-weight: 800; color: ${item.statut === 'Signé' ? '#059669' : '#f59e0b'}; text-transform: uppercase;">${item.statut}</span>
+                  </div>
+                  
+                  <div style="display: flex; gap: 40px; margin-top: 10px;">
+                    ${sigClient ? `
+                      <div style="flex: 1;">
+                        <p style="font-size: 9px; font-weight: bold; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase;">Signature Bénéficiaire</p>
+                        <img src="${sigClient}" style="max-width: 150px; height: 60px; border: 1px solid #f3f4f6; padding: 5px; border-radius: 8px;" />
+                        <p style="font-size: 8px; color: #6b7280; margin-top: 3px;">Signé le ${dateSigClient}</p>
+                      </div>
+                    ` : ''}
+                    ${sigCoach ? `
+                      <div style="flex: 1;">
+                        <p style="font-size: 9px; font-weight: bold; color: #9ca3af; margin-bottom: 5px; text-transform: uppercase;">Signature Formateur</p>
+                        <img src="${sigCoach}" style="max-width: 150px; height: 60px; border: 1px solid #f3f4f6; padding: 5px; border-radius: 8px;" />
+                        <p style="font-size: 8px; color: #6b7280; margin-top: 3px;">Signé le ${dateSigCoach}</p>
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('');
+
+            return `
+              <div style="margin-bottom: 40px; page-break-inside: avoid;">
+                <div style="background: #f8fafc; padding: 15px 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <h3 style="margin: 0; color: #4f46e5; font-size: 16px;">SÉANCE ${g.numero} : ${g.nom.split(' - ')[0]}</h3>
+                    <p style="margin: 5px 0 0; font-size: 12px; color: #64748b; font-weight: bold;">
+                      📅 ${g.date ? new Date(g.date).toLocaleDateString('fr-FR') : 'Date non définie'} 
+                      &nbsp;&nbsp; ⏰ ${g.debut || '--:--'} - ${g.fin || '--:--'}
+                    </p>
+                  </div>
+                </div>
+                <div style="padding-left: 10px;">
+                  ${itemsHtml}
+                </div>
+              </div>
+            `;
+          }).join('');
 
           recapEl.innerHTML = `
-            <div style="border: 2px solid #4f46e5; border-radius: 20px; padding: 30px;">
-              <div style="display: flex; justify-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #f3f4f6; padding-bottom: 20px;">
+            <div style="border: 1px solid #e2e8f0; border-radius: 24px; padding: 40px; background: #fff;">
+              <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; padding-bottom: 30px; border-bottom: 2px solid #f1f5f9;">
                 <div>
-                  <h1 style="color: #4f46e5; margin: 0; font-size: 24px;">RÉCAPITULATIF DE FORMATION</h1>
-                  <p style="color: #6b7280; font-size: 12px; margin-top: 5px;">Document généré le ${new Date().toLocaleDateString()}</p>
+                  <h1 style="color: #4f46e5; font-size: 28px; font-weight: 900; margin: 0; letter-spacing: -0.025em;">RÉCAPITULATIF DE SÉANCES</h1>
+                  <p style="color: #94a3b8; font-size: 11px; font-weight: bold; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.1em;">Document de traçabilité Qualiopi</p>
                 </div>
                 <div style="text-align: right;">
-                  <h2 style="margin: 0; font-size: 16px;">${doc.nomcomplet_client || doc.nom}</h2>
-                  <p style="font-size: 12px; color: #6b7280;">Dossier : ${doc.numero_dossier || 'N/A'}</p>
+                  <h2 style="font-size: 18px; font-weight: 800; color: #1e293b; margin: 0;">${doc.nomcomplet_client || doc.nom}</h2>
+                  <p style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 600;">Dossier : ${doc.numero_dossier || 'N/A'}</p>
                 </div>
               </div>
 
-              <table style="width: 100%; border-collapse: collapse;">
-                <thead>
-                  <tr style="background: #f9fafb; text-align: left; border-bottom: 2px solid #e5e7eb;">
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">N°</th>
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Activité</th>
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Date</th>
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Horaires</th>
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Statut</th>
-                    <th style="padding: 12px; font-size: 10px; text-transform: uppercase; color: #374151;">Signatures</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${sessionsHtml}
-                </tbody>
-              </table>
+              <div>
+                ${sessionsContent}
+              </div>
 
-              <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #9ca3af; text-align: center;">
-                Ce document récapitule l'ensemble des activités et émargements réalisés dans le cadre de la formation Qualiopi.
+              <div style="margin-top: 50px; padding: 25px; background: #fdf2f2; border-radius: 16px; border: 1px solid #fee2e2;">
+                <p style="font-size: 10px; color: #b91c1c; font-weight: bold; text-align: center; margin: 0; line-height: 1.5;">
+                  Ce document certifie l'ensemble des activités réalisées et signées par les deux parties.<br/>
+                  Généré automatiquement par VB Logiciel le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
+                </p>
               </div>
             </div>
           `;
