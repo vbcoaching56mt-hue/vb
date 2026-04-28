@@ -1144,12 +1144,13 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 };
 
 const ClientDetailView = ({
-  client, formateurs, assignFormateur, handleModuleChange, modules,
+  client, formateurs, assignFormateur, handleModuleChange, modules, 
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, 
   handleGenerateDocx, documentTemplates, pedagogicalResources, 
   handleDownloadResource, handleUploadExerciseResponse, generateSessions, 
-  handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition,
-  setViewingSession
+  handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition, 
+  setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime, 
+  onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -1183,7 +1184,6 @@ const ClientDetailView = ({
   }, [client.id, supabase]);
 
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
-  const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
 
   const handleSaveClientInfo = async () => {
     setIsSavingInfo(true);
@@ -1196,20 +1196,15 @@ const ClientDetailView = ({
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
-      module_id: client.module_id, // Préserver le module
-      formateur_id: client.formateur_id // Hérité de l'assignation globale
+      module_id: client.module_id,
+      formateur_id: client.formateur_id
     }, { onConflict: 'id' });
 
     if (error) {
-      console.error("[handleSaveClientInfo] Erreur upsert:", error);
       toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
-      // Déclenchement automatique des séances si un module est présent
-      if (client.module_id) {
-        console.log("[handleSaveClientInfo] Module détecté, lancement de generateSessions pour client:", client.id);
-        await generateSessions(client);
-      }
+      if (client.module_id) await generateSessions(client);
       toast.success("Informations personnelles sauvegardées !");
     }
     setIsSavingInfo(false);
@@ -1249,7 +1244,13 @@ const ClientDetailView = ({
           <h2 className="text-2xl font-bold text-gray-900">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
           <p className="text-gray-500">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
         </div>
-        <div className="mt-4 md:mt-0">
+        <div className="mt-4 md:mt-0 flex items-center gap-3">
+          <button 
+            onClick={() => handleDownloadPDF(client)}
+            className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+          >
+            <Download size={16} /> Télécharger le Récapitulatif
+          </button>
           <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
             {client.status || 'Actif'}
           </span>
@@ -1404,124 +1405,146 @@ const ClientDetailView = ({
       )}
 
       {activeTab === 'seances' && (
-        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm">
           <div className="flex justify-between items-center mb-8 px-2">
             <div>
               <h3 className="text-xl font-black text-gray-900">Planning & Supervision</h3>
-              <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">Étapes pédagogiques et émargements</p>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">Vue par Blocs de Séances</p>
             </div>
             <button 
               onClick={() => {
                 setTargetSessionForAddition({ clientId: client.id, nextNum: clientSessions.length + 1 });
                 setIsSessionItemModalOpen(true);
               }} 
-              className="bg-indigo-600 hover:bg-black text-white text-xs font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-lg shadow-indigo-100 transition-all transform active:scale-95"
+              className="bg-indigo-600 hover:bg-black text-white text-xs font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-lg transition-all"
             >
               <Plus size={16} /> Ajouter une étape
             </button>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse bg-white text-sm">
-              <thead>
-                <tr className="bg-gray-50/50 text-[10px] font-black uppercase text-gray-400 tracking-widest border-b border-gray-100">
-                  <th className="p-4">Étape</th>
-                  <th className="p-4">Date & Horaires</th>
-                  <th className="p-4">Activité</th>
-                  <th className="p-4 text-center">Client</th>
-                  <th className="p-4 text-center">Coach</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {clientSessions.length > 0 ? clientSessions.map(s => (
-                  <tr key={s.id} className="hover:bg-gray-50/50 transition-colors group">
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center font-black text-[10px]">
-                          S{s.numero_seance}
-                        </div>
-                        <span className="font-bold text-gray-800">{s.titre || s.nom || 'Séance'}</span>
+          <div className="space-y-6">
+            {(() => {
+              const grouped = clientSessions.reduce((acc, s) => {
+                const key = s.numero_seance || 'Sans numéro';
+                if (!acc[key]) acc[key] = { numero: s.numero_seance, items: [] };
+                acc[key].items.push(s);
+                return acc;
+              }, {});
+
+              return Object.values(grouped).sort((a, b) => (a.numero || 0) - (b.numero || 0)).map((group, gIdx) => (
+                <div key={gIdx} className="border border-gray-100 rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm">
+                  <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">
+                        {group.numero || '?'}
                       </div>
-                    </td>
-                    <td className="p-4">
-                      <div className="font-bold text-gray-700 text-xs">{s.date ? new Date(s.date).toLocaleDateString() : 'Non planifiée'}</div>
-                      <div className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">{s.heure_debut || '--:--'} - {s.heure_fin || '--:--'}</div>
-                    </td>
-                    <td className="p-4">
-                      <span className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase tracking-wider ${
-                        s.type_activite === 'Exercice' ? 'bg-amber-100 text-amber-700' : 
-                        s.type_activite === 'Document PDF' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'
-                      }`}>
-                        {s.type_activite || 'Signature'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <div className="flex justify-center">
-                        {s.statut_client === 'Signé' ? (
-                          <div className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-green-100">
-                            <Check size={10} strokeWidth={4} /> OK
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1 bg-orange-50 text-orange-600 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-orange-100 opacity-60">
-                            <Clock size={10} strokeWidth={4} /> Attente
-                          </div>
-                        )}
+                      <div>
+                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">SÉANCE {group.numero}</h4>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Planification globale</p>
                       </div>
-                    </td>
-                    <td className="p-4 text-center">
-                      <div className="flex justify-center">
-                        {s.statut_formateur === 'Signé' ? (
-                          <div className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-green-100">
-                            <Check size={10} strokeWidth={4} /> OK
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1 bg-orange-50 text-orange-600 px-2 py-1 rounded-lg text-[9px] font-black uppercase border border-orange-100 opacity-60">
-                            <Clock size={10} strokeWidth={4} /> Attente
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button 
-                          onClick={() => {
-                            const docUrl = s.file_url || s.ressource_url;
-                            if (docUrl) {
-                              setViewingSession({ session: { ...s, file_url: docUrl }, mode: 'view' });
-                            } else {
-                              toast.error("Aucun document lié à cette étape.");
-                            }
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
+                        <input
+                          type="date"
+                          value={group.items[0]?.date || ''}
+                          onChange={(e) => {
+                            group.items.forEach(s => updateSessionDate(s.id, e.target.value));
                           }}
-                          className="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                          title="Consulter le document"
-                        >
-                          <Eye size={18} />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteSession(s.id)}
-                          className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                          title="Supprimer l'étape"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        />
                       </div>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr>
-                    <td colSpan="6" className="py-20 text-center">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-16 h-16 bg-gray-50 rounded-3xl flex items-center justify-center text-gray-300">
-                          <History size={32} />
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
+                        <input
+                          type="time"
+                          value={editedTimes[group.items[0]?.id]?.start ?? group.items[0]?.heure_debut ?? ''}
+                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                          onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
+                        <input
+                          type="time"
+                          value={editedTimes[group.items[0]?.id]?.end ?? group.items[0]?.heure_fin ?? ''}
+                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                          onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
+                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
+                        />
+                      </div>
+                      {lastModifiedSessionId && group.items.some(s => s.id === lastModifiedSessionId) && (
+                        <div className="flex items-center text-green-500 animate-pulse">
+                          <Check size={16} strokeWidth={3} />
                         </div>
-                        <p className="text-gray-400 italic text-sm">Aucune séance n'est encore programmée pour ce client.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-4 space-y-3">
+                    {group.items.map(s => (
+                      <div key={s.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                            s.type_activite === 'Exercice' ? 'bg-amber-50 text-amber-600' : 
+                            s.type_activite === 'Document PDF' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'
+                          }`}>
+                            {s.type_activite === 'Exercice' ? <PenTool size={20} /> : <FileText size={20} />}
+                          </div>
+                          <div>
+                            <h5 className="font-bold text-gray-900 text-sm">{s.titre || s.nom || 'Activité'}</h5>
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                  Client: {s.statut_client === 'Signé' ? 'OK' : 'Attente'}
+                                </span>
+                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                  Coach: {s.statut_formateur === 'Signé' ? 'OK' : 'Attente'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => {
+                              const docUrl = s.file_url || s.ressource_url;
+                              if (docUrl) {
+                                setViewingSession({ session: { ...s, file_url: docUrl }, mode: 'view' });
+                              } else {
+                                toast.error("Aucun document lié.");
+                              }
+                            }}
+                            className="p-2.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                            title="Consulter"
+                          >
+                            <Eye size={20} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteSession(s.id)}
+                            className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                            title="Supprimer"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                    ))}
+                  </div>
+                </div>
+              ));
+            })()}
+            {clientSessions.length === 0 && (
+              <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
+                <History className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                <p className="text-gray-400 italic text-sm">Aucune séance n'est encore programmée.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1588,6 +1611,13 @@ const AdminClientsView = ({
           setIsSessionItemModalOpen={setIsSessionItemModalOpen}
           setTargetSessionForAddition={setTargetSessionForAddition}
           setViewingSession={setViewingSession}
+          handleDownloadPDF={handleDownloadPDF}
+          updateSessionDate={updateSessionDate}
+          updateSessionTime={updateSessionTime}
+          onTimeChange={onTimeChange}
+          onSaveTimes={onSaveTimes}
+          editedTimes={editedTimes}
+          lastModifiedSessionId={lastModifiedSessionId}
         />
       );
     }
@@ -1812,66 +1842,47 @@ const FormateurDetailView = ({
                 <button 
                   key={key} 
                   onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
-                  className="bg-white hover:bg-rose-600 hover:text-white text-rose-600 border border-rose-100 px-5 py-3 rounded-2xl text-sm font-bold shadow-sm transition-all flex items-center gap-2"
+                  className="bg-rose-600 hover:bg-rose-700 text-white px-5 py-3 rounded-2xl text-sm font-bold shadow-lg transition-all flex items-center gap-2 transform active:scale-95"
                 >
                   <PenTool size={16} /> Générer {key}
                 </button>
               ))}
               {Object.keys(documentTemplates || {}).length === 0 && (
-                <p className="text-xs text-gray-400 italic">Aucun modèle de document formateur disponible.</p>
+                <p className="text-gray-400 italic text-sm">Aucun modèle de document formateur configuré.</p>
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {trainerDocs.map(doc => (
+            <div className="space-y-3">
+              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Suivi des signatures</h4>
+              {trainerDocs.length > 0 ? trainerDocs.map(doc => (
                 <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-rose-200 transition-all shadow-sm">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
                       <FileText size={20} />
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-900 text-sm">{doc.nom}</h4>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.workflow_status === 'SIGNE_ET_ARCHIVE' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {doc.workflow_status === 'SIGNE_ET_ARCHIVE' ? 'Archivé' : 'À signer'}
-                        </span>
-                        <span className="text-[10px] text-gray-400 font-medium">
-                          {new Date(doc.created_at).toLocaleDateString()}
+                      <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(doc.created_at).toLocaleDateString()}</span>
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {doc.statut_formateur === 'Signé' ? 'Signé' : 'En attente de signature'}
                         </span>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setViewingDocId(doc.id)}
-                      className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                      title="Voir le document"
-                    >
-                      <Eye size={20} />
-                    </button>
-                    <button 
-                      onClick={() => {
-                        // Use resolveFileUrl for direct download if needed, 
-                        // but viewer is safer for now.
-                        setViewingDocId(doc.id);
-                      }}
-                      className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                      title="Télécharger"
-                    >
-                      <Download size={20} />
-                    </button>
-                  </div>
+                  <button 
+                    onClick={() => setViewingDocId(doc.id)}
+                    className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                  >
+                    <Eye size={20} />
+                  </button>
                 </div>
-              ))}
-              {trainerDocs.length === 0 && (
-                <div className="md:col-span-2 py-10 text-center border-2 border-dashed border-gray-100 rounded-[24px]">
-                  <p className="text-gray-400 text-sm italic">Aucun document administratif généré pour ce formateur.</p>
-                </div>
+              )) : (
+                <p className="text-gray-400 italic text-sm py-4">Aucun document généré pour le moment.</p>
               )}
             </div>
           </div>
         </div>
-
       </div>
 
       {/* Liste des clients assignés */}
