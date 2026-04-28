@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import {
-  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
-  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
+import { 
+  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
+  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
   Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
@@ -34,19 +34,28 @@ const DownloadIcon = () => <FileText className="w-4 h-4 mr-2" />;
 // Buckets autorisés : 'documents', 'ressources-pedagogiques', 'signed_documents'
 const resolveFileUrl = (rawUrl) => {
   if (!rawUrl) return null;
-  // Si c'est déjà une URL complète, on la retourne telle quelle
   if (rawUrl.startsWith('http')) return rawUrl;
 
+  // Nettoyage : si le chemin commence par un nom de bucket connu + slash, on le retire
+  // car supabase.storage.from(bucket) le rajoute déjà.
+  let cleanPath = rawUrl;
+  const knownBuckets = ['documents', 'ressources-pedagogiques', 'signed_documents', 'module_resources', 'client_files'];
+  for (const b of knownBuckets) {
+    if (cleanPath.startsWith(`${b}/`)) {
+      cleanPath = cleanPath.substring(b.length + 1);
+      break;
+    }
+  }
+
   // LOGIQUE DE BUCKET :
-  // On privilégie 'documents' selon les instructions utilisateur, sauf préfixes spécifiques
-  const isRessource = rawUrl.startsWith('ressources') || rawUrl.startsWith('modeling-imports');
-  const isSigned = rawUrl.startsWith('signed_');
+  const isRessource = cleanPath.startsWith('ressources/') || cleanPath.startsWith('modeling-imports/');
+  const isSigned = cleanPath.startsWith('signed_');
   const bucket = isSigned ? 'signed_documents' : (isRessource ? 'ressources-pedagogiques' : 'documents');
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(rawUrl);
+  const { data } = supabase.storage.from(bucket).getPublicUrl(cleanPath);
 
   if (!data?.publicUrl) {
-    console.error("Erreur de lien storage:", rawUrl, "dans le bucket:", bucket);
+    console.error("Erreur de lien storage:", cleanPath, "dans le bucket:", bucket);
   }
 
   return data?.publicUrl || null;
@@ -164,7 +173,9 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
 // Modale PDF polyvalente:
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, supabase: passedSupabase }) => {
+  // On utilise le supabase passé en prop s'il existe, sinon le global
+  const activeSupabase = passedSupabase || supabase;
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasRead, setHasRead] = useState(false);
@@ -175,8 +186,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [pdfError, setPdfError] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
   const docxContainerRef = useRef(null);
-
-  // Suppression du useEffect local, maintenant géré au niveau de l'App pour plus de réactivité
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -192,40 +201,29 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     const extractBucketPath = (fullUrl) => {
       if (!fullUrl) return null;
       console.log('[DocumentViewerModal] Extraction depuis:', fullUrl);
-
-      // Cas 1: URL complète Supabase (public ou sign)
-      // On élargit la regex pour capturer plus de variantes possibles d'URL Supabase
+      
+      // Cas 1: URL complète Supabase (public ou sign|authenticated)
       const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
       if (match) {
         let bucket = match[1];
         let rawPath = match[2];
-
-        // On décode pour avoir le nom réel, mais on garde une version brute si besoin
         let path = decodeURIComponent(rawPath);
-
+        
         // Nettoyage : si le path commence par le nom du bucket (redondance parfois constatée)
         if (path.startsWith(`${bucket}/`)) {
-          console.warn(`[DocumentViewerModal] Nettoyage du path: retrait du bucket préfixe "${bucket}/"`);
           path = path.substring(bucket.length + 1);
         }
-
-        if (path.startsWith('modeling-imports/') && bucket === 'documents') {
-          bucket = 'ressources-pedagogiques';
-        }
-
-        console.log(`[DocumentViewerModal] Extrait : Bucket=${bucket}, Path=${path}`);
+        
         return { bucket, path };
       }
-
-      // Cas 2: Chemin relatif (détecté par l'absence de protocole/domaine complexe)
+      
+      // Cas 2: Chemin relatif
       if (!fullUrl.startsWith('http')) {
         const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
         const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
-        console.log(`[DocumentViewerModal] Chemin relatif détecté. Bucket auto: ${bucket}, Path: ${fullUrl}`);
         return { bucket, path: fullUrl };
       }
 
-      console.error('[DocumentViewerModal] Format d\'URL non reconnu pour extraction Storage');
       return null;
     };
 
@@ -244,27 +242,23 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       }
 
       const { bucket: initialBucket, path: initialPath } = initialExtracted;
-
-      // Liste des buckets à tester en cas d'échec
-      const bucketsToTry = [initialBucket, 'ressources-pedagogiques', 'documents', 'signed_documents'];
+      const bucketsToTry = [initialBucket, 'documents', 'ressources-pedagogiques', 'signed_documents', 'module_resources', 'client_files'].filter((v, i, a) => a.indexOf(v) === i);
       const uniqueBuckets = [...new Set(bucketsToTry.filter(Boolean))];
 
       try {
         let finalSignedUrl = null;
         let lastError = null;
-        let finalBucket = initialBucket;
         let finalPath = initialPath;
 
         for (const bucket of uniqueBuckets) {
           console.log(`[DocumentViewerModal] Tentative dans le bucket: ${bucket} | Path: ${initialPath}`);
+          let { data, error } = await activeSupabase.storage.from(bucket).createSignedUrl(initialPath, 3600);
 
-          let { data, error } = await supabase.storage.from(bucket).createSignedUrl(initialPath, 3600);
-
-          // Fallback 1: Si non trouvé, on tente le nom de fichier seul (sans dossiers)
+          // Fallback 1: Si non trouvé, on tente le nom de fichier seul
           if (error?.message?.includes('not found') && initialPath.includes('/')) {
             const alternativePath = initialPath.split('/').pop();
             console.warn(`[DocumentViewerModal] Objet non trouvé à "${initialPath}" dans "${bucket}". Tentative à la racine: "${alternativePath}"...`);
-            const fallbackResult = await supabase.storage.from(bucket).createSignedUrl(alternativePath, 3600);
+            const fallbackResult = await activeSupabase.storage.from(bucket).createSignedUrl(alternativePath, 3600);
             data = fallbackResult.data;
             error = fallbackResult.error;
             if (!error && data?.signedUrl) {
@@ -274,12 +268,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
           if (!error && data?.signedUrl) {
             finalSignedUrl = data.signedUrl;
-            finalBucket = bucket;
             console.log(`%c[DocumentViewerModal] ✅ Succès trouvé dans le bucket "${bucket}" !`, 'color: #10b981; font-weight: bold;');
             break;
           } else {
             lastError = error?.message || 'Inconnu';
-            console.warn(`[DocumentViewerModal] Échec dans le bucket "${bucket}": ${lastError}`);
           }
         }
 
@@ -297,39 +289,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             const response = await fetch(finalSignedUrl);
             const arrayBuffer = await response.arrayBuffer();
             if (window.docx && docxContainerRef.current) {
-              await window.docx.renderAsync(arrayBuffer, docxContainerRef.current, null, {
-                className: "docx",
-                inWrapper: false,
-                ignoreWidth: false,
-                ignoreHeight: false,
-              });
+              await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
               setBlobUrl(finalSignedUrl);
               setLoadingPdf(false);
             } else {
-              // Attente si lib non chargée
-              let checks = 0;
-              const interval = setInterval(async () => {
-                checks++;
-                if (window.docx && docxContainerRef.current) {
-                  clearInterval(interval);
-                  try {
-                    await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
-                    setBlobUrl(finalSignedUrl);
-                  } catch (e) {
-                    setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
-                  }
-                  setLoadingPdf(false);
-                } else if (checks > 15) {
-                  clearInterval(interval);
-                  setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
-                  setLoadingPdf(false);
-                }
-              }, 100);
-              return;
+              setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
+              setLoadingPdf(false);
             }
           } catch (fetchErr) {
             console.error("[DocumentViewerModal] Erreur Word:", fetchErr);
-            setBlobUrl(finalSignedUrl);
+            setBlobUrl(finalSignedUrl); 
           }
         } else {
           setBlobUrl(finalSignedUrl);
@@ -354,7 +323,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     }
 
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, pdfUrl]);
 
 
@@ -409,31 +378,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     );
     if (blobUrl) {
       const isWord = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
-
-      // Si c'est un Word, on affiche le conteneur de rendu local
-      if (isWord) {
-        // Si on a une URL Office Online (fallback), on l'affiche en iframe
-        if (blobUrl.includes('officeapps.live.com')) {
-          return (
-            <iframe
-              src={blobUrl}
-              title={pdfTitle}
-              className="w-full h-full border-0"
-              allowFullScreen
-            />
-          );
-        }
-
+      if (isWord && !blobUrl.includes('officeapps.live.com')) {
         return (
           <div className="w-full h-full overflow-auto bg-white p-4 docx-container text-left">
             <div ref={docxContainerRef} />
           </div>
         );
       }
-
       return (
         <iframe
-          src={`${blobUrl}#toolbar=0&navpanes=0`}
+          src={blobUrl + (isWord ? '' : '#toolbar=0&navpanes=0')}
           title={pdfTitle}
           className="w-full h-full border-0"
           allowFullScreen
@@ -446,8 +400,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         <div className="text-5xl">📄</div>
         <div className="text-center">
           <p className="font-semibold text-gray-600">
-            {pdfError
-              ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document')
+            {pdfError 
+              ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document') 
               : 'Aucun fichier joint à cette session.'}
           </p>
           {debugInfo && (
@@ -463,20 +417,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         {isValidUrl && (
           <button
             onClick={() => window.open(blobUrl || pdfUrl, '_blank')}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shadow-lg"
+            className="flex items-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-colors shadow-lg"
           >
             <Download size={16} /> Télécharger pour lire le document
           </button>
-        )}
-        {pdfUrl?.toLowerCase().endsWith('.docx') && (
-          <p className="text-[11px] text-indigo-500 font-bold bg-indigo-50 px-4 py-2 rounded-lg mt-2">
-            ℹ️ Format Word : Lecture native activée. Si le rendu ne s'affiche pas, utilisez le bouton Télécharger.
-          </p>
-        )}
-        {mode === 'sign' && (
-          <p className="text-xs text-orange-500 font-medium text-center max-w-xs bg-orange-50 p-3 rounded-xl">
-            ⚠️ Une fois le document lu, vous pouvez apposer votre signature ci-dessous.
-          </p>
         )}
       </div>
     );
@@ -499,7 +443,15 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Bouton "Ouvrir" supprimé pour éviter la confusion (le doc doit apparaître automatiquement) */}
+            {isValidUrl && (
+              <button
+                onClick={() => window.open(pdfUrl, '_blank')}
+                className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                title="Ouvrir dans un nouvel onglet"
+              >
+                <Download size={14} /> Ouvrir ↗
+              </button>
+            )}
             <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors">✕</button>
           </div>
         </div>
@@ -589,7 +541,7 @@ const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title =
         </div>
         <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
         <p className="text-gray-500 mb-8">
-          Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ?
+          Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ? 
           Toutes les données associées seront supprimées et cette action est irréversible.
         </p>
         <div className="flex gap-3">
@@ -633,28 +585,34 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `modeling-imports/${fileName}`;
+      const filePath = fileName; // On met à la racine du bucket pour simplifier
 
-      const { error: uploadError } = await supabase.storage
+      console.log('StepResourceModal: Tentative upload vers documents...', filePath);
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('documents')
-        .upload(filePath, file);
+        .upload(filePath, file, { cacheControl: '3600', upsert: true });
 
       if (uploadError) {
-        console.error('Error uploading file in modal:', uploadError);
-        alert('Erreur lors de l\'import du fichier sur le Storage. L\'activité ne sera pas liée.');
-        setSelectedResourceId('');
-        return;
+        console.error('StepResourceModal: Échec upload Storage:', uploadError);
+        // Fallback sur ressources-pedagogiques
+        console.log('StepResourceModal: Tentative de repli sur ressources-pedagogiques...');
+        const { error: fallbackError } = await supabase.storage
+          .from('ressources-pedagogiques')
+          .upload(filePath, file, { cacheControl: '3600', upsert: true });
+        
+        if (fallbackError) {
+          throw fallbackError;
+        }
       }
 
-      // Link the uploaded file ONLY if success
+      // Link the uploaded file
       setSelectedResourceId(filePath); // Store the full storage path
       if (!title) setTitle(file.name.replace(/\.[^/.]+$/, "")); // Auto-title if empty
 
-      console.log('File successfully uploaded to documents and linked:', filePath);
+      console.log('File successfully uploaded and linked:', filePath);
     } catch (err) {
-      console.error('Critical error in handleFileUpload:', err);
-      alert('Erreur critique lors de l\'upload du fichier.');
-      setSelectedResourceId('');
+      console.error('Error uploading file in modal:', err);
+      alert('Erreur lors de l\'import du fichier : ' + err.message);
     } finally {
       setIsUploading(false);
     }
@@ -732,7 +690,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
                   </div>
 
                   <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier' + ((type === 'signature' || metadata.documentType === 'signature') ? ' (PDF uniquement)' : ' (PDF conseillé, Word/Excel non visualisables)')}
+                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier' + ((type === 'signature' || metadata.documentType === 'signature') ? ' (PDF uniquement)' : ' (PDF, Word, Excel)')}
                     <input
                       type="file"
                       className="hidden"
@@ -1186,17 +1144,13 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 };
 
 const ClientDetailView = ({
-  client, onBack, supabase, fetchUtilisateurs, modules, sessions,
-  handleGenerateDocx, documentTemplates, pedagogicalResources,
-  handleDeleteClient, fetchSessions, fetchDocuments, currentUserId,
-  userRole, documents, generateSessions, handleModuleChange,
-  assignFormateur, formateurs,
-  generatePDF
+  client, formateurs, assignFormateur, handleModuleChange, modules,
+  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, handleGenerateDocx, documentTemplates,
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions, handleDeleteClient
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
-  const [isWorkflowEnabled, setIsWorkflowEnabled] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -1206,8 +1160,6 @@ const ClientDetailView = ({
     modalite_formation: client.modalite_formation || 'Mixte',
     montant_prestation: client.montant_prestation || ''
   });
-  const [signaturePreview, setSignaturePreview] = React.useState(null); // { url, name }
-  const [isAddStepOpen, setIsAddStepOpen] = React.useState(false);
 
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
@@ -1250,83 +1202,31 @@ const ClientDetailView = ({
       toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
+      // Déclenchement automatique des séances si un module est présent
+      if (client.module_id) {
+        console.log("[handleSaveClientInfo] Module détecté, lancement de generateSessions pour client:", client.id);
+        await generateSessions(client);
+      }
       toast.success("Informations personnelles sauvegardées !");
     }
     setIsSavingInfo(false);
   };
 
-  const updateSession = async (id, payload, isBulk = false, sessionNum = null) => {
-    try {
-      if (isBulk && sessionNum) {
-        // Mise à jour de toutes les étapes du même numéro de séance
-        const { error } = await supabase.from('sessions')
-          .update(payload)
-          .eq('client_id', client.id)
-          .eq('numero_seance', sessionNum);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('sessions').update(payload).eq('id', id);
-        if (error) throw error;
-      }
-      if (fetchSessions) fetchSessions();
-      toast.success("💾 Planning mis à jour");
-    } catch (err) {
-      console.error("Erreur mise à jour séance:", err);
-      toast.error("Erreur lors de la mise à jour");
-    }
+  const updateSession = async (id, payload) => {
+    await supabase.from('sessions').update(payload).eq('id', id);
+    if (fetchSessions) fetchSessions();
   };
 
-  const handleAddCustomSession = () => {
-    setIsAddStepOpen(true);
-  };
-
-  const handleAddStepSave = async (formData) => {
-    const loadingToast = toast.loading("📁 Ajout de l'étape...");
-    try {
-      if (!formData.titre) throw new Error("Veuillez saisir un titre");
-
-      // Sécurité anti-doublon pour la contrainte unique_session_per_client_module_nom
-      let baseTitle = formData.titre;
-      let finalTitle = baseTitle;
-      let counter = 2;
-      let isDuplicate = true;
-
-      while (isDuplicate) {
-        const titleToCheck = finalTitle.trim().toLowerCase();
-        const exists = sessions.some(s =>
-          s.client_id === client.id &&
-          (s.module_id === (client.module_id || null)) &&
-          (s.nom || '').trim().toLowerCase() === titleToCheck
-        );
-        if (exists) {
-          finalTitle = `${baseTitle} (${counter})`;
-          counter++;
-        } else {
-          isDuplicate = false;
-        }
-      }
-
-      const { error } = await supabase.from('sessions').insert([{
-        client_id: client.id,
-        module_id: client.module_id || null,
-        numero_seance: parseInt(formData.numero_seance),
-        nom: finalTitle,
-        type_activite: formData.type_activite,
-        date: formData.date,
-        heure_debut: formData.heure_debut,
-        heure_fin: formData.heure_fin,
-        file_url: formData.file_url || null,
-        statut: 'À venir'
-      }]);
-
-      if (error) throw error;
-      if (fetchSessions) await fetchSessions();
-      setIsAddStepOpen(false);
-      toast.success("✅ Élément ajouté au planning !", { id: loadingToast });
-    } catch (err) {
-      console.error("Erreur ajout étape:", err);
-      toast.error(err.message || "❌ Erreur lors de l'ajout", { id: loadingToast });
-    }
+  const handleAddCustomSession = async () => {
+    const nextNum = clientSessions.length + 1;
+    const { error } = await supabase.from('sessions').insert([{
+      client_id: client.id,
+      module_id: client.module_id,
+      numero_seance: nextNum,
+      titre: `Séance personnalisée ${nextNum}`,
+      statut: 'À venir'
+    }]);
+    if (!error && fetchSessions) fetchSessions();
   };
 
   const handleDeleteSession = async (id) => {
@@ -1346,13 +1246,7 @@ const ClientDetailView = ({
           <h2 className="text-2xl font-bold text-gray-900">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
           <p className="text-gray-500">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
         </div>
-        <div className="mt-4 md:mt-0 flex gap-3 items-center">
-          <button
-            onClick={() => generatePDF(client)}
-            className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-2xl text-xs font-bold border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
-          >
-            <FileText size={16} /> Attestation de Présence
-          </button>
+        <div className="mt-4 md:mt-0">
           <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
             {client.status || 'Actif'}
           </span>
@@ -1494,50 +1388,13 @@ const ClientDetailView = ({
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <div className="pt-6 border-gray-100">
-            <h3 className="text-lg font-bold text-gray-800 mb-2">Générateurs Automatiques</h3>
-            <p className="text-xs text-gray-500 mb-6 italic">Générez des documents pré-remplis à partir de vos modèles Word (.docx).</p>
-
-            {/* Sécurité Formateur Assigné */}
-            {!client.formateur_id && (
-              <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-4 text-amber-800">
-                <AlertCircle className="shrink-0 mt-0.5" size={18} />
-                <div className="text-sm">
-                  <p className="font-bold">Aucun formateur assigné</p>
-                  <p>L'assignation d'un formateur est requise pour générer des documents administratifs (le formateur doit apparaître sur les contrats).</p>
-                </div>
-              </div>
-            )}
-
-            <div className="flex flex-col gap-6">
-              <label className={`flex items-center gap-3 p-4 rounded-2xl border transition-all cursor-pointer ${isWorkflowEnabled ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-100 hover:border-gray-300'} ${!client.formateur_id ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="checkbox"
-                  className="w-5 h-5 accent-indigo-600 rounded"
-                  checked={isWorkflowEnabled}
-                  onChange={(e) => setIsWorkflowEnabled(e.target.checked)}
-                  disabled={!client.formateur_id}
-                />
-                <div className="flex-1">
-                  <p className="font-bold text-gray-900 text-sm">Activer le flux de signature formateur</p>
-                  <p className="text-[10px] text-gray-500 uppercase font-black">Envoie le document généré directement au formateur pour signature</p>
-                </div>
-                <div className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-tighter ${isWorkflowEnabled ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
-                  {isWorkflowEnabled ? 'Flux Actif' : 'Désactivé'}
-                </div>
-              </label>
-
-              <div className="flex gap-2 flex-wrap pt-2">
-                {Object.keys(documentTemplates || {}).map(key => (
-                  <button
-                    key={key}
-                    onClick={() => handleGenerateDocx(client, key, isWorkflowEnabled)}
-                    disabled={!client.formateur_id}
-                    className={`flex items-center px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${!client.formateur_id ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-indigo-50 text-indigo-700 border-indigo-100 hover:bg-indigo-600 hover:text-white shadow-sm'}`}
-                  >
-                    <FileText className="w-4 h-4 mr-2" /> Générer {key}
-                  </button>
-                ))}
-              </div>
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Générateurs Automatiques</h3>
+            <div className="flex gap-2 flex-wrap pt-2">
+              {Object.keys(documentTemplates || {}).map(key => (
+                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
+                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -1545,158 +1402,68 @@ const ClientDetailView = ({
 
       {activeTab === 'seances' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8">
-            <div>
-              <h3 className="text-xl font-bold text-gray-800">Supervision du Planning</h3>
-              <p className="text-sm text-gray-500">Gérez les dates, heures et suivez l'avancement des signatures.</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => generatePDF(client)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg hover:shadow-emerald-100 transition-all"
-              >
-                <Download size={16} /> 📥 Télécharger le Récapitulatif
-              </button>
-              <button
-                onClick={handleAddCustomSession}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-3 rounded-2xl flex items-center gap-2 shadow-lg hover:shadow-indigo-100 transition-all"
-              >
-                <Plus size={16} /> Ajouter une étape
-              </button>
-            </div>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-lg font-bold text-gray-800">Calendrier des Séances</h3>
+            <button onClick={handleAddCustomSession} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm transition-all">
+              <Plus size={14} /> Ajouter une étape personnalisée
+            </button>
           </div>
+          <div className="space-y-4">
+            {clientSessions.length > 0 ? clientSessions.map(session => (
+              <div key={session.id} className="p-5 border border-gray-100 rounded-2xl bg-gray-50 flex flex-col gap-4 relative group">
+                <button onClick={() => handleDeleteSession(session.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                  <Trash2 size={16} />
+                </button>
 
-          <div className="space-y-8">
-            {(() => {
-              const grouped = clientSessions.reduce((acc, s) => {
-                const key = s.numero_seance;
-                if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || s.titre || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-                acc[key].items.push(s);
-                return acc;
-              }, {});
-
-              const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
-
-              if (sortedGroups.length === 0) {
-                return (
-                  <div className="text-center py-16 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
-                    <p className="text-gray-400 font-bold italic mb-4">Aucune séance générée pour ce client.</p>
-                    <button
-                      onClick={() => generateSessions(client)}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-2xl text-xs font-bold shadow-lg transition-all"
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Titre de la séance / étape</label>
+                    <input
+                      type="text"
+                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 font-bold text-gray-800"
+                      defaultValue={session.titre}
+                      onBlur={(e) => updateSession(session.id, { titre: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Type d'Activité</label>
+                    <select
+                      className="w-full p-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-indigo-500 bg-white"
+                      defaultValue={session.type_activite || 'Signature'}
+                      onChange={(e) => updateSession(session.id, { type_activite: e.target.value })}
                     >
-                      Générer le parcours maintenant
-                    </button>
-                  </div>
-                )
-              }
-
-              return sortedGroups.map((group, gIdx) => (
-                <div key={gIdx} className="border border-gray-100 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all">
-                  <div className="bg-indigo-50/50 p-5 border-b border-gray-100 flex flex-col lg:flex-row justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center font-bold shadow-md">
-                        {group.numero}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900 leading-tight uppercase tracking-tight text-sm">Séance {group.numero} : {group.nom}</h4>
-                        <p className="text-[10px] text-indigo-600 font-black uppercase tracking-tighter">{group.items.length} Étapes d'accompagnement</p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-4 mt-2 lg:mt-0">
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">📅 Date</label>
-                        <input
-                          type="date"
-                          defaultValue={group.date || ''}
-                          onBlur={(e) => updateSession(null, { date: e.target.value }, true, group.numero)}
-                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
-                        />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">🕒 Début</label>
-                        <input
-                          type="time"
-                          defaultValue={group.debut || ''}
-                          onBlur={(e) => updateSession(null, { heure_debut: e.target.value }, true, group.numero)}
-                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
-                        />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1">🕒 Fin</label>
-                        <input
-                          type="time"
-                          defaultValue={group.fin || ''}
-                          onBlur={(e) => updateSession(null, { heure_fin: e.target.value }, true, group.numero)}
-                          className="bg-white border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-0 bg-white overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="text-[9px] text-gray-400 uppercase font-black tracking-widest border-b border-gray-50 bg-gray-50/20">
-                          <th className="py-4 px-6">Étape / Activité</th>
-                          <th className="py-4 px-2 text-center w-24">Bénéficiaire</th>
-                          <th className="py-4 px-2 text-center w-24">Coach</th>
-                          <th className="py-4 px-6 text-right w-24">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {group.items.map(session => (
-                          <tr key={session.id} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="py-4 px-6">
-                              <div className="flex items-center gap-4">
-                                <div className={`w-9 h-9 ${session.type_activite === 'signature' ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-600'} rounded-xl flex items-center justify-center shadow-sm`}>
-                                  {session.type_activite === 'signature' ? <PenTool size={16} /> : <FileText size={16} />}
-                                </div>
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="font-bold text-gray-800 text-[13px]">{session.ressource_titre || session.nom || session.titre || 'Étape'}</span>
-                                  <span className="text-[9px] text-gray-400 font-bold tracking-wider uppercase">{session.type_activite}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-4 px-2">
-                              <div className="flex justify-center">
-                                <button
-                                  onClick={() => session.signature_image && setSignaturePreview({ url: session.signature_image, name: `Signature Bénéficiaire - ${session.nom}` })}
-                                  className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${session.signature_image ? 'bg-emerald-100 text-emerald-600 shadow-sm cursor-pointer hover:scale-110 active:scale-95' : 'bg-rose-50 text-rose-300'}`}
-                                  title={session.signature_image ? "Voir la signature" : "Signature manquante"}
-                                >
-                                  {session.signature_image ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
-                                </button>
-                              </div>
-                            </td>
-                            <td className="py-4 px-2">
-                              <div className="flex justify-center">
-                                <button
-                                  onClick={() => session.signature_formateur && setSignaturePreview({ url: session.signature_formateur, name: `Signature Coach - ${session.nom}` })}
-                                  className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${session.signature_formateur ? 'bg-emerald-100 text-emerald-600 shadow-sm cursor-pointer hover:scale-110 active:scale-95' : 'bg-rose-50 text-rose-300'}`}
-                                  title={session.signature_formateur ? "Voir la signature" : "Signature manquante"}
-                                >
-                                  {session.signature_formateur ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
-                                </button>
-                              </div>
-                            </td>
-                            <td className="py-4 px-6 text-right">
-                              <button
-                                onClick={() => handleDeleteSession(session.id)}
-                                className="p-2.5 text-gray-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                      <option value="Signature">Signature Présence</option>
+                      <option value="Document PDF">Document PDF</option>
+                      <option value="Exercice">Exercice / Outil</option>
+                    </select>
                   </div>
                 </div>
-              ));
-            })()}
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-2 border-t border-gray-200/50">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Date</label>
+                    <input type="date" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.date || ''} onBlur={(e) => updateSession(session.id, { date: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Heure</label>
+                    <input type="time" className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none" defaultValue={session.heure_debut || ''} onBlur={(e) => updateSession(session.id, { heure_debut: e.target.value })} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ressource Pédagogique (Modélothèque)</label>
+                    <select
+                      className="w-full p-2 text-xs border border-gray-200 rounded-lg outline-none bg-white"
+                      defaultValue={session.ressource_id || ''}
+                      onChange={(e) => updateSession(session.id, { ressource_id: e.target.value })}
+                    >
+                      <option value="">Aucune ressource liée</option>
+                      {pedagogicalResources.map(res => (
+                        <option key={res.name} value={res.name}>{res.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )) : <p className="text-gray-500 italic text-sm text-center py-8">Aucune séance n'est encore programmée pour ce client.</p>}
           </div>
         </div>
       )}
@@ -1706,282 +1473,20 @@ const ClientDetailView = ({
           <h3 className="text-lg font-bold text-gray-800 mb-6">Documents Uploadés</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {clientDocs.length > 0 ? clientDocs.map(doc => (
-              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col gap-3 group hover:border-indigo-300 bg-white relative">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-50 text-blue-600 flex items-center justify-center rounded-xl"><FileText size={20} /></div>
-                    <div>
-                      <p className="font-bold text-gray-900 text-sm truncate max-w-[150px]">{doc.nom}</p>
-                      <p className="text-[10px] text-gray-500 font-medium">{doc.type_document || doc.type || 'Document'}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg transition-colors"><Download size={18} /></a>
+              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-300">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-50 text-blue-600 flex items-center justify-center rounded-xl"><FileText size={20} /></div>
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm truncate max-w-[150px]">{doc.nom}</p>
+                    <p className="text-[10px] text-gray-500">{doc.type}</p>
                   </div>
                 </div>
-
-                {/* Badge de statut Workflow */}
-                {doc.workflow_status && doc.workflow_status !== 'FINAL' && (
-                  <div className="mt-1 pt-3 border-t border-gray-50 flex items-center justify-between">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tight flex items-center gap-1.5 ${doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                      {doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? (
-                        <><Clock size={12} /> Signature Formateur Attendue</>
-                      ) : (
-                        <><CheckCircle size={12} /> Signé et Archivé</>
-                      )}
-                    </span>
-                    {doc.workflow_status === 'SIGNE_ET_ARCHIVE' && (
-                      <span className="text-[10px] text-gray-400 font-bold italic">Signé le {doc.date_signature_formateur ? new Date(doc.date_signature_formateur).toLocaleDateString() : '??'}</span>
-                    )}
-                  </div>
-                )}
+                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg"><Download size={18} /></a>
               </div>
             )) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
           </div>
         </div>
       )}
-
-      {signaturePreview && (
-        <div className="fixed inset-0 bg-gray-900/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSignaturePreview(null)}>
-          <div className="bg-white p-7 rounded-[40px] shadow-2xl max-w-sm w-full border border-white/20 text-center relative" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
-              <div className="text-left">
-                <h4 className="font-extrabold text-gray-900 text-base">{signaturePreview.name.split(' - ')[0]}</h4>
-                <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">{signaturePreview.name.split(' - ')[1]}</p>
-              </div>
-              <button onClick={() => setSignaturePreview(null)} className="w-10 h-10 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900 rounded-2xl flex items-center justify-center transition-all"><X size={20} /></button>
-            </div>
-            <div className="bg-gray-50 rounded-[32px] p-8 border border-indigo-50 shadow-inner mb-6">
-              <img src={signaturePreview.url} alt="Signature Preview" className="max-w-full h-auto mx-auto drop-shadow-sm" />
-            </div>
-            <button
-              onClick={() => setSignaturePreview(null)}
-              className="w-full py-4 bg-gray-900 text-white font-black rounded-2xl hover:bg-gray-800 transition-all shadow-lg active:scale-95"
-            >
-              C'est tout bon
-            </button>
-          </div>
-        </div>
-      )}
-
-      <AddStepModal
-        isOpen={isAddStepOpen}
-        onClose={() => setIsAddStepOpen(false)}
-        onSave={handleAddStepSave}
-        lastSessionNum={clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance || 0)) : 1}
-        sessions={clientSessions}
-        supabase={supabase}
-      />
-    </div>
-  );
-};
-
-/* --- Composant Modale Ajout Étape --- */
-const AddStepModal = ({ isOpen, onClose, onSave, lastSessionNum, sessions, supabase }) => {
-  const [formData, setFormData] = React.useState({
-    titre: '',
-    type_activite: 'Émargement',
-    date: new Date().toISOString().split('T')[0],
-    heure_debut: '09:00',
-    heure_fin: '10:00',
-    numero_seance: lastSessionNum || 1,
-    file_url: null
-  });
-  const [isUploading, setIsUploading] = React.useState(false);
-  const [isNewSession, setIsNewSession] = React.useState(false);
-
-  // Récupérer les numéros de séance uniques existants
-  const existingSessionNums = Array.from(new Set(sessions.map(s => s.numero_seance))).sort((a, b) => a - b);
-
-  const handleSessionNumChange = (val) => {
-    if (val === 'new') {
-      setIsNewSession(true);
-      const nextNum = (lastSessionNum || 0) + 1;
-      setFormData({
-        ...formData,
-        numero_seance: nextNum,
-        date: new Date().toISOString().split('T')[0],
-        heure_debut: '09:00',
-        heure_fin: '10:00'
-      });
-    } else {
-      setIsNewSession(false);
-      const num = parseInt(val);
-      const firstMatch = sessions.find(s => s.numero_seance === num);
-      if (firstMatch) {
-        setFormData({
-          ...formData,
-          numero_seance: num,
-          date: firstMatch.date || '',
-          heure_debut: firstMatch.heure_debut || '',
-          heure_fin: firstMatch.heure_fin || ''
-        });
-      } else {
-        setFormData({ ...formData, numero_seance: num });
-      }
-    }
-  };
-
-  const handleFileUpload = async (file) => {
-    if (!file) return;
-    setIsUploading(true);
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `documents/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      setFormData({ ...formData, file_url: filePath });
-      if (!formData.titre) setFormData(prev => ({ ...prev, titre: file.name.replace(/\.[^/.]+$/, "") }));
-      toast.success("Fichier PDF lié avec succès");
-    } catch (err) {
-      console.error('Error uploading file:', err);
-      toast.error("Erreur lors de l'import du fichier.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-gray-900/60 z-[120] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
-      <div className="bg-white p-8 rounded-[40px] shadow-2xl max-w-md w-full border border-white/20" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h4 className="font-extrabold text-gray-900 text-xl">Ajouter une étape</h4>
-            <p className="text-xs text-indigo-600 font-bold uppercase tracking-widest mt-1">Nouveau contenu au planning</p>
-          </div>
-          <button onClick={onClose} className="w-10 h-10 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-900 rounded-2xl flex items-center justify-center transition-all">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-5">
-          <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Séance N°</label>
-            <select
-              className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
-              value={isNewSession ? 'new' : formData.numero_seance}
-              onChange={e => handleSessionNumChange(e.target.value)}
-            >
-              {existingSessionNums.map(num => (
-                <option key={num} value={num}>Séance {num}</option>
-              ))}
-              <option value="new">+ Nouvelle Séance</option>
-            </select>
-          </div>
-
-          {/* Si Nouvelle Séance : On demande le Titre de la Séance, Date et Horaires */}
-          {isNewSession ? (
-            <div className="space-y-5 animate-slide-up">
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de la séance</label>
-                <input
-                  type="text"
-                  placeholder="Ex: Séance 3 - Coaching de mi-parcours"
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
-                  value={formData.titre}
-                  onChange={e => setFormData({ ...formData, titre: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Date de la séance</label>
-                <input
-                  type="date"
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                  value={formData.date}
-                  onChange={e => setFormData({ ...formData, date: e.target.value })}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Heure Début</label>
-                  <input
-                    type="time"
-                    className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                    value={formData.heure_debut}
-                    onChange={e => setFormData({ ...formData, heure_debut: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Heure Fin</label>
-                  <input
-                    type="time"
-                    className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800"
-                    value={formData.heure_fin}
-                    onChange={e => setFormData({ ...formData, heure_fin: e.target.value })}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Si Séance Existante : On demande Titre de l'activité, Type et Fichier */
-            <div className="space-y-5 animate-slide-up">
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Titre de l'activité</label>
-                <input
-                  type="text"
-                  placeholder="Ex: Analyse de la situation..."
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 transition-all"
-                  value={formData.titre}
-                  onChange={e => setFormData({ ...formData, titre: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Type d'activité</label>
-                <select
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 appearance-none"
-                  value={formData.type_activite}
-                  onChange={e => setFormData({ ...formData, type_activite: e.target.value })}
-                >
-                  <option value="Émargement">Émargement (Présence)</option>
-                  <option value="document">Document (Lecture)</option>
-                  <option value="Exercice">Exercice (Travail)</option>
-                </select>
-              </div>
-
-              {(formData.type_activite === 'document' || formData.type_activite === 'Exercice') && (
-                <div className="animate-slide-up">
-                  <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">
-                    Support / Énoncé (PDF, Word, Excel)
-                  </label>
-                  <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploading ? 'Importation...' : formData.file_url ? '✓ Fichier prêt' : '📁 Importer un fichier'}
-                    <input
-                      type="file"
-                      className="hidden"
-                      disabled={isUploading}
-                      accept=".pdf,.doc,.docx,.xls,.xlsx"
-                      onChange={(e) => handleFileUpload(e.target.files[0])}
-                    />
-                  </label>
-                  {formData.file_url && (
-                    <p className="text-[9px] text-green-600 font-bold mt-1 truncate">Fichier lié : {formData.file_url.split('/').pop()}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={() => onSave(formData)}
-          disabled={isUploading || !formData.titre}
-          className="w-full mt-8 py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {isUploading ? 'Veuillez patienter...' : <><Plus size={20} /> Valider l'ajout</>}
-        </button>
-      </div>
     </div>
   );
 };
@@ -1997,7 +1502,6 @@ const AdminClientsView = ({
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, generateSessions,
-  generatePDF,
   handleDeleteClient
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
@@ -2021,7 +1525,6 @@ const AdminClientsView = ({
           handleDownloadResource={handleDownloadResource}
           handleUploadExerciseResponse={handleUploadExerciseResponse}
           generateSessions={generateSessions}
-          generatePDF={generatePDF}
           handleDeleteClient={handleDeleteClient}
         />
       );
@@ -2101,13 +1604,7 @@ const AdminClientsView = ({
   );
 };
 
-const AdminFormateursView = ({
-  clients, formateurs, documents, expandedClientId,
-  setExpandedClientId, supabase, fetchUtilisateurs,
-  fetchDocuments, activeTab, setActiveTab, modules,
-  sessions, handleDownloadResource, handleDeleteFormateur,
-  documentTemplates, handleGenerateDocx
-}) => {
+const AdminFormateursView = ({ clients, formateurs, documents, expandedClientId, setExpandedClientId, supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, modules, sessions, handleDownloadResource, handleDeleteFormateur }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
 
@@ -2123,9 +1620,6 @@ const AdminFormateursView = ({
           modules={modules}
           clients={clients}
           handleDeleteFormateur={handleDeleteFormateur}
-          documents={documents}
-          documentTemplates={documentTemplates}
-          handleGenerateDocx={handleGenerateDocx}
         />
       );
     }
@@ -2207,8 +1701,8 @@ const AdminFormateursView = ({
           </div>
           <div className="p-4 border-t border-gray-100 bg-gray-50 text-right shrink-0">
             <button
-              onClick={() => setSelectedClientSummary(null)}
-              className="bg-gray-900 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-black transition-all"
+               onClick={() => setSelectedClientSummary(null)}
+               className="bg-gray-900 text-white font-bold py-2.5 px-8 rounded-xl hover:bg-black transition-all"
             >
               Fermer la supervision
             </button>
@@ -2279,7 +1773,7 @@ const AdminFormateursView = ({
                                 return (
                                   <tr key={client.id} className="hover:bg-gray-50/50 transition-colors">
                                     <td className="p-3">
-                                      <div
+                                      <div 
                                         className="font-bold text-sm text-indigo-600 hover:text-indigo-800 cursor-pointer underline underline-offset-2 transition-colors"
                                         onClick={(e) => { e.stopPropagation(); setSelectedClientSummary(client); }}
                                       >
@@ -2441,7 +1935,7 @@ const IngenierieView = ({
                                   ) : (
                                     <div className="flex items-center gap-2 group/title">
                                       <p className="font-bold text-gray-900">{template.titre}</p>
-                                      <button
+                                      <button 
                                         onClick={() => { setEditingId(template.id); setEditValue(template.titre); }}
                                         className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/title:opacity-100 transition-opacity"
                                       >
@@ -2485,7 +1979,7 @@ const IngenierieView = ({
                                       ) : (
                                         <div className="flex items-center gap-2 group/restitle leading-none">
                                           <span className="font-bold text-gray-800">{res.titre}</span>
-                                          <button
+                                          <button 
                                             onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
                                             className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
                                           >
@@ -2591,21 +2085,12 @@ const FormateurView = ({
   handleAddSession, handleDeleteSession, updateSessionTime,
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
-  setIsSessionItemModalOpen, setTargetSessionForAddition, signingDocId, setSigningDocId,
-  generatePDF,
-  viewingDocId, setViewingDocId, setViewingSession
+  setIsSessionItemModalOpen, setTargetSessionForAddition
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({}); // { sessionId: { start, end } }
   const [savingId, setSavingId] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
-  const [activeMainTab, setActiveMainTab] = React.useState('clients'); // 'clients' or 'admin'
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
-
-  const pendingAdminDocs = (documents || []).filter(d =>
-    d.assigned_formateur_id === currentUserId &&
-    d.statut_formateur !== 'Signé' &&
-    !d.signe_par_formateur
-  );
 
   React.useEffect(() => {
     // Reset tab when expanded client changes
@@ -2648,487 +2133,378 @@ const FormateurView = ({
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+      <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Formateur</h1>
-          <p className="text-gray-500 text-lg mt-1">Gérez vos clients et vos documents administratifs.</p>
-        </div>
-        <div className="flex bg-gray-100 p-1.5 rounded-2xl w-full md:w-auto">
-          <button
-            onClick={() => setActiveMainTab('clients')}
-            className={`flex-1 md:flex-none px-6 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${activeMainTab === 'clients' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Users size={18} /> Mes Clients
-          </button>
-          <button
-            onClick={() => setActiveMainTab('admin')}
-            className={`flex-1 md:flex-none px-6 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 relative ${activeMainTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Archive size={18} /> Administratif
-            {pendingAdminDocs.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-[10px] flex items-center justify-center rounded-full border-2 border-white animate-pulse">
-                {pendingAdminDocs.length}
-              </span>
-            )}
-          </button>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Clients Assignés</h1>
+          <p className="text-gray-500 text-lg mt-1">Suivez l'avancement et gérez les émargements des sessions.</p>
         </div>
       </div>
 
-      {activeMainTab === 'clients' ? (
-        <div className="grid grid-cols-1 gap-6">
-          <div className="flex items-center gap-2 mb-2">
-            <h2 className="text-xl font-bold text-gray-800">Assignations en cours</h2>
-            <span className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">{assignedClients.length}</span>
-          </div>
-          {assignedClients.length > 0 ? assignedClients.map(client => {
-            const clientSessions = sessions.filter(s => s.client_id === client.id);
-            const isExpanded = expandedClientId === client.id;
-            const assignedModule = modules?.find(m => String(m.id) === String(client.module_id));
-            const progress = Math.min(100, Math.round(((client.seances_effectuees || 0) / (client.seances_totales || 10)) * 100));
 
-            return (
-              <div key={client.id} className={`bg-white rounded-3xl p-6 shadow-sm border ${isExpanded ? 'border-indigo-200' : 'border-gray-100'} transition-all`}>
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex items-center">
-                    <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-bold text-2xl mr-4">{client.nom ? client.nom.charAt(0) : '?'}</div>
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-xl">{client.nom}</h3>
-                      <p className="text-sm text-gray-500 font-medium">{client.email}</p>
-                    </div>
-                  </div>
 
-                  <div className="flex flex-1 max-w-xs flex-col">
-                    <div className="flex justify-between text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">
-                      <span>Progression</span>
-                      <span>{progress}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }}></div>
-                    </div>
-                  </div>
+      <div className="grid grid-cols-1 gap-6">
+        {assignedClients.length > 0 ? assignedClients.map(client => {
+          const clientSessions = sessions.filter(s => s.client_id === client.id);
+          const isExpanded = expandedClientId === client.id;
+          const assignedModule = modules?.find(m => String(m.id) === String(client.module_id));
+          const progress = Math.min(100, Math.round(((client.seances_effectuees || 0) / (client.seances_totales || 10)) * 100));
 
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
-                      className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-700' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'}`}
-                    >
-                      {isExpanded ? "Réduire" : "Gérer les séances"}
-                    </button>
+          return (
+            <div key={client.id} className={`bg-white rounded-3xl p-6 shadow-sm border ${isExpanded ? 'border-indigo-200' : 'border-gray-100'} transition-all`}>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center">
+                  <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-bold text-2xl mr-4">{client.nom ? client.nom.charAt(0) : '?'}</div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-xl">{client.nom}</h3>
+                    <p className="text-sm text-gray-500 font-medium">{client.email}</p>
                   </div>
                 </div>
 
-                {isExpanded && (
-                  <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
-                    <div className="flex gap-4 border-b border-gray-200 mb-6 font-sans">
-                      <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
-                      <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
-                    </div>
+                <div className="flex flex-1 max-w-xs flex-col">
+                  <div className="flex justify-between text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">
+                    <span>Progression</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                  </div>
+                </div>
 
-                    {formateurClientTab === 'docs_signes' && (
-                      <div className="mb-4">
-                        {(() => {
-                          const signedSessions = clientSessions.filter(s =>
-                            s.statut === 'Signé' && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
-                          );
-                          if (signedSessions.length === 0) return (
-                            <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                              <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
-                              <p className="text-gray-400 text-sm italic">Aucun document signé validé pour ce client.</p>
-                            </div>
-                          );
-                          return (
-                            <div className="overflow-hidden rounded-2xl border border-gray-100">
-                              <table className="w-full text-left text-sm">
-                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
-                                  <tr>
-                                    <th className="px-4 py-3">Nom du document</th>
-                                    <th className="px-4 py-3">Date de signature</th>
-                                    <th className="px-4 py-3 text-right">Action</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50 bg-white">
-                                  {signedSessions.map(session => {
-                                    const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
-                                    const dateSign = session.date_signature_formateur || session.date_signature || session.updated_at;
-                                    return (
-                                      <tr key={session.id} className="hover:bg-gray-50 transition-colors">
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 bg-green-100 text-green-600 rounded-lg flex items-center justify-center shrink-0">
-                                              <FileCheck size={16} />
-                                            </div>
-                                            <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</span>
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-xs text-gray-500">
-                                          {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
-                                        </td>
-                                        <td className="px-4 py-3 text-right">
-                                          <a
-                                            href={signedUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
-                                          >
-                                            <Download size={13} /> Télécharger
-                                          </a>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
+                    className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-700' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'}`}
+                  >
+                    {isExpanded ? "Réduire" : "Gérer les séances"}
+                  </button>
+                </div>
+              </div>
 
-                    {formateurClientTab === 'seances' && (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <h4 className="font-bold text-gray-800 flex items-center">
-                            <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
-                            Planning des Séances - {assignedModule?.nom || 'Sans module'}
-                          </h4>
+              {isExpanded && (
+                <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
+                  <div className="flex gap-4 border-b border-gray-200 mb-6 font-sans">
+                    <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
+                    <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
+                  </div>
 
-                          {(userRole === 'admin' || userRole === 'formateur') && (
-                            <div className="flex gap-2 ml-auto">
-                              <button
-                                onClick={() => generatePDF(client)}
-                                className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-emerald-100 flex items-center shadow-sm"
-                              >
-                                <FileText size={14} className="mr-1.5" /> Attestation de Présence
-                              </button>
-                              <button
-                                onClick={() => handleAddSession(client)}
-                                className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center shadow-sm"
-                                title="Ajouter une séance"
-                              >
-                                <span className="mr-1.5">➕</span> Ajouter une séance
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="mb-4 flex flex-wrap gap-2"></div>
-
-                        {clientSessions.length > 0 ? (
+                  {formateurClientTab === 'docs_signes' && (
+                    <div className="mb-4">
+                      {(() => {
+                        const signedSessions = clientSessions.filter(s =>
+                          s.statut === 'Signé' && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
+                        );
+                        if (signedSessions.length === 0) return (
+                          <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+                            <p className="text-gray-400 text-sm italic">Aucun document signé validé pour ce client.</p>
+                          </div>
+                        );
+                        return (
                           <div className="overflow-hidden rounded-2xl border border-gray-100">
                             <table className="w-full text-left text-sm">
                               <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
                                 <tr>
-                                  <th className="px-4 py-3 text-left">N° & Séance</th>
-                                  <th className="px-4 py-3 text-left">Date</th>
-                                  <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
-                                  <th className="px-4 py-3 text-left">Statut</th>
-                                  <th className="px-4 py-3 text-right">Actions</th>
+                                  <th className="px-4 py-3">Nom du document</th>
+                                  <th className="px-4 py-3">Date de signature</th>
+                                  <th className="px-4 py-3 text-right">Action</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-gray-100 bg-white">
-                                {(() => {
-                                  const grouped = clientSessions.reduce((acc, s) => {
-                                    const key = s.numero_seance;
-                                    if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-                                    acc[key].items.push(s);
-                                    return acc;
-                                  }, {});
-
-                                  return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
-                                    <React.Fragment key={gIdx}>
-                                      {/* Folder Header Row */}
-                                      <tr className="bg-indigo-50/30">
-                                        <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
-                                          <div className="flex items-center gap-2 text-xs">
-                                            <Layout size={12} className="text-indigo-600" />
-                                            <span>SÉANCE {group.numero} : {group.nom}</span>
+                              <tbody className="divide-y divide-gray-50 bg-white">
+                                {signedSessions.map(session => {
+                                  const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
+                                  const dateSign = session.date_signature_formateur || session.date_signature || session.updated_at;
+                                  return (
+                                    <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-8 h-8 bg-green-100 text-green-600 rounded-lg flex items-center justify-center shrink-0">
+                                            <FileCheck size={16} />
                                           </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <input
-                                            type="date"
-                                            value={group.date || ''}
-                                            onChange={(e) => {
-                                              group.items.forEach(s => updateSessionDate(s.id, e.target.value));
-                                            }}
-                                            className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
-                                          />
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-2">
-                                            <div className="flex flex-col gap-0.5">
-                                              <input
-                                                type="time"
-                                                value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
-                                                onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
-                                                className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                              />
-                                              <input
-                                                type="time"
-                                                value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
-                                                onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
-                                                className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                              />
-                                            </div>
-                                            <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
-                                              <Save size={14} />
-                                            </button>
-                                          </div>
-                                        </td>
-                                        <td colSpan="2" className="px-4 py-3 text-right">
-                                          <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
-                                        </td>
-                                      </tr>
-
-                                      {/* Nested Items */}
-                                      {group.items.map(session => (
-                                        <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
-                                          <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
-                                            <span className="text-[14px]">
-                                              {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
-                                            </span>
-                                            <span className="truncate">{session.ressource_titre || session.nom}</span>
-                                          </td>
-                                          <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
-                                          <td className="px-4 py-3">
-                                            <div className="flex flex-col gap-1">
-                                              <div className="flex items-center gap-1.5">
-                                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                                <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                                              </div>
-                                              <div className="flex items-center gap-1.5">
-                                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                                <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                                              </div>
-                                            </div>
-                                          </td>
-                                          <td className="px-4 py-3 text-right">
-                                            <div className="flex justify-end items-center gap-2">
-                                              {(() => {
-                                                const today = new Date().toISOString().split('T')[0];
-                                                const sessionDate = session.date || group.date;
-                                                const isDateLocked = sessionDate && today < sessionDate;
-                                                const metadata = session.metadata || {};
-
-                                                if (session.metadata?.isCustom) {
-                                                  return (
-                                                    <button
-                                                      onClick={() => handleDeleteSession(session)}
-                                                      className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
-                                                      title="Supprimer cet élément personnalisé"
-                                                    >
-                                                      <Trash2 size={14} />
-                                                    </button>
-                                                  );
-                                                }
-
-                                                if (session.type_activite === 'signature') {
-                                                  const isSigned = session.statut_formateur === 'Signé';
-                                                  return (
-                                                    <button
-                                                      disabled={isSigned || isDateLocked}
-                                                      onClick={() => signSession(session)}
-                                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
-                                                    >
-                                                      {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
-                                                    </button>
-                                                  );
-                                                }
-
-                                                if (session.type_activite === 'document') {
-                                                  const isToSign = metadata.isToSign;
-                                                  const signedUrl = session.file_url_signed || metadata.file_url_signed;
-                                                  return (
-                                                    <div className="flex gap-2 items-center">
-                                                      <button
-                                                        onClick={() => {
-                                                          const fileUrl = signedUrl || session.file_url || session.ressource_url;
-                                                          setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
-                                                        }}
-                                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
-                                                      >
-                                                        {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                                      </button>
-                                                      {signedUrl && (
-                                                        <button
-                                                          onClick={() => handleDownloadResource(signedUrl)}
-                                                          className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                                          title="Télécharger la preuve de signature"
-                                                        >
-                                                          <FileCheck size={16} />
-                                                        </button>
-                                                      )}
-                                                      {isToSign && (
-                                                        <button
-                                                          disabled={isDateLocked}
-                                                          onClick={() => {
-                                                            const fileUrl = signedUrl || session.file_url || session.ressource_url;
-                                                            if (session.statut_formateur === 'Signé') {
-                                                              setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
-                                                            } else {
-                                                              setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
-                                                            }
-                                                          }}
-                                                          className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_formateur === 'Signé' ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
-                                                        >
-                                                          {session.statut_formateur === 'Signé' ? 'Consulter Signé' : 'Signer Document'}
-                                                        </button>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                }
-
-                                                if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                                  return (
-                                                    <div className="flex gap-2">
-                                                      <button
-                                                        onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                                      >
-                                                        Télécharger
-                                                      </button>
-                                                      {userRole === 'client' && (
-                                                        <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                                          Soumettre Réponse
-                                                          <input
-                                                            type="file"
-                                                            className="hidden"
-                                                            onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                                          />
-                                                        </label>
-                                                      )}
-                                                      {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                        <button
-                                                          onClick={() => window.open(session.reponse_url, '_blank')}
-                                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
-                                                        >
-                                                          Voir Réponse
-                                                        </button>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                }
-
-                                                return (
-                                                  <button
-                                                    onClick={() => handleDeleteSession(session)}
-                                                    className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                                                  >
-                                                    <Trash2 size={14} />
-                                                  </button>
-                                                );
-                                              })()}
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                      {/* Footer row with Add button */}
-                                      <tr className="bg-gray-50/20">
-                                        <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
-                                          <button
-                                            onClick={() => {
-                                              setTargetSessionForAddition(group);
-                                              setIsSessionItemModalOpen(true);
-                                            }}
-                                            className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
-                                          >
-                                            <Plus size={12} /> Ajouter un élément
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    </React.Fragment>
-                                  ));
-                                })()}
+                                          <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-gray-500">
+                                        {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                                      </td>
+                                      <td className="px-4 py-3 text-right">
+                                        <a
+                                          href={signedUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                                        >
+                                          <Download size={13} /> Télécharger
+                                        </a>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
-                        ) : (
-                          <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                            <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
-                            {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
-                          </div>
-                        )}
-                      </>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {formateurClientTab === 'seances' && (
+                    <>
+                  <div className="flex items-center gap-3">
+                    <h4 className="font-bold text-gray-800 flex items-center">
+                      <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
+                      Planning des Séances - {assignedModule?.nom || 'Sans module'}
+                    </h4>
+
+                    {(userRole === 'admin' || userRole === 'formateur') && (
+                      <button
+                        onClick={() => handleAddSession(client)}
+                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
+                        title="Ajouter une séance"
+                      >
+                        <span className="mr-1.5">➕</span> Ajouter une séance
+                      </button>
                     )}
                   </div>
-                )}
-              </div>
-            );
-          }) : (
-            <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-gray-200">
-              <p className="text-gray-400 font-medium italic">Aucun client ne vous est assigné actuellement.</p>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-8 animate-slide-up">
-          {/* Section Urgente : Documents à signer */}
-          {pendingAdminDocs.length > 0 && (
-            <div className="bg-amber-50 rounded-3xl p-8 border border-amber-200 shadow-sm">
-              <h2 className="text-xl font-bold text-amber-900 mb-6 flex items-center gap-2">
-                <AlertCircle className="text-amber-500" /> Documents en attente de signature ({pendingAdminDocs.length})
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {pendingAdminDocs.map(doc => (
-                  <div key={doc.id} className="bg-white p-6 rounded-2xl border border-amber-100 flex items-center justify-between shadow-sm group hover:border-amber-400 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-all">
-                        <FileText size={24} />
-                      </div>
-                      <div>
-                        <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
-                        <p className="text-[10px] text-amber-600 font-black uppercase">
-                          Émis le {doc.created_at && !isNaN(new Date(doc.created_at).getTime())
-                            ? new Date(doc.created_at).toLocaleDateString('fr-FR')
-                            : new Date().toLocaleDateString('fr-FR')}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setSigningDocId(doc.id)}
-                      className="bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-amber-100 transition-all flex items-center gap-2"
-                    >
-                      <PenTool size={14} /> Signer maintenant
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* Section Archives Administratives */}
-          <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm">
-            <h2 className="text-xl font-bold text-gray-800 mb-8 flex items-center gap-2">
-              <Archive className="text-indigo-500" /> Archives Administratives & Contrats
-            </h2>
+                  <div className="mb-4 flex flex-wrap gap-2"></div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && (d.workflow_status === 'SIGNE_ET_ARCHIVE' || d.statut_formateur === 'Signé' || d.signe_par_formateur)).map(doc => (
-                <div key={doc.id} className="p-5 bg-gray-50 border border-gray-200 rounded-3xl group hover:bg-white hover:border-indigo-300 transition-all relative">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 bg-white text-indigo-600 rounded-2xl flex items-center justify-center font-bold shadow-sm group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                      <FileCheck size={24} />
+                  {clientSessions.length > 0 ? (
+                    <div className="overflow-hidden rounded-2xl border border-gray-100">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                          <tr>
+                            <th className="px-4 py-3 text-left">N° & Séance</th>
+                            <th className="px-4 py-3 text-left">Date</th>
+                            <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
+                            <th className="px-4 py-3 text-left">Statut</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white">
+                          {(() => {
+                            const grouped = clientSessions.reduce((acc, s) => {
+                              const key = s.numero_seance;
+                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                              acc[key].items.push(s);
+                              return acc;
+                            }, {});
+
+                            return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                              <React.Fragment key={gIdx}>
+                                {/* Folder Header Row */}
+                                <tr className="bg-indigo-50/30">
+                                  <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Layout size={12} className="text-indigo-600" />
+                                      <span>SÉANCE {group.numero} : {group.nom}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <input
+                                      type="date"
+                                      value={group.date || ''}
+                                      onChange={(e) => {
+                                        group.items.forEach(s => updateSessionDate(s.id, e.target.value));
+                                      }}
+                                      className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex flex-col gap-0.5">
+                                        <input
+                                          type="time"
+                                          value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
+                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                        />
+                                        <input
+                                          type="time"
+                                          value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
+                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                        />
+                                      </div>
+                                      <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
+                                        <Save size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td colSpan="2" className="px-4 py-3 text-right">
+                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+                                  </td>
+                                </tr>
+
+                                {/* Nested Items */}
+                                {group.items.map(session => (
+                                  <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
+                                    <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
+                                      <span className="text-[14px]">
+                                        {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
+                                      </span>
+                                      <span className="truncate">{session.ressource_titre || session.nom}</span>
+                                    </td>
+                                    <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
+                                    <td className="px-4 py-3">
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3 text-right">
+                                      <div className="flex justify-end items-center gap-2">
+                                        {(() => {
+                                          const today = new Date().toISOString().split('T')[0];
+                                          const sessionDate = session.date || group.date;
+                                          const isDateLocked = sessionDate && today < sessionDate;
+                                          const metadata = session.metadata || {};
+
+                                          if (session.metadata?.isCustom) {
+                                            return (
+                                              <button
+                                                onClick={() => handleDeleteSession(session)}
+                                                className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                                                title="Supprimer cet élément personnalisé"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            );
+                                          }
+
+                                          if (session.type_activite === 'signature') {
+                                            const isSigned = session.statut_formateur === 'Signé';
+                                            return (
+                                              <button
+                                                disabled={isSigned || isDateLocked}
+                                                onClick={() => signSession(session)}
+                                                className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                              >
+                                                {isSigned ? 'Émargé ✓' : isDateLocked ? `Indisponible` : 'Émarger'}
+                                              </button>
+                                            );
+                                          }
+
+                                          if (session.type_activite === 'document') {
+                                            const isToSign = metadata.isToSign;
+                                            const signedUrl = session.file_url_signed || metadata.file_url_signed;
+                                            return (
+                                              <div className="flex gap-2 items-center">
+                                                <button
+                                                  onClick={() => handleDownloadResource(signedUrl || session.file_url || session.ressource_url)}
+                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
+                                                >
+                                                  {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                                </button>
+                                                {signedUrl && (
+                                                  <button
+                                                    onClick={() => handleDownloadResource(signedUrl)}
+                                                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                    title="Télécharger la preuve de signature"
+                                                  >
+                                                    <FileCheck size={16} />
+                                                  </button>
+                                                )}
+                                                {isToSign && (
+                                                  <button
+                                                    disabled={session.statut_client === 'Signé' || isDateLocked}
+                                                    onClick={() => signSession(session)}
+                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${(session.statut === 'Signé') ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-700 hover:bg-indigo-800'}`}
+                                                  >
+                                                    {session.statut_formateur === 'Signé' ? 'Signé ✓' : 'Signer Document'}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+
+                                          if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                            return (
+                                              <div className="flex gap-2">
+                                                <button
+                                                  onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                                >
+                                                  Télécharger
+                                                </button>
+                                                {userRole === 'client' && (
+                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                    Soumettre Réponse
+                                                    <input
+                                                      type="file"
+                                                      className="hidden"
+                                                      onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                                    />
+                                                  </label>
+                                                )}
+                                                {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
+                                                  <button
+                                                    onClick={() => window.open(session.reponse_url, '_blank')}
+                                                    className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                  >
+                                                    Voir Réponse
+                                                  </button>
+                                                )}
+                                              </div>
+                                            );
+                                          }
+
+                                          return (
+                                            <button
+                                              onClick={() => handleDeleteSession(session)}
+                                              className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          );
+                                        })()}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {/* Footer row with Add button */}
+                                <tr className="bg-gray-50/20">
+                                  <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
+                                    <button
+                                      onClick={() => {
+                                        setTargetSessionForAddition(group);
+                                        setIsSessionItemModalOpen(true);
+                                      }}
+                                      className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
+                                    >
+                                      <Plus size={12} /> Ajouter un élément
+                                    </button>
+                                  </td>
+                                </tr>
+                              </React.Fragment>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
                     </div>
-                    <button onClick={() => handleDownloadResource(doc.url)} className="text-gray-400 hover:text-indigo-600 transition-colors">
-                      <Download size={20} />
-                    </button>
-                  </div>
-                  <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={doc.nom}>{doc.nom}</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-lg text-[9px] font-black uppercase">Archivé</span>
-                    <p className="text-[10px] text-gray-400 font-medium">Signé le {doc.date_signature_formateur ? new Date(doc.date_signature_formateur).toLocaleDateString() : '??'}</p>
-                  </div>
-                </div>
-              ))}
-              {(documents || []).filter(d => d.assigned_formateur_id === currentUserId && (d.workflow_status === 'SIGNE_ET_ARCHIVE' || d.statut_formateur === 'Signé' || d.signe_par_formateur)).length === 0 && (
-                <div className="col-span-full py-12 text-center border-2 border-dashed border-gray-100 rounded-3xl">
-                  <p className="text-gray-400 italic text-sm">Aucun contrat ou document administratif archivé pour le moment.</p>
+                  ) : (
+                    <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
+                      {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
+                    </div>
+                  )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
+          )
+        }) : (
+          <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-gray-200">
+            <p className="text-gray-400 font-medium italic">Aucun client ne vous est assigné actuellement.</p>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
@@ -3696,7 +3072,7 @@ const SessionsView = ({
                 return sortedGroups.map((group, gIdx) => {
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
-
+                  
                   const previousGroupNotSigned = gIdx > 0 && sortedGroups[gIdx - 1].items.some(s => s.statut !== 'Signé');
                   const isLocked = isFuture || previousGroupNotSigned;
 
@@ -3718,142 +3094,136 @@ const SessionsView = ({
                       </tr>
                       {group.items.map(session => (
                         <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
-                          <td className="py-4 pl-12">
-                            <div className="flex items-center gap-3">
-                              <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
-                              </div>
+                        <td className="py-4 pl-12">
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                            <div className="flex flex-col">
+                              <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                              <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
                             </div>
-                          </td>
-                          <td className="py-4 text-xs italic text-gray-400">
-                            {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
-                          </td>
-                          <td className="py-4 text-center">
-                            <div className="flex flex-col gap-1 items-center">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                              </div>
+                          </div>
+                        </td>
+                        <td className="py-4 text-xs italic text-gray-400">
+                          {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
+                        </td>
+                        <td className="py-4 text-center">
+                          <div className="flex flex-col gap-1 items-center">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                             </div>
-                          </td>
-                          <td className="py-4 text-right pr-4">
-                            <div className="flex justify-end gap-2">
-                              {(() => {
-                                const today = new Date().toISOString().split('T')[0];
-                                const sessionDate = session.date || group.date;
-                                const isDateLocked = sessionDate && today < sessionDate;
-                                const metadata = session.metadata || {};
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 text-right pr-4">
+                          <div className="flex justify-end gap-2">
+                            {(() => {
+                              const today = new Date().toISOString().split('T')[0];
+                              const sessionDate = session.date || group.date;
+                              const isDateLocked = sessionDate && today < sessionDate;
+                              const metadata = session.metadata || {};
 
-                                const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
+                              const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
 
-                                if (isSignatureCondition) {
-                                  const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                  const docUrl = session.file_url || session.ressource_url;
-                                  return (
-                                    <div className="flex gap-2 items-center justify-end w-full">
-                                      {docUrl && (
-                                        <button
-                                          onClick={() => {
-                                            const fileUrl = signedUrl || docUrl;
-                                            console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
-                                            console.log('[Consulter] session:', session.id, session.ressource_titre);
-                                            setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
-                                          }}
-                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
-                                        >
-                                          Consulter
-                                        </button>
-                                      )}
+                              if (isSignatureCondition) {
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = session.file_url || session.ressource_url;
+                                return (
+                                  <div className="flex gap-2 items-center justify-end w-full">
+                                    {docUrl && (
                                       <button
-                                        disabled={session.statut_client === 'Signé' || isDateLocked}
                                         onClick={() => {
-                                          if (session.statut_client === 'Signé') return;
-                                          const fileUrl = docUrl || null;
-                                          console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
-                                          console.log('[Signer] session:', session.id, session.type_activite);
-                                          if (session.type_activite === 'signature') {
-                                            signSession(session);
-                                          } else {
-                                            setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
-                                          }
+                                          const fileUrl = signedUrl || docUrl;
+                                          console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
+                                          console.log('[Consulter] session:', session.id, session.ressource_titre);
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
                                         }}
-                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${session.statut_client === 'Signé'
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                                      >
+                                        Consulter
+                                      </button>
+                                    )}
+                                    <button
+                                      disabled={session.statut_client === 'Signé' || isDateLocked}
+                                      onClick={() => {
+                                        if (session.statut_client === 'Signé') return;
+                                        const fileUrl = docUrl || null;
+                                        console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
+                                        console.log('[Signer] session:', session.id, session.type_activite);
+                                        setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        session.statut_client === 'Signé'
                                           ? 'bg-green-50 text-green-600 border-green-200'
                                           : isDateLocked
-                                            ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                                            : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
-                                          }`}
-                                      >
-                                        {session.statut_client === 'Signé'
-                                          ? (session.type_activite === 'signature' ? 'Émargé ✓' : 'Signé ✓')
-                                          : isDateLocked
-                                            ? 'Indisponible'
-                                            : (session.type_activite === 'signature' ? 'Émarger' : 'Signer le document')}
-                                      </button>
-                                    </div>
-                                  );
-                                }
+                                          ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                                          : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
+                                      }`}
+                                    >
+                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+                                    </button>
+                                  </div>
+                                );
+                              }
 
-                                if (session.type_activite === 'document') {
-                                  const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                  const docUrl = signedUrl || session.file_url || session.ressource_url;
-                                  return (
-                                    <div className="flex gap-2 items-center justify-end w-full">
+                              if (session.type_activite === 'document') {
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                return (
+                                  <div className="flex gap-2 items-center justify-end w-full">
+                                    <button
+                                      onClick={() => {
+                                        console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
+                                        setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                      }`}
+                                    >
+                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                return (
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                                    >
+                                      Télécharger
+                                    </button>
+                                    <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                      {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
+                                      <input
+                                        type="file"
+                                        className="hidden"
+                                        onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                      />
+                                    </label>
+                                    {session.reponse_url && (
                                       <button
-                                        onClick={() => {
-                                          console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
-                                          setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-                                        }}
-                                        className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                          }`}
+                                        onClick={() => window.open(session.reponse_url, '_blank')}
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
                                       >
-                                        {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                        Ma Réponse ↗
                                       </button>
-                                    </div>
-                                  );
-                                }
+                                    )}
+                                  </div>
+                                );
+                              }
 
-                                if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                  return (
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                      >
-                                        Télécharger
-                                      </button>
-                                      <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                        {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
-                                        <input
-                                          type="file"
-                                          className="hidden"
-                                          onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                        />
-                                      </label>
-                                      {session.reponse_url && (
-                                        <button
-                                          onClick={() => window.open(session.reponse_url, '_blank')}
-                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
-                                        >
-                                          Ma Réponse ↗
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                }
-
-                                return null;
-                              })()}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                              return null;
+                            })()}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                     </React.Fragment>
                   );
                 });
@@ -4476,21 +3846,11 @@ export default function App() {
   useEffect(() => {
     const initSession = async () => {
       setIsLoadingSession(true);
-
-      // Pré-chargement global du moteur de rendu Word pour un affichage instantané ultérieur
-      if (typeof window !== 'undefined' && !window.document.getElementById('docx-preview-script')) {
-        const script = window.document.createElement('script');
-        script.id = 'docx-preview-script';
-        script.src = "https://cdn.jsdelivr.net/npm/docx-preview@0.1.15/dist/docx-preview.min.js";
-        script.async = true;
-        window.document.body.appendChild(script);
-      }
-
       const { data: { session } } = await supabase.auth.getSession();
-
+      
       if (session?.user?.email) {
         console.log('[App] Session trouvée pour:', session.user.email);
-
+        
         // Chercher le rôle
         const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', session.user.email).single();
         if (userData && userData.role) {
@@ -4601,7 +3961,7 @@ export default function App() {
     // 1. Charger les formateurs depuis 'utilisateurs'
     const { data: formateursData, error: formateursError } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, telephone, compagnie_assurance, numero_assurance_rcp')
+      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, telephone')
       .eq('role', 'formateur');
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
@@ -4784,7 +4144,7 @@ export default function App() {
       await supabase.from('clients').delete().eq('id', clientId);
       // 4. Supprimer le compte Auth (si possible)
       await supabaseAdmin.auth.admin.deleteUser(clientId);
-
+      
       toast.success("Client et toutes ses données supprimés avec succès.");
       setExpandedClientId(null);
       fetchUtilisateurs();
@@ -4914,10 +4274,10 @@ export default function App() {
     e.preventDefault();
     if (!newModuleName.trim()) return;
     const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances) }]);
-    if (!error) {
-      await fetchModules();
-      setNewModuleName('');
-      setNewModuleSeances(1);
+    if (!error) { 
+      await fetchModules(); 
+      setNewModuleName(''); 
+      setNewModuleSeances(1); 
       toast.success("Module créé avec succès !");
     }
     else toast.error('Erreur lors de la création du module : ' + error.message);
@@ -5053,7 +4413,7 @@ export default function App() {
 
     console.log(`[generateSessions] Début. ClientID: ${finalClientId}, ModuleID: ${finalModuleId}`);
 
-    const moduleId = finalModuleId;
+    const moduleId = finalModuleId; 
     if (!moduleId || isNaN(moduleId)) {
       console.warn("[generateSessions] ID de module invalide ou absent pour le client:", finalClientId);
       return;
@@ -5120,8 +4480,8 @@ export default function App() {
                 module_id: finalModuleId,
                 numero_seance: t.ordre,
                 nom: `${t.titre} - ${res.titre}`, // Rend le nom unique pour la DB
-                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' :
-                  (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
+                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' : 
+                               (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
                 ressource_id: res.ressource_id || null,
                 file_url: res.file_url || null,
                 ressource_titre: res.titre,
@@ -5180,8 +4540,8 @@ export default function App() {
       }
 
       const finalSessionsToInsert = sessionsToInsert.filter(newSession => {
-        const isDuplicate = alreadyInDb?.some(existing =>
-          existing.nom === newSession.nom &&
+        const isDuplicate = alreadyInDb?.some(existing => 
+          existing.nom === newSession.nom && 
           (existing.ressource_titre === newSession.ressource_titre || (!existing.ressource_titre && !newSession.ressource_titre))
         );
         return !isDuplicate;
@@ -5220,7 +4580,7 @@ export default function App() {
   const onSaveTimes = async (sessionId) => {
     const times = editedTimes[sessionId];
     if (!times) return;
-
+    
     setLastModifiedSessionId(sessionId);
     const updates = {};
     if (times.start) updates.heure_debut = times.start;
@@ -5240,41 +4600,28 @@ export default function App() {
   const updateSessionTime = async (sessionId, field, value) => {
     setLastModifiedSessionId(sessionId);
     const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
-    if (!error) {
-      await fetchSessions();
-      toast.success("🕒 Heure mise à jour");
-    }
+    if (!error) await fetchSessions();
   };
 
   const updateSessionDate = async (sessionId, newDate) => {
     setLastModifiedSessionId(sessionId);
     const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
-    if (!error) {
-      await fetchSessions();
-      toast.success("📅 Date mise à jour");
-    }
+    if (!error) await fetchSessions();
   };
 
   const signSession = (session) => {
-    // Si c'est un émargement pur OU si aucun fichier n'est joint, on ouvre le PAD directement
-    const hasFile = session.file_url || session.ressource_url || session.signed_pdf_url || (session.metadata && session.metadata.file_url);
-    if (session.type_activite === 'signature' || session.type_activite === 'Émargement' || !hasFile) {
-      setSigningSessionId(session.id);
-    } else {
-      // Sinon on passe par le visualiseur (qui permet de lire avant de signer)
-      setViewingSession({ session, mode: 'sign' });
-    }
+    setSigningSessionId(session.id);
   };
 
   /**
    * Superpose la signature sur le PDF original et sauvegarde le résultat
    */
-  // --- Fonctions utilitaires Archivage ---
+   // --- Fonctions utilitaires Archivage ---
   const overlaySignatureOnPdf = async (session, client, signatureDataUrl, role) => {
     try {
       console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
-
-      const originalRelativePath = session.file_url || session.ressource_url || session.url || session.file_url_signed || session.metadata?.file_url_signed;
+      
+      const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
       if (!originalRelativePath) {
         console.log("[SignatureProof] Pas de chemin de document pour apposer la signature.");
         return null;
@@ -5282,13 +4629,13 @@ export default function App() {
 
       // 1. Obtenir une URL de lecture valide (signée si nécessaire) pour le fetch
       console.log("[SignatureProof] Obtention URL signée pour original:", originalRelativePath);
-
+      
       // Extraction du bucket/path
       const extractBucketPath = (fullUrl) => {
         if (!fullUrl) return null;
         let bucket = 'documents';
         let path = fullUrl;
-
+        
         const match = fullUrl.match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
         if (match) {
           bucket = match[1];
@@ -5318,9 +4665,9 @@ export default function App() {
         if (!res.ok) throw new Error(`HTTP ${res.status} lors de la lecture du PDF original`);
         return res.arrayBuffer();
       });
-
+      
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
-
+      
       // 3. Préparer l'image de la signature
       const signatureImageBytes = await fetch(signatureDataUrl).then(res => res.arrayBuffer());
       const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
@@ -5386,43 +4733,35 @@ export default function App() {
     const session = sessions.find(s => s.id === sessionId);
     if (!session) return;
 
-    const signingToast = toast.loading("✍️ Enregistrement de la signature...");
-    try {
-      setLastModifiedSessionId(sessionId);
-      const updateData = {};
-      const client = clients.find(c => c.id === session.client_id);
+    setLastModifiedSessionId(sessionId);
+    const updateData = {};
+    const client = clients.find(c => c.id === session.client_id);
 
-      if (userRole === 'formateur' || userRole === 'admin') {
-        updateData.signature_formateur = signatureDataUrl;
-        updateData.date_signature_formateur = new Date().toISOString();
-        updateData.statut_formateur = 'Signé';
-        updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
-      } else {
-        updateData.signature_image = signatureDataUrl;
-        updateData.date_signature = new Date().toISOString();
-        updateData.statut_client = 'Signé';
-        updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
+    if (userRole === 'formateur' || userRole === 'admin') {
+      updateData.signature_formateur = signatureDataUrl;
+      updateData.date_signature_formateur = new Date().toISOString();
+      updateData.statut_formateur = 'Signé';
+      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
+    } else {
+      updateData.signature_image = signatureDataUrl;
+      updateData.date_signature = new Date().toISOString();
+      updateData.statut_client = 'Signé';
+      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet pour affichage immédiat
+    }
+
+    // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
+    if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
+      const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
+      if (signedUrl) {
+        updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
+        updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
       }
+    }
 
-      // Gestion du statut 'Complet' si les deux ont signé
-      const isNowFullySigned = (updateData.signature_formateur || session.signature_formateur) && (updateData.signature_image || session.signature_image);
-      if (isNowFullySigned) {
-        updateData.statut = 'Complet';
-      }
+    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
 
-      // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
-      if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
-        const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
-        if (signedUrl) {
-          updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
-          updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
-        }
-      }
-
-      const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
-      if (error) throw error;
-
-      if (updateData.statut === 'Signé' || updateData.statut === 'Complet') {
+    if (!error) {
+      if (updateData.statut === 'Signé') {
         const client = clients.find(c => c.id === session.client_id);
         if (client) {
           const newEffectuees = (client.seances_effectuees || 0) + 1;
@@ -5431,19 +4770,18 @@ export default function App() {
         }
       }
       await fetchSessions();
-      await fetchDocuments();
-      toast.success(`✅ Émargement enregistré !`, { id: signingToast });
+      toast.success(`Émargement enregistré avec succès !`);
       setSigningSessionId(null);
       if (userRole === 'client') setActiveTab('mes_seances');
-    } catch (error) {
+    } else {
       console.error("Erreur signature session:", error);
-      toast.error("❌ Erreur lors de la signature", { id: signingToast });
+      toast.error("Erreur lors de la signature : " + error.message);
     }
   };
 
   const handleAddSessionItem = async (data) => {
     if (!targetSessionForAddition) return;
-
+    
     setIsSessionItemModalOpen(false);
     setLastModifiedSessionId(targetSessionForAddition.items[0]?.id);
 
@@ -5456,8 +4794,8 @@ export default function App() {
       type_activite: data.type,
       file_url: data.url,
       ressource_url: data.url,
-      metadata: {
-        isCustom: true,
+      metadata: { 
+        isCustom: true, 
         isToSign: data.isToSign,
         documentType: data.type === 'signature' ? 'signature' : 'info'
       },
@@ -5511,7 +4849,7 @@ export default function App() {
 
     const isCustom = session.metadata?.isCustom === true;
     const confirmMsg = isCustom ? "Supprimer cet élément personnalisé ?" : `Supprimer la séance N°${session.numero_seance} ?`;
-
+    
     if (!window.confirm(confirmMsg)) return;
 
     const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
@@ -5608,11 +4946,22 @@ export default function App() {
       }
 
       // Sinon, on va chercher le fichier dans ton storage Supabase
-      const { data, error } = await supabase.storage
+      // On tente d'abord 'ressources-pedagogiques' (historique) puis 'documents' (nouveauté)
+      let { data, error } = await supabase.storage
         .from('ressources-pedagogiques')
-        .createSignedUrl(fileName, 60);
+        .createSignedUrl(fileName, 3600);
 
-      if (error || !data) throw error || new Error("Lien non généré");
+      if (error || !data?.signedUrl) {
+        console.log('handleDownloadResource: Pas trouvé dans ressources-pedagogiques, tentative dans documents...');
+        const secondTry = await supabase.storage
+          .from('documents')
+          .createSignedUrl(fileName, 3600);
+        
+        data = secondTry.data;
+        error = secondTry.error;
+      }
+
+      if (error || !data?.signedUrl) throw error || new Error("Fichier introuvable dans le stockage.");
       window.open(data.signedUrl, '_blank');
     } catch (err) {
       console.error("Erreur téléchargement:", err);
@@ -5652,7 +5001,7 @@ export default function App() {
     }
   };
 
-  const handleGenerateDocx = async (clientRow, type, withWorkflow = false, providedFormateurId = null) => {
+  const handleGenerateDocx = async (clientRow, type) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -5660,43 +5009,38 @@ export default function App() {
         return;
       }
 
-      // 1. Récupération client (si fourni)
-      let finalClient = clientRow;
-      if (clientRow?.id) {
-        const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
-        if (theClient) finalClient = theClient;
-      }
+      // 1. Récupération depuis la table ciblée 'clients'
+      const { data: theClient } = await supabase.from('clients').select('*').eq('id', clientRow.id).single();
+      const finalClient = theClient || clientRow; // fallback
 
-      // 2. Récupération formateur
+      // 2. Récupération formateur dans 'utilisateurs'
       let theCoach = { nom: 'Non assigné' };
-      const coachId = providedFormateurId || finalClient?.formateur_id;
-
-      if (coachId) {
-        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', coachId).single();
+      if (finalClient.formateur_id) {
+        const { data: coachData } = await supabase.from('utilisateurs').select('*').eq('id', finalClient.formateur_id).single();
         if (coachData) theCoach = coachData;
       }
 
-      if (finalClient && !finalClient.module_id && !clientRow?.id) {
-        // Optionnel : on continue même sans module si c'est un document admin hors client
+      if (!finalClient.module_id && !clientRow.module_id) {
+        toast.error("Veuillez d'abord assigner un module à ce client.");
+        return;
       }
 
-      const module = (finalClient || clientRow) ? modules.find(m => m.id === (finalClient?.module_id || clientRow?.module_id)) : null;
+      const module = modules.find(m => m.id === (finalClient.module_id || clientRow.module_id));
+
+      // Extraction impérative des dates via requête sur sessions
+      const { data: sessionDates, error: dateError } = await supabase
+        .from('sessions')
+        .select('date')
+        .eq('client_id', clientRow.id)
+        .not('date', 'is', null)
+        .order('date', { ascending: true });
 
       let dateDebut = '[Date non définie]';
       let dateFin = '[Date non définie]';
 
-      if (clientRow?.id) {
-        const { data: sessionDates, error: dateError } = await supabase
-          .from('sessions')
-          .select('date')
-          .eq('client_id', clientRow.id)
-          .not('date', 'is', null)
-          .order('date', { ascending: true });
-
-        if (!dateError && sessionDates && sessionDates.length > 0) {
-          dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
-          dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
-        }
+      if (!dateError && sessionDates && sessionDates.length > 0) {
+        dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
+        dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
       }
 
 
@@ -5717,14 +5061,12 @@ export default function App() {
         formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
         email_formateur: theCoach.email || '',
         tel_formateur: theCoach.telephone || '',
-        compagnie_assurance: theCoach.compagnie_assurance || '',
-        numero_assurance_rcp: theCoach.numero_assurance_rcp || '',
-        nomcomplet_client: finalClient?.nom_complet || finalClient?.nomcomplet_client || (finalClient ? `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim() : ''),
-        client_phone: finalClient?.telephone || finalClient?.client_phone || '',
-        client_email: finalClient?.email_contact || finalClient?.client_email || finalClient?.email || '',
-        prix_prestation: finalClient?.montant_prestation || module?.prix_prestation || '',
-        adresse_session: finalClient?.adresse_postale || finalClient?.adresse_session || finalClient?.adresse_client || '',
-        modalite_formation: finalClient?.modalite_formation || 'Mixte',
+        nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
+        client_phone: finalClient.telephone || finalClient.client_phone || '',
+        client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
+        prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+        adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
+        modalite_formation: finalClient.modalite_formation || 'Mixte',
         date_debut: dateDebut,
         date_fin: dateFin,
         date_signature: new Date().toLocaleDateString('fr-FR'),
@@ -5737,55 +5079,30 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
-      // Préparation des noms de fichiers
-      const safeNomClient = (finalClient?.nom_complet || clientRow?.nom || theCoach?.nom || 'Document').replace(/\s+/g, '_');
+      // Save as file for manual check, then upload
+      const safeNomClient = (finalClient.nom_complet || clientRow.nom || 'Client').replace(/\s+/g, '_');
       const finalFileName = `${type}_${safeNomClient}_final.docx`;
+      saveAs(out, finalFileName);
 
-      // On ne télécharge plus le fichier sur l'ordi de l'admin par défaut (pour éviter les doublons)
-      // saveAs(out, finalFileName);
+      // Auto-upload the result too
+      const { error: uploadError } = await supabase.storage.from('documents').upload(`${Date.now()}_${finalFileName}`, out);
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(`${Date.now()}_${finalFileName}`);
+        await supabase.from('documents').insert([{
+          nom: `${type === 'contrat' ? 'Contrat' : 'Document'} - ${finalClient.nom_complet || finalClient.nomcomplet_client || clientRow.nom}`,
+          type_document: 'Autre',
+          url: publicUrl,
+          user_id: clientRow.id,
+          visible_client: true,
+          visible_formateur: true
+        }]);
 
-      // Sanitisation du chemin (retrait accents et espaces)
-      const sanitizedName = finalFileName
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-zA-Z0-9._-]/g, "_");
-
-      // --- ÉTAPE GÉNÉRATION WORD ET UPLOAD ---
-
-      const storagePathWord = `${Date.now()}_${sanitizedName}.docx`;
-      const { error: uploadWordError } = await supabase.storage.from('documents').upload(storagePathWord, out);
-      if (uploadWordError) {
-        console.error("Word Upload Error:", uploadWordError);
-        toast.error(`Erreur upload : ${uploadWordError.message}`);
-        return;
+        await fetchDocuments();
+        toast.success(`Document "${finalFileName}" généré et archivé.`);
       }
-
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePathWord);
-
-      const docName = `${type} - ${finalClient?.nom_complet || finalClient?.nom || theCoach?.nom || 'Document'}`;
-
-      const { error: insertError } = await supabase.from('documents').insert([{
-        nom: docName,
-        type_document: type,
-        url: publicUrl,
-        user_id: clientRow?.id || null,
-        assigned_formateur_id: coachId || null,
-        visible_client: !withWorkflow,
-        visible_formateur: true,
-        workflow_status: withWorkflow ? 'EN_ATTENTE_SIGNATURE_FORMATEUR' : 'FINAL'
-      }]);
-
-      if (insertError) {
-        console.error("Insert Error:", insertError);
-        toast.error(`Erreur base de données : ${insertError.message}`);
-        return;
-      }
-
-      await fetchDocuments();
-      toast.success(withWorkflow ? `Document "${finalFileName}" envoyé au formateur pour signature.` : `Document "${finalFileName}" généré et archivé.`);
     } catch (error) {
       console.error("Docx Error:", error);
-      toast.error(`Erreur de génération : ${error.message || "Erreur inconnue"}`);
+      toast.error("Erreur lors de la génération du document Word.");
     }
   };
   const handleAddDocument = async (e) => {
@@ -5795,32 +5112,21 @@ export default function App() {
 
     let finalUrl = newDocUrl;
     if (newDocFile) {
-      const fileExt = newDocFile.name.split('.').pop().toLowerCase();
+      const fileExt = newDocFile.name.split('.').pop();
       const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-
-      // Vérification extension : PDF ou Image uniquement pour la visualisation
-      if (fileExt !== 'pdf' && !newDocFile.type.startsWith('image/')) {
-        toast.warning("Note : Seuls les fichiers PDF et Images sont visualisables directement. Les autres formats seront uniquement téléchargeables.");
-      }
       const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(fileName, newDocFile);
 
       if (uploadError) {
-        console.error("Erreur upload Storage:", uploadError);
-        toast.error("Erreur upload Storage: " + uploadError.message);
+        console.error("Erreur upload:", uploadError);
+        toast.error("Erreur upload: " + uploadError.message);
         setIsAddingDoc(false);
         return;
       }
-
       const { data: { publicUrl } } = supabase.storage
         .from('documents')
         .getPublicUrl(fileName);
-
-      if (!publicUrl) {
-        console.error("Erreur de lien storage (publicUrl non générée):", fileName);
-      }
-
       finalUrl = publicUrl;
     }
 
@@ -5860,29 +5166,13 @@ export default function App() {
 
     // signerType = 'client' ou 'formateur'
     const updateColumn = signerType === 'client'
-      ? { signe_par_client: true, date_signature_client: new Date().toISOString(), statut_client: 'Signé' }
-      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString(), statut_formateur: 'Signé' }; // Ajout de la date formateur utile
+      ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
+      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() }; // Ajout de la date formateur utile
 
     if (signatureDataUrl) {
       // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
       if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
       else updateColumn.signature_formateur = signatureDataUrl;
-
-      // Automatisation de l'archivage pour les documents administratifs (Table DOCUMENTS)
-      const client = clients.find(c => c.id === doc.user_id);
-      if (client) {
-        console.log("[handleSignDocument] Tentative d'archivage PDF pour document admin:", doc.nom);
-        const signedUrl = await overlaySignatureOnPdf(doc, client, signatureDataUrl, signerType);
-        if (signedUrl) {
-          updateColumn.url_signed_pdf = signedUrl;
-          updateColumn.signed_pdf_url = signedUrl;
-        }
-      }
-    }
-
-    // SIGNE_ET_ARCHIVE si c'est un document admin du workflow
-    if (signerType === 'formateur' && (doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' || doc.statut_formateur !== 'Signé')) {
-      updateColumn.workflow_status = 'SIGNE_ET_ARCHIVE';
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
@@ -5907,13 +5197,9 @@ export default function App() {
 
     if (error) {
       toast.error("Erreur signature: " + error.message);
-    } else {
-      toast.success("Document signé et archivé !");
+      // rollback state en cas d'erreur
+      await fetchDocuments();
     }
-
-    // Rafraîchissement systématique pour synchroniser les onglets
-    await fetchDocuments();
-    await fetchSessions();
   };
 
   const updateDateSeance = async (docId, date) => {
@@ -5930,157 +5216,6 @@ export default function App() {
     if (!signingDocId) return;
     await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl);
     setSigningDocId(null);
-  };
-
-  const generatePDF = async (client) => {
-    const loadingToast = toast.loading("📄 Génération du récapitulatif Qualiopi...");
-    try {
-      const doc = new jsPDF();
-      const clientSessions = sessions
-        .filter(s => s.client_id === client.id)
-        .sort((a, b) => {
-          const numA = parseInt(a.numero_seance) || 0;
-          const numB = parseInt(b.numero_seance) || 0;
-          if (numA !== numB) return numA - numB;
-          return new Date(a.date) - new Date(b.date);
-        });
-
-      if (clientSessions.length === 0) {
-        toast.error("Aucune donnée de séance trouvée pour ce client.", { id: loadingToast });
-        return;
-      }
-
-      // --- Header Design ---
-      doc.setFillColor(15, 23, 42);
-      doc.rect(0, 0, 210, 40, 'F');
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(22);
-      doc.setTextColor(255, 255, 255);
-      doc.text("RÉCAPITULATIF DE FORMATION", 105, 20, { align: "center" });
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text("Document de suivi pédagogique & Émargements Qualiopi", 105, 28, { align: "center" });
-
-      // --- Infos Section ---
-      let y = 55;
-      doc.setTextColor(30, 41, 59);
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("INFORMATIONS DU BÉNÉFICIAIRE", 20, y);
-
-      y += 8;
-      doc.setDrawColor(226, 232, 240);
-      doc.line(20, y, 190, y);
-
-      y += 10;
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold"); doc.text("Nom :", 20, y);
-      doc.setFont("helvetica", "normal"); doc.text(`${client.nom_complet || client.nom || client.nomcomplet_client}`, 60, y);
-
-      y += 6;
-      doc.setFont("helvetica", "bold"); doc.text("Dossier N° :", 20, y);
-      doc.setFont("helvetica", "normal"); doc.text(`${client.numero_dossier || '--'}`, 60, y);
-
-      y += 6;
-      doc.setFont("helvetica", "bold"); doc.text("Date d'édition :", 20, y);
-      doc.setFont("helvetica", "normal"); doc.text(`${new Date().toLocaleDateString('fr-FR')}`, 60, y);
-
-      y += 15;
-
-      // --- Groupement par séance ---
-      const groupedBySeance = clientSessions.reduce((acc, s) => {
-        const key = s.numero_seance || 0;
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(s);
-        return acc;
-      }, {});
-
-      const sortedSeances = Object.keys(groupedBySeance).sort((a, b) => parseInt(a) - parseInt(b));
-
-      sortedSeances.forEach((num) => {
-        const group = groupedBySeance[num];
-        const first = group[0];
-
-        // Header Séance
-        if (y > 230) { doc.addPage(); y = 20; }
-
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(20, y, 170, 10, 2, 2, 'F');
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.setTextColor(79, 70, 229);
-        doc.text(`SÉANCE ${num} : ${first.date || '--'} (${first.heure_debut || '--'} à ${first.heure_fin || '--'})`, 25, y + 6.5);
-
-        y += 18;
-
-        group.forEach((item) => {
-          if (y > 250) { doc.addPage(); y = 20; }
-
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(15, 23, 42);
-          doc.text(`${item.nom || item.type_activite}`, 25, y);
-
-          // Signatures
-          const hasClientSign = item.signature_image;
-          const hasCoachSign = item.signature_formateur;
-
-          if (hasClientSign || hasCoachSign) {
-            if (hasClientSign) {
-              try {
-                doc.addImage(item.signature_image, 'PNG', 100, y - 6, 25, 10);
-                doc.setFontSize(6);
-                doc.setTextColor(148, 163, 184);
-                doc.text("Signé Bénéficiaire", 100, y + 6);
-                if (item.date_signature) {
-                  const d = new Date(item.date_signature);
-                  doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 100, y + 8.5);
-                }
-              } catch (e) { console.error("Err PDF sign client", e); }
-            }
-            if (hasCoachSign) {
-              try {
-                doc.addImage(item.signature_formateur, 'PNG', 140, y - 6, 25, 10);
-                doc.setFontSize(6);
-                doc.setTextColor(148, 163, 184);
-                doc.text("Signé Coach", 140, y + 6);
-                if (item.date_signature_formateur) {
-                  const d = new Date(item.date_signature_formateur);
-                  doc.text(`le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`, 140, y + 8.5);
-                }
-              } catch (e) { console.error("Err PDF sign coach", e); }
-            }
-          } else {
-            doc.setFontSize(8);
-            doc.setTextColor(203, 213, 225);
-            doc.text("(En attente d'émargement)", 100, y);
-          }
-
-          y += 12;
-          doc.setDrawColor(241, 245, 249);
-          doc.line(25, y - 4, 185, y - 4);
-        });
-
-        y += 10;
-      });
-
-      // Footer pagination
-      const pageCount = doc.internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(`Page ${i} / ${pageCount} - Document généré par Logiciel VB`, 105, 285, { align: "center" });
-      }
-
-      doc.save(`Recap_Qualiopi_${client.nom || 'Client'}.pdf`);
-      toast.success("✅ Récapitulatif généré avec succès", { id: loadingToast });
-    } catch (err) {
-      console.error("Erreur PDF:", err);
-      toast.error("Échec de la génération du PDF", { id: loadingToast });
-    }
   };
 
   const handleDownloadPDF = async (doc) => {
@@ -6115,29 +5250,6 @@ export default function App() {
         if (blob.type === 'application/pdf' || urlToDownload.toLowerCase().includes('.pdf')) {
           const pdfBytes = await blob.arrayBuffer();
           pdfDoc = await PDFDocument.load(pdfBytes);
-        } else if (urlToDownload.toLowerCase().endsWith('.docx') || urlToDownload.toLowerCase().endsWith('.doc')) {
-          // Conversion Word -> Image -> PDF (via rendu temporaire)
-          pdfDoc = await PDFDocument.create();
-          const arrayBuffer = await blob.arrayBuffer();
-          const tempDiv = document.createElement('div');
-          tempDiv.style.width = '794px';
-          tempDiv.style.position = 'fixed';
-          tempDiv.style.left = '-9999px';
-          document.body.appendChild(tempDiv);
-
-          if (window.docx) {
-            await window.docx.renderAsync(arrayBuffer, tempDiv);
-            await new Promise(r => setTimeout(r, 500));
-            const canvas = await html2canvas(tempDiv, { scale: 1.5 });
-            const imgData = canvas.toDataURL('image/png');
-            document.body.removeChild(tempDiv);
-
-            const page = pdfDoc.addPage([canvas.width * 0.75, canvas.height * 0.75]);
-            const img = await pdfDoc.embedPng(imgData);
-            page.drawImage(img, { x: 0, y: 0, width: canvas.width * 0.75, height: canvas.height * 0.75 });
-          } else {
-            throw new Error("Moteur de conversion Word non chargé. Réessayez dans un instant.");
-          }
         } else {
           pdfDoc = await PDFDocument.create();
           const page = pdfDoc.addPage([595.28, 841.89]);
@@ -6253,16 +5365,8 @@ export default function App() {
     fetchSessions();
     fetchPedagogicalResources();
 
-    // --- Synchronisation Temps Réel (Sessions) ---
-    const channel = supabase
-      .channel('sessions-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, () => {
-        fetchSessions();
-      })
-      .subscribe();
-
     // Détection des liens d'invitation ou de récupération de mot de passe
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       if (
         event === 'PASSWORD_RECOVERY' ||
         (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
@@ -6271,11 +5375,6 @@ export default function App() {
         setIsSettingPassword(true);
       }
     });
-
-    return () => {
-      supabase.removeChannel(channel);
-      subscription.unsubscribe();
-    };
   }, [userRole]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
@@ -6327,7 +5426,7 @@ export default function App() {
         onComplete={async () => {
           // Auto login process
           const { data: { user } } = await supabase.auth.getUser();
-
+          
           if (user && user.email) {
             const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
             if (userData && userData.role) {
@@ -6335,15 +5434,15 @@ export default function App() {
               setIsResetPassword(false);
               return;
             }
-
+            
             const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
             if (clientData && clientData.id) {
-              handleLogin('client', clientData.id);
-              setIsResetPassword(false);
-              return;
+               handleLogin('client', clientData.id);
+               setIsResetPassword(false);
+               return;
             }
           }
-
+          
           // Fallback if role not found
           await supabase.auth.signOut();
           window.history.replaceState(null, '', '/');
@@ -6500,7 +5599,6 @@ export default function App() {
             handleDownloadResource={handleDownloadResource}
             handleUploadExerciseResponse={handleUploadExerciseResponse}
             generateSessions={generateSessions}
-            generatePDF={generatePDF}
             handleDeleteClient={handleDeleteClient}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
@@ -6518,8 +5616,6 @@ export default function App() {
             sessions={sessions}
             handleDownloadResource={handleDownloadResource}
             handleDeleteFormateur={handleDeleteFormateur}
-            documentTemplates={documentTemplates}
-            handleGenerateDocx={handleGenerateDocx}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
@@ -6588,7 +5684,6 @@ export default function App() {
             handleAddSession={handleAddSession}
             handleDeleteSession={handleDeleteSession}
             updateSessionTime={updateSessionTime}
-            generatePDF={generatePDF}
             handleGenerateDocx={handleGenerateDocx}
             documents={documents}
             fetchUtilisateurs={fetchUtilisateurs}
@@ -6600,11 +5695,8 @@ export default function App() {
             setTargetSessionForAddition={setTargetSessionForAddition}
             onTimeChange={onTimeChange}
             onSaveTimes={onSaveTimes}
-            setViewingDocId={setViewingDocId}
-            setViewingSession={setViewingSession}
-            signingDocId={signingDocId}
-            setSigningDocId={setSigningDocId}
-            viewingDocId={viewingDocId}
+            setLastModifiedSessionId={setLastModifiedSessionId}
+            lastModifiedSessionId={lastModifiedSessionId}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
@@ -6648,11 +5740,9 @@ export default function App() {
       </div>
 
       {/* Modals Qualiopi */}
-      <DocumentViewerModal
+      <SignatureModal
         isOpen={signingDocId !== null}
-        document={documents.find(d => d.id === signingDocId)}
         onClose={() => setSigningDocId(null)}
-        mode="sign"
         onSave={handleSignatureSave}
       />
 
@@ -6669,6 +5759,7 @@ export default function App() {
         isOpen={viewingDocId !== null}
         document={documents.find(d => d.id === viewingDocId)}
         onClose={() => setViewingDocId(null)}
+        supabase={supabase}
         mode="view"
       />
 
@@ -6684,6 +5775,7 @@ export default function App() {
           ? (viewingSession.session.ressource_titre || viewingSession.session.nom || 'Document')
           : ''
         }
+        supabase={supabase}
         mode={viewingSession?.mode || 'view'}
         onClose={() => setViewingSession(null)}
         onSave={viewingSession?.mode === 'sign' ? async (signature) => {
@@ -6691,17 +5783,6 @@ export default function App() {
           setViewingSession(null);
           await handleSessionSignatureSave(sessionId, signature);
         } : undefined}
-      />
-
-      {/* Pad de signature direct (Émargement rapide) */}
-      <SignatureModal
-        isOpen={signingSessionId !== null}
-        onClose={() => setSigningSessionId(null)}
-        onSave={async (signature) => {
-          const sessionId = signingSessionId;
-          setSigningSessionId(null);
-          await handleSessionSignatureSave(sessionId, signature);
-        }}
       />
 
       <InviteModal
@@ -6717,11 +5798,7 @@ export default function App() {
   );
 }
 
-const FormateurDetailView = ({
-  formateur, onBack, supabase, fetchUtilisateurs, modules,
-  clients, handleDeleteFormateur, documents,
-  documentTemplates, handleGenerateDocx
-}) => {
+const FormateurDetailView = ({ formateur, onBack, supabase, fetchUtilisateurs, modules, clients, handleDeleteFormateur }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [legalInfo, setLegalInfo] = React.useState({
@@ -6730,9 +5807,7 @@ const FormateurDetailView = ({
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     email: formateur.email || '',
-    telephone: formateur.telephone || '',
-    compagnie_assurance: formateur.compagnie_assurance || '',
-    numero_assurance_rcp: formateur.numero_assurance_rcp || ''
+    telephone: formateur.telephone || ''
   });
 
   const handleSave = async () => {
@@ -6745,9 +5820,7 @@ const FormateurDetailView = ({
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
         email: legalInfo.email,
-        telephone: legalInfo.telephone,
-        compagnie_assurance: legalInfo.compagnie_assurance,
-        numero_assurance_rcp: legalInfo.numero_assurance_rcp
+        telephone: legalInfo.telephone
       })
       .eq('id', formateur.id);
 
@@ -6759,10 +5832,6 @@ const FormateurDetailView = ({
     }
     setIsSaving(false);
   };
-
-  const formateurDocs = (documents || []).filter(d =>
-    d.assigned_formateur_id === formateur.id && !d.user_id
-  );
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -6833,33 +5902,6 @@ const FormateurDetailView = ({
           </div>
         </div>
 
-        {/* Section Assurance RCP */}
-        <div className="mt-8 pt-8 border-t border-gray-100">
-          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-6">
-            <CheckCircle className="text-emerald-500" size={24} /> Informations d'Assurance RCP
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Compagnie d'assurance</label>
-              <input
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
-                value={legalInfo.compagnie_assurance}
-                onChange={e => setLegalInfo({ ...legalInfo, compagnie_assurance: e.target.value })}
-                placeholder="Ex: MMA, AXA, HISCOX..."
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Numéro de contrat RCP</label>
-              <input
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
-                value={legalInfo.numero_assurance_rcp}
-                onChange={e => setLegalInfo({ ...legalInfo, numero_assurance_rcp: e.target.value })}
-                placeholder="Ex: 123456789/ABC"
-              />
-            </div>
-          </div>
-        </div>
-
         <div className="mt-12 flex justify-end items-center gap-4">
           <button
             onClick={() => setIsConfirmDeleteOpen(true)}
@@ -6885,56 +5927,6 @@ const FormateurDetailView = ({
           itemName={legalInfo.nom || "ce formateur"}
           title="Supprimer ce formateur ?"
         />
-      </div>
-
-      {/* NOUVEL ESPACE DOCS ADMINISTRATIFS (HORS CLIENT) */}
-      <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8 animate-slide-up">
-        <div className="flex justify-between items-center mb-8 pb-4 border-b border-gray-100">
-          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Archive className="text-blue-500" /> Documents Administratifs (Contrats / NDA...)
-          </h3>
-          <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">Communication Admin-Formateur</span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div>
-            <h4 className="text-sm font-bold text-gray-500 uppercase mb-4 tracking-widest">Générateurs Word</h4>
-            <div className="flex flex-wrap gap-2">
-              {Object.keys(documentTemplates || {}).map(key => (
-                <button
-                  key={key}
-                  onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
-                  className="inline-flex items-center gap-2 bg-gray-50 text-blue-700 px-4 py-2.5 rounded-xl text-xs font-bold border border-blue-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm"
-                >
-                  <FileText size={14} /> Générer {key}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-bold text-gray-500 uppercase mb-4 tracking-widest">Historique ({formateurDocs.length})</h4>
-            <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-              {formateurDocs.length > 0 ? formateurDocs.map(doc => (
-                <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group bg-gray-50/50 hover:bg-white hover:border-blue-200 transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-100 text-blue-600 flex items-center justify-center rounded-lg"><FileText size={16} /></div>
-                    <div>
-                      <p className="font-bold text-gray-800 text-xs truncate max-w-[180px]">{doc.nom}</p>
-                      <div className="flex gap-2 items-center">
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'bg-amber-100 text-amber-600' : 'bg-green-100 text-green-600'
-                          }`}>
-                          {doc.workflow_status === 'EN_ATTENTE_SIGNATURE_FORMATEUR' ? 'À signer' : 'Signé'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-blue-600 bg-white rounded-lg shadow-sm"><Download size={16} /></a>
-                </div>
-              )) : <p className="text-gray-400 text-xs italic">Aucun document administratif enregistré.</p>}
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Liste des clients assignés */}
