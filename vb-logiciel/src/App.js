@@ -2151,30 +2151,48 @@ const FormateurDetailView = ({
 
             <div className="space-y-3">
               <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Suivi des signatures</h4>
-              {trainerDocs.length > 0 ? trainerDocs.map(doc => (
-                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-rose-200 transition-all shadow-sm">
+              {trainerDocs.length > 0 ? trainerDocs.map(doc => {
+                const isSigned = doc.signe_par_formateur || doc.statut_formateur === 'Signé';
+                return (
+                <div key={doc.id} className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm ${isSigned ? 'border-green-100 hover:border-green-300' : 'border-gray-100 hover:border-rose-200'}`}>
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
-                      <FileText size={20} />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSigned ? 'bg-green-50 text-green-600' : 'bg-rose-50 text-rose-600'}`}>
+                      {isSigned ? <FileCheck size={20} /> : <FileText size={20} />}
                     </div>
                     <div>
                       <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
                       <div className="flex items-center gap-3 mt-1">
                         <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(doc.created_at).toLocaleDateString()}</span>
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.statut_formateur === 'Signé' || doc.signe_par_formateur ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {doc.statut_formateur === 'Signé' || doc.signe_par_formateur ? 'Signé' : 'En attente de signature'}
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${isSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {isSigned ? 'Signé' : 'En attente de signature'}
                         </span>
                       </div>
+                      {isSigned && doc.date_signature_formateur && (
+                        <p className="text-[10px] text-green-600 mt-0.5">
+                          Signé le {new Date(doc.date_signature_formateur).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setViewingDocId(doc.id)}
                       className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                      title="Consulter"
+                      title="Consulter le document original"
                     >
                       <Eye size={20} />
                     </button>
+                    {isSigned && doc.signed_pdf_url && (
+                      <a
+                        href={doc.signed_pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
+                        title="Télécharger le PDF signé"
+                      >
+                        <Download size={14} /> PDF signé
+                      </a>
+                    )}
                     <button
                       onClick={() => setDocToDelete(doc)}
                       className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
@@ -2184,7 +2202,8 @@ const FormateurDetailView = ({
                     </button>
                   </div>
                 </div>
-              )) : (
+                );
+              }) : (
                 <p className="text-gray-400 italic text-sm py-4">Aucun document généré pour le moment.</p>
               )}
 
@@ -6223,12 +6242,75 @@ export default function App() {
 
     toast.loading('Signature en cours...', { id: 'sign-doc' });
     try {
-      const docWithFileUrl = { ...doc, file_url: doc.url };
-      const signedPdfUrl = await overlaySignatureOnPdf(docWithFileUrl, {}, signatureDataUrl, 'formateur');
+      const formateur = formateurs.find(f => f.id === doc.assigned_formateur_id);
+      const now = new Date();
+      const signedAtLabel = now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' });
+
+      // Génération du certificat PDF avec jsPDF
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      pdf.setFillColor(220, 38, 38);
+      pdf.rect(0, 0, 210, 45, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(16);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('CERTIFICAT DE SIGNATURE ÉLECTRONIQUE', 105, 18, { align: 'center' });
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text('VB Coaching – Document signé numériquement', 105, 32, { align: 'center' });
+
+      let y = 62;
+      const infoRow = (label, value) => {
+        pdf.setFontSize(9);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(120, 120, 120);
+        pdf.text(label.toUpperCase(), 20, y);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(13);
+        pdf.setTextColor(30, 30, 30);
+        pdf.text(value, 20, y + 8);
+        y += 24;
+      };
+
+      infoRow('Document signé', doc.nom || 'Document administratif');
+      infoRow('Signataire', formateur?.nom || 'Formateur');
+      infoRow('Date et heure de signature', signedAtLabel);
+
+      y += 4;
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(120, 120, 120);
+      pdf.text('SIGNATURE', 20, y);
+      y += 6;
+      pdf.setDrawColor(200, 200, 200);
+      pdf.setLineWidth(0.3);
+      pdf.rect(20, y, 115, 48);
+      if (signatureDataUrl) {
+        pdf.addImage(signatureDataUrl, 'PNG', 22, y + 2, 111, 44);
+      }
+
+      pdf.setDrawColor(220, 38, 38);
+      pdf.setLineWidth(0.5);
+      pdf.line(20, 245, 190, 245);
+      pdf.setFontSize(8);
+      pdf.setTextColor(160, 160, 160);
+      pdf.text('Ce document constitue une preuve de signature électronique.', 105, 254, { align: 'center' });
+      pdf.text('Généré automatiquement par VB Logiciel', 105, 261, { align: 'center' });
+
+      const pdfBlob = pdf.output('blob');
+      const fileName = `certificat_${docId}_${Date.now()}.pdf`;
+      const certFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+      const { error: uploadError } = await supabase.storage.from('signed_documents').upload(fileName, certFile);
+      let signedPdfUrl = null;
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage.from('signed_documents').getPublicUrl(fileName);
+        signedPdfUrl = publicUrl;
+      }
 
       const updateData = {
         signe_par_formateur: true,
-        date_signature_formateur: new Date().toISOString(),
+        date_signature_formateur: now.toISOString(),
         signature_formateur: signatureDataUrl,
         statut: 'Signé',
         visible_admin: true,
@@ -6239,7 +6321,7 @@ export default function App() {
       if (error) throw error;
 
       setDocuments(documents.map(d => d.id === docId ? { ...d, ...updateData } : d));
-      toast.success('Document signé ! L\'admin peut maintenant le consulter.', { id: 'sign-doc' });
+      toast.success("Document signé ! L'admin peut maintenant le consulter.", { id: 'sign-doc' });
     } catch (err) {
       toast.error('Erreur lors de la signature : ' + err.message, { id: 'sign-doc' });
       await fetchDocuments();
@@ -6951,7 +7033,8 @@ export default function App() {
       {/* Visionneuse PDF pour docs de la modélothèque */}
       <DocumentViewerModal
         isOpen={viewingDocId !== null}
-        document={documents.find(d => d.id === viewingDocId)}
+        url={(() => { const d = documents.find(doc => doc.id === viewingDocId); return d?.signed_pdf_url || d?.url || null; })()}
+        title={documents.find(doc => doc.id === viewingDocId)?.nom}
         onClose={() => setViewingDocId(null)}
         supabase={supabase}
         mode="view"
