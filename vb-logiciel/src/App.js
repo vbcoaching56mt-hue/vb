@@ -1812,19 +1812,35 @@ const ClientDetailView = ({
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <h3 className="text-lg font-bold text-gray-800 mb-6">Documents Uploadés</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {clientDocs.length > 0 ? clientDocs.map(doc => (
-              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-300">
+          <div className="grid grid-cols-1 gap-3">
+            {clientDocs.length > 0 ? clientDocs.map(doc => {
+              const clientSigned = doc.signe_par_client;
+              const formateurSigned = doc.signe_par_formateur;
+              const needsClientSign = doc.requiresClientSignature !== false;
+              const needsFormateurSign = doc.requiresTrainerSignature === true;
+              const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned);
+              return (
+              <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-50 text-blue-600 flex items-center justify-center rounded-xl"><FileText size={20} /></div>
+                  <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${fullySignedByAll ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}><FileText size={20} /></div>
                   <div>
-                    <p className="font-bold text-gray-900 text-sm truncate max-w-[150px]">{doc.nom}</p>
-                    <p className="text-[10px] text-gray-500">{doc.type}</p>
+                    <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        Client: {clientSigned ? 'Signé ✓' : 'En attente'}
+                      </span>
+                      {needsFormateurSign && (
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          Formateur: {formateurSigned ? 'Signé ✓' : 'En attente'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg"><Download size={18} /></a>
+                <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
               </div>
-            )) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
+              );
+            }) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
           </div>
         </div>
       )}
@@ -2901,9 +2917,10 @@ const FormateurView = ({
                       </div>
                       
                       {(() => {
-                        const adminDocs = documents.filter(d => 
-                          d.user_id === client.id && 
-                          (d.assigned_formateur_id === currentUserId || d.visible_formateur)
+                        const adminDocs = documents.filter(d =>
+                          (d.user_id === client.id || d.assigned_formateur_id === currentUserId) &&
+                          (d.assigned_formateur_id === currentUserId || d.visible_formateur) &&
+                          d.type_document === 'Administratif'
                         );
                         
                         if (adminDocs.length === 0) return (
@@ -3121,10 +3138,12 @@ const FormateurView = ({
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
+                                        {(session.metadata?.requiresTrainerSignature === true) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
+                                        )}
                                       </div>
                                     </td>
                                     <td className="px-4 py-3 text-right">
@@ -3893,10 +3912,12 @@ const SessionsView = ({
                               <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                               <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                             </div>
+                            {(session.metadata?.requiresTrainerSignature === true) && (
                             <div className="flex items-center gap-1.5">
                               <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                               <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                             </div>
+                            )}
                           </div>
                         </td>
                         <td className="py-4 text-right pr-4">
@@ -6037,6 +6058,8 @@ export default function App() {
           signe_par_client: false,
           signe_par_formateur: false,
           visible_admin: true,
+          requiresClientSignature: !effectiveIsForFormateur,
+          requiresTrainerSignature: effectiveIsForFormateur || templateDestination === 'formateur',
         };
 
         if (effectiveIsForFormateur || formateurId) {
