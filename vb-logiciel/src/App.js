@@ -6106,6 +6106,7 @@ export default function App() {
           url: publicUrl,
           signe_par_client: false,
           signe_par_formateur: false,
+          docx_data: dataToMerge,
         };
 
         if (effectiveIsForFormateur || formateurId) {
@@ -6246,56 +6247,114 @@ export default function App() {
       const now = new Date();
       const signedAtLabel = now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' });
 
-      // Génération du certificat PDF avec jsPDF
+      // Génération du document signé en PDF avec jsPDF (contenu complet + signature)
+      const data = doc.docx_data || {};
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const W = 210, margin = 20, contentW = W - margin * 2;
 
+      // ── Bandeau rouge ──────────────────────────────────────────────────────
       pdf.setFillColor(220, 38, 38);
-      pdf.rect(0, 0, 210, 45, 'F');
+      pdf.rect(0, 0, W, 38, 'F');
       pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(16);
+      pdf.setFontSize(15);
       pdf.setFont('helvetica', 'bold');
-      pdf.text('CERTIFICAT DE SIGNATURE ÉLECTRONIQUE', 105, 18, { align: 'center' });
-      pdf.setFontSize(10);
+      pdf.text((doc.nom || 'Document administratif').toUpperCase(), W / 2, 17, { align: 'center' });
+      pdf.setFontSize(9);
       pdf.setFont('helvetica', 'normal');
-      pdf.text('VB Coaching – Document signé numériquement', 105, 32, { align: 'center' });
+      pdf.text('VB Coaching – Document officiel signé', W / 2, 29, { align: 'center' });
 
-      let y = 62;
-      const infoRow = (label, value) => {
+      // ── Parties ─────────────────────────────────────────────────────────────
+      let y = 50;
+      const section = (title) => {
+        pdf.setFillColor(245, 245, 245);
+        pdf.rect(margin, y, contentW, 8, 'F');
         pdf.setFontSize(9);
         pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(120, 120, 120);
-        pdf.text(label.toUpperCase(), 20, y);
+        pdf.setTextColor(80, 80, 80);
+        pdf.text(title.toUpperCase(), margin + 3, y + 5.5);
+        y += 13;
+      };
+      const field = (label, value) => {
+        if (!value) return;
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(130, 130, 130);
+        pdf.text(label, margin, y);
         pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(13);
         pdf.setTextColor(30, 30, 30);
-        pdf.text(value, 20, y + 8);
-        y += 24;
+        pdf.setFontSize(10);
+        const lines = pdf.splitTextToSize(String(value), contentW - 55);
+        pdf.text(lines, margin + 55, y);
+        y += lines.length * 5.5 + 2;
       };
 
-      infoRow('Document signé', doc.nom || 'Document administratif');
-      infoRow('Signataire', formateur?.nom || 'Formateur');
-      infoRow('Date et heure de signature', signedAtLabel);
+      section('Le donneur d\'ordre');
+      field('Organisme :', 'VB Coaching – Véronique BOULAIS');
+      field('Adresse :', '2 Rue du Général Baron Fabre, 56000 VANNES');
+      field('Email :', 'vbcoaching56@gmail.com');
 
       y += 4;
-      pdf.setFontSize(9);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(120, 120, 120);
-      pdf.text('SIGNATURE', 20, y);
-      y += 6;
-      pdf.setDrawColor(200, 200, 200);
-      pdf.setLineWidth(0.3);
-      pdf.rect(20, y, 115, 48);
-      if (signatureDataUrl) {
-        pdf.addImage(signatureDataUrl, 'PNG', 22, y + 2, 111, 44);
+      section('Le sous-traitant (Formateur)');
+      field('Nom :', data.nom_formateur || data.nom || formateur?.nom || '');
+      field('Adresse :', data.adresse_formateur || '');
+      field('SIRET :', data.formateur_siret || '');
+      field('NDA :', data.formateur_nda || '');
+      field('Email :', data.email_formateur || '');
+      field('Téléphone :', data.tel_formateur || '');
+
+      if (data.nomcomplet_client || data.formation_nom) {
+        y += 4;
+        section('Prestation concernée');
+        field('Bénéficiaire :', data.nomcomplet_client || '');
+        field('Formation :', data.formation_nom || '');
+        field('Période :', data.date_debut && data.date_fin ? `Du ${data.date_debut} au ${data.date_fin}` : '');
+        field('Prix :', data.prix_prestation ? `${data.prix_prestation} €` : '');
+        field('Modalité :', data.modalite_formation || '');
       }
 
+      // ── Zone de signature ───────────────────────────────────────────────────
+      y += 8;
+      // Ligne séparatrice
       pdf.setDrawColor(220, 38, 38);
-      pdf.setLineWidth(0.5);
-      pdf.line(20, 245, 190, 245);
-      pdf.setFontSize(8);
-      pdf.setTextColor(160, 160, 160);
-      pdf.text('Ce document constitue une preuve de signature électronique.', 105, 254, { align: 'center' });
-      pdf.text('Généré automatiquement par VB Logiciel', 105, 261, { align: 'center' });
+      pdf.setLineWidth(0.4);
+      pdf.line(margin, y, W - margin, y);
+      y += 8;
+
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(30, 30, 30);
+      pdf.text('SIGNATURE DU FORMATEUR', margin, y);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(`Signé le ${signedAtLabel}`, W - margin, y, { align: 'right' });
+      y += 6;
+
+      // Cadre signature
+      pdf.setDrawColor(200, 200, 200);
+      pdf.setLineWidth(0.3);
+      const sigBoxH = 50;
+      pdf.rect(margin, y, 110, sigBoxH);
+      if (signatureDataUrl) {
+        pdf.addImage(signatureDataUrl, 'PNG', margin + 2, y + 2, 106, sigBoxH - 4);
+      }
+
+      // Nom du signataire à droite
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(30, 30, 30);
+      pdf.text(formateur?.nom || data.nom_formateur || 'Le Formateur', W - margin, y + 20, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(130, 130, 130);
+      pdf.text('Signature et cachet', W - margin, y + 28, { align: 'right' });
+
+      // ── Pied de page ────────────────────────────────────────────────────────
+      pdf.setFontSize(7);
+      pdf.setTextColor(180, 180, 180);
+      pdf.text(
+        'VB Coaching – Véronique BOULAIS | 2 Rue du Général Baron Fabre 56000 VANNES | N° Siret : 399146067020034',
+        W / 2, 287, { align: 'center' }
+      );
 
       const pdfBlob = pdf.output('blob');
       const fileName = `certificat_${docId}_${Date.now()}.pdf`;
