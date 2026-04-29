@@ -6249,201 +6249,40 @@ export default function App() {
     if (!doc) return;
 
     const TOAST_ID = 'sign-doc';
-    toast.loading('Préparation du document…', { id: TOAST_ID });
-
-    // ── IMPORTANT : le container DOIT être dans le viewport pour que
-    // le navigateur le rende réellement. On l'y place avec opacity≈0
-    // pour qu'il soit invisible mais pleinement rendu par le moteur CSS.
-    const renderContainer = document.createElement('div');
-    renderContainer.style.cssText = [
-      'position:fixed',
-      'top:0',
-      'left:0',
-      'width:794px',
-      'background:white',
-      'z-index:9999',
-      'opacity:0.001',          // quasi-invisible mais rendu réel
-      'pointer-events:none',
-      'overflow:visible',
-    ].join(';');
-    document.body.appendChild(renderContainer);
+    toast.loading('Génération du PDF signé…', { id: TOAST_ID });
 
     try {
       const formateur = formateurs.find(f => f.id === doc.assigned_formateur_id);
       const now = new Date();
-      const A4_W_PT = 595, A4_H_PT = 842;
 
-      const pdfDoc  = await PDFDocument.create();
-      const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const fontBold= await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-      // ── Helper : dessiner la signature sur une page PDF ──────────────
-      const drawSignatureBlock = async (page, yBase) => {
-        if (!signatureDataUrl) return;
-        const sigB64   = signatureDataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
-        const sigBytes = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
-        const sigImg   = await pdfDoc.embedPng(sigBytes);
-        const sigW = 160, sigH = 58;
-        const sigX = A4_W_PT * 0.55;
-        const sigY = yBase;
-        page.drawImage(sigImg, { x: sigX, y: sigY, width: sigW, height: sigH });
-        page.drawText(formateur?.nom || 'Le Formateur', {
-          x: sigX, y: sigY - 14, size: 9, font: fontBold, color: rgb(0.1, 0.1, 0.1),
-        });
-        page.drawText(
-          `Signé numériquement le ${now.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`,
-          { x: sigX, y: sigY - 26, size: 7.5, font: fontReg, color: rgb(0.4, 0.4, 0.4) },
-        );
-      };
-
-      // ── 1. Télécharger le .docx ───────────────────────────────────────
-      let docxRenderedOk = false;
-
-      try {
-        toast.loading('Chargement du document Word…', { id: TOAST_ID });
-        const docxResp = await fetch(doc.url);
-        if (!docxResp.ok) throw new Error(`HTTP ${docxResp.status}`);
-        const docxBytes = await docxResp.arrayBuffer();
-
-        // ── 2. Rendre le Word dans le container ───────────────────────
-        const { renderAsync } = await import('docx-preview');
-        await renderAsync(new Uint8Array(docxBytes), renderContainer, null, {
-          inWrapper: false,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          renderHeaders: true,
-          renderFooters: true,
-          useBase64URL: true,
-        });
-
-        // Forcer le recalcul de la hauteur
-        renderContainer.style.height = renderContainer.scrollHeight + 'px';
-
-        // ── 3. Attendre que les polices & images se chargent ──────────
-        toast.loading('Chargement des polices et images…', { id: TOAST_ID });
-        await Promise.allSettled([
-          document.fonts.ready,
-          new Promise(r => setTimeout(r, 4000)), // garde-fou 4 s
-        ]);
-
-        toast.loading('Capture du document en cours…', { id: TOAST_ID });
-
-        const CONTAINER_W = 794;
-        const PAGE_H_PX   = Math.round(CONTAINER_W * 297 / 210); // ~1123 px par page A4
-
-        // Fixer la hauteur du container APRÈS le rendu pour que html-to-image la connaisse
-        const article = renderContainer.querySelector('article') || renderContainer;
-        const totalH  = Math.max(article.scrollHeight, PAGE_H_PX);
-        renderContainer.style.height = totalH + 'px';
-        renderContainer.style.overflow = 'hidden';
-
-        // html-to-image : rendu SVG foreignObject, bien plus fiable que html2canvas pour docx-preview
-        const { toPng } = await import('html-to-image');
-        const fullDataUrl = await toPng(renderContainer, {
-          backgroundColor: '#ffffff',
-          width:  CONTAINER_W,
-          height: totalH,
-          pixelRatio: 2,
-          filter: node => node.tagName !== 'SCRIPT' && node.tagName !== 'STYLE',
-        });
-
-        // Vérifier que l'image n'est pas vide
-        const testImg = new Image();
-        await new Promise(r => { testImg.onload = r; testImg.src = fullDataUrl; });
-        const testCv = document.createElement('canvas');
-        testCv.width = 200; testCv.height = 200;
-        const tctx = testCv.getContext('2d');
-        tctx.drawImage(testImg, 0, 0, 200, 200);
-        const sample = tctx.getImageData(0, 0, 200, 200).data;
-        const darkPx = [...sample].filter((v, i) => i % 4 !== 3 && v < 245).length;
-
-        if (darkPx > 200) {
-          toast.loading('Assemblage du PDF…', { id: TOAST_ID });
-
-          // Construire un canvas depuis le dataUrl pour le découpage en tranches
-          const fullImg = new Image();
-          await new Promise(r => { fullImg.onload = r; fullImg.src = fullDataUrl; });
-
-          const PAGE_H_CANVAS = PAGE_H_PX * 2; // pixelRatio 2
-          const canvasW       = fullImg.width;
-          const canvasH       = fullImg.height;
-          const totalPages    = Math.max(1, Math.ceil(canvasH / PAGE_H_CANVAS));
-
-          for (let i = 0; i < totalPages; i++) {
-            const sliceH = Math.min(PAGE_H_CANVAS, canvasH - i * PAGE_H_CANVAS);
-            const slice  = document.createElement('canvas');
-            slice.width  = canvasW;
-            slice.height = PAGE_H_CANVAS;
-            const ctx    = slice.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, slice.width, slice.height);
-            ctx.drawImage(fullImg, 0, i * PAGE_H_CANVAS, canvasW, sliceH, 0, 0, canvasW, sliceH);
-
-            const imgData  = slice.toDataURL('image/jpeg', 0.92);
-            const b64      = imgData.replace('data:image/jpeg;base64,', '');
-            const jpgBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-            const jpgImage = await pdfDoc.embedJpg(jpgBytes);
-            const page     = pdfDoc.addPage([A4_W_PT, A4_H_PT]);
-            page.drawImage(jpgImage, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT });
-
-            if (i === totalPages - 1) {
-              await drawSignatureBlock(page, 90);
-            }
-          }
-          docxRenderedOk = true;
-        }
-      } catch (renderErr) {
-        console.warn('[handleDocumentSignatureSave] Rendu Word échoué :', renderErr.message);
+      // 1. Appeler la serverless function pour convertir .docx → PDF avec signature
+      const apiResp = await fetch('/api/convert-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docxUrl: doc.url,
+          signerName: formateur?.nom || 'Le Formateur',
+          signedAt: now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }),
+          signatureBase64: signatureDataUrl,
+        }),
+      });
+      if (!apiResp.ok) {
+        const errText = await apiResp.text();
+        throw new Error('Conversion PDF : ' + errText);
       }
+      const pdfBlob = await apiResp.blob();
 
-      // ── 4. Fallback : page d'attestation si le rendu a échoué ────────
-      if (!docxRenderedOk) {
-        toast.loading('Génération de la page de signature…', { id: TOAST_ID });
-        const page = pdfDoc.addPage([A4_W_PT, A4_H_PT]);
-
-        // En-tête
-        page.drawRectangle({ x: 0, y: A4_H_PT - 80, width: A4_W_PT, height: 80, color: rgb(0.24, 0.27, 0.64) });
-        page.drawText('ATTESTATION DE SIGNATURE', {
-          x: 50, y: A4_H_PT - 38, size: 18, font: fontBold, color: rgb(1, 1, 1),
-        });
-        page.drawText('VB Coaching', {
-          x: 50, y: A4_H_PT - 58, size: 11, font: fontReg, color: rgb(0.8, 0.85, 1),
-        });
-
-        // Infos document
-        const lines = [
-          { label: 'Document signé :', value: doc.nom || 'Document administratif' },
-          { label: 'Signataire       :', value: formateur?.nom || 'Formateur' },
-          { label: 'Date & heure     :', value: now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }) },
-          { label: 'Fichier source   :', value: doc.url?.split('/').pop()?.split('?')[0] || 'document.docx' },
-        ];
-        lines.forEach((l, idx) => {
-          const y = A4_H_PT - 150 - idx * 32;
-          page.drawText(l.label, { x: 50,  y, size: 10, font: fontBold, color: rgb(0.3, 0.3, 0.3) });
-          page.drawText(l.value, { x: 185, y, size: 10, font: fontReg,  color: rgb(0.1, 0.1, 0.1), maxWidth: 360 });
-        });
-
-        // Ligne de séparation
-        page.drawLine({ start: { x: 50, y: 200 }, end: { x: A4_W_PT - 50, y: 200 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
-        page.drawText('Signature électronique du formateur', {
-          x: 50, y: 180, size: 9, font: fontBold, color: rgb(0.4, 0.4, 0.4),
-        });
-
-        await drawSignatureBlock(page, 110);
-      }
-
-      // ── 5. Upload PDF final ───────────────────────────────────────────
+      // 2. Upload du PDF généré dans le bucket documents
       toast.loading('Upload du PDF signé…', { id: TOAST_ID });
-      const pdfBytes  = await pdfDoc.save();
-      const fileName  = `signed_${docId}_${Date.now()}.pdf`;
-      const pdfFile   = new File([new Blob([pdfBytes], { type: 'application/pdf' })], fileName, { type: 'application/pdf' });
-
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, pdfFile);
-      if (uploadError) throw new Error('Upload échoué : ' + uploadError.message);
+      const fileName = `signed_${docId}_${Date.now()}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, new File([pdfBlob], fileName, { type: 'application/pdf' }));
+      if (uploadError) throw new Error('Upload : ' + uploadError.message);
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-      // ── 6. Mise à jour base de données ────────────────────────────────
+      // 3. Mise à jour base de données
       const updateData = {
         signe_par_formateur: true,
         date_signature_formateur: now.toISOString(),
@@ -6456,19 +6295,12 @@ export default function App() {
       if (dbError) throw dbError;
 
       setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updateData } : d));
-      toast.success(
-        docxRenderedOk
-          ? "✅ Document signé avec son contenu Word ! PDF disponible."
-          : "✅ Attestation de signature générée. Contenu Word : voir document source.",
-        { id: TOAST_ID }
-      );
+      toast.success("Document signé ! PDF disponible pour l'admin.", { id: TOAST_ID });
 
     } catch (err) {
       console.error('[handleDocumentSignatureSave]', err);
-      toast.error('Erreur lors de la signature : ' + err.message, { id: TOAST_ID });
+      toast.error('Erreur : ' + err.message, { id: TOAST_ID });
       await fetchDocuments();
-    } finally {
-      if (renderContainer.parentNode) document.body.removeChild(renderContainer);
     }
   };
 

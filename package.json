@@ -1,0 +1,13 @@
+{
+  "name": "vb-api",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.x"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^131.0.1",
+    "mammoth": "^1.8.0",
+    "puppeteer-core": "^22.6.4"
+  }
+}
