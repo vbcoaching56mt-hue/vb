@@ -9,7 +9,7 @@ import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseAdmin } from './supabaseClientConfig';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
@@ -6241,126 +6241,95 @@ export default function App() {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
 
-    toast.loading('Signature en cours...', { id: 'sign-doc' });
+    toast.loading('Conversion du document en PDF…', { id: 'sign-doc' });
+
+    const renderContainer = document.createElement('div');
+    renderContainer.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;z-index:-1;visibility:hidden;';
+    document.body.appendChild(renderContainer);
+
     try {
       const formateur = formateurs.find(f => f.id === doc.assigned_formateur_id);
       const now = new Date();
-      const signedAtLabel = now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' });
 
-      // Génération du document signé en PDF avec jsPDF (contenu complet + signature)
-      const data = doc.docx_data || {};
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const W = 210, margin = 20, contentW = W - margin * 2;
+      // 1. Télécharger le .docx original
+      const docxResp = await fetch(doc.url);
+      if (!docxResp.ok) throw new Error('Impossible de télécharger le document original');
+      const docxBytes = await docxResp.arrayBuffer();
 
-      // ── Bandeau rouge ──────────────────────────────────────────────────────
-      pdf.setFillColor(220, 38, 38);
-      pdf.rect(0, 0, W, 38, 'F');
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(15);
-      pdf.setFont('helvetica', 'bold');
-      pdf.text((doc.nom || 'Document administratif').toUpperCase(), W / 2, 17, { align: 'center' });
-      pdf.setFontSize(9);
-      pdf.setFont('helvetica', 'normal');
-      pdf.text('VB Coaching – Document officiel signé', W / 2, 29, { align: 'center' });
+      // 2. Rendre le .docx en HTML (docx-preview)
+      const { renderAsync } = await import('docx-preview');
+      await renderAsync(new Uint8Array(docxBytes), renderContainer, null, {
+        inWrapper: false,
+        ignoreWidth: false,
+        ignoreHeight: false,
+        renderHeaders: true,
+        renderFooters: true,
+        useBase64URL: true,
+      });
 
-      // ── Parties ─────────────────────────────────────────────────────────────
-      let y = 50;
-      const section = (title) => {
-        pdf.setFillColor(245, 245, 245);
-        pdf.rect(margin, y, contentW, 8, 'F');
-        pdf.setFontSize(9);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(80, 80, 80);
-        pdf.text(title.toUpperCase(), margin + 3, y + 5.5);
-        y += 13;
-      };
-      const field = (label, value) => {
-        if (!value) return;
-        pdf.setFontSize(8);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(130, 130, 130);
-        pdf.text(label, margin, y);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setTextColor(30, 30, 30);
-        pdf.setFontSize(10);
-        const lines = pdf.splitTextToSize(String(value), contentW - 55);
-        pdf.text(lines, margin + 55, y);
-        y += lines.length * 5.5 + 2;
-      };
+      // Laisser le temps aux polices/images de se charger
+      await new Promise(r => setTimeout(r, 1500));
+      toast.loading('Ajout de la signature…', { id: 'sign-doc' });
 
-      section('Le donneur d\'ordre');
-      field('Organisme :', 'VB Coaching – Véronique BOULAIS');
-      field('Adresse :', '2 Rue du Général Baron Fabre, 56000 VANNES');
-      field('Email :', 'vbcoaching56@gmail.com');
+      // 3. Capturer chaque page (sections docx-preview)
+      const sections = renderContainer.querySelectorAll('section');
+      const pages = sections.length > 0 ? Array.from(sections) : [renderContainer];
 
-      y += 4;
-      section('Le sous-traitant (Formateur)');
-      field('Nom :', data.nom_formateur || data.nom || formateur?.nom || '');
-      field('Adresse :', data.adresse_formateur || '');
-      field('SIRET :', data.formateur_siret || '');
-      field('NDA :', data.formateur_nda || '');
-      field('Email :', data.email_formateur || '');
-      field('Téléphone :', data.tel_formateur || '');
+      // 4. Assembler le PDF avec pdf-lib
+      const pdfDoc = await PDFDocument.create();
+      const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const A4_W = 595, A4_H = 842; // points
 
-      if (data.nomcomplet_client || data.formation_nom) {
-        y += 4;
-        section('Prestation concernée');
-        field('Bénéficiaire :', data.nomcomplet_client || '');
-        field('Formation :', data.formation_nom || '');
-        field('Période :', data.date_debut && data.date_fin ? `Du ${data.date_debut} au ${data.date_fin}` : '');
-        field('Prix :', data.prix_prestation ? `${data.prix_prestation} €` : '');
-        field('Modalité :', data.modalite_formation || '');
+      for (let i = 0; i < pages.length; i++) {
+        const canvas = await html2canvas(pages[i], {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.92);
+        const b64 = imgData.replace('data:image/jpeg;base64,', '');
+        const jpgBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        const jpgImage = await pdfDoc.embedJpg(jpgBytes);
+
+        const page = pdfDoc.addPage([A4_W, A4_H]);
+        page.drawImage(jpgImage, { x: 0, y: 0, width: A4_W, height: A4_H });
+
+        // Superposer la signature sur la dernière page
+        if (i === pages.length - 1 && signatureDataUrl) {
+          const sigB64 = signatureDataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+          const sigBytes = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
+          const sigImage = await pdfDoc.embedPng(sigBytes);
+
+          // Colonne droite (sous-traitant), zone basse — position estimée pour Convention A4
+          const sigW = 150, sigH = 55;
+          const sigX = A4_W * 0.55;   // ~327pt depuis la gauche
+          const sigY = A4_H * 0.26;   // ~219pt depuis le bas
+
+          page.drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
+
+          page.drawText(formateur?.nom || 'Le Formateur', {
+            x: sigX, y: sigY - 14, size: 9,
+            font: fontBold, color: rgb(0.1, 0.1, 0.1),
+          });
+          page.drawText(
+            `Signé numériquement le ${now.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`,
+            { x: sigX, y: sigY - 25, size: 7.5, font: fontRegular, color: rgb(0.4, 0.4, 0.4) }
+          );
+        }
       }
 
-      // ── Zone de signature ───────────────────────────────────────────────────
-      y += 8;
-      // Ligne séparatrice
-      pdf.setDrawColor(220, 38, 38);
-      pdf.setLineWidth(0.4);
-      pdf.line(margin, y, W - margin, y);
-      y += 8;
-
-      pdf.setFontSize(10);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(30, 30, 30);
-      pdf.text('SIGNATURE DU FORMATEUR', margin, y);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(100, 100, 100);
-      pdf.text(`Signé le ${signedAtLabel}`, W - margin, y, { align: 'right' });
-      y += 6;
-
-      // Cadre signature
-      pdf.setDrawColor(200, 200, 200);
-      pdf.setLineWidth(0.3);
-      const sigBoxH = 50;
-      pdf.rect(margin, y, 110, sigBoxH);
-      if (signatureDataUrl) {
-        pdf.addImage(signatureDataUrl, 'PNG', margin + 2, y + 2, 106, sigBoxH - 4);
-      }
-
-      // Nom du signataire à droite
-      pdf.setFontSize(9);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(30, 30, 30);
-      pdf.text(formateur?.nom || data.nom_formateur || 'Le Formateur', W - margin, y + 20, { align: 'right' });
-      pdf.setFont('helvetica', 'normal');
-      pdf.setTextColor(130, 130, 130);
-      pdf.text('Signature et cachet', W - margin, y + 28, { align: 'right' });
-
-      // ── Pied de page ────────────────────────────────────────────────────────
-      pdf.setFontSize(7);
-      pdf.setTextColor(180, 180, 180);
-      pdf.text(
-        'VB Coaching – Véronique BOULAIS | 2 Rue du Général Baron Fabre 56000 VANNES | N° Siret : 399146067020034',
-        W / 2, 287, { align: 'center' }
-      );
-
-      const pdfBlob = pdf.output('blob');
+      // 5. Sauvegarder et uploader
+      const pdfBytes = await pdfDoc.save();
+      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
       const fileName = `signed_${docId}_${Date.now()}.pdf`;
-      const certFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, certFile);
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, new File([pdfBlob], fileName, { type: 'application/pdf' }));
       if (uploadError) throw new Error('Erreur upload PDF signé : ' + uploadError.message);
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
@@ -6378,10 +6347,12 @@ export default function App() {
       if (error) throw error;
 
       setDocuments(documents.map(d => d.id === docId ? { ...d, ...updateData } : d));
-      toast.success("Document signé ! L'admin peut maintenant le consulter.", { id: 'sign-doc' });
+      toast.success("Document signé ! PDF disponible pour l'admin.", { id: 'sign-doc' });
     } catch (err) {
       toast.error('Erreur lors de la signature : ' + err.message, { id: 'sign-doc' });
       await fetchDocuments();
+    } finally {
+      if (renderContainer.parentNode) document.body.removeChild(renderContainer);
     }
   };
 
