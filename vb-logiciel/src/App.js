@@ -6357,15 +6357,13 @@ export default function App() {
       );
 
       const pdfBlob = pdf.output('blob');
-      const fileName = `certificat_${docId}_${Date.now()}.pdf`;
+      const fileName = `signed_${docId}_${Date.now()}.pdf`;
       const certFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-      const { error: uploadError } = await supabase.storage.from('signed_documents').upload(fileName, certFile);
-      let signedPdfUrl = null;
-      if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from('signed_documents').getPublicUrl(fileName);
-        signedPdfUrl = publicUrl;
-      }
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, certFile);
+      if (uploadError) throw new Error('Erreur upload PDF signé : ' + uploadError.message);
+
+      const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
       const updateData = {
         signe_par_formateur: true,
@@ -6373,8 +6371,8 @@ export default function App() {
         signature_formateur: signatureDataUrl,
         statut: 'Signé',
         visible_admin: true,
+        signed_pdf_url: signedPdfUrl,
       };
-      if (signedPdfUrl) updateData.signed_pdf_url = signedPdfUrl;
 
       const { error } = await supabase.from('documents').update(updateData).eq('id', docId);
       if (error) throw error;
