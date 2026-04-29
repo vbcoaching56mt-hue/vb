@@ -6217,6 +6217,35 @@ export default function App() {
     }
   };
 
+  const handleDocumentSignatureSave = async (docId, signatureDataUrl) => {
+    const doc = documents.find(d => d.id === docId);
+    if (!doc) return;
+
+    toast.loading('Signature en cours...', { id: 'sign-doc' });
+    try {
+      const docWithFileUrl = { ...doc, file_url: doc.url };
+      const signedPdfUrl = await overlaySignatureOnPdf(docWithFileUrl, {}, signatureDataUrl, 'formateur');
+
+      const updateData = {
+        signe_par_formateur: true,
+        date_signature_formateur: new Date().toISOString(),
+        signature_formateur: signatureDataUrl,
+        statut: 'Signé',
+        visible_admin: true,
+      };
+      if (signedPdfUrl) updateData.signed_pdf_url = signedPdfUrl;
+
+      const { error } = await supabase.from('documents').update(updateData).eq('id', docId);
+      if (error) throw error;
+
+      setDocuments(documents.map(d => d.id === docId ? { ...d, ...updateData } : d));
+      toast.success('Document signé ! L\'admin peut maintenant le consulter.', { id: 'sign-doc' });
+    } catch (err) {
+      toast.error('Erreur lors de la signature : ' + err.message, { id: 'sign-doc' });
+      await fetchDocuments();
+    }
+  };
+
   const updateDateSeance = async (docId, date) => {
     setDocuments(documents.map(d => d.id === docId ? { ...d, date_seance: date } : d));
     const { error } = await supabase.from('documents').update({ date_seance: date }).eq('id', docId);
@@ -6944,9 +6973,14 @@ export default function App() {
         mode={viewingSession?.mode || 'view'}
         onClose={() => setViewingSession(null)}
         onSave={viewingSession?.mode === 'sign' ? async (signature) => {
-          const sessionId = viewingSession.session.id;
+          const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
-          await handleSessionSignatureSave(sessionId, signature);
+          const isDocument = documents.some(d => d.id === sessionOrDoc.id);
+          if (isDocument) {
+            await handleDocumentSignatureSave(sessionOrDoc.id, signature);
+          } else {
+            await handleSessionSignatureSave(sessionOrDoc.id, signature);
+          }
         } : undefined}
       />
 
