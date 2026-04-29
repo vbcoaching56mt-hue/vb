@@ -1977,13 +1977,22 @@ const AdminClientsView = ({
   );
 };
 
-const FormateurDetailView = ({ 
-  formateur, onBack, supabase, fetchUtilisateurs, modules, clients, 
+const FormateurDetailView = ({
+  formateur, onBack, supabase, fetchUtilisateurs, modules, clients,
   handleDeleteFormateur, documents, documentTemplates, handleGenerateDocx,
-  setViewingDocId
+  setViewingDocId, fetchDocuments
 }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+  const [docToDelete, setDocToDelete] = React.useState(null);
+
+  const handleDeleteDoc = async () => {
+    if (!docToDelete) return;
+    const { error } = await supabase.from('documents').delete().eq('id', docToDelete.id);
+    if (error) { toast.error('Erreur lors de la suppression : ' + error.message); }
+    else { toast.success('Document supprimé.'); await fetchDocuments(); }
+    setDocToDelete(null);
+  };
   const [legalInfo, setLegalInfo] = React.useState({
     nom: formateur.nom || '',
     formateur_siret: formateur.formateur_siret || formateur.siret || '',
@@ -2145,22 +2154,40 @@ const FormateurDetailView = ({
                       <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
                       <div className="flex items-center gap-3 mt-1">
                         <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(doc.created_at).toLocaleDateString()}</span>
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {doc.statut_formateur === 'Signé' ? 'Signé' : 'En attente de signature'}
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${doc.statut_formateur === 'Signé' || doc.signe_par_formateur ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {doc.statut_formateur === 'Signé' || doc.signe_par_formateur ? 'Signé' : 'En attente de signature'}
                         </span>
                       </div>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setViewingDocId(doc.id)}
-                    className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                  >
-                    <Eye size={20} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setViewingDocId(doc.id)}
+                      className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      title="Consulter"
+                    >
+                      <Eye size={20} />
+                    </button>
+                    <button
+                      onClick={() => setDocToDelete(doc)}
+                      className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                      title="Supprimer ce document"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
               )) : (
                 <p className="text-gray-400 italic text-sm py-4">Aucun document généré pour le moment.</p>
               )}
+
+              <DeleteConfirmationModal
+                isOpen={!!docToDelete}
+                onClose={() => setDocToDelete(null)}
+                onConfirm={handleDeleteDoc}
+                itemName={docToDelete?.nom || 'ce document'}
+                title="Supprimer ce document ?"
+              />
             </div>
           </div>
         </div>
@@ -2220,6 +2247,7 @@ const AdminFormateursView = ({
           onBack={() => setSelectedFormateurId(null)}
           supabase={supabase}
           fetchUtilisateurs={fetchUtilisateurs}
+          fetchDocuments={fetchDocuments}
           modules={modules}
           clients={clients}
           handleDeleteFormateur={handleDeleteFormateur}
