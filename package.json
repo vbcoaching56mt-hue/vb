@@ -6,8 +6,9 @@
     "node": ">=18.x"
   },
   "dependencies": {
-    "@sparticuz/chromium": "^131.0.1",
+    "html-to-pdfmake": "^2.4.10",
+    "jsdom": "^25.0.0",
     "mammoth": "^1.8.0",
-    "puppeteer-core": "^22.6.4"
+    "pdfmake": "^0.2.10"
   }
 }

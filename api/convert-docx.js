@@ -16,7 +16,7 @@ module.exports = async (req, res) => {
     if (!docxResp.ok) throw new Error(`Téléchargement échoué: HTTP ${docxResp.status}`);
     const docxBuffer = Buffer.from(await docxResp.arrayBuffer());
 
-    // 2. Convertir .docx → HTML avec mammoth
+    // 2. Convertir .docx → HTML avec mammoth (images en base64)
     const { value: bodyHtml } = await mammoth.convertToHtml(
       { buffer: docxBuffer },
       {
@@ -27,98 +27,67 @@ module.exports = async (req, res) => {
       }
     );
 
-    // 3. Construire le HTML complet avec la signature intégrée
-    const fullHtml = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: Arial, Calibri, sans-serif;
-      font-size: 11pt;
-      line-height: 1.5;
-      color: #000;
-    }
-    .page { padding: 20mm 18mm 20mm 25mm; }
-    h1 { font-size: 14pt; margin: 0 0 10pt; }
-    h2 { font-size: 12pt; margin: 8pt 0 6pt; }
-    p  { margin: 0 0 6pt; }
-    ul, ol { margin: 0 0 6pt 18pt; }
-    table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
-    td, th { border: 1px solid #ccc; padding: 5pt 7pt; font-size: 10pt; }
-    th { background: #f5f5f5; font-weight: bold; }
-    img { max-width: 100%; height: auto; }
+    // 3. Convertir HTML → nodes pdfmake
+    const { JSDOM } = require('jsdom');
+    const htmlToPdfMake = require('html-to-pdfmake');
+    const { window } = new JSDOM('');
+    const pdfContent = htmlToPdfMake(bodyHtml, { window });
 
-    .sig-section {
-      margin-top: 28pt;
-      padding-top: 16pt;
-      border-top: 1pt solid #bbb;
-      display: flex;
-      justify-content: space-between;
-      gap: 20pt;
-    }
-    .sig-col { flex: 1; text-align: center; }
-    .sig-col strong { display: block; margin-bottom: 6pt; font-size: 10pt; }
-    .sig-img {
-      max-width: 190pt;
-      max-height: 72pt;
-      object-fit: contain;
-      display: block;
-      margin: 8pt auto 4pt;
-    }
-    .sig-name { font-size: 9.5pt; }
-    .sig-date { font-size: 8pt; color: #555; margin-top: 3pt; }
-  </style>
-</head>
-<body>
-  <div class="page">
-    ${bodyHtml}
+    // 4. Bloc de signature
+    const sigBlock = {
+      margin: [0, 28, 0, 0],
+      table: {
+        widths: ['*', '*'],
+        body: [[
+          {
+            border: [false, true, false, false],
+            stack: [
+              { text: "Le donneur d'ordre", bold: true, fontSize: 10, margin: [0, 8, 0, 6] },
+              { text: 'VB Coaching – Véronique BOULAIS', fontSize: 10 },
+            ],
+          },
+          {
+            border: [false, true, false, false],
+            stack: [
+              { text: 'Le sous-traitant', bold: true, fontSize: 10, margin: [0, 8, 0, 6] },
+              ...(signatureBase64
+                ? [{ image: signatureBase64, width: 140, height: 52, alignment: 'center', margin: [0, 4, 0, 4] }]
+                : [{ canvas: [{ type: 'rect', x: 0, y: 0, w: 140, h: 52, lineWidth: 1, lineColor: '#cccccc' }] }]),
+              { text: signerName || 'Le Formateur', fontSize: 9.5, alignment: 'center' },
+              { text: `Signé numériquement le ${signedAt || ''}`, fontSize: 8, color: '#555555', alignment: 'center', margin: [0, 3, 0, 0] },
+            ],
+          },
+        ]],
+      },
+    };
 
-    <div class="sig-section">
-      <div class="sig-col">
-        <strong>Le donneur d'ordre</strong>
-        <p class="sig-name">VB Coaching – Véronique BOULAIS</p>
-      </div>
-      <div class="sig-col">
-        <strong>Le sous-traitant</strong>
-        ${signatureBase64
-          ? `<img class="sig-img" src="${signatureBase64}" alt="Signature formateur" />`
-          : '<div style="height:72pt;border:1px solid #ccc;margin:8pt auto;width:190pt;"></div>'}
-        <p class="sig-name">${signerName || 'Le Formateur'}</p>
-        <p class="sig-date">Signé numériquement le ${signedAt || ''}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+    // 5. Générer le PDF avec pdfmake (pur Node.js, sans navigateur)
+    const pdfMake = require('pdfmake/build/pdfmake');
+    pdfMake.vfs = require('pdfmake/build/vfs_fonts').vfs;
 
-    // 4. Lancer Puppeteer + Chromium et générer le PDF
-    const chromium = require('@sparticuz/chromium');
-    const puppeteer = require('puppeteer-core');
+    const docDefinition = {
+      pageSize: 'A4',
+      pageMargins: [72, 57, 51, 57],
+      content: [
+        ...(Array.isArray(pdfContent) ? pdfContent : [pdfContent]),
+        sigBlock,
+      ],
+      defaultStyle: { fontSize: 11, lineHeight: 1.5 },
+    };
 
-    const browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
+    const pdfDoc = pdfMake.createPdfKitDocument(docDefinition);
+    const chunks = [];
+    pdfDoc.on('data', chunk => chunks.push(chunk));
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
+      pdfDoc.on('error', reject);
+      pdfDoc.end();
     });
 
-    const page = await browser.newPage();
-    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 25000 });
-
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '0', right: '0', bottom: '0', left: '0' },
-    });
-
-    await browser.close();
-
-    // 5. Renvoyer le PDF
+    // 6. Renvoyer le PDF
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="signed_document.pdf"');
-    res.status(200).send(Buffer.from(pdfBuffer));
+    res.status(200).send(pdfBuffer);
 
   } catch (err) {
     console.error('[convert-docx]', err);
