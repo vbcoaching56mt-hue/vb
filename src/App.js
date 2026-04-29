@@ -217,14 +217,21 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         return { bucket, path };
       }
       
-      // Cas 2: Chemin relatif
-      if (!fullUrl.startsWith('http')) {
-        const isRessource = fullUrl.startsWith('ressources') || fullUrl.startsWith('modeling-imports');
-        const bucket = isRessource ? 'ressources-pedagogiques' : 'documents';
-        return { bucket, path: fullUrl };
+      // Cas 2: Chemin relatif ou simple nom de fichier
+      let path = fullUrl;
+      let bucket = 'documents'; // Default
+
+      if (path.startsWith('ressources/') || path.startsWith('ressources-pedagogiques/')) {
+        bucket = 'ressources-pedagogiques';
+        path = path.replace('ressources/', '').replace('ressources-pedagogiques/', '');
+      } else if (path.startsWith('modeling-imports/')) {
+        bucket = 'ressources-pedagogiques';
+      } else if (path.startsWith('documents/')) {
+        bucket = 'documents';
+        path = path.replace('documents/', '');
       }
 
-      return null;
+      return { bucket, path };
     };
 
     const loadSignedUrl = async () => {
@@ -2509,9 +2516,22 @@ const IngenierieView = ({
           <h3 className="font-bold text-gray-900 mb-4 flex items-center"><FileText className="mr-2" size={18} /> Nouveau Modèle</h3>
           <div className="space-y-4">
             <input type="text" value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)} placeholder="Nom du type" className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white" />
-            <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md`}>
               Uploader le Modèle (.docx)
-              <input type="file" className="hidden" disabled={!newTemplateName} accept=".docx" onChange={(e) => { if (e.target.files[0]) { handleUploadDocxTemplate(e.target.files[0], newTemplateName); setNewTemplateName(''); } }} />
+              <input 
+                type="file" 
+                className="hidden" 
+                accept=".docx" 
+                onChange={(e) => { 
+                  if (e.target.files[0]) { 
+                    const file = e.target.files[0];
+                    const autoName = file.name.replace(/\.[^/.]+$/, "");
+                    setNewTemplateName(autoName);
+                    handleUploadDocxTemplate(file, autoName); 
+                    setNewTemplateName(''); 
+                  } 
+                }} 
+              />
             </label>
           </div>
         </div>
@@ -2764,90 +2784,90 @@ const FormateurView = ({
 
                   {formateurClientTab === 'seances' && (
                     <>
-                  <div className="flex items-center gap-3">
-                    <h4 className="font-bold text-gray-800 flex items-center">
-                      <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
-                      Planning des Séances - {assignedModule?.nom || 'Sans module'}
-                    </h4>
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-bold text-gray-800 flex items-center">
+                          <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
+                          Planning des Séances - {assignedModule?.nom || 'Sans module'}
+                        </h4>
 
-                    {(userRole === 'admin' || userRole === 'formateur') && (
-                      <button
-                        onClick={() => handleAddSession(client)}
-                        className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
-                        title="Ajouter une séance"
-                      >
-                        <span className="mr-1.5">➕</span> Ajouter une séance
-                      </button>
-                    )}
-                  </div>
+                        {(userRole === 'admin' || userRole === 'formateur') && (
+                          <button
+                            onClick={() => handleAddSession(client)}
+                            className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-indigo-100 flex items-center"
+                            title="Ajouter une séance"
+                          >
+                            <span className="mr-1.5">➕</span> Ajouter une séance
+                          </button>
+                        )}
+                      </div>
 
-                  <div className="mb-4 flex flex-wrap gap-2"></div>
+                      <div className="mb-4 flex flex-wrap gap-2"></div>
 
-                  {clientSessions.length > 0 ? (
-                    <div className="overflow-hidden rounded-2xl border border-gray-100">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
-                          <tr>
-                            <th className="px-4 py-3 text-left">N° & Séance</th>
-                            <th className="px-4 py-3 text-left">Date</th>
-                            <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
-                            <th className="px-4 py-3 text-left">Statut</th>
-                            <th className="px-4 py-3 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100 bg-white">
-                          {(() => {
-                            const grouped = clientSessions.reduce((acc, s) => {
-                              const key = s.numero_seance;
-                              if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-                              acc[key].items.push(s);
-                              return acc;
-                            }, {});
+                      {clientSessions.length > 0 ? (
+                        <div className="overflow-hidden rounded-2xl border border-gray-100">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                              <tr>
+                                <th className="px-4 py-3 text-left">N° & Séance</th>
+                                <th className="px-4 py-3 text-left">Date</th>
+                                <th className="px-4 py-3 text-left">Horaires (Début/Fin)</th>
+                                <th className="px-4 py-3 text-left">Statut</th>
+                                <th className="px-4 py-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                              {(() => {
+                                const grouped = clientSessions.reduce((acc, s) => {
+                                  const key = s.numero_seance;
+                                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                                  acc[key].items.push(s);
+                                  return acc;
+                                }, {});
 
-                            return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
-                              <React.Fragment key={gIdx}>
-                                {/* Folder Header Row */}
-                                <tr className="bg-indigo-50/30">
-                                  <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
-                                    <div className="flex items-center gap-2 text-xs">
-                                      <Layout size={12} className="text-indigo-600" />
-                                      <span>SÉANCE {group.numero} : {group.nom}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <input
-                                      type="date"
-                                      value={group.date || ''}
-                                      onChange={(e) => {
-                                        group.items.forEach(s => updateSessionDate(s.id, e.target.value));
-                                      }}
-                                      className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
-                                    />
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex flex-col gap-0.5">
+                                return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                                  <React.Fragment key={gIdx}>
+                                    {/* Folder Header Row */}
+                                    <tr className="bg-indigo-50/30">
+                                      <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <Layout size={12} className="text-indigo-600" />
+                                          <span>SÉANCE {group.numero} : {group.nom}</span>
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3">
                                         <input
-                                          type="time"
-                                          value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
-                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
-                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                          type="date"
+                                          value={group.date || ''}
+                                          onChange={(e) => {
+                                            group.items.forEach(s => updateSessionDate(s.id, e.target.value));
+                                          }}
+                                          className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
                                         />
-                                        <input
-                                          type="time"
-                                          value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
-                                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
-                                          className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                        />
-                                      </div>
-                                      <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
-                                        <Save size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td colSpan="2" className="px-4 py-3 text-right">
-                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
-                                  </td>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center gap-2">
+                                          <div className="flex flex-col gap-0.5">
+                                            <input
+                                              type="time"
+                                              value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
+                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                            />
+                                            <input
+                                              type="time"
+                                              value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
+                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                            />
+                                          </div>
+                                          <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
+                                            <Save size={14} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                      <td colSpan="2" className="px-4 py-3 text-right">
+                                        <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+                                      </td>
                                 </tr>
 
                                 {/* Nested Items */}
@@ -2879,75 +2899,68 @@ const FormateurView = ({
                                           const sessionDate = session.date || group.date;
                                           const isDateLocked = sessionDate && today < sessionDate;
                                           const metadata = session.metadata || {};
-
-                                          // Actions for documents/exercices
-                                          const renderCommonActions = () => {
-                                            const signedUrl = session.file_url_signed || metadata.file_url_signed;
-                                            const isToSign = metadata.isToSign || session.type_activite === 'signature';
-                                            const isSigned = session.statut_formateur === 'Signé' || session.statut === 'Signé';
-
-                                            return (
-                                              <div className="flex gap-2 items-center">
-                                                {(session.type_activite === 'document' || session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                                  <button
-                                                    onClick={() => {
-                                                      const docUrl = signedUrl || session.file_url || session.ressource_url;
-                                                      setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-                                                    }}
-                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
-                                                  >
-                                                    {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                                  </button>
-                                                )}
-
-                                                {isToSign && (
-                                                  <button
-                                                    disabled={isSigned || isDateLocked}
-                                                    onClick={() => signSession(session)}
-                                                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
-                                                  >
-                                                    {isSigned ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer'}
-                                                  </button>
-                                                )}
-
-                                                {signedUrl && (
-                                                  <button
-                                                    onClick={() => handleDownloadResource(signedUrl)}
-                                                    className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                                    title="Télécharger"
-                                                  >
-                                                    <FileCheck size={16} />
-                                                  </button>
-                                                )}
-                                                 {userRole === 'client' && (
-                                                   <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                                     Soumettre Réponse
-                                                     <input
-                                                       type="file"
-                                                       className="hidden"
-                                                       onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                                     />
-                                                   </label>
-                                                 )}
-                                                {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                  <button
-                                                    onClick={() => window.open(session.reponse_url, '_blank')}
-                                                    className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
-                                                  >
-                                                    Voir Réponse
-                                                  </button>
-                                                )}
-                                              </div>
-                                            );
-                                          }
+                                          const signedUrl = session.file_url_signed || metadata.file_url_signed;
+                                          const isToSign = metadata.isToSign || session.type_activite === 'signature';
+                                          const isSigned = session.statut_formateur === 'Signé' || session.statut === 'Signé';
 
                                           return (
-                                            <button
-                                              onClick={() => handleDeleteSession(session)}
-                                              className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                                            >
-                                              <Trash2 size={14} />
-                                            </button>
+                                            <div className="flex gap-2 items-center">
+                                              {(session.type_activite === 'document' || session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                                <button
+                                                  onClick={() => {
+                                                    const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                                    setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                                  }}
+                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
+                                                >
+                                                  {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                                </button>
+                                              )}
+
+                                              {isToSign && (
+                                                <button
+                                                  disabled={isSigned || isDateLocked}
+                                                  onClick={() => signSession(session)}
+                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                                >
+                                                  {isSigned ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer'}
+                                                </button>
+                                              )}
+
+                                              {signedUrl && (
+                                                <button
+                                                  onClick={() => handleDownloadResource(signedUrl)}
+                                                  className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                  title="Télécharger"
+                                                >
+                                                  <FileCheck size={16} />
+                                                </button>
+                                              )}
+                                                {userRole === 'client' && (
+                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                    Soumettre Réponse
+                                                    <input
+                                                      type="file"
+                                                      className="hidden"
+                                                      onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
+                                                    />
+                                                  </label>
+                                                )}
+                                              {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
+                                                <button
+                                                  onClick={() => window.open(session.reponse_url, '_blank')}
+                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                >
+                                                  Voir Réponse
+                                                </button>
+                                              )}
+                                              <button
+                                                onClick={() => handleDeleteSession(session)}
+                                                className="text-gray-300 hover:text-red-500 transition-colors p-1"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            </div>
                                           );
                                         })()}
                                       </div>
@@ -2977,15 +2990,14 @@ const FormateurView = ({
                   ) : (
                     <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                       <p className="text-gray-400 text-sm italic">Aucune séance n'est encore enregistrée pour ce client.</p>
-                      {!client.module_id && <p className="text-xs text-rose-500 mt-2 font-bold">⚠️ Assignez un module à ce client pour générer ses séances.</p>}
                     </div>
                   )}
-                    </>
-                  )}
+                  </>
+                )}
                 </div>
               )}
             </div>
-          )
+          );
         }) : (
           <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-gray-200">
             <p className="text-gray-400 font-medium italic">Aucun client ne vous est assigné actuellement.</p>
@@ -2997,14 +3009,16 @@ const FormateurView = ({
 };
 
 const DocumentsView = ({
-  userRole, documents, clients, formateurs, handleSignDocument, handleDownloadPDF,
-  handleAddDocument, newDocName, setNewDocName, newDocType, setNewDocType, newDocUrl, setNewDocUrl,
-  newDocFile, setNewDocFile, updateDateSeance,
-  newDocClientId, setNewDocClientId, newDocVisClient, setNewDocVisClient,
-  newDocVisFormateur, setNewDocVisFormateur, isAddingDoc, currentUserId,
-  selectedClientForDocs, setSelectedClientForDocs, signingDocId, setSigningDocId, viewingDocId, setViewingDocId,
-  handleSignatureSave,
-  documentTemplates, handleUploadDocxTemplate, newTemplateName, setNewTemplateName, sessions
+  sessions, documents, clients, formateurs, userRole, currentUserId,
+  handleSignDocument, handleDownloadPDF, handleAddDocument,
+  updateDateSeance, newDocName, setNewDocName,
+  newDocType, setNewDocType, newDocUrl, setNewDocUrl,
+  newDocFile, setNewDocFile, newDocClientId, setNewDocClientId,
+  newDocVisClient, setNewDocVisClient, newDocVisFormateur, setNewDocVisFormateur,
+  isAddingDoc, selectedClientForDocs, setSelectedClientForDocs,
+  signingDocId, setSigningDocId, viewingDocId, setViewingDocId,
+  handleSignatureSave, documentTemplates, handleUploadDocxTemplate,
+  newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [modelesTab, setModelesTab] = React.useState('modeles');
@@ -3100,13 +3114,24 @@ const DocumentsView = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {Object.keys(documentTemplates || {}).map(key => (
-              <div key={key} className="p-4 border border-gray-100 bg-gray-50/50 rounded-2xl group hover:border-amber-500 transition-all">
+              <div key={key} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tighter">Modèle Actif</span>
-                  <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
-                    Mettre à jour
-                    <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key)} />
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
+                      Mettre à jour
+                      <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key)} />
+                    </label>
+                    <button 
+                      onClick={() => {
+                        setTargetToDelete({ id: key, type: 'template' });
+                        setIsDeleteModalOpen(true);
+                      }}
+                      className="p-1.5 text-gray-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
                 <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
                 <p className="text-[10px] text-gray-500 truncate">{documentTemplates[key]?.name || "Modèle chargé"}</p>
@@ -5445,7 +5470,34 @@ export default function App() {
     }
   };
 
-  const handleDownloadResource = async (fileName) => {
+  const handleDeleteDocxTemplate = async (templateKey) => {
+    try {
+      const template = documentTemplates[templateKey];
+      if (!template) return;
+
+      // Extraction du nom du fichier pour le storage
+      const fileName = template.url.split('/').pop().split('?')[0];
+
+      // 1. Supprimer du storage
+      await supabase.storage.from('documents').remove([fileName]);
+
+      // 2. Supprimer de documents (Modèle Référence)
+      await supabase.from('documents').delete().eq('nom', templateKey).eq('type_document', 'Modèle Référence');
+
+      // 3. Supprimer de module_step_resources
+      await supabase.from('module_step_resources').delete().eq('titre', templateKey);
+
+      // 4. Update local state
+      const newTemplates = { ...documentTemplates };
+      delete newTemplates[templateKey];
+      setDocumentTemplates(newTemplates);
+
+      toast.success(`Modèle "${templateKey}" supprimé définitivement.`);
+    } catch (err) {
+      console.error("Delete Template Error:", err);
+      toast.error("Erreur lors de la suppression.");
+    }
+  };
     try {
       // Si le fileName est déjà une URL complète (modélothèque), on l'ouvre
       if (fileName && (fileName.startsWith('http') || fileName.startsWith('https'))) {
@@ -6423,10 +6475,10 @@ export default function App() {
             viewingDocId={viewingDocId}
             setViewingDocId={setViewingDocId}
             handleSignatureSave={handleSignatureSave}
-            documentTemplates={documentTemplates}
-            handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
+            setIsDeleteModalOpen={setIsDeleteModalOpen}
+            setTargetToDelete={setTargetToDelete}
           />}
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
 
@@ -6487,6 +6539,14 @@ export default function App() {
         onInvite={handleInviteUser}
         isAddingUser={isAddingUser}
         formateurs={formateurs}
+      />
+
+      <DeleteConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title="Supprimer définitivement ?"
+        itemName={targetToDelete?.type === 'template' ? `le modèle "${targetToDelete.id}"` : "cet élément"}
       />
 
       <Toaster />
