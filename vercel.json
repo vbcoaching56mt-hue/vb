@@ -1,6 +1,6 @@
 {
-  "rootDirectory": "vb-logiciel",
-  "buildCommand": "CI=false react-scripts build",
-  "outputDirectory": "build",
-  "framework": "create-react-app"
+  "buildCommand": "cd vb-logiciel && CI=false react-scripts build",
+  "outputDirectory": "vb-logiciel/build",
+  "installCommand": "cd vb-logiciel && npm install",
+  "framework": null
 }
