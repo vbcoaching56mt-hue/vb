@@ -6,9 +6,8 @@
     "node": ">=18.x"
   },
   "dependencies": {
-    "html-to-pdfmake": "^2.4.10",
-    "jsdom": "^25.0.0",
     "mammoth": "^1.8.0",
+    "node-html-parser": "^6.1.13",
     "pdfmake": "^0.2.10"
   }
 }
