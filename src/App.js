@@ -4447,6 +4447,8 @@ export default function App() {
   const [newResourceName, setNewResourceName] = useState('');
   const [isUploadingResource, setIsUploadingResource] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
 
 
 
@@ -4689,6 +4691,20 @@ export default function App() {
       console.error("Erreur suppression formateur:", err);
       fetchUtilisateurs();
     }
+  };
+
+  // --- Suppression via modale de confirmation ---
+  const handleConfirmDelete = async () => {
+    if (!targetToDelete) return;
+    setIsDeleteModalOpen(false);
+    if (targetToDelete.type === 'template') {
+      await handleDeleteDocxTemplate(targetToDelete.id);
+    } else if (targetToDelete.type === 'client') {
+      await handleDeleteClient(targetToDelete.id);
+    } else if (targetToDelete.type === 'formateur') {
+      await handleDeleteFormateur(targetToDelete.id);
+    }
+    setTargetToDelete(null);
   };
 
   // --- Actions Supabase : Utilisateurs ---
