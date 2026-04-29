@@ -6081,7 +6081,6 @@ export default function App() {
           nom: `${type} - ${targetName}`,
           type_document: 'Administratif',
           url: publicUrl,
-          file_url: publicUrl,
           statut: 'À signer',
           signe_par_client: false,
           signe_par_formateur: false,
