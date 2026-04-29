@@ -1,0 +1,24 @@
+
+C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\src\App.js
+     2:98   warning  'Folder' is defined but never used         no-unused-vars
+     2:123  warning  'Check' is defined but never used          no-unused-vars
+     2:130  warning  'Trash2' is defined but never used         no-unused-vars
+     2:138  warning  'Save' is defined but never used           no-unused-vars
+     2:144  warning  'Lock' is defined but never used           no-unused-vars
+     2:150  warning  'AlertCircle' is defined but never used    no-unused-vars
+   241:185  error    'SettingsIcon' is not defined              react/jsx-no-undef
+   248:184  error    'UsersIcon' is not defined                 react/jsx-no-undef
+   255:190  error    'UserIcon' is not defined                  react/jsx-no-undef
+   722:18   error    'FolderIcon' is not defined                react/jsx-no-undef
+   885:67   error    'CheckIcon' is not defined                 react/jsx-no-undef
+   885:107  error    'SaveIcon' is not defined                  react/jsx-no-undef
+   914:42   error    'TrashIcon' is not defined                 react/jsx-no-undef
+   931:73   error    'CheckIcon' is not defined                 react/jsx-no-undef
+  1170:206  error    'ClipboardIcon' is not defined             react/jsx-no-undef
+  1233:139  error    'ClipboardIcon' is not defined             react/jsx-no-undef
+  1463:168  error    'UserIcon' is not defined                  react/jsx-no-undef
+  1468:169  error    'SettingsIcon' is not defined              react/jsx-no-undef
+  1666:13   warning  'data' is assigned a value but never used  no-unused-vars
+
+Ô£û 19 problems (12 errors, 7 warnings)
+

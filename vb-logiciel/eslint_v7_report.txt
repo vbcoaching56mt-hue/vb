@@ -1,0 +1,63 @@
+
+C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\src\App.js
+     1:51   warning  'LayoutDashboard' is defined but never used  no-unused-vars
+     1:106  warning  'Download' is defined but never used         no-unused-vars
+    50:21   error    'React' is not defined                       no-undef
+    51:37   error    'React' is not defined                       no-undef
+    53:3    error    'React' is not defined                       no-undef
+   182:43   error    'useState' is not defined                    no-undef
+   254:190  error    'User' is not defined                        react/jsx-no-undef
+   628:41   error    'React' is not defined                       no-undef
+   629:35   error    'React' is not defined                       no-undef
+   884:67   error    'Check' is not defined                       react/jsx-no-undef
+   971:39   error    'React' is not defined                       no-undef
+   977:27   error    'React' is not defined                       no-undef
+  1169:206  error    'Clipboard' is not defined                   react/jsx-no-undef
+  1232:139  error    'Clipboard' is not defined                   react/jsx-no-undef
+  1462:168  error    'User' is not defined                        react/jsx-no-undef
+  1516:35   error    'useState' is not defined                    no-undef
+  1517:45   error    'useState' is not defined                    no-undef
+  1518:37   error    'useState' is not defined                    no-undef
+  1519:49   error    'useState' is not defined                    no-undef
+  1522:51   error    'useState' is not defined                    no-undef
+  1523:43   error    'useState' is not defined                    no-undef
+  1524:43   error    'useState' is not defined                    no-undef
+  1527:53   error    'useState' is not defined                    no-undef
+  1528:61   error    'useState' is not defined                    no-undef
+  1529:51   error    'useState' is not defined                    no-undef
+  1532:39   error    'useState' is not defined                    no-undef
+  1533:33   error    'useState' is not defined                    no-undef
+  1534:37   error    'useState' is not defined                    no-undef
+  1537:33   error    'useState' is not defined                    no-undef
+  1538:49   error    'useState' is not defined                    no-undef
+  1541:41   error    'useState' is not defined                    no-undef
+  1542:43   error    'useState' is not defined                    no-undef
+  1543:41   error    'useState' is not defined                    no-undef
+  1544:41   error    'useState' is not defined                    no-undef
+  1545:41   error    'useState' is not defined                    no-undef
+  1546:43   error    'useState' is not defined                    no-undef
+  1549:45   error    'useState' is not defined                    no-undef
+  1550:51   error    'useState' is not defined                    no-undef
+  1551:45   error    'useState' is not defined                    no-undef
+  1552:45   error    'useState' is not defined                    no-undef
+  1553:35   error    'useState' is not defined                    no-undef
+  1554:45   error    'useState' is not defined                    no-undef
+  1555:51   error    'useState' is not defined                    no-undef
+  1558:39   error    'useState' is not defined                    no-undef
+  1559:39   error    'useState' is not defined                    no-undef
+  1560:37   error    'useState' is not defined                    no-undef
+  1561:39   error    'useState' is not defined                    no-undef
+  1562:47   error    'useState' is not defined                    no-undef
+  1563:49   error    'useState' is not defined                    no-undef
+  1564:55   error    'useState' is not defined                    no-undef
+  1565:41   error    'useState' is not defined                    no-undef
+  1566:49   error    'useState' is not defined                    no-undef
+  2316:3    error    'useEffect' is not defined                   no-undef
+  2325:3    error    'useEffect' is not defined                   no-undef
+  2365:18   error    'User' is not defined                        react/jsx-no-undef
+  2384:300  error    'Home' is not defined                        react/jsx-no-undef
+  2385:308  error    'Clipboard' is not defined                   react/jsx-no-undef
+  2386:296  error    'User' is not defined                        react/jsx-no-undef
+
+Ô£û 58 problems (56 errors, 2 warnings)
+

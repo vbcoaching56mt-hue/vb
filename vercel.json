@@ -1,0 +1,6 @@
+{
+  "rootDirectory": "vb-logiciel",
+  "buildCommand": "CI=false react-scripts build",
+  "outputDirectory": "build",
+  "framework": "create-react-app"
+}

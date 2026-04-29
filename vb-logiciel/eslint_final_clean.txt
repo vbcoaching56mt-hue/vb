@@ -1,0 +1,42 @@
+
+C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\src\App.js
+  1581:25  warning  'generateSessions' was used before it was defined  no-use-before-define
+  2079:10  error    'newDocName' is not defined                        no-undef
+  2079:32  error    'newDocClientId' is not defined                    no-undef
+  2080:5   error    'setIsAddingDoc' is not defined                    no-undef
+  2082:20  error    'newDocUrl' is not defined                         no-undef
+  2083:9   error    'newDocFile' is not defined                        no-undef
+  2084:23  error    'newDocFile' is not defined                        no-undef
+  2088:27  error    'newDocFile' is not defined                        no-undef
+  2093:9   error    'setIsAddingDoc' is not defined                    no-undef
+  2105:14  error    'newDocName' is not defined                        no-undef
+  2106:24  error    'newDocType' is not defined                        no-undef
+  2108:18  error    'newDocClientId' is not defined                    no-undef
+  2109:25  error    'newDocVisClient' is not defined                   no-undef
+  2110:28  error    'newDocVisFormateur' is not defined                no-undef
+  2118:7   error    'setNewDocName' is not defined                     no-undef
+  2119:7   error    'setNewDocType' is not defined                     no-undef
+  2120:7   error    'setNewDocUrl' is not defined                      no-undef
+  2121:7   error    'setNewDocFile' is not defined                     no-undef
+  2122:7   error    'setNewDocClientId' is not defined                 no-undef
+  2123:7   error    'setNewDocVisClient' is not defined                no-undef
+  2124:7   error    'setNewDocVisFormateur' is not defined             no-undef
+  2129:5   error    'setIsAddingDoc' is not defined                    no-undef
+  2524:25  error    'newDocName' is not defined                        no-undef
+  2524:52  error    'setNewDocName' is not defined                     no-undef
+  2525:25  error    'newDocType' is not defined                        no-undef
+  2525:52  error    'setNewDocType' is not defined                     no-undef
+  2526:24  error    'newDocUrl' is not defined                         no-undef
+  2526:49  error    'setNewDocUrl' is not defined                      no-undef
+  2527:25  error    'newDocFile' is not defined                        no-undef
+  2527:52  error    'setNewDocFile' is not defined                     no-undef
+  2528:29  error    'newDocClientId' is not defined                    no-undef
+  2528:64  error    'setNewDocClientId' is not defined                 no-undef
+  2529:30  error    'newDocVisClient' is not defined                   no-undef
+  2529:67  error    'setNewDocVisClient' is not defined                no-undef
+  2530:33  error    'newDocVisFormateur' is not defined                no-undef
+  2530:76  error    'setNewDocVisFormateur' is not defined             no-undef
+  2531:26  error    'isAddingDoc' is not defined                       no-undef
+
+Ô£û 37 problems (36 errors, 1 warning)
+

@@ -1,0 +1,28 @@
+{
+  "utilisateurs_columns": [
+    "adresse_formateur",
+    "adresse_session",
+    "client_email",
+    "client_phone",
+    "email",
+    "formateur_assigne",
+    "formateur_id",
+    "formateur_nda",
+    "formateur_siret",
+    "id",
+    "module_id",
+    "nom",
+    "nomcomplet_client",
+    "numero_dossier",
+    "role",
+    "seances_effectuees",
+    "seances_totales"
+  ],
+  "modules_columns": [
+    "description",
+    "id",
+    "nom",
+    "prix_prestation",
+    "seances_prevues"
+  ]
+}

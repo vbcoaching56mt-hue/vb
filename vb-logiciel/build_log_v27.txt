@@ -1,0 +1,34 @@
+
+> vb-logiciel@0.1.0 build
+> react-scripts build
+
+(node:60256) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  656.47 kB (+568 B)  build\static\js\main.83a24f2e.js
+  33.56 kB            build\static\js\732.8b751c54.chunk.js
+  8.74 kB             build\static\js\977.98e57384.chunk.js
+  5.8 kB              build\static\css\main.ddff05f8.css
+  1.77 kB             build\static\js\453.01f016a2.chunk.js
+
+The bundle size is significantly larger than recommended.
+Consider reducing it with code splitting: https://goo.gl/9VhYWB
+You can also analyze the project dependencies: https://goo.gl/LeUzfb
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+

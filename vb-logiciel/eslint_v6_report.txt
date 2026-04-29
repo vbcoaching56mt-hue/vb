@@ -1,0 +1,8 @@
+
+C:\Users\vbcoa\OneDrive\Documents\Antigravity\Application VB\vb-logiciel\src\App.js
+    2:119  warning  'Lock' is defined but never used         no-unused-vars
+    2:125  warning  'AlertCircle' is defined but never used  no-unused-vars
+  722:18   error    'Folder' is not defined                  react/jsx-no-undef
+
+Ô£û 3 problems (1 error, 2 warnings)
+
