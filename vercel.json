@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd vb-logiciel && CI=false react-scripts build",
+  "buildCommand": "cd vb-logiciel && npm run build",
   "outputDirectory": "vb-logiciel/build",
   "installCommand": "cd vb-logiciel && npm install",
   "framework": null
