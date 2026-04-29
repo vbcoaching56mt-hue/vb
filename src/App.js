@@ -5498,6 +5498,8 @@ export default function App() {
       toast.error("Erreur lors de la suppression.");
     }
   };
+
+  const handleDownloadResource = async (fileName) => {
     try {
       // Si le fileName est déjà une URL complète (modélothèque), on l'ouvre
       if (fileName && (fileName.startsWith('http') || fileName.startsWith('https'))) {
