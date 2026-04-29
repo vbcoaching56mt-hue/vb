@@ -5811,13 +5811,10 @@ export default function App() {
             nom: type,
             type_document: 'Administratif',
             url: publicUrl,
-            file_url: publicUrl,
             assigned_formateur_id: f.id,
-            statut: 'À signer',
             signe_par_formateur: false,
             signe_par_client: false,
             visible_formateur: true,
-            visible_admin: true,
           }));
           await supabase.from('documents').insert(docsToInsert);
           await fetchDocuments();
@@ -6081,10 +6078,8 @@ export default function App() {
           nom: `${type} - ${targetName}`,
           type_document: 'Administratif',
           url: publicUrl,
-          statut: 'À signer',
           signe_par_client: false,
           signe_par_formateur: false,
-          visible_admin: true,
         };
 
         if (effectiveIsForFormateur || formateurId) {
