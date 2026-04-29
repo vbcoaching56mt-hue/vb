@@ -2195,7 +2195,7 @@ const FormateurDetailView = ({
                     )}
                     <button
                       onClick={() => setDocToDelete(doc)}
-                      className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                      className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
                       title="Supprimer ce document"
                     >
                       <Trash2 size={18} />
@@ -6123,8 +6123,15 @@ export default function App() {
           }
         }
 
-        const { error: insertError } = await supabase.from('documents').insert([docToInsert]);
-        if (insertError) throw insertError;
+        // Tentative d'insert avec docx_data ; si la colonne n'existe pas encore, on réessaie sans
+        let { error: insertError } = await supabase.from('documents').insert([docToInsert]);
+        if (insertError && insertError.message?.includes('docx_data')) {
+          const { docx_data: _omit, ...docWithoutData } = docToInsert;
+          const { error: insertError2 } = await supabase.from('documents').insert([docWithoutData]);
+          if (insertError2) throw insertError2;
+        } else if (insertError) {
+          throw insertError;
+        }
         await fetchDocuments();
         toast.success(`Document généré et archivé.`);
       } else {
@@ -6241,99 +6248,191 @@ export default function App() {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
 
-    toast.loading('Conversion du document en PDF…', { id: 'sign-doc' });
+    const TOAST_ID = 'sign-doc';
+    toast.loading('Préparation du document…', { id: TOAST_ID });
 
+    // ── IMPORTANT : le container DOIT être dans le viewport pour que
+    // le navigateur le rende réellement. On l'y place avec opacity≈0
+    // pour qu'il soit invisible mais pleinement rendu par le moteur CSS.
     const renderContainer = document.createElement('div');
-    renderContainer.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;z-index:-1;visibility:hidden;';
+    renderContainer.style.cssText = [
+      'position:fixed',
+      'top:0',
+      'left:0',
+      'width:794px',
+      'background:white',
+      'z-index:9999',
+      'opacity:0.001',          // quasi-invisible mais rendu réel
+      'pointer-events:none',
+      'overflow:visible',
+    ].join(';');
     document.body.appendChild(renderContainer);
 
     try {
       const formateur = formateurs.find(f => f.id === doc.assigned_formateur_id);
       const now = new Date();
+      const A4_W_PT = 595, A4_H_PT = 842;
 
-      // 1. Télécharger le .docx original
-      const docxResp = await fetch(doc.url);
-      if (!docxResp.ok) throw new Error('Impossible de télécharger le document original');
-      const docxBytes = await docxResp.arrayBuffer();
+      const pdfDoc  = await PDFDocument.create();
+      const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const fontBold= await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-      // 2. Rendre le .docx en HTML (docx-preview)
-      const { renderAsync } = await import('docx-preview');
-      await renderAsync(new Uint8Array(docxBytes), renderContainer, null, {
-        inWrapper: false,
-        ignoreWidth: false,
-        ignoreHeight: false,
-        renderHeaders: true,
-        renderFooters: true,
-        useBase64URL: true,
-      });
+      // ── Helper : dessiner la signature sur une page PDF ──────────────
+      const drawSignatureBlock = async (page, yBase) => {
+        if (!signatureDataUrl) return;
+        const sigB64   = signatureDataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+        const sigBytes = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
+        const sigImg   = await pdfDoc.embedPng(sigBytes);
+        const sigW = 160, sigH = 58;
+        const sigX = A4_W_PT * 0.55;
+        const sigY = yBase;
+        page.drawImage(sigImg, { x: sigX, y: sigY, width: sigW, height: sigH });
+        page.drawText(formateur?.nom || 'Le Formateur', {
+          x: sigX, y: sigY - 14, size: 9, font: fontBold, color: rgb(0.1, 0.1, 0.1),
+        });
+        page.drawText(
+          `Signé numériquement le ${now.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`,
+          { x: sigX, y: sigY - 26, size: 7.5, font: fontReg, color: rgb(0.4, 0.4, 0.4) },
+        );
+      };
 
-      // Laisser le temps aux polices/images de se charger
-      await new Promise(r => setTimeout(r, 1500));
-      toast.loading('Ajout de la signature…', { id: 'sign-doc' });
+      // ── 1. Télécharger le .docx ───────────────────────────────────────
+      let docxRenderedOk = false;
 
-      // 3. Capturer chaque page (sections docx-preview)
-      const sections = renderContainer.querySelectorAll('section');
-      const pages = sections.length > 0 ? Array.from(sections) : [renderContainer];
+      try {
+        toast.loading('Chargement du document Word…', { id: TOAST_ID });
+        const docxResp = await fetch(doc.url);
+        if (!docxResp.ok) throw new Error(`HTTP ${docxResp.status}`);
+        const docxBytes = await docxResp.arrayBuffer();
 
-      // 4. Assembler le PDF avec pdf-lib
-      const pdfDoc = await PDFDocument.create();
-      const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const A4_W = 595, A4_H = 842; // points
+        // ── 2. Rendre le Word dans le container ───────────────────────
+        const { renderAsync } = await import('docx-preview');
+        await renderAsync(new Uint8Array(docxBytes), renderContainer, null, {
+          inWrapper: false,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          renderHeaders: true,
+          renderFooters: true,
+          useBase64URL: true,
+        });
 
-      for (let i = 0; i < pages.length; i++) {
-        const canvas = await html2canvas(pages[i], {
-          scale: 2,
+        // Forcer le recalcul de la hauteur
+        renderContainer.style.height = renderContainer.scrollHeight + 'px';
+
+        // ── 3. Attendre que les polices & images se chargent ──────────
+        toast.loading('Chargement des polices et images…', { id: TOAST_ID });
+        await Promise.allSettled([
+          document.fonts.ready,
+          new Promise(r => setTimeout(r, 4000)), // garde-fou 4 s
+        ]);
+
+        toast.loading('Capture du document en cours…', { id: TOAST_ID });
+
+        const SCALE = 2;
+        const CONTAINER_W = 794;
+
+        const fullCanvas = await html2canvas(renderContainer, {
+          scale: SCALE,
           useCORS: true,
           allowTaint: true,
           backgroundColor: '#ffffff',
           logging: false,
+          width:  CONTAINER_W,
+          height: renderContainer.scrollHeight,
+          windowWidth: CONTAINER_W,
+          scrollX: 0,
+          scrollY: 0,
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.92);
-        const b64 = imgData.replace('data:image/jpeg;base64,', '');
-        const jpgBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        const jpgImage = await pdfDoc.embedJpg(jpgBytes);
+        // ── Vérifier que le canvas n'est pas blanc ────────────────────
+        const testCtx  = fullCanvas.getContext('2d');
+        const sample   = testCtx.getImageData(50, 50, 200, 200).data;
+        const darkPx   = [...sample].filter((v, i) => i % 4 !== 3 && v < 240).length;
+        const hasContent = darkPx > 300; // au moins 300 px sombres = contenu réel
 
-        const page = pdfDoc.addPage([A4_W, A4_H]);
-        page.drawImage(jpgImage, { x: 0, y: 0, width: A4_W, height: A4_H });
+        if (hasContent && fullCanvas.width > 0 && fullCanvas.height > 0) {
+          toast.loading('Assemblage du PDF…', { id: TOAST_ID });
 
-        // Superposer la signature sur la dernière page
-        if (i === pages.length - 1 && signatureDataUrl) {
-          const sigB64 = signatureDataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
-          const sigBytes = Uint8Array.from(atob(sigB64), c => c.charCodeAt(0));
-          const sigImage = await pdfDoc.embedPng(sigBytes);
+          const PAGE_H_PX     = Math.round(CONTAINER_W * 297 / 210);
+          const PAGE_H_CANVAS = PAGE_H_PX * SCALE;
+          const totalPages    = Math.max(1, Math.ceil(fullCanvas.height / PAGE_H_CANVAS));
 
-          // Colonne droite (sous-traitant), zone basse — position estimée pour Convention A4
-          const sigW = 150, sigH = 55;
-          const sigX = A4_W * 0.55;   // ~327pt depuis la gauche
-          const sigY = A4_H * 0.26;   // ~219pt depuis le bas
+          for (let i = 0; i < totalPages; i++) {
+            const sliceH  = Math.min(PAGE_H_CANVAS, fullCanvas.height - i * PAGE_H_CANVAS);
+            const slice   = document.createElement('canvas');
+            slice.width   = fullCanvas.width;
+            slice.height  = PAGE_H_CANVAS;
+            const ctx     = slice.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, slice.width, slice.height);
+            ctx.drawImage(fullCanvas, 0, i * PAGE_H_CANVAS, fullCanvas.width, sliceH, 0, 0, slice.width, sliceH);
 
-          page.drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH });
+            const imgData  = slice.toDataURL('image/jpeg', 0.92);
+            const b64      = imgData.replace('data:image/jpeg;base64,', '');
+            const jpgBytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const jpgImage = await pdfDoc.embedJpg(jpgBytes);
+            const page     = pdfDoc.addPage([A4_W_PT, A4_H_PT]);
+            page.drawImage(jpgImage, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT });
 
-          page.drawText(formateur?.nom || 'Le Formateur', {
-            x: sigX, y: sigY - 14, size: 9,
-            font: fontBold, color: rgb(0.1, 0.1, 0.1),
-          });
-          page.drawText(
-            `Signé numériquement le ${now.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`,
-            { x: sigX, y: sigY - 25, size: 7.5, font: fontRegular, color: rgb(0.4, 0.4, 0.4) }
-          );
+            if (i === totalPages - 1) {
+              // Signature sur la dernière page, zone basse gauche pour ne pas couvrir le contenu
+              await drawSignatureBlock(page, 90);
+            }
+          }
+          docxRenderedOk = true;
         }
+      } catch (renderErr) {
+        console.warn('[handleDocumentSignatureSave] Rendu Word échoué :', renderErr.message);
       }
 
-      // 5. Sauvegarder et uploader
-      const pdfBytes = await pdfDoc.save();
-      const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const fileName = `signed_${docId}_${Date.now()}.pdf`;
+      // ── 4. Fallback : page d'attestation si le rendu a échoué ────────
+      if (!docxRenderedOk) {
+        toast.loading('Génération de la page de signature…', { id: TOAST_ID });
+        const page = pdfDoc.addPage([A4_W_PT, A4_H_PT]);
 
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(fileName, new File([pdfBlob], fileName, { type: 'application/pdf' }));
-      if (uploadError) throw new Error('Erreur upload PDF signé : ' + uploadError.message);
+        // En-tête
+        page.drawRectangle({ x: 0, y: A4_H_PT - 80, width: A4_W_PT, height: 80, color: rgb(0.24, 0.27, 0.64) });
+        page.drawText('ATTESTATION DE SIGNATURE', {
+          x: 50, y: A4_H_PT - 38, size: 18, font: fontBold, color: rgb(1, 1, 1),
+        });
+        page.drawText('VB Coaching', {
+          x: 50, y: A4_H_PT - 58, size: 11, font: fontReg, color: rgb(0.8, 0.85, 1),
+        });
+
+        // Infos document
+        const lines = [
+          { label: 'Document signé :', value: doc.nom || 'Document administratif' },
+          { label: 'Signataire       :', value: formateur?.nom || 'Formateur' },
+          { label: 'Date & heure     :', value: now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }) },
+          { label: 'Fichier source   :', value: doc.url?.split('/').pop()?.split('?')[0] || 'document.docx' },
+        ];
+        lines.forEach((l, idx) => {
+          const y = A4_H_PT - 150 - idx * 32;
+          page.drawText(l.label, { x: 50,  y, size: 10, font: fontBold, color: rgb(0.3, 0.3, 0.3) });
+          page.drawText(l.value, { x: 185, y, size: 10, font: fontReg,  color: rgb(0.1, 0.1, 0.1), maxWidth: 360 });
+        });
+
+        // Ligne de séparation
+        page.drawLine({ start: { x: 50, y: 200 }, end: { x: A4_W_PT - 50, y: 200 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
+        page.drawText('Signature électronique du formateur', {
+          x: 50, y: 180, size: 9, font: fontBold, color: rgb(0.4, 0.4, 0.4),
+        });
+
+        await drawSignatureBlock(page, 110);
+      }
+
+      // ── 5. Upload PDF final ───────────────────────────────────────────
+      toast.loading('Upload du PDF signé…', { id: TOAST_ID });
+      const pdfBytes  = await pdfDoc.save();
+      const fileName  = `signed_${docId}_${Date.now()}.pdf`;
+      const pdfFile   = new File([new Blob([pdfBytes], { type: 'application/pdf' })], fileName, { type: 'application/pdf' });
+
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, pdfFile);
+      if (uploadError) throw new Error('Upload échoué : ' + uploadError.message);
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
+      // ── 6. Mise à jour base de données ────────────────────────────────
       const updateData = {
         signe_par_formateur: true,
         date_signature_formateur: now.toISOString(),
@@ -6342,14 +6441,20 @@ export default function App() {
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
       };
+      const { error: dbError } = await supabase.from('documents').update(updateData).eq('id', docId);
+      if (dbError) throw dbError;
 
-      const { error } = await supabase.from('documents').update(updateData).eq('id', docId);
-      if (error) throw error;
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updateData } : d));
+      toast.success(
+        docxRenderedOk
+          ? "✅ Document signé avec son contenu Word ! PDF disponible."
+          : "✅ Attestation de signature générée. Contenu Word : voir document source.",
+        { id: TOAST_ID }
+      );
 
-      setDocuments(documents.map(d => d.id === docId ? { ...d, ...updateData } : d));
-      toast.success("Document signé ! PDF disponible pour l'admin.", { id: 'sign-doc' });
     } catch (err) {
-      toast.error('Erreur lors de la signature : ' + err.message, { id: 'sign-doc' });
+      console.error('[handleDocumentSignatureSave]', err);
+      toast.error('Erreur lors de la signature : ' + err.message, { id: TOAST_ID });
       await fetchDocuments();
     } finally {
       if (renderContainer.parentNode) document.body.removeChild(renderContainer);
@@ -6357,6 +6462,7 @@ export default function App() {
   };
 
   const updateDateSeance = async (docId, date) => {
+
     setDocuments(documents.map(d => d.id === docId ? { ...d, date_seance: date } : d));
     const { error } = await supabase.from('documents').update({ date_seance: date }).eq('id', docId);
     if (error) {
