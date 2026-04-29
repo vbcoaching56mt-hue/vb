@@ -1,0 +1,189 @@
+# 📘 Cahier des Charges Technique et Fonctionnel : ERP VB Coaching (Phase 2)
+
+## 1. Vision et Objectifs du Projet
+Développer une plateforme SaaS centralisée (type ERP) dédiée à la gestion des Bilans de Compétences. L'objectif est de digitaliser l'intégralité du parcours, du closing commercial à l'audit Qualiopi, en passant par l'accompagnement pédagogique via une IA.
+
+---
+
+## 2. Architecture Fonctionnelle (Les Interfaces)
+
+L'application est découpée en 3 espaces distincts avec des niveaux de permissions stricts (RBAC : Role-Based Access Control).
+
+### 🔑 2.1 Interface Administrateur (Pilotage & Qualiopi)
+L'espace central pour le propriétaire du cabinet (VB Coaching).
+*   **Gestion des Utilisateurs :** Création, suspension et affectation des sous-traitants (consultants).
+*   **Bibliothèque Pédagogique (Master) :** Création, modification et suppression des exercices (ex: Ancres de Schein, Roue des valeurs) et configuration des "Triggers IA".
+*   **Contrôle Qualiopi Global :** Tableau de bord d'audit listant les anomalies de parcours (retards, émargements manquants, conventions non signées).
+*   **Catalogue de Templates :** Gestion centralisée des modèles de documents juridiques et commerciaux.
+
+### 💼 2.2 Interface Sous-traitant (Le Consultant)
+L'espace de travail quotidien du coach accompagnateur.
+*   **Tableau de Bord Bénéficiaires :** Vue Kanban ou Liste de ses clients assignés avec leur état d'avancement (Phase 1, 2, 3).
+*   **Gestion des Rendez-vous :** Synchronisation bidirectionnelle avec son Google Calendar.
+*   **Suivi Pédagogique :** Accès aux résultats d'exercices, visualisation des pré-analyses générées par l'IA de Gemini, et rédaction de notes de synthèse privées.
+*   **Validation d'Émargement :** Contreseing numérique des séances réalisées.
+
+### 🎓 2.3 Interface Bénéficiaire (Le Client)
+L'espace personnel et confidentiel du candidat au bilan.
+*   **Parcours Guidé :** Réalisation des exercices cognitifs avec l'agent conversationnel IA intégré.
+*   **Espace Administratif :** Consultation et signature électronique des conventions de formation, et validation des feuilles d'émargement post-séance.
+*   **Centre de Ressources :** Accès en lecture seule aux synthèses débriefées et aux ressources mises à disposition par son consultant.
+*   **Prise de Rendez-vous :** Sélection de créneaux via l'intégration Calendar du consultant.
+
+---
+
+## 3. Flux de Données et Fonctionnalités Clés
+
+### 📄 3.1 Génération Automatique de Documents
+*   **Flux :** `Données Base (Nom, Dates, Prix)` -> `Moteur de Template (ex: Docxtemplater ou Handlebars/Puppeteer)` -> `Fichier PDF`
+*   **Technique :** Stockage des variables JSON associées à un parcours. Lors du clic sur "Générer Convention", un worker Node.js fusionne les variables avec le template Master de l'Admin pour produire le PDF final.
+
+### ✍️ 3.2 Émargement Numérique (Preuve Qualiopi)
+*   **Flux :** Fin de RDV -> Le consultant déclenche l'émargement -> Notification au Bénéficiaire -> Checkbox + Signature -> Hachage et Horodatage.
+*   **Technique :** Stockage de l'IP, de l'horodatage UTC exact, et d'un hash cryptographique unique liant la session, l'ID utilisateur et l'heure pour garantir l'intégrité face aux auditeurs.
+
+### 📅 3.3 Synchronisation Google Calendar
+*   **Flux :** OAuth2 Consultant -> Accès aux événements -> Mise en miroir sur la plateforme.
+*   **Technique :** Intégration de l'API Google Calendar. Un webhook écoute les modifications GCal pour mettre à jour la base VB Coaching, et un déclencheur Cron rappelle les RDV aux bénéficiairs (e-mail/SMS).
+
+---
+
+## 4. Modélisation de la Base de Données (Schéma Prisma / Relational)
+
+Voici la structure SQL/Prisma permettant de lier solidement les 3 types d'utilisateurs et de supporter les nouvelles fonctionnalités.
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------
+// ENUMS DE STATUT
+// ----------------------------------------------------------------------
+enum Role {
+  ADMIN
+  CONSULTANT
+  BENEFICIARY
+}
+
+enum DocumentType {
+  CONVENTION
+  SYNTHESIS_REPORT
+  CERTIFICATE
+}
+
+// ----------------------------------------------------------------------
+// GESTION DES UTILISATEURS
+// ----------------------------------------------------------------------
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  role          Role     @default(BENEFICIARY)
+  firstName     String
+  lastName      String
+  
+  // Clés API / Tokens (ex: Google Calendar)
+  googleCalToken String?
+  
+  // Relations (Un consultant a plusieurs bénéficiaires)
+  consultantId  String?
+  consultant    User?    @relation("ConsultantBeneficiaries", fields: [consultantId], references: [id])
+  beneficiaries User[]   @relation("ConsultantBeneficiaries")
+
+  // Historique et traçabilité
+  sessions      Session[]        @relation("BeneficiarySessions")
+  consultantSessions Session[]   @relation("ConsultantSessions")
+  documents     Document[]
+  assessments   Assessment[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ----------------------------------------------------------------------
+// EXERCICES (Master Admin) & EVALUATIONS (Instances Clients)
+// ----------------------------------------------------------------------
+model ExerciseDefinition {
+  id            String   @id @default(uuid())
+  title         String   // Ex: "Ancres de Schein", "Roue des Valeurs"
+  version       Int      @default(1)
+  contentSchema Json     // Configuration JSON (Questions, Mapping IA)
+  isActive      Boolean  @default(true)
+  
+  assessments   Assessment[]
+}
+
+model Assessment {
+  id                  String   @id @default(uuid())
+  beneficiaryId       String
+  beneficiary         User     @relation(fields: [beneficiaryId], references: [id])
+  
+  exerciseDefId       String
+  definition          ExerciseDefinition @relation(fields: [exerciseDefId], references: [id])
+  
+  status              String   @default("IN_PROGRESS") // NOT_STARTED, IA_ANALYZED...
+  responsesData       Json     // Les réponses brutes du client
+  iaSynthesisData     Json?    // Les verbatims IA et scores de cohérence
+  
+  createdAt           DateTime @default(now())
+  completedAt         DateTime?
+}
+
+// ----------------------------------------------------------------------
+// TRACKING DES RENDEZ-VOUS & ÉMARGEMENT (QUALIOPI)
+// ----------------------------------------------------------------------
+model Session {
+  id                  String   @id @default(uuid())
+  beneficiaryId       String
+  beneficiary         User     @relation("BeneficiarySessions", fields: [beneficiaryId], references: [id])
+  
+  consultantId        String
+  consultant          User     @relation("ConsultantSessions", fields: [consultantId], references: [id])
+  
+  startTime           DateTime
+  endTime             DateTime
+  googleEventId       String?  @unique // Lien avec le calendrier Google
+  
+  type                String   // Ex: "Debriefing Phase 1", "Clôture"
+  
+  // Preuve d'émargement
+  isBeneficiarySigned Boolean  @default(false)
+  beneficiarySignedAt DateTime?
+  beneficiaryIp       String?  // Tracabilité locale réseau
+  
+  isConsultantSigned  Boolean  @default(false)
+  consultantSignedAt  DateTime?
+}
+
+// ----------------------------------------------------------------------
+// GESTION DOCUMENTAIRE
+// ----------------------------------------------------------------------
+model Document {
+  id                  String   @id @default(uuid())
+  ownerId             String
+  owner               User     @relation(fields: [ownerId], references: [id])
+  
+  type                DocumentType
+  title               String
+  fileUrl             String   // Lien S3 / Cloud Storage
+  
+  // Statut de signature électronique (via outil tiers éventuel ou local)
+  isSigned            Boolean  @default(false)
+  signedAt            DateTime?
+  signatureHash       String?  @unique // Preuve d'intégrité
+  
+  createdAt           DateTime @default(now())
+}
+```
+
+## 5. Prochaines Étapes (Review)
+Ce document nécessite votre validation avant de passer à l'implémentation de la Phase 2.
+Les points clés à valider sont :
+1. Les 3 rôles définis (ADMIN, CONSULTANT, BENEFICIARY) sont-ils exhaustifs ?
+2. Le système de signature (horodatage + IP + Hash) suffit-il à votre auditeur Qualiopi, ou souhaitez-vous une intégration avec un tiers de confiance (ex: DocuSign, Yousign) ?
+3. Le schéma Prisma correspond-il à vos attentes architecturales ?

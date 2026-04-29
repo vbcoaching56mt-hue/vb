@@ -1,0 +1,11 @@
+# 🖥️ Simulation Visuelle : Dashboard ERP "Mon Bilan"
+
+Voici une représentation visuelle du rendu de l'interface que j'ai codée en React / Tailwind, intégrant les éléments de votre maquette Canva.
+
+![Rendu du Dashboard 'Mon Bilan'](C:\Users\vbcoa\.gemini\antigravity\brain\9e543fc4-9460-47fd-bbb4-94aef24aa260\dashboard_mon_bilan_mockup_1773762771810.png)
+
+### ✅ Éléments intégrés dans ce design :
+1. **Sidebar Anthracite / Noir :** Le menu latéral à gauche avec la mise en évidence en Rose pour l'onglet actif.
+2. **Mes Intérêts Dominants :** Les fiches de profil avec les icônes colorées.
+3. **Ancres de Carrière :** Le Radar Chart central.
+4. **Bloc "Mon Projet Pro" :** La zone de saisie pour la synthèse du projet.

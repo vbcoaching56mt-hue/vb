@@ -1,0 +1,31 @@
+# Projet VB Coaching - Phase 2 : ERP Bilan de Compétences
+
+## Objectifs
+Concevoir l'architecture d'un logiciel métier pour la gestion des Bilans de Compétences (Admin, Sous-traitants, Bénéficiaires).
+
+## Tâches
+- [x] **Planification et Architecture Initiale**
+  - [x] Initialiser le plan de travail.
+  - [x] Rédiger le Cahier des Charges Fonctionnel et Technique.
+  - [x] Concevoir le schéma de base de données (SQL) pour lier les utilisateurs et les fonctionnalités.
+- [x] **Validation et Restitution**
+  - [x] Soumettre le document complet à l'utilisateur pour validation.
+
+## Phase 3 : Développement Frontend de l'Interface
+- [x] **Création de la maquette fonctionnelle ('Mon Bilan')**
+  - [x] Intégrer la Sidebar (Gris Anthracite).
+  - [x] Développer la structure globale (Header, Layout Responsive).
+  - [x] Créer le composant 'Mes Intérêts' (Cartes cliquables).
+  - [x] Intégrer le Radar Chart 'Ancres de Carrière'.
+  - [x] Ajouter la section 'Mon Projet Pro'.
+
+## Phase 4 : Visualisation
+- [x] **Génération du rendu visuel**
+  - [x] Créer une image de prévisualisation du Dashboard (Sidebar + Mon Bilan).
+
+## Phase 5 : Rendu Interactif
+- [x] **Version HTML/React Exécutable**
+  - [x] Intégrer React et Tailwind via CDN.
+  - [x] Ajouter la bascule de navigation entre 'Accueil' et 'Mon Bilan'.
+  - [x] Traduire le script Python de calcul des Anciens en JavaScript.
+  - [x] Relier le calcul au Radar Chart pour un affichage dynamique.
