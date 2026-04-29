@@ -578,7 +578,7 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
       const meta = session.metadata || {};
       setNom(session.ressource_titre || session.titre || session.nom || '');
       setReqClient(meta.requiresClientSignature !== false);
-      setReqFormateur(meta.requiresTrainerSignature !== false);
+      setReqFormateur(meta.requiresTrainerSignature === true);
     }
   }, [isOpen, session]);
 
@@ -1728,7 +1728,7 @@ const ClientDetailView = ({
                     {group.items.map(s => {
                       const sMeta = s.metadata || {};
                       const clientRequired = sMeta.requiresClientSignature !== false;
-                      const coachRequired = sMeta.requiresTrainerSignature !== false;
+                      const coachRequired = sMeta.requiresTrainerSignature === true;
                       return (
                       <div key={s.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
                         <div className="flex items-center gap-4">
