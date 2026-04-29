@@ -1,4 +1,16 @@
 const mammoth = require('mammoth');
+const PdfPrinter = require('pdfmake');
+const vfsFonts = require('pdfmake/build/vfs_fonts');
+
+const fonts = {
+  Roboto: {
+    normal:      Buffer.from(vfsFonts.vfs['Roboto-Regular.ttf'],       'base64'),
+    bold:        Buffer.from(vfsFonts.vfs['Roboto-Medium.ttf'],        'base64'),
+    italics:     Buffer.from(vfsFonts.vfs['Roboto-Italic.ttf'],        'base64'),
+    bolditalics: Buffer.from(vfsFonts.vfs['Roboto-MediumItalic.ttf'],  'base64'),
+  },
+};
+const printer = new PdfPrinter(fonts);
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -61,10 +73,7 @@ module.exports = async (req, res) => {
       },
     };
 
-    // 5. Générer le PDF avec pdfmake (pur Node.js, sans navigateur)
-    const pdfMake = require('pdfmake/build/pdfmake');
-    pdfMake.vfs = require('pdfmake/build/vfs_fonts').vfs;
-
+    // 5. Générer le PDF (API Node.js de pdfmake via PdfPrinter)
     const docDefinition = {
       pageSize: 'A4',
       pageMargins: [72, 57, 51, 57],
@@ -72,10 +81,10 @@ module.exports = async (req, res) => {
         ...(Array.isArray(pdfContent) ? pdfContent : [pdfContent]),
         sigBlock,
       ],
-      defaultStyle: { fontSize: 11, lineHeight: 1.5 },
+      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.5 },
     };
 
-    const pdfDoc = pdfMake.createPdfKitDocument(docDefinition);
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
     const chunks = [];
     pdfDoc.on('data', chunk => chunks.push(chunk));
     const pdfBuffer = await new Promise((resolve, reject) => {
