@@ -6328,44 +6328,56 @@ export default function App() {
 
         toast.loading('Capture du document en cours…', { id: TOAST_ID });
 
-        const SCALE = 2;
         const CONTAINER_W = 794;
+        const PAGE_H_PX   = Math.round(CONTAINER_W * 297 / 210); // ~1123 px par page A4
 
-        const fullCanvas = await html2canvas(renderContainer, {
-          scale: SCALE,
-          useCORS: true,
-          allowTaint: true,
+        // Fixer la hauteur du container APRÈS le rendu pour que html-to-image la connaisse
+        const article = renderContainer.querySelector('article') || renderContainer;
+        const totalH  = Math.max(article.scrollHeight, PAGE_H_PX);
+        renderContainer.style.height = totalH + 'px';
+        renderContainer.style.overflow = 'hidden';
+
+        // html-to-image : rendu SVG foreignObject, bien plus fiable que html2canvas pour docx-preview
+        const { toPng } = await import('html-to-image');
+        const fullDataUrl = await toPng(renderContainer, {
           backgroundColor: '#ffffff',
-          logging: false,
           width:  CONTAINER_W,
-          height: renderContainer.scrollHeight,
-          windowWidth: CONTAINER_W,
-          scrollX: 0,
-          scrollY: 0,
+          height: totalH,
+          pixelRatio: 2,
+          filter: node => node.tagName !== 'SCRIPT' && node.tagName !== 'STYLE',
         });
 
-        // ── Vérifier que le canvas n'est pas blanc ────────────────────
-        const testCtx  = fullCanvas.getContext('2d');
-        const sample   = testCtx.getImageData(50, 50, 200, 200).data;
-        const darkPx   = [...sample].filter((v, i) => i % 4 !== 3 && v < 240).length;
-        const hasContent = darkPx > 300; // au moins 300 px sombres = contenu réel
+        // Vérifier que l'image n'est pas vide
+        const testImg = new Image();
+        await new Promise(r => { testImg.onload = r; testImg.src = fullDataUrl; });
+        const testCv = document.createElement('canvas');
+        testCv.width = 200; testCv.height = 200;
+        const tctx = testCv.getContext('2d');
+        tctx.drawImage(testImg, 0, 0, 200, 200);
+        const sample = tctx.getImageData(0, 0, 200, 200).data;
+        const darkPx = [...sample].filter((v, i) => i % 4 !== 3 && v < 245).length;
 
-        if (hasContent && fullCanvas.width > 0 && fullCanvas.height > 0) {
+        if (darkPx > 200) {
           toast.loading('Assemblage du PDF…', { id: TOAST_ID });
 
-          const PAGE_H_PX     = Math.round(CONTAINER_W * 297 / 210);
-          const PAGE_H_CANVAS = PAGE_H_PX * SCALE;
-          const totalPages    = Math.max(1, Math.ceil(fullCanvas.height / PAGE_H_CANVAS));
+          // Construire un canvas depuis le dataUrl pour le découpage en tranches
+          const fullImg = new Image();
+          await new Promise(r => { fullImg.onload = r; fullImg.src = fullDataUrl; });
+
+          const PAGE_H_CANVAS = PAGE_H_PX * 2; // pixelRatio 2
+          const canvasW       = fullImg.width;
+          const canvasH       = fullImg.height;
+          const totalPages    = Math.max(1, Math.ceil(canvasH / PAGE_H_CANVAS));
 
           for (let i = 0; i < totalPages; i++) {
-            const sliceH  = Math.min(PAGE_H_CANVAS, fullCanvas.height - i * PAGE_H_CANVAS);
-            const slice   = document.createElement('canvas');
-            slice.width   = fullCanvas.width;
-            slice.height  = PAGE_H_CANVAS;
-            const ctx     = slice.getContext('2d');
+            const sliceH = Math.min(PAGE_H_CANVAS, canvasH - i * PAGE_H_CANVAS);
+            const slice  = document.createElement('canvas');
+            slice.width  = canvasW;
+            slice.height = PAGE_H_CANVAS;
+            const ctx    = slice.getContext('2d');
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, slice.width, slice.height);
-            ctx.drawImage(fullCanvas, 0, i * PAGE_H_CANVAS, fullCanvas.width, sliceH, 0, 0, slice.width, sliceH);
+            ctx.drawImage(fullImg, 0, i * PAGE_H_CANVAS, canvasW, sliceH, 0, 0, canvasW, sliceH);
 
             const imgData  = slice.toDataURL('image/jpeg', 0.92);
             const b64      = imgData.replace('data:image/jpeg;base64,', '');
@@ -6375,7 +6387,6 @@ export default function App() {
             page.drawImage(jpgImage, { x: 0, y: 0, width: A4_W_PT, height: A4_H_PT });
 
             if (i === totalPages - 1) {
-              // Signature sur la dernière page, zone basse gauche pour ne pas couvrir le contenu
               await drawSignatureBlock(page, 90);
             }
           }
