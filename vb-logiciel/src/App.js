@@ -1728,7 +1728,7 @@ const ClientDetailView = ({
                     {group.items.map(s => {
                       const sMeta = s.metadata || {};
                       const clientRequired = sMeta.requiresClientSignature !== false;
-                      const coachRequired = sMeta.requiresTrainerSignature === true;
+                      const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
                       return (
                       <div key={s.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
                         <div className="flex items-center gap-4">
@@ -3138,7 +3138,7 @@ const FormateurView = ({
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
-                                        {(session.metadata?.requiresTrainerSignature === true) && (
+                                        {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
@@ -3912,7 +3912,7 @@ const SessionsView = ({
                               <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                               <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                             </div>
-                            {(session.metadata?.requiresTrainerSignature === true) && (
+                            {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                             <div className="flex items-center gap-1.5">
                               <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                               <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
@@ -6058,8 +6058,6 @@ export default function App() {
           signe_par_client: false,
           signe_par_formateur: false,
           visible_admin: true,
-          requiresClientSignature: !effectiveIsForFormateur,
-          requiresTrainerSignature: effectiveIsForFormateur || templateDestination === 'formateur',
         };
 
         if (effectiveIsForFormateur || formateurId) {
@@ -6076,7 +6074,8 @@ export default function App() {
           }
         }
 
-        await supabase.from('documents').insert([docToInsert]);
+        const { error: insertError } = await supabase.from('documents').insert([docToInsert]);
+        if (insertError) throw insertError;
         await fetchDocuments();
         toast.success(`Document généré et archivé.`);
       } else {
