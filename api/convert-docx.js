@@ -1,111 +1,72 @@
 const mammoth = require('mammoth');
-const PdfPrinter = require('pdfmake');
-const vfsFonts = require('pdfmake/build/vfs_fonts');
+const PDFDocument = require('pdfkit');
 const { parse } = require('node-html-parser');
 
-const fonts = {
-  Roboto: {
-    normal:      Buffer.from(vfsFonts.vfs['Roboto-Regular.ttf'],      'base64'),
-    bold:        Buffer.from(vfsFonts.vfs['Roboto-Medium.ttf'],       'base64'),
-    italics:     Buffer.from(vfsFonts.vfs['Roboto-Italic.ttf'],       'base64'),
-    bolditalics: Buffer.from(vfsFonts.vfs['Roboto-MediumItalic.ttf'], 'base64'),
-  },
-};
-const printer = new PdfPrinter(fonts);
+const M_L = 72, M_R = 51, M_T = 57, M_B = 57;
+const PW = 595; // A4 points
+const PH = 842;
+const CW = PW - M_L - M_R; // ~472
 
-// Convertit les noeuds inline (bold, italic, etc.) en tableaux pdfmake
-function getInlineNodes(node) {
+// Extrait les segments inline (bold/italic) d'un nœud
+function getSegments(node, bold = false, italics = false) {
   if (node.nodeType === 3) {
-    const t = node.rawText;
-    return t ? [t] : [];
+    const t = node.rawText?.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+    return t?.trim() ? [{ text: t, bold, italics }] : [];
   }
   const tag = (node.tagName || '').toLowerCase();
-  const children = node.childNodes.flatMap(getInlineNodes);
-  if (!children.length) return [];
-  const combined = children.length === 1 ? children[0] : children;
-
-  switch (tag) {
-    case 'strong': case 'b': return [{ text: combined, bold: true }];
-    case 'em':     case 'i': return [{ text: combined, italics: true }];
-    case 'u':                return [{ text: combined, decoration: 'underline' }];
-    case 'br':               return ['\n'];
-    default:                 return children;
-  }
+  if (tag === 'br') return [{ text: '\n', bold: false, italics: false }];
+  const b = bold || tag === 'strong' || tag === 'b';
+  const i = italics || tag === 'em' || tag === 'i';
+  return node.childNodes.flatMap(c => getSegments(c, b, i));
 }
 
-// Convertit le HTML mammoth en tableau de nodes pdfmake
-function parseHtmlToPdfMake(html) {
-  const root = parse(html);
-  const content = [];
-
-  function processNode(node) {
-    if (node.nodeType === 3) {
-      const t = node.rawText?.trim();
-      if (t) content.push({ text: t });
-      return;
-    }
-    const tag = (node.tagName || '').toLowerCase();
-
-    switch (tag) {
-      case 'h1':
-        content.push({ text: node.text.trim(), fontSize: 16, bold: true, margin: [0, 10, 0, 6] });
-        break;
-      case 'h2':
-        content.push({ text: node.text.trim(), fontSize: 13, bold: true, margin: [0, 8, 0, 4] });
-        break;
-      case 'h3':
-        content.push({ text: node.text.trim(), fontSize: 11, bold: true, margin: [0, 6, 0, 3] });
-        break;
-      case 'p': {
-        const inline = node.childNodes.flatMap(getInlineNodes);
-        if (inline.length) content.push({ text: inline, margin: [0, 0, 0, 5] });
-        break;
-      }
-      case 'ul': {
-        const items = node.querySelectorAll('li').map(li => li.text.trim()).filter(Boolean);
-        if (items.length) content.push({ ul: items, margin: [0, 0, 0, 5] });
-        break;
-      }
-      case 'ol': {
-        const items = node.querySelectorAll('li').map(li => li.text.trim()).filter(Boolean);
-        if (items.length) content.push({ ol: items, margin: [0, 0, 0, 5] });
-        break;
-      }
-      case 'table': {
-        const rows = node.querySelectorAll('tr')
-          .map(tr => tr.querySelectorAll('td, th').map(td => ({
-            text: td.text.trim(),
-            bold: td.tagName?.toLowerCase() === 'th',
-            fillColor: td.tagName?.toLowerCase() === 'th' ? '#f0f0f0' : null,
-            fontSize: 9,
-            margin: [3, 3, 3, 3],
-          })))
-          .filter(r => r.length > 0);
-        if (rows.length > 0) {
-          const colCount = Math.max(...rows.map(r => r.length));
-          content.push({
-            table: { body: rows, widths: Array(colCount).fill('*') },
-            layout: 'lightHorizontalLines',
-            margin: [0, 5, 0, 8],
-          });
-        }
-        break;
-      }
-      case 'img': {
-        const src = node.getAttribute('src');
-        if (src?.startsWith('data:')) {
-          content.push({ image: src, maxWidth: 450, margin: [0, 5, 0, 5] });
-        }
-        break;
-      }
-      default:
-        node.childNodes.forEach(processNode);
-        break;
-    }
+function renderBlock(doc, node, fontSize, topMargin = 0) {
+  const segs = getSegments(node).filter(s => s.text.trim());
+  if (!segs.length) return;
+  if (topMargin > 0) doc.moveDown(topMargin);
+  try {
+    segs.forEach(({ text, bold, italics }, i) => {
+      const font = bold && italics ? 'Helvetica-BoldOblique'
+                 : bold     ? 'Helvetica-Bold'
+                 : italics  ? 'Helvetica-Oblique'
+                 :             'Helvetica';
+      doc.font(font).fontSize(fontSize).text(text, { continued: i < segs.length - 1 });
+    });
+  } catch (_) {
+    doc.font('Helvetica').fontSize(fontSize).text(node.text?.trim() || '');
   }
+  doc.font('Helvetica').fontSize(11).moveDown(0.25);
+}
 
-  root.childNodes.forEach(processNode);
-  return content;
+function renderTable(doc, tableNode) {
+  const rows = tableNode.querySelectorAll('tr');
+  if (!rows.length) return;
+  const colCount = Math.max(...rows.map(tr => tr.querySelectorAll('td, th').length));
+  if (!colCount) return;
+
+  const ROW_H = 18;
+  const colW = Math.floor(CW / colCount);
+  doc.moveDown(0.4);
+  let y = doc.y;
+
+  rows.forEach(tr => {
+    const cells = tr.querySelectorAll('td, th');
+    const isHeader = !!tr.querySelector('th');
+    if (y + ROW_H > PH - M_B) { doc.addPage(); y = M_T; }
+
+    cells.forEach((cell, ci) => {
+      const x = M_L + ci * colW;
+      const w = ci === colCount - 1 ? CW - ci * colW : colW;
+      if (isHeader) doc.save().rect(x, y, w, ROW_H).fill('#f0f0f0').restore();
+      doc.save().rect(x, y, w, ROW_H).stroke('#cccccc').restore();
+      doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(8)
+         .text(cell.text.trim(), x + 2, y + 4, { width: w - 4, lineBreak: false });
+    });
+    y += ROW_H;
+  });
+
+  doc.text('', M_L, y);
+  doc.font('Helvetica').fontSize(11).moveDown(0.4);
 }
 
 module.exports = async (req, res) => {
@@ -121,10 +82,10 @@ module.exports = async (req, res) => {
 
     // 1. Télécharger le .docx
     const docxResp = await fetch(docxUrl);
-    if (!docxResp.ok) throw new Error(`Téléchargement échoué: HTTP ${docxResp.status}`);
+    if (!docxResp.ok) throw new Error(`HTTP ${docxResp.status}`);
     const docxBuffer = Buffer.from(await docxResp.arrayBuffer());
 
-    // 2. Convertir .docx → HTML avec mammoth (images en base64)
+    // 2. .docx → HTML (images en base64)
     const { value: bodyHtml } = await mammoth.convertToHtml(
       { buffer: docxBuffer },
       {
@@ -135,55 +96,90 @@ module.exports = async (req, res) => {
       }
     );
 
-    // 3. Convertir HTML → nodes pdfmake
-    const pdfContent = parseHtmlToPdfMake(bodyHtml);
+    // 3. PDF avec PDFKit + polices Helvetica intégrées (aucun fichier externe)
+    const doc = new PDFDocument({
+      size: 'A4',
+      margins: { top: M_T, bottom: M_B, left: M_L, right: M_R },
+    });
+    const buffers = [];
+    doc.on('data', buf => buffers.push(buf));
+    doc.font('Helvetica').fontSize(11);
 
-    // 4. Bloc de signature
-    const sigBlock = {
-      margin: [0, 28, 0, 0],
-      table: {
-        widths: ['*', '*'],
-        body: [[
-          {
-            border: [false, true, false, false],
-            stack: [
-              { text: "Le donneur d'ordre", bold: true, fontSize: 10, margin: [0, 8, 0, 6] },
-              { text: 'VB Coaching – Véronique BOULAIS', fontSize: 10 },
-            ],
-          },
-          {
-            border: [false, true, false, false],
-            stack: [
-              { text: 'Le sous-traitant', bold: true, fontSize: 10, margin: [0, 8, 0, 6] },
-              ...(signatureBase64
-                ? [{ image: signatureBase64, width: 140, height: 52, alignment: 'center', margin: [0, 4, 0, 4] }]
-                : [{ canvas: [{ type: 'rect', x: 0, y: 0, w: 140, h: 52, lineWidth: 1, lineColor: '#cccccc' }] }]),
-              { text: signerName || 'Le Formateur', fontSize: 9.5, alignment: 'center' },
-              { text: `Signé numériquement le ${signedAt || ''}`, fontSize: 8, color: '#555555', alignment: 'center', margin: [0, 3, 0, 0] },
-            ],
-          },
-        ]],
-      },
-    };
-
-    // 5. Générer le PDF avec pdfmake/PdfPrinter (Node.js natif)
-    const docDefinition = {
-      pageSize: 'A4',
-      pageMargins: [72, 57, 51, 57],
-      content: [...pdfContent, sigBlock],
-      defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.5 },
-    };
-
-    const pdfDoc = printer.createPdfKitDocument(docDefinition);
-    const chunks = [];
-    pdfDoc.on('data', chunk => chunks.push(chunk));
-    const pdfBuffer = await new Promise((resolve, reject) => {
-      pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
-      pdfDoc.on('error', reject);
-      pdfDoc.end();
+    parse(bodyHtml).childNodes.forEach(node => {
+      if (node.nodeType === 3) {
+        const t = node.rawText?.trim();
+        if (t) { doc.font('Helvetica').fontSize(11).text(t); doc.moveDown(0.2); }
+        return;
+      }
+      const tag = (node.tagName || '').toLowerCase();
+      switch (tag) {
+        case 'h1': renderBlock(doc, node, 16, 0.4); break;
+        case 'h2': renderBlock(doc, node, 13, 0.3); break;
+        case 'h3': renderBlock(doc, node, 11, 0.2); break;
+        case 'p':  renderBlock(doc, node, 11, 0);   break;
+        case 'ul':
+          node.querySelectorAll('li').forEach(li =>
+            doc.font('Helvetica').fontSize(11).text(`• ${li.text.trim()}`, { indent: 12 })
+          );
+          doc.moveDown(0.3);
+          break;
+        case 'ol':
+          node.querySelectorAll('li').forEach((li, idx) =>
+            doc.font('Helvetica').fontSize(11).text(`${idx + 1}. ${li.text.trim()}`, { indent: 12 })
+          );
+          doc.moveDown(0.3);
+          break;
+        case 'table': renderTable(doc, node); break;
+        case 'img': {
+          const src = node.getAttribute('src');
+          if (src?.startsWith('data:')) {
+            try {
+              doc.image(Buffer.from(src.split(',')[1], 'base64'), { fit: [CW, 400] });
+              doc.moveDown(0.3);
+            } catch (_) { /* image invalide, on passe */ }
+          }
+          break;
+        }
+      }
     });
 
-    // 6. Renvoyer le PDF
+    // 4. Bloc de signature
+    if (doc.y + 120 > PH - M_B) doc.addPage();
+    doc.moveDown(1.5);
+
+    const lineY = doc.y;
+    doc.moveTo(M_L, lineY).lineTo(PW - M_R, lineY).stroke('#bbbbbb');
+
+    const col2X = M_L + CW / 2 + 10;
+    const colW2 = CW / 2 - 10;
+    const sigY = lineY + 10;
+
+    // Colonne gauche — donneur d'ordre
+    doc.font('Helvetica-Bold').fontSize(10).text("Le donneur d'ordre", M_L, sigY, { width: colW2 });
+    doc.font('Helvetica').fontSize(10).text('VB Coaching – Véronique BOULAIS', M_L, sigY + 16, { width: colW2 });
+
+    // Colonne droite — sous-traitant
+    doc.font('Helvetica-Bold').fontSize(10).text('Le sous-traitant', col2X, sigY, { width: colW2 });
+
+    let nameY = sigY + 16;
+    if (signatureBase64) {
+      try {
+        doc.image(Buffer.from(signatureBase64.split(',')[1], 'base64'), col2X, sigY + 16, { fit: [140, 52] });
+        nameY = sigY + 72;
+      } catch (_) { /* signature corrompue, on passe */ }
+    }
+
+    doc.font('Helvetica').fontSize(9.5).text(signerName || 'Le Formateur', col2X, nameY, { width: colW2 });
+    doc.font('Helvetica').fontSize(8).fillColor('#555555')
+       .text(`Signé numériquement le ${signedAt || ''}`, col2X, nameY + 14, { width: colW2 });
+
+    // 5. Renvoyer le PDF
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+      doc.on('error', reject);
+      doc.end();
+    });
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="signed_document.pdf"');
     res.status(200).send(pdfBuffer);
