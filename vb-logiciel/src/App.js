@@ -239,7 +239,14 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setLoadingPdf(true);
       setPdfError(null);
       setBlobUrl(null);
-      console.log('[DocumentViewerModal] Génération signed URL pour:', pdfUrl);
+
+      // Pour les fichiers Word : Office Online avec l'URL publique directement
+      const isWordFile = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
+      if (isWordFile) {
+        setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`);
+        setLoadingPdf(false);
+        return;
+      }
 
       const initialExtracted = extractBucketPath(pdfUrl);
       if (!initialExtracted) {
