@@ -252,6 +252,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [hasRead, setHasRead] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const scrollRef = useRef(null);
+  const signatureSectionRef = useRef(null);
   const [blobUrl, setBlobUrl] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
@@ -418,6 +419,17 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, pdfUrl]);
 
+  useEffect(() => {
+    if (!isOpen || mode !== 'sign' || hasRead) return;
+    const el = signatureSectionRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setHasRead(true); },
+      { threshold: 0.3 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isOpen, mode, hasRead, blobUrl]);
 
   const handleScroll = (e) => {
     const el = e.target;
@@ -495,7 +507,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
               <h3 className="font-extrabold text-base text-gray-900">{pdfTitle}</h3>
               {mode === 'sign' && (
                 <p className="text-[11px] font-bold" style={{ color: hasRead ? '#16a34a' : '#f97316' }}>
-                  {hasRead ? '✅ Document parcouru — vous pouvez maintenant signer.' : '⬇️ Faites défiler jusqu\'en bas pour déverrouiller la signature.'}
+                  {hasRead ? '✅ Document parcouru — vous pouvez maintenant signer.' : '⬇️ Parcourez le document puis faites défiler pour déverrouiller la signature.'}
                 </p>
               )}
             </div>
@@ -528,7 +540,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
           {/* Section signature (mode sign uniquement) */}
           {mode === 'sign' && (
-            <div className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
+            <div ref={signatureSectionRef} className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
               <div className="p-5 border-b border-gray-100">
                 <h4 className="font-extrabold text-gray-900 mb-1">Signature électronique</h4>
                 <p className="text-sm text-gray-500">En cliquant sur "Signer ce document", votre nom et la date/heure seront apposés comme signature numérique sur le document original.</p>
