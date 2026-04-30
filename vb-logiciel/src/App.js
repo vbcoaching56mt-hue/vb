@@ -173,11 +173,82 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
 // Modale PDF polyvalente:
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
+/**
+ * Convertit un Blob DOCX en Blob PDF via le moteur du navigateur.
+ * docx-preview rend le DOCX en HTML fidèle, html2canvas capture, jsPDF compile.
+ * Si signature = { signerName, nowStr } est fourni, un bloc de signature est ajouté.
+ */
+const convertDocxBlobToPdf = async (docxBlob, signature = null) => {
+  if (!window.docx) throw new Error('docx-preview non disponible');
+
+  const container = document.createElement('div');
+  container.style.cssText = 'width:816px;position:fixed;left:-9999px;top:0;background:#ffffff;';
+  document.body.appendChild(container);
+
+  try {
+    const arrayBuffer = await docxBlob.arrayBuffer();
+    await window.docx.renderAsync(arrayBuffer, container, null, {
+      renderHeaders: true,
+      renderFooters: true,
+      ignoreLastRenderedPageBreak: false,
+    });
+
+    // Ajouter le bloc de signature dans le HTML avant la capture
+    if (signature) {
+      const sigDiv = document.createElement('div');
+      sigDiv.style.cssText = 'padding:30px 40px 20px;font-family:Arial,sans-serif;';
+      sigDiv.innerHTML = `
+        <hr style="border:none;border-top:1px solid #bbb;margin-bottom:20px;" />
+        <div style="display:flex;justify-content:flex-end;">
+          <div style="text-align:left;">
+            <p style="font-weight:bold;font-size:12px;margin:0 0 5px 0;">Le sous-traitant</p>
+            <p style="font-size:12px;margin:0 0 4px 0;">${signature.signerName}</p>
+            <p style="font-size:10px;color:#555;margin:0;">Signé numériquement le ${signature.nowStr}</p>
+          </div>
+        </div>`;
+      container.appendChild(sigDiv);
+    }
+
+    await new Promise(r => setTimeout(r, 700));
+
+    const canvas = await html2canvas(container, {
+      scale: 1.5,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      width: 816,
+      height: container.scrollHeight,
+      windowWidth: 816,
+    });
+
+    document.body.removeChild(container);
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pdfW = pdf.internal.pageSize.getWidth();
+    const pdfH = pdf.internal.pageSize.getHeight();
+    const imgData = canvas.toDataURL('image/jpeg', 0.93);
+    const imgH = (canvas.height * pdfW) / canvas.width;
+
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
+    let remaining = imgH - pdfH;
+    let offset = pdfH;
+    while (remaining > 0) {
+      pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, -offset, pdfW, imgH);
+      offset += pdfH;
+      remaining -= pdfH;
+    }
+
+    return pdf.output('blob');
+  } catch (err) {
+    if (container.parentNode) document.body.removeChild(container);
+    throw err;
+  }
+};
+
 const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
-  const canvasRef = useRef(null);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [hasRead, setHasRead] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const scrollRef = useRef(null);
@@ -353,40 +424,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) setHasRead(true);
   };
 
-  const getCoordinates = (e) => {
-    const canvas = canvasRef.current;
-    if (e.touches && e.touches.length > 0) {
-      const rect = canvas.getBoundingClientRect();
-      return { offsetX: e.touches[0].clientX - rect.left, offsetY: e.touches[0].clientY - rect.top };
-    }
-    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
-  };
-
-  const startDrawing = (e) => {
-    if (!canvasRef.current) return;
-    setIsDrawing(true);
-    const ctx = canvasRef.current.getContext('2d');
-    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#0f172a';
-    const { offsetX, offsetY } = getCoordinates(e);
-    ctx.beginPath(); ctx.moveTo(offsetX, offsetY);
-  };
-  const draw = (e) => {
-    if (!isDrawing || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext('2d');
-    const { offsetX, offsetY } = getCoordinates(e);
-    ctx.lineTo(offsetX, offsetY); ctx.stroke();
-  };
-  const stopDrawing = () => setIsDrawing(false);
-  const clearCanvas = () => {
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-  };
-  const handleSave = () => {
-    if (!canvasRef.current) return;
-    onSave && onSave(canvasRef.current.toDataURL('image/png'));
-  };
 
   if (!isOpen) return null;
 
@@ -494,41 +531,22 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             <div className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
               <div className="p-5 border-b border-gray-100">
                 <h4 className="font-extrabold text-gray-900 mb-1">Signature électronique</h4>
-                <p className="text-sm text-gray-500">Signez lisiblement dans le cadre ci-dessous pour valider votre accord.</p>
+                <p className="text-sm text-gray-500">En cliquant sur "Signer ce document", votre nom et la date/heure seront apposés comme signature numérique sur le document original.</p>
               </div>
               <div className="p-5">
-                <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none mb-4 relative">
-                  <canvas
-                    ref={canvasRef}
-                    width={800}
-                    height={200}
-                    className="w-full h-[200px] cursor-crosshair"
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseOut={stopDrawing}
-                    onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDrawing}
-                  />
-                  <div className="absolute bottom-3 right-3 opacity-30 text-xs font-bold uppercase tracking-widest text-gray-500">Zone de signature</div>
-                </div>
                 <label className="flex items-start gap-3 cursor-pointer mb-5 select-none">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-rose-500 shrink-0" />
                   <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
                 </label>
-                <div className="flex justify-between gap-3">
-                  <button onClick={clearCanvas} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Effacer</button>
-                  <div className="flex gap-3">
-                    <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
-                    <button
-                      onClick={handleSave}
-                      disabled={!agreed}
-                      className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${agreed ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
-                    >
-                      Valider ma signature
-                    </button>
-                  </div>
+                <div className="flex justify-end gap-3">
+                  <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
+                  <button
+                    onClick={() => onSave && onSave()}
+                    disabled={!agreed}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${agreed ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                  >
+                    Signer ce document
+                  </button>
                 </div>
               </div>
             </div>
@@ -2162,7 +2180,7 @@ const FormateurDetailView = ({
                     <div>
                       <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
                       <div className="flex items-center gap-3 mt-1">
-                        <span className="text-[10px] text-gray-400 font-bold uppercase">{new Date(doc.created_at).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{doc.created_at ? new Date(doc.created_at).toLocaleDateString('fr-FR') : '—'}</span>
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${isSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {isSigned ? 'Signé' : 'En attente de signature'}
                         </span>
@@ -2195,7 +2213,7 @@ const FormateurDetailView = ({
                     )}
                     <button
                       onClick={() => setDocToDelete(doc)}
-                      className="p-2.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                      className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
                       title="Supprimer ce document"
                     >
                       <Trash2 size={18} />
@@ -5492,7 +5510,7 @@ export default function App() {
    * Superpose la signature sur le PDF original et sauvegarde le résultat
    */
    // --- Fonctions utilitaires Archivage ---
-  const overlaySignatureOnPdf = async (session, client, signatureDataUrl, role) => {
+  const overlaySignatureOnPdf = async (session, client, role) => {
     try {
       console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
       
@@ -5542,38 +5560,31 @@ export default function App() {
       });
       
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
-      
-      // 3. Préparer l'image de la signature
-      const signatureImageBytes = await fetch(signatureDataUrl).then(res => res.arrayBuffer());
-      const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
-      const sigDims = signatureImage.scale(0.25);
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-      // 4. Ajouter la signature sur la dernière page
+      // 3. Ajouter le bloc de signature sur la dernière page
       const pages = pdfDoc.getPages();
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
 
-      const xPos = role === 'formateur' || role === 'admin' ? width - 50 - sigDims.width : 50;
+      const formateur = formateurs.find(f => f.id === session.formateur_id);
+      const signerName = (role === 'formateur' || role === 'admin')
+        ? (formateur?.nom || 'Le Formateur')
+        : (client.nom_complet || client.nom || 'Le Client');
 
-      lastPage.drawImage(signatureImage, {
-        x: xPos,
-        y: 50,
-        width: sigDims.width,
-        height: sigDims.height,
+      const xPos = role === 'formateur' || role === 'admin' ? width / 2 + 10 : 50;
+      const now = new Date();
+      const nowStr = now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' });
+
+      lastPage.drawText(role === 'formateur' || role === 'admin' ? 'Le sous-traitant' : 'Le bénéficiaire', {
+        x: xPos, y: 90, size: 10, font: helveticaBold, color: rgb(0, 0, 0),
       });
-
-      // 5. Ajouter une mention texte
-      const signerName = (role === 'formateur' || role === 'admin') ? 'Le Formateur' : (client.nom_complet || client.nom || 'Le Client');
-      lastPage.drawText(`Signé numériquement par ${signerName}`, {
-        x: xPos,
-        y: 35,
-        size: 8,
+      lastPage.drawText(signerName, {
+        x: xPos, y: 74, size: 10, font: helvetica, color: rgb(0, 0, 0),
       });
-
-      lastPage.drawText(`Le ${new Date().toLocaleString('fr-FR')}`, {
-        x: xPos,
-        y: 25,
-        size: 8,
+      lastPage.drawText(`Signé numériquement le ${nowStr}`, {
+        x: xPos, y: 58, size: 8, font: helvetica, color: rgb(0.33, 0.33, 0.33),
       });
 
       // 6. Exporter le PDF
@@ -5613,12 +5624,10 @@ export default function App() {
     const client = clients.find(c => c.id === session.client_id);
 
     if (userRole === 'formateur' || userRole === 'admin') {
-      updateData.signature_formateur = signatureDataUrl;
       updateData.date_signature_formateur = new Date().toISOString();
       updateData.statut_formateur = 'Signé';
-      updateData.statut = 'Signé'; // Auto-valide le document ou l'émargement complet
+      updateData.statut = 'Signé';
     } else {
-      updateData.signature_image = signatureDataUrl;
       updateData.date_signature = new Date().toISOString();
       updateData.statut_client = 'Signé';
       updateData.statut = 'Signé';
@@ -5626,7 +5635,7 @@ export default function App() {
 
     // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
     if ((session.type_activite === 'document' || session.type_activite === 'signature') && client) {
-      const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, signatureDataUrl, userRole);
+      const signedUrl = await overlaySignatureOnPdf({ ...session, ...updateData }, client, userRole);
       if (signedUrl) {
         updateData.metadata = { ...(session.metadata || {}), file_url_signed: signedUrl };
         updateData.signed_pdf_url = signedUrl; // Colonne dédiée pour l'onglet Documents Signés
@@ -6095,11 +6104,11 @@ export default function App() {
         saveAs(out, finalFileName);
       }
 
-      // Auto-upload
+      // Auto-upload du DOCX
       const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, out);
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
-        
+
         const docToInsert = {
           nom: `${type} - ${targetName}`,
           type_document: 'Administratif',
@@ -6244,35 +6253,97 @@ export default function App() {
     }
   };
 
-  const handleDocumentSignatureSave = async (docId, signatureDataUrl) => {
+  const handleDocumentSignatureSave = async (docId) => {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
 
     const TOAST_ID = 'sign-doc';
-    toast.loading('Génération du PDF signé…', { id: TOAST_ID });
+    toast.loading('Signature du document en cours…', { id: TOAST_ID });
 
     try {
       const formateur = formateurs.find(f => f.id === doc.assigned_formateur_id);
+      const signerName = formateur?.nom || 'Le Formateur';
       const now = new Date();
+      const nowStr = now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' });
 
-      // 1. Appeler la serverless function pour convertir .docx → PDF avec signature
-      const apiResp = await fetch('/api/convert-docx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          docxUrl: doc.url,
-          signerName: formateur?.nom || 'Le Formateur',
-          signedAt: now.toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }),
-          signatureBase64: signatureDataUrl,
-        }),
-      });
-      if (!apiResp.ok) {
-        const errText = await apiResp.text();
-        throw new Error('Conversion PDF : ' + errText);
+      const docUrl = doc.url || '';
+      const isDocx = /\.(docx|doc)$/i.test(docUrl);
+
+      let pdfBlob;
+
+      if (!isDocx) {
+        // PDF : on superpose le bloc de signature directement → formatage 100% préservé
+        const urlMatch = docUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
+        let bucket = 'documents';
+        let path = docUrl;
+        if (urlMatch) {
+          bucket = urlMatch[1];
+          path = decodeURIComponent(urlMatch[2]);
+        }
+
+        const { data: signData, error: signErr } = await supabase.storage
+          .from(bucket).createSignedUrl(path, 300);
+        if (signErr || !signData?.signedUrl) throw new Error('Lecture document impossible : ' + signErr?.message);
+
+        const pdfBytes = await fetch(signData.signedUrl).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.arrayBuffer();
+        });
+
+        const pdfDoc = await PDFDocument.load(pdfBytes);
+        const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        const pages = pdfDoc.getPages();
+        const lastPage = pages[pages.length - 1];
+        const { width } = lastPage.getSize();
+        const xPos = width / 2 + 10;
+
+        lastPage.drawText('Le sous-traitant', {
+          x: xPos, y: 90, size: 10, font: helveticaBold, color: rgb(0, 0, 0),
+        });
+        lastPage.drawText(signerName, {
+          x: xPos, y: 74, size: 10, font: helvetica, color: rgb(0, 0, 0),
+        });
+        lastPage.drawText(`Signé numériquement le ${nowStr}`, {
+          x: xPos, y: 58, size: 8, font: helvetica, color: rgb(0.33, 0.33, 0.33),
+        });
+
+        const pdfBytesOut = await pdfDoc.save();
+        pdfBlob = new Blob([pdfBytesOut], { type: 'application/pdf' });
+
+      } else {
+        // DOCX : conversion via le moteur du navigateur (qualité parfaite)
+        toast.loading('Rendu du document en cours…', { id: TOAST_ID });
+        const urlMatch = docUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
+        let bucket = 'documents';
+        let path = docUrl;
+        if (urlMatch) { bucket = urlMatch[1]; path = decodeURIComponent(urlMatch[2]); }
+
+        const { data: signData, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 300);
+        if (signErr || !signData?.signedUrl) throw new Error('Lecture DOCX impossible : ' + signErr?.message);
+
+        const docxBlob = await fetch(signData.signedUrl).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.blob();
+        });
+
+        if (window.docx) {
+          // Rendu navigateur avec signature intégrée (formatage 100% préservé)
+          pdfBlob = await convertDocxBlobToPdf(docxBlob, { signerName, nowStr });
+        } else {
+          // Fallback API serveur (mammoth → pdfkit)
+          const apiResp = await fetch('/api/convert-docx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ docxUrl: docUrl, signerName, signedAt: nowStr }),
+          });
+          if (!apiResp.ok) throw new Error('Conversion PDF : ' + await apiResp.text());
+          pdfBlob = await apiResp.blob();
+        }
       }
-      const pdfBlob = await apiResp.blob();
 
-      // 2. Upload du PDF généré dans le bucket documents
+      // Upload du PDF signé
       toast.loading('Upload du PDF signé…', { id: TOAST_ID });
       const fileName = `signed_${docId}_${Date.now()}.pdf`;
       const { error: uploadError } = await supabase.storage
@@ -6282,11 +6353,9 @@ export default function App() {
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-      // 3. Mise à jour base de données
       const updateData = {
         signe_par_formateur: true,
         date_signature_formateur: now.toISOString(),
-        signature_formateur: signatureDataUrl,
         statut: 'Signé',
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
@@ -7032,14 +7101,14 @@ export default function App() {
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
         onClose={() => setViewingSession(null)}
-        onSave={viewingSession?.mode === 'sign' ? async (signature) => {
+        onSave={viewingSession?.mode === 'sign' ? async () => {
           const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
           const isDocument = documents.some(d => d.id === sessionOrDoc.id);
           if (isDocument) {
-            await handleDocumentSignatureSave(sessionOrDoc.id, signature);
+            await handleDocumentSignatureSave(sessionOrDoc.id);
           } else {
-            await handleSessionSignatureSave(sessionOrDoc.id, signature);
+            await handleSessionSignatureSave(sessionOrDoc.id, null);
           }
         } : undefined}
       />
