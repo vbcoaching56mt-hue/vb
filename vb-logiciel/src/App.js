@@ -375,24 +375,25 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           throw new Error(lastError || 'Fichier introuvable');
         }
 
-        // Si c'est un Word, on le télécharge et on le rend localement
+        // Si c'est un Word, rendu via docx-preview ou Office Online en fallback
         const isWord = finalPath.toLowerCase().endsWith('.docx') || finalPath.toLowerCase().endsWith('.doc');
         if (isWord) {
-          try {
-            const response = await fetch(finalSignedUrl);
-            const arrayBuffer = await response.arrayBuffer();
-            if (window.docx && docxContainerRef.current) {
+          let rendered = false;
+          if (window.docx && docxContainerRef.current) {
+            try {
+              const response = await fetch(finalSignedUrl);
+              const arrayBuffer = await response.arrayBuffer();
               await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
               setBlobUrl(finalSignedUrl);
-              setLoadingPdf(false);
-            } else {
-              setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
-              setLoadingPdf(false);
+              rendered = true;
+            } catch (renderErr) {
+              console.warn('[DocumentViewerModal] docx-preview échoué, fallback Office Online:', renderErr.message);
             }
-          } catch (fetchErr) {
-            console.error("[DocumentViewerModal] Erreur Word:", fetchErr);
-            setBlobUrl(finalSignedUrl); 
           }
+          if (!rendered) {
+            setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
+          }
+          setLoadingPdf(false);
         } else {
           setBlobUrl(finalSignedUrl);
         }
@@ -6325,44 +6326,18 @@ export default function App() {
         pdfBlob = new Blob([pdfBytesOut], { type: 'application/pdf' });
 
       } else {
-        // DOCX : conversion via le moteur du navigateur (qualité parfaite)
-        toast.loading('Rendu du document en cours…', { id: TOAST_ID });
-
-        // Essai 1 : fetch direct (fonctionne si le bucket est public)
-        let docxBlob;
-        const directResp = await fetch(docUrl).catch(() => null);
-        if (directResp?.ok) {
-          docxBlob = await directResp.blob();
-        } else {
-          // Essai 2 : signed URL avec correctif de chemin (déduplication bucket)
-          const urlMatch = docUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
-          let bucket = 'documents';
-          let path = docUrl;
-          if (urlMatch) {
-            bucket = urlMatch[1];
-            path = decodeURIComponent(urlMatch[2]);
-            if (path.startsWith(`${bucket}/`)) path = path.substring(bucket.length + 1);
-          }
-          const { data: signData, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 300);
-          if (signErr || !signData?.signedUrl) throw new Error('Lecture DOCX impossible : ' + signErr?.message);
-          const signedResp = await fetch(signData.signedUrl);
-          if (!signedResp.ok) throw new Error(`HTTP ${signedResp.status} - Document introuvable`);
-          docxBlob = await signedResp.blob();
+        // DOCX → PDF via API serveur (mammoth + pdfkit, robuste, sans dépendance navigateur)
+        toast.loading('Conversion du document…', { id: TOAST_ID });
+        const apiResp = await fetch('/api/convert-docx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docxUrl: docUrl, signerName, signedAt: nowStr }),
+        });
+        if (!apiResp.ok) {
+          const errText = await apiResp.text().catch(() => apiResp.statusText);
+          throw new Error('Conversion PDF : ' + errText);
         }
-
-        if (window.docx) {
-          // Rendu navigateur avec signature intégrée (formatage 100% préservé)
-          pdfBlob = await convertDocxBlobToPdf(docxBlob, { signerName, nowStr });
-        } else {
-          // Fallback API serveur (mammoth → pdfkit)
-          const apiResp = await fetch('/api/convert-docx', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ docxUrl: docUrl, signerName, signedAt: nowStr }),
-          });
-          if (!apiResp.ok) throw new Error('Conversion PDF : ' + await apiResp.text());
-          pdfBlob = await apiResp.blob();
-        }
+        pdfBlob = await apiResp.blob();
       }
 
       // Upload du PDF signé
