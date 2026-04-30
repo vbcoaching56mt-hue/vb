@@ -6327,18 +6327,28 @@ export default function App() {
       } else {
         // DOCX : conversion via le moteur du navigateur (qualité parfaite)
         toast.loading('Rendu du document en cours…', { id: TOAST_ID });
-        const urlMatch = docUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
-        let bucket = 'documents';
-        let path = docUrl;
-        if (urlMatch) { bucket = urlMatch[1]; path = decodeURIComponent(urlMatch[2]); }
 
-        const { data: signData, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 300);
-        if (signErr || !signData?.signedUrl) throw new Error('Lecture DOCX impossible : ' + signErr?.message);
-
-        const docxBlob = await fetch(signData.signedUrl).then(r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.blob();
-        });
+        // Essai 1 : fetch direct (fonctionne si le bucket est public)
+        let docxBlob;
+        const directResp = await fetch(docUrl).catch(() => null);
+        if (directResp?.ok) {
+          docxBlob = await directResp.blob();
+        } else {
+          // Essai 2 : signed URL avec correctif de chemin (déduplication bucket)
+          const urlMatch = docUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
+          let bucket = 'documents';
+          let path = docUrl;
+          if (urlMatch) {
+            bucket = urlMatch[1];
+            path = decodeURIComponent(urlMatch[2]);
+            if (path.startsWith(`${bucket}/`)) path = path.substring(bucket.length + 1);
+          }
+          const { data: signData, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 300);
+          if (signErr || !signData?.signedUrl) throw new Error('Lecture DOCX impossible : ' + signErr?.message);
+          const signedResp = await fetch(signData.signedUrl);
+          if (!signedResp.ok) throw new Error(`HTTP ${signedResp.status} - Document introuvable`);
+          docxBlob = await signedResp.blob();
+        }
 
         if (window.docx) {
           // Rendu navigateur avec signature intégrée (formatage 100% préservé)
