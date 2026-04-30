@@ -6340,12 +6340,16 @@ export default function App() {
         pdfBlob = await apiResp.blob();
       }
 
-      // Upload du PDF signé
-      toast.loading('Upload du PDF signé…', { id: TOAST_ID });
-      const fileName = `signed_${docId}_${Date.now()}.pdf`;
+      // Upload du document signé (DOCX ou PDF selon la source)
+      toast.loading('Upload du document signé…', { id: TOAST_ID });
+      const signedExt = isDocx ? 'docx' : 'pdf';
+      const signedMime = isDocx
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : 'application/pdf';
+      const fileName = `signed_${docId}_${Date.now()}.${signedExt}`;
       const { error: uploadError } = await supabase.storage
         .from('documents')
-        .upload(fileName, new File([pdfBlob], fileName, { type: 'application/pdf' }));
+        .upload(fileName, new File([pdfBlob], fileName, { type: signedMime }));
       if (uploadError) throw new Error('Upload : ' + uploadError.message);
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
@@ -6361,7 +6365,7 @@ export default function App() {
       if (dbError) throw dbError;
 
       setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updateData } : d));
-      toast.success("Document signé ! PDF disponible pour l'admin.", { id: TOAST_ID });
+      toast.success('Document signé avec succès !', { id: TOAST_ID });
 
     } catch (err) {
       console.error('[handleDocumentSignatureSave]', err);

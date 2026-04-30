@@ -6,8 +6,6 @@
     "node": ">=18.x"
   },
   "dependencies": {
-    "mammoth": "^1.8.0",
-    "node-html-parser": "^6.1.13",
-    "pdfkit": "^0.14.0"
+    "pizzip": "^3.2.0"
   }
 }
