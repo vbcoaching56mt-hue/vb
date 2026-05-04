@@ -4417,30 +4417,43 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
 
   const [profileData, setProfileData] = useState({
     nom: user?.nom || '',
-    adresse: user?.adresse_formateur || user?.adresse_session || '',
+    adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
+    adresse_session: user?.adresse_session || '',
     siret: user?.formateur_siret || '',
     nda: user?.formateur_nda || '',
-    nomcomplet: user?.nomcomplet_client || user?.nom || ''
+    email: user?.email || '',
+    telephone: user?.telephone || '',
+    compagnie_assurance: user?.compagnie_assurance || '',
+    numero_assurance_rcp: user?.numero_assurance_rcp || '',
+    nomcomplet: user?.nomcomplet_client || user?.nom || '',
+    adresse_client: user?.adresse_postale || ''
   });
+  const [sameAddress, setSameAddress] = useState(
+    !user?.adresse_session || user?.adresse_session === (user?.adresse_formateur || user?.adresse_pro || '')
+  );
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleUpdate = async () => {
-    const updates = {
-      nom: profileData.nom,
-      adresse_formateur: profileData.adresse,
-      formateur_siret: profileData.siret,
-      formateur_nda: profileData.nda,
-      nomcomplet_client: profileData.nomcomplet
-    };
-
+    setIsSaving(true);
     let error;
     if (userRole === 'client') {
       const result = await supabase.from('clients').update({
         nom_complet: profileData.nomcomplet,
-        adresse_postale: profileData.adresse
+        adresse_postale: profileData.adresse_client
       }).eq('id', currentUserId);
       error = result.error;
     } else {
-      const result = await supabase.from('utilisateurs').update(updates).eq('id', currentUserId);
+      const result = await supabase.from('utilisateurs').update({
+        nom: profileData.nom,
+        email: profileData.email,
+        telephone: profileData.telephone,
+        adresse_formateur: profileData.adresse_formateur,
+        adresse_session: sameAddress ? profileData.adresse_formateur : profileData.adresse_session,
+        formateur_siret: profileData.siret,
+        formateur_nda: profileData.nda,
+        compagnie_assurance: profileData.compagnie_assurance,
+        numero_assurance_rcp: profileData.numero_assurance_rcp
+      }).eq('id', currentUserId);
       error = result.error;
     }
     if (!error) {
@@ -4449,63 +4462,106 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     } else {
       toast.error('Erreur lors de la mise à jour : ' + error.message);
     }
+    setIsSaving(false);
   };
 
+  const inputCls = "w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm";
+  const labelCls = "block text-xs font-bold text-gray-400 uppercase mb-2";
+
   return (
-    <div className="space-y-8 animate-fade-in max-w-2xl mx-auto">
+    <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
       <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+        <h2 className="text-2xl font-bold text-gray-900 mb-8 flex items-center">
           <span className="w-2 h-8 bg-indigo-600 rounded-full mr-4"></span> Mon Profil
         </h2>
 
-        <div className="space-y-5">
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nom Complet / Raison Sociale</label>
-            <input
-              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-              value={profileData.nomcomplet}
-              onChange={e => setProfileData({ ...profileData, nomcomplet: e.target.value })}
-            />
+        {userRole === 'client' ? (
+          <div className="space-y-5">
+            <div>
+              <label className={labelCls}>Nom Complet</label>
+              <input className={inputCls} value={profileData.nomcomplet} onChange={e => setProfileData({ ...profileData, nomcomplet: e.target.value })} />
+            </div>
+            <div>
+              <label className={labelCls}>Adresse</label>
+              <input className={inputCls} value={profileData.adresse_client} onChange={e => setProfileData({ ...profileData, adresse_client: e.target.value })} />
+            </div>
           </div>
-
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse</label>
-            <input
-              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-sans"
-              value={profileData.adresse}
-              onChange={e => setProfileData({ ...profileData, adresse: e.target.value })}
-            />
-          </div>
-
-          {(userRole === 'admin' || userRole === 'formateur') && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
-                <input
-                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                  value={profileData.siret}
-                  onChange={e => setProfileData({ ...profileData, siret: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Numéro Déclaration Activité)</label>
-                <input
-                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                  value={profileData.nda}
-                  onChange={e => setProfileData({ ...profileData, nda: e.target.value })}
-                />
+        ) : (
+          <div className="space-y-8">
+            {/* Identité */}
+            <div>
+              <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
+                <FileText size={16} className="text-indigo-500" /> Identité Professionnelle
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className={labelCls}>Raison Sociale / Nom complet</label>
+                  <input className={inputCls} value={profileData.nom} onChange={e => setProfileData({ ...profileData, nom: e.target.value })} placeholder="Ex: Matthys Coaching" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>SIRET</label>
+                    <input className={inputCls} value={profileData.siret} onChange={e => setProfileData({ ...profileData, siret: e.target.value })} placeholder="14 chiffres" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>NDA (Qualiopi)</label>
+                    <input className={inputCls} value={profileData.nda} onChange={e => setProfileData({ ...profileData, nda: e.target.value })} placeholder="N° Déclaration" />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Assurance RCP — Compagnie</label>
+                  <input className={inputCls} value={profileData.compagnie_assurance} onChange={e => setProfileData({ ...profileData, compagnie_assurance: e.target.value })} placeholder="Ex: AXA, MAIF, Hiscox..." />
+                </div>
+                <div>
+                  <label className={labelCls}>Assurance RCP — N° de contrat</label>
+                  <input className={inputCls} value={profileData.numero_assurance_rcp} onChange={e => setProfileData({ ...profileData, numero_assurance_rcp: e.target.value })} placeholder="N° de contrat RCP" />
+                </div>
               </div>
             </div>
-          )}
 
-          <div className="pt-6">
-            <button
-              onClick={handleUpdate}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
-            >
-              <Save size={20} /> Enregistrer les modifications
-            </button>
+            {/* Contact */}
+            <div>
+              <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
+                <Plus size={16} className="text-rose-500" /> Coordonnées & Contact
+              </h3>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className={labelCls}>Email professionnel</label>
+                  <input className={inputCls} type="email" value={profileData.email} onChange={e => setProfileData({ ...profileData, email: e.target.value })} placeholder="email@pro.fr" />
+                </div>
+                <div>
+                  <label className={labelCls}>Téléphone</label>
+                  <input className={inputCls} type="tel" value={profileData.telephone} onChange={e => setProfileData({ ...profileData, telephone: e.target.value })} placeholder="06..." />
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className={labelCls}>Adresse Siège Social</label>
+                  <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
+                  <label htmlFor="profSameAddress" className="text-sm text-gray-600 cursor-pointer select-none">Même adresse pour les sessions de formation</label>
+                </div>
+                {!sameAddress && (
+                  <div>
+                    <label className={labelCls}>Adresse de Pratique</label>
+                    <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
+        )}
+
+        <div className="pt-8 mt-6 border-t border-gray-100">
+          <button
+            onClick={handleUpdate}
+            disabled={isSaving}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <Save size={20} /> {isSaving ? 'Enregistrement...' : 'Enregistrer les modifications'}
+          </button>
         </div>
       </div>
     </div>
