@@ -329,21 +329,24 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 const convertDocxBlobToPdf = async (docxBlob, signature = null) => {
   if (!window.docx) throw new Error('docx-preview non disponible');
 
-  // A4 at 96 dpi = 794 px
-  const PAGE_W = 794;
+  // Standard DOCX page width at 96 dpi (matches Word default for A4/Letter templates)
+  const DOC_W = 816;
+  const SCALE = 2;
 
   const wrapper = document.createElement('div');
-  wrapper.style.cssText = `width:${PAGE_W}px;position:fixed;left:-9999px;top:0;background:#ffffff;`;
+  // position:absolute avoids viewport clipping; scrollHeight reflects full content height
+  wrapper.style.cssText = `width:${DOC_W}px;position:absolute;left:-9999px;top:0;background:#fff;`;
 
-  // CSS overrides: suppress tracked-changes markup, box-shadows, fix table layout
   const styleEl = document.createElement('style');
-  styleEl.textContent = `
-    .docx-wrapper { background:#fff !important; padding:0 !important; }
-    .docx-wrapper > section { box-shadow:none !important; margin:0 auto !important; background:#fff !important; }
-    ins, del, .ins, .del { background:none !important; color:inherit !important; text-decoration:none !important; }
-    table { table-layout:fixed !important; border-collapse:collapse !important; width:100% !important; }
-    td, th { overflow:hidden !important; word-wrap:break-word !important; word-break:break-word !important; }
-  `;
+  styleEl.textContent = [
+    '.docx-wrapper{background:#fff!important;padding:0!important;}',
+    '.docx-wrapper>section{box-shadow:none!important;margin:0!important;background:#fff!important;}',
+    // suppress tracked-change markup colours
+    'ins,del{background:transparent!important;text-decoration:none!important;}',
+    // prevent table cells from overflowing their boundaries
+    'table{table-layout:fixed!important;border-collapse:collapse!important;}',
+    'td,th{word-wrap:break-word!important;word-break:break-word!important;overflow:hidden!important;}',
+  ].join('');
   wrapper.appendChild(styleEl);
   document.body.appendChild(wrapper);
 
@@ -354,80 +357,71 @@ const convertDocxBlobToPdf = async (docxBlob, signature = null) => {
       renderFooters: true,
       renderChanges: false,
       ignoreLastRenderedPageBreak: false,
-      breakPages: true,
     });
 
     if (signature) {
-      const sigDiv = document.createElement('div');
-      sigDiv.style.cssText = 'padding:30px 40px 20px;font-family:Arial,sans-serif;';
-      sigDiv.innerHTML = `
-        <hr style="border:none;border-top:1px solid #bbb;margin-bottom:20px;" />
-        <div style="display:flex;justify-content:flex-end;">
-          <div style="text-align:left;">
-            <p style="font-weight:bold;font-size:12px;margin:0 0 5px 0;">Le sous-traitant</p>
-            <p style="font-size:12px;margin:0 0 4px 0;">${signature.signerName}</p>
-            <p style="font-size:10px;color:#555;margin:0;">Signé numériquement le ${signature.nowStr}</p>
-          </div>
-        </div>`;
-      wrapper.appendChild(sigDiv);
+      const sd = document.createElement('div');
+      sd.style.cssText = 'padding:24px 40px;font-family:Arial,sans-serif;border-top:1px solid #bbb;margin-top:20px;';
+      sd.innerHTML = `
+        <table style="width:100%;border:none;">
+          <tr>
+            <td style="width:50%;border:none;vertical-align:top;">
+              <p style="font-weight:bold;font-size:11px;margin:0 0 4px 0;">Le donneur d'ordre</p>
+              <p style="font-size:11px;margin:0;">VB Coaching – Véronique BOULAIS</p>
+            </td>
+            <td style="width:50%;border:none;vertical-align:top;">
+              <p style="font-weight:bold;font-size:11px;margin:0 0 4px 0;">Le sous-traitant</p>
+              <p style="font-size:11px;margin:0 0 3px 0;">${signature.signerName}</p>
+              <p style="font-size:9px;color:#555;margin:0;">Signé numériquement le ${signature.nowStr}</p>
+            </td>
+          </tr>
+        </table>`;
+      wrapper.appendChild(sd);
     }
 
-    // Wait for fonts and layout to settle
-    await new Promise(r => setTimeout(r, 1000));
+    // Let fonts and layout settle before capturing
+    await new Promise(r => setTimeout(r, 1200));
 
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = pdf.internal.pageSize.getHeight();
-
-    // docx-preview renders each page as a <section> — capture them individually
-    // so page breaks match the original document exactly
-    const pageSections = Array.from(wrapper.querySelectorAll('.docx-wrapper > section'));
-
-    if (pageSections.length > 0) {
-      for (let i = 0; i < pageSections.length; i++) {
-        if (i > 0) pdf.addPage();
-        const canvas = await html2canvas(pageSections[i], {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-          allowTaint: false,
-        });
-        const imgData = canvas.toDataURL('image/jpeg', 0.97);
-        const imgH = (canvas.height * pdfW) / canvas.width;
-        // Fit the page: if content is taller than A4 scale proportionally
-        if (imgH > pdfH) {
-          const ratio = pdfH / imgH;
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfW * ratio, pdfH);
-        } else {
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
-        }
-      }
-    } else {
-      // Fallback: single-pass capture + slice
-      const canvas = await html2canvas(wrapper, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        width: PAGE_W,
-        height: wrapper.scrollHeight,
-        windowWidth: PAGE_W,
-      });
-      const imgData = canvas.toDataURL('image/jpeg', 0.97);
-      const imgH = (canvas.height * pdfW) / canvas.width;
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
-      let remaining = imgH - pdfH;
-      let offset = pdfH;
-      while (remaining > 0) {
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -offset, pdfW, imgH);
-        offset += pdfH;
-        remaining -= pdfH;
-      }
-    }
+    // Capture the entire document as one tall image
+    const canvas = await html2canvas(wrapper, {
+      scale: SCALE,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      width: DOC_W,
+      height: wrapper.scrollHeight,
+      windowWidth: DOC_W,
+    });
 
     document.body.removeChild(wrapper);
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pdfW = pdf.internal.pageSize.getWidth();   // 595.28 pt
+    const pdfH = pdf.internal.pageSize.getHeight();  // 841.89 pt
+
+    // Exact A4 page height in canvas pixels:
+    // canvas.width px === pdfW pt  →  pdfH pt === pdfH * canvas.width / pdfW px
+    const pageH_px = Math.round(pdfH * canvas.width / pdfW);
+    const nPages = Math.ceil(canvas.height / pageH_px);
+
+    for (let i = 0; i < nPages; i++) {
+      if (i > 0) pdf.addPage();
+
+      // Crop exactly one A4-worth of pixels from the full canvas
+      const sliceH = Math.min(pageH_px, canvas.height - i * pageH_px);
+      const pg = document.createElement('canvas');
+      pg.width = canvas.width;
+      pg.height = sliceH;
+      const ctx = pg.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, pg.width, pg.height);
+      ctx.drawImage(canvas, 0, -i * pageH_px); // shift canvas up to reveal the right slice
+
+      const imgData = pg.toDataURL('image/jpeg', 0.97);
+      // Last page may be shorter than a full A4 page
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH * sliceH / pageH_px);
+    }
+
     return pdf.output('blob');
   } catch (err) {
     if (wrapper.parentNode) document.body.removeChild(wrapper);
