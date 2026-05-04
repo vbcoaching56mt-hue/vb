@@ -1582,11 +1582,17 @@ const ClientDetailView = ({
           <p className="text-gray-500">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
         </div>
         <div className="mt-4 md:mt-0 flex items-center gap-3">
-          <button 
+          <button
+            onClick={() => handleDownloadPDF(client, 'emargement')}
+            className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+          >
+            <Download size={16} /> Récap Émargements
+          </button>
+          <button
             onClick={() => handleDownloadPDF(client)}
             className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
           >
-            <Download size={16} /> Télécharger le Récapitulatif
+            <Download size={16} /> Récapitulatif Général
           </button>
           <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
             {client.status || 'Actif'}
@@ -1957,7 +1963,7 @@ const ClientDetailView = ({
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                         Client: {clientSigned ? 'Signé ✓' : 'En attente'}
                       </span>
-                      {needsFormateurSign && (
+                      {(needsFormateurSign || formateurSigned) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           Formateur: {formateurSigned ? 'Signé ✓' : 'En attente'}
                         </span>
@@ -4127,10 +4133,12 @@ const SessionsView = ({
                                       disabled={session.statut_client === 'Signé' || isDateLocked}
                                       onClick={() => {
                                         if (session.statut_client === 'Signé') return;
-                                        const fileUrl = docUrl || null;
-                                        console.log('[Signer] URL document envoyée au visualiseur:', fileUrl);
-                                        console.log('[Signer] session:', session.id, session.type_activite);
-                                        setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        if (session.type_activite === 'signature') {
+                                          signSession && signSession(session);
+                                        } else {
+                                          const fileUrl = docUrl || null;
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        }
                                       }}
                                       className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
                                         session.statut_client === 'Signé'
@@ -5731,7 +5739,7 @@ export default function App() {
       updateData.statut_formateur = 'Signé';
       updateData.statut = 'Signé';
     } else {
-      updateData.date_signature = new Date().toISOString();
+      updateData.date_signature_client = new Date().toISOString();
       updateData.statut_client = 'Signé';
       updateData.statut = 'Signé';
     }
@@ -5778,7 +5786,7 @@ export default function App() {
     if (clientSig) {
       updateData.signature_client = clientSig;
       updateData.statut = 'Signé';
-      updateData.date_signature = new Date().toISOString();
+      updateData.date_signature_client = new Date().toISOString();
     }
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
@@ -6507,14 +6515,15 @@ export default function App() {
     setSigningDocId(null);
   };
 
-  const handleDownloadPDF = async (doc) => {
+  const handleDownloadPDF = async (doc, recapType = 'general') => {
     if (doc && doc.id) {
       // Détection : Si doc n'a pas d'URL mais a un rôle ou email, c'est un client -> Générer Récapitulatif
       const isClientRecap = (doc.role || doc.email) && !doc.url && !doc.url_signed_pdf;
 
       if (isClientRecap) {
         try {
-          toast.loading("Génération du récapitulatif...", { id: 'recap' });
+          const isEmargementOnly = recapType === 'emargement';
+          toast.loading(isEmargementOnly ? "Génération du récap émargements..." : "Génération du récapitulatif...", { id: 'recap' });
           const clientSessions = sessions.filter(s => s.client_id === doc.id).sort((a, b) => {
             if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
             return new Date(a.created_at) - new Date(b.created_at);
@@ -6536,7 +6545,9 @@ export default function App() {
           recapEl.style.left = '-9999px';
 
           let sessionsContent = Object.values(grouped).sort((a, b) => a.numero - b.numero).map(g => {
-            const itemsHtml = g.items.map(item => {
+            const filteredItems = isEmargementOnly ? g.items.filter(i => i.type_activite === 'signature') : g.items;
+            if (filteredItems.length === 0) return '';
+            const itemsHtml = filteredItems.map(item => {
               const sigClient = item.signature_image || item.signature_client || null;
               const sigCoach = item.signature_formateur || null;
               const dateSigClient = item.date_signature_client ? new Date(item.date_signature_client).toLocaleString('fr-FR') : (item.statut === 'Signé' ? 'Horodatage certifié' : null);
@@ -6591,8 +6602,8 @@ export default function App() {
             <div style="border: 1px solid #e2e8f0; border-radius: 24px; padding: 40px; background: #fff;">
               <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; padding-bottom: 30px; border-bottom: 2px solid #f1f5f9;">
                 <div>
-                  <h1 style="color: #4f46e5; font-size: 28px; font-weight: 900; margin: 0; letter-spacing: -0.025em;">RÉCAPITULATIF DE SÉANCES</h1>
-                  <p style="color: #94a3b8; font-size: 11px; font-weight: bold; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.1em;">Document de traçabilité Qualiopi</p>
+                  <h1 style="color: #4f46e5; font-size: 28px; font-weight: 900; margin: 0; letter-spacing: -0.025em;">${isEmargementOnly ? 'FEUILLES D\'ÉMARGEMENT' : 'RÉCAPITULATIF DE SÉANCES'}</h1>
+                  <p style="color: #94a3b8; font-size: 11px; font-weight: bold; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.1em;">${isEmargementOnly ? 'Émargements signés — Traçabilité Qualiopi' : 'Document de traçabilité Qualiopi'}</p>
                 </div>
                 <div style="text-align: right;">
                   <h2 style="font-size: 18px; font-weight: 800; color: #1e293b; margin: 0;">${doc.nomcomplet_client || doc.nom}</h2>
@@ -6621,9 +6632,9 @@ export default function App() {
           const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
           const imgData = canvas.toDataURL('image/png');
           pdf.addImage(imgData, 'PNG', 40, 40, 515, (canvas.height * 515) / canvas.width);
-          pdf.save(`Recapitulatif_${doc.nom || 'Client'}_${Date.now()}.pdf`);
+          pdf.save(`${isEmargementOnly ? 'Emargements' : 'Recapitulatif'}_${doc.nom || 'Client'}_${Date.now()}.pdf`);
           
-          toast.success("Récapitulatif généré !", { id: 'recap' });
+          toast.success(isEmargementOnly ? "Récap émargements généré !" : "Récapitulatif généré !", { id: 'recap' });
           return;
         } catch (err) {
           console.error("Recap Error:", err);
