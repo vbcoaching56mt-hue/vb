@@ -170,6 +170,56 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   );
 };
 
+const AddressInput = ({ value, onChange }) => {
+  const parseAddress = (addr) => {
+    if (!addr) return { rue: '', codePostal: '', ville: '' };
+    const m = addr.match(/^(.*?),?\s*(\d{5})\s+(.+)$/);
+    if (m) return { rue: m[1].trim().replace(/,$/, ''), codePostal: m[2], ville: m[3].trim() };
+    return { rue: addr, codePostal: '', ville: '' };
+  };
+  const [parts, setParts] = React.useState(() => parseAddress(value));
+  const updatePart = (field, val) => {
+    const np = { ...parts, [field]: val };
+    setParts(np);
+    const combined = [np.rue, np.codePostal && np.ville ? `${np.codePostal} ${np.ville}` : (np.codePostal || np.ville)].filter(Boolean).join(', ');
+    onChange(combined);
+  };
+  return (
+    <div className="space-y-2">
+      <div>
+        <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">N° et Rue</label>
+        <input
+          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+          value={parts.rue}
+          onChange={e => updatePart('rue', e.target.value)}
+          placeholder="Ex: 12 Rue de la Paix"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Code Postal</label>
+          <input
+            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+            value={parts.codePostal}
+            onChange={e => updatePart('codePostal', e.target.value.replace(/\D/g, '').slice(0, 5))}
+            placeholder="56000"
+            maxLength={5}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Ville</label>
+          <input
+            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+            value={parts.ville}
+            onChange={e => updatePart('ville', e.target.value)}
+            placeholder="Ex: Vannes"
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
   const fCanvasRef = useRef(null);
   const cCanvasRef = useRef(null);
@@ -2161,9 +2211,13 @@ const FormateurDetailView = ({
     formateur_siret: formateur.formateur_siret || formateur.siret || '',
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
+    adresse_session: formateur.adresse_session || '',
     email: formateur.email || '',
     telephone: formateur.telephone || ''
   });
+  const [sameAddress, setSameAddress] = React.useState(
+    !formateur.adresse_session || formateur.adresse_session === (formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '')
+  );
 
   const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id) : [];
 
@@ -2176,6 +2230,7 @@ const FormateurDetailView = ({
         formateur_siret: legalInfo.formateur_siret,
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
+        adresse_session: sameAddress ? legalInfo.adresse_formateur : legalInfo.adresse_session,
         email: legalInfo.email,
         telephone: legalInfo.telephone
       })
@@ -2239,10 +2294,33 @@ const FormateurDetailView = ({
             </h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Professionnelle</label>
-                <textarea rows="2" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                  value={legalInfo.adresse_formateur} onChange={e => setLegalInfo({ ...legalInfo, adresse_formateur: e.target.value })} placeholder="Adresse complète du siège" />
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Siège Social</label>
+                <AddressInput
+                  value={legalInfo.adresse_formateur}
+                  onChange={val => setLegalInfo({ ...legalInfo, adresse_formateur: val })}
+                />
               </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="sameAddress"
+                  checked={sameAddress}
+                  onChange={e => setSameAddress(e.target.checked)}
+                  className="w-4 h-4 accent-rose-500 cursor-pointer rounded"
+                />
+                <label htmlFor="sameAddress" className="text-sm text-gray-600 cursor-pointer select-none">
+                  Même adresse pour les sessions de formation
+                </label>
+              </div>
+              {!sameAddress && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse de Pratique</label>
+                  <AddressInput
+                    value={legalInfo.adresse_session}
+                    onChange={val => setLegalInfo({ ...legalInfo, adresse_session: val })}
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
@@ -4980,7 +5058,7 @@ export default function App() {
     // 1. Charger les formateurs depuis 'utilisateurs'
     const { data: formateursData, error: formateursError } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, telephone')
+      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone')
       .eq('role', 'formateur');
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
@@ -6188,6 +6266,7 @@ export default function App() {
           nom_formateur: theFormateur.nom || '',
           raison_sociale: theFormateur.nom || '',
           adresse_formateur: theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse_client || theFormateur.adresse || '',
+          adresse_session: theFormateur.adresse_session || theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse || '',
           formateur_nda: theFormateur.formateur_nda || theFormateur.nda || '',
           formateur_siret: theFormateur.formateur_siret || theFormateur.siret || '',
           email_formateur: theFormateur.email || '',
