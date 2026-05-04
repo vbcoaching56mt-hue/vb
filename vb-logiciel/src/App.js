@@ -329,19 +329,34 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 const convertDocxBlobToPdf = async (docxBlob, signature = null) => {
   if (!window.docx) throw new Error('docx-preview non disponible');
 
-  const container = document.createElement('div');
-  container.style.cssText = 'width:816px;position:fixed;left:-9999px;top:0;background:#ffffff;';
-  document.body.appendChild(container);
+  // A4 at 96 dpi = 794 px
+  const PAGE_W = 794;
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = `width:${PAGE_W}px;position:fixed;left:-9999px;top:0;background:#ffffff;`;
+
+  // CSS overrides: suppress tracked-changes markup, box-shadows, fix table layout
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    .docx-wrapper { background:#fff !important; padding:0 !important; }
+    .docx-wrapper > section { box-shadow:none !important; margin:0 auto !important; background:#fff !important; }
+    ins, del, .ins, .del { background:none !important; color:inherit !important; text-decoration:none !important; }
+    table { table-layout:fixed !important; border-collapse:collapse !important; width:100% !important; }
+    td, th { overflow:hidden !important; word-wrap:break-word !important; word-break:break-word !important; }
+  `;
+  wrapper.appendChild(styleEl);
+  document.body.appendChild(wrapper);
 
   try {
     const arrayBuffer = await docxBlob.arrayBuffer();
-    await window.docx.renderAsync(arrayBuffer, container, null, {
+    await window.docx.renderAsync(arrayBuffer, wrapper, null, {
       renderHeaders: true,
       renderFooters: true,
+      renderChanges: false,
       ignoreLastRenderedPageBreak: false,
+      breakPages: true,
     });
 
-    // Ajouter le bloc de signature dans le HTML avant la capture
     if (signature) {
       const sigDiv = document.createElement('div');
       sigDiv.style.cssText = 'padding:30px 40px 20px;font-family:Arial,sans-serif;';
@@ -354,42 +369,68 @@ const convertDocxBlobToPdf = async (docxBlob, signature = null) => {
             <p style="font-size:10px;color:#555;margin:0;">Signé numériquement le ${signature.nowStr}</p>
           </div>
         </div>`;
-      container.appendChild(sigDiv);
+      wrapper.appendChild(sigDiv);
     }
 
-    await new Promise(r => setTimeout(r, 700));
-
-    const canvas = await html2canvas(container, {
-      scale: 1.5,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      width: 816,
-      height: container.scrollHeight,
-      windowWidth: 816,
-    });
-
-    document.body.removeChild(container);
+    // Wait for fonts and layout to settle
+    await new Promise(r => setTimeout(r, 1000));
 
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = pdf.internal.pageSize.getHeight();
-    const imgData = canvas.toDataURL('image/jpeg', 0.93);
-    const imgH = (canvas.height * pdfW) / canvas.width;
 
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
-    let remaining = imgH - pdfH;
-    let offset = pdfH;
-    while (remaining > 0) {
-      pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, -offset, pdfW, imgH);
-      offset += pdfH;
-      remaining -= pdfH;
+    // docx-preview renders each page as a <section> — capture them individually
+    // so page breaks match the original document exactly
+    const pageSections = Array.from(wrapper.querySelectorAll('.docx-wrapper > section'));
+
+    if (pageSections.length > 0) {
+      for (let i = 0; i < pageSections.length; i++) {
+        if (i > 0) pdf.addPage();
+        const canvas = await html2canvas(pageSections[i], {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          allowTaint: false,
+        });
+        const imgData = canvas.toDataURL('image/jpeg', 0.97);
+        const imgH = (canvas.height * pdfW) / canvas.width;
+        // Fit the page: if content is taller than A4 scale proportionally
+        if (imgH > pdfH) {
+          const ratio = pdfH / imgH;
+          pdf.addImage(imgData, 'JPEG', 0, 0, pdfW * ratio, pdfH);
+        } else {
+          pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
+        }
+      }
+    } else {
+      // Fallback: single-pass capture + slice
+      const canvas = await html2canvas(wrapper, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        width: PAGE_W,
+        height: wrapper.scrollHeight,
+        windowWidth: PAGE_W,
+      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.97);
+      const imgH = (canvas.height * pdfW) / canvas.width;
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
+      let remaining = imgH - pdfH;
+      let offset = pdfH;
+      while (remaining > 0) {
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, -offset, pdfW, imgH);
+        offset += pdfH;
+        remaining -= pdfH;
+      }
     }
 
+    document.body.removeChild(wrapper);
     return pdf.output('blob');
   } catch (err) {
-    if (container.parentNode) document.body.removeChild(container);
+    if (wrapper.parentNode) document.body.removeChild(wrapper);
     throw err;
   }
 };
