@@ -170,6 +170,96 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   );
 };
 
+const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle }) => {
+  const fCanvasRef = useRef(null);
+  const cCanvasRef = useRef(null);
+  const [fDrawing, setFDrawing] = useState(false);
+  const [cDrawing, setCDrawing] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const setup = (canvas) => {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#0f172a';
+    };
+    setup(fCanvasRef.current);
+    setup(cCanvasRef.current);
+  }, [isOpen]);
+
+  const getCoords = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches?.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    return { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+  };
+
+  const fStart = (e) => { if (e.touches) e.preventDefault(); setFDrawing(true); const ctx = fCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, fCanvasRef.current); ctx.beginPath(); ctx.moveTo(x, y); };
+  const fMove  = (e) => { if (!fDrawing) return; if (e.touches) e.preventDefault(); const ctx = fCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, fCanvasRef.current); ctx.lineTo(x, y); ctx.stroke(); };
+  const fStop  = () => setFDrawing(false);
+
+  const cStart = (e) => { if (e.touches) e.preventDefault(); setCDrawing(true); const ctx = cCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, cCanvasRef.current); ctx.beginPath(); ctx.moveTo(x, y); };
+  const cMove  = (e) => { if (!cDrawing) return; if (e.touches) e.preventDefault(); const ctx = cCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, cCanvasRef.current); ctx.lineTo(x, y); ctx.stroke(); };
+  const cStop  = () => setCDrawing(false);
+
+  const clearCanvas = (ref) => { const c = ref.current; if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height); };
+
+  const isEmpty = (canvas) => {
+    if (!canvas) return true;
+    return !Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data).some(v => v !== 0);
+  };
+
+  const handleSave = () => {
+    if (isEmpty(fCanvasRef.current)) { toast.error('La signature du formateur est requise.'); return; }
+    const fSig = fCanvasRef.current.toDataURL('image/png');
+    const cSig = !isEmpty(cCanvasRef.current) ? cCanvasRef.current.toDataURL('image/png') : null;
+    onSave(fSig, cSig);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full max-w-2xl border border-gray-100">
+        <h3 className="text-xl font-extrabold text-gray-900 mb-1">Émargement de présence</h3>
+        {sessionTitle && <p className="text-sm text-indigo-600 font-bold mb-3">{sessionTitle}</p>}
+        <p className="text-sm text-gray-500 mb-6">Signez dans les cadres ci-dessous pour valider la présence.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Formateur <span className="text-rose-500">*</span></span>
+              <button onClick={() => clearCanvas(fCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
+            </div>
+            <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
+              <canvas ref={fCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
+                onMouseDown={fStart} onMouseMove={fMove} onMouseUp={fStop} onMouseOut={fStop}
+                onTouchStart={fStart} onTouchMove={fMove} onTouchEnd={fStop} />
+              <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
+            </div>
+          </div>
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Bénéficiaire</span>
+              <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
+            </div>
+            <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
+              <canvas ref={cCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
+                onMouseDown={cStart} onMouseMove={cMove} onMouseUp={cStop} onMouseOut={cStop}
+                onTouchStart={cStart} onTouchMove={cMove} onTouchEnd={cStop} />
+              <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-between gap-3">
+          <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
+          <button onClick={handleSave} className="px-6 py-3 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 transition-colors shadow-lg">Valider l'émargement</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Modale PDF polyvalente:
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
@@ -5675,6 +5765,32 @@ export default function App() {
     }
   };
 
+  const handleEmargementSave = async (formateurSig, clientSig) => {
+    const sessionId = signingSessionId;
+    if (!sessionId) return;
+
+    const updateData = {
+      signature_formateur: formateurSig,
+      statut_formateur: 'Signé',
+      date_signature_formateur: new Date().toISOString(),
+    };
+
+    if (clientSig) {
+      updateData.signature_client = clientSig;
+      updateData.statut = 'Signé';
+      updateData.date_signature = new Date().toISOString();
+    }
+
+    const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
+    if (!error) {
+      await fetchSessions();
+      setSigningSessionId(null);
+      toast.success('Émargement enregistré !');
+    } else {
+      toast.error('Erreur : ' + error.message);
+    }
+  };
+
   const handleAddSessionItem = async (data) => {
     if (!targetSessionForAddition) return;
     
@@ -7066,6 +7182,13 @@ export default function App() {
         isOpen={signingDocId !== null}
         onClose={() => setSigningDocId(null)}
         onSave={handleSignatureSave}
+      />
+
+      <EmargementModal
+        isOpen={signingSessionId !== null}
+        onClose={() => setSigningSessionId(null)}
+        onSave={handleEmargementSave}
+        sessionTitle={(() => { const s = sessions.find(s => s.id === signingSessionId); return s?.ressource_titre || s?.nom; })()}
       />
 
       <SessionItemModal
