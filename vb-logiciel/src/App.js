@@ -2213,7 +2213,9 @@ const FormateurDetailView = ({
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     adresse_session: formateur.adresse_session || '',
     email: formateur.email || '',
-    telephone: formateur.telephone || ''
+    telephone: formateur.telephone || '',
+    compagnie_assurance: formateur.compagnie_assurance || '',
+    numero_assurance_rcp: formateur.numero_assurance_rcp || ''
   });
   const [sameAddress, setSameAddress] = React.useState(
     !formateur.adresse_session || formateur.adresse_session === (formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '')
@@ -2232,7 +2234,9 @@ const FormateurDetailView = ({
         adresse_formateur: legalInfo.adresse_formateur,
         adresse_session: sameAddress ? legalInfo.adresse_formateur : legalInfo.adresse_session,
         email: legalInfo.email,
-        telephone: legalInfo.telephone
+        telephone: legalInfo.telephone,
+        compagnie_assurance: legalInfo.compagnie_assurance,
+        numero_assurance_rcp: legalInfo.numero_assurance_rcp
       })
       .eq('id', formateur.id);
 
@@ -2284,6 +2288,16 @@ const FormateurDetailView = ({
                   <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
                     value={legalInfo.formateur_nda} onChange={e => setLegalInfo({ ...legalInfo, formateur_nda: e.target.value })} placeholder="N° Déclaration" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Assurance RCP — Compagnie</label>
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  value={legalInfo.compagnie_assurance} onChange={e => setLegalInfo({ ...legalInfo, compagnie_assurance: e.target.value })} placeholder="Ex: AXA, MAIF, Hiscox..." />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Assurance RCP — N° de contrat</label>
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  value={legalInfo.numero_assurance_rcp} onChange={e => setLegalInfo({ ...legalInfo, numero_assurance_rcp: e.target.value })} placeholder="N° de contrat RCP" />
               </div>
             </div>
           </div>
@@ -5058,7 +5072,7 @@ export default function App() {
     // 1. Charger les formateurs depuis 'utilisateurs'
     const { data: formateursData, error: formateursError } = await supabase
       .from('utilisateurs')
-      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone')
+      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
       .eq('role', 'formateur');
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
@@ -6271,6 +6285,8 @@ export default function App() {
           formateur_siret: theFormateur.formateur_siret || theFormateur.siret || '',
           email_formateur: theFormateur.email || '',
           tel_formateur: theFormateur.telephone || '',
+          compagnie_assurance: theFormateur.compagnie_assurance || '',
+          numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
           date_signature: new Date().toLocaleDateString('fr-FR')
         };
         targetId = fId;
