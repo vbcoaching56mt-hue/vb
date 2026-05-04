@@ -6578,8 +6578,8 @@ export default function App() {
         pdfBlob = new Blob([pdfBytesOut], { type: 'application/pdf' });
 
       } else {
-        // DOCX → PDF via API serveur (mammoth + pdfkit, robuste, sans dépendance navigateur)
-        toast.loading('Conversion du document…', { id: TOAST_ID });
+        // DOCX → injecter la signature côté serveur, puis convertir en PDF dans le navigateur
+        toast.loading('Injection de la signature…', { id: TOAST_ID });
         const apiResp = await fetch('/api/convert-docx', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -6587,21 +6587,20 @@ export default function App() {
         });
         if (!apiResp.ok) {
           const errText = await apiResp.text().catch(() => apiResp.statusText);
-          throw new Error('Conversion PDF : ' + errText);
+          throw new Error('Injection signature : ' + errText);
         }
-        pdfBlob = await apiResp.blob();
+        const signedDocxBlob = await apiResp.blob();
+        // Convertir le DOCX signé en PDF (signature déjà injectée dans le XML DOCX)
+        toast.loading('Conversion en PDF…', { id: TOAST_ID });
+        pdfBlob = await convertDocxBlobToPdf(signedDocxBlob, null);
       }
 
-      // Upload du document signé (DOCX ou PDF selon la source)
+      // Upload toujours en PDF
       toast.loading('Upload du document signé…', { id: TOAST_ID });
-      const signedExt = isDocx ? 'docx' : 'pdf';
-      const signedMime = isDocx
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/pdf';
-      const fileName = `signed_${docId}_${Date.now()}.${signedExt}`;
+      const fileName = `signed_${docId}_${Date.now()}.pdf`;
       const { error: uploadError } = await supabase.storage
         .from('documents')
-        .upload(fileName, new File([pdfBlob], fileName, { type: signedMime }));
+        .upload(fileName, new File([pdfBlob], fileName, { type: 'application/pdf' }));
       if (uploadError) throw new Error('Upload : ' + uploadError.message);
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
