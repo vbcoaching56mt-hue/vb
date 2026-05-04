@@ -170,11 +170,12 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   );
 };
 
-const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle }) => {
+const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
   const fCanvasRef = useRef(null);
   const cCanvasRef = useRef(null);
   const [fDrawing, setFDrawing] = useState(false);
   const [cDrawing, setCDrawing] = useState(false);
+  const isClient = signerRole === 'client';
 
   useEffect(() => {
     if (!isOpen) return;
@@ -185,9 +186,9 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle }) => {
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     };
-    setup(fCanvasRef.current);
+    if (!isClient) setup(fCanvasRef.current);
     setup(cCanvasRef.current);
-  }, [isOpen]);
+  }, [isOpen, isClient]);
 
   const getCoords = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
@@ -211,36 +212,43 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle }) => {
   };
 
   const handleSave = () => {
-    if (isEmpty(fCanvasRef.current)) { toast.error('La signature du formateur est requise.'); return; }
-    const fSig = fCanvasRef.current.toDataURL('image/png');
-    const cSig = !isEmpty(cCanvasRef.current) ? cCanvasRef.current.toDataURL('image/png') : null;
-    onSave(fSig, cSig);
+    if (isClient) {
+      if (isEmpty(cCanvasRef.current)) { toast.error('Votre signature est requise.'); return; }
+      onSave(null, cCanvasRef.current.toDataURL('image/png'));
+    } else {
+      if (isEmpty(fCanvasRef.current)) { toast.error('La signature du formateur est requise.'); return; }
+      const fSig = fCanvasRef.current.toDataURL('image/png');
+      const cSig = !isEmpty(cCanvasRef.current) ? cCanvasRef.current.toDataURL('image/png') : null;
+      onSave(fSig, cSig);
+    }
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-gray-900/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full max-w-2xl border border-gray-100">
+      <div className={`bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full border border-gray-100 ${isClient ? 'max-w-lg' : 'max-w-2xl'}`}>
         <h3 className="text-xl font-extrabold text-gray-900 mb-1">Émargement de présence</h3>
         {sessionTitle && <p className="text-sm text-indigo-600 font-bold mb-3">{sessionTitle}</p>}
-        <p className="text-sm text-gray-500 mb-6">Signez dans les cadres ci-dessous pour valider la présence.</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+        <p className="text-sm text-gray-500 mb-6">{isClient ? 'Signez ci-dessous pour valider votre présence.' : 'Signez dans les cadres ci-dessous pour valider la présence.'}</p>
+        <div className={`grid gap-6 mb-6 ${isClient ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
+          {!isClient && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Formateur <span className="text-rose-500">*</span></span>
+                <button onClick={() => clearCanvas(fCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
+              </div>
+              <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
+                <canvas ref={fCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
+                  onMouseDown={fStart} onMouseMove={fMove} onMouseUp={fStop} onMouseOut={fStop}
+                  onTouchStart={fStart} onTouchMove={fMove} onTouchEnd={fStop} />
+                <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
+              </div>
+            </div>
+          )}
           <div>
             <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Formateur <span className="text-rose-500">*</span></span>
-              <button onClick={() => clearCanvas(fCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
-            </div>
-            <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
-              <canvas ref={fCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
-                onMouseDown={fStart} onMouseMove={fMove} onMouseUp={fStop} onMouseOut={fStop}
-                onTouchStart={fStart} onTouchMove={fMove} onTouchEnd={fStop} />
-              <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
-            </div>
-          </div>
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Bénéficiaire</span>
+              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Bénéficiaire {isClient && <span className="text-rose-500">*</span>}</span>
               <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
             </div>
             <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
@@ -1479,14 +1487,14 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
 };
 
 const ClientDetailView = ({
-  client, formateurs, assignFormateur, handleModuleChange, modules, 
-  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, 
-  handleGenerateDocx, documentTemplates, pedagogicalResources, 
-  handleDownloadResource, handleUploadExerciseResponse, generateSessions, 
-  handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition, 
-  setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime, 
+  client, formateurs, assignFormateur, handleModuleChange, modules,
+  supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, fetchDocuments,
+  handleGenerateDocx, documentTemplates, pedagogicalResources,
+  handleDownloadResource, handleUploadExerciseResponse, generateSessions,
+  handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition,
+  setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -1715,16 +1723,24 @@ const ClientDetailView = ({
                         </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => window.open(signedUrl, '_blank')}
-                      className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
-                    >
-                      <Download size={14} /> Télécharger
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setViewingSession && setViewingSession({ session: { ...session, file_url: signedUrl }, mode: 'view' })}
+                        className="flex items-center gap-2 bg-white text-indigo-700 px-4 py-2 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                      >
+                        <Eye size={14} /> Voir
+                      </button>
+                      <button
+                        onClick={() => window.open(signedUrl, '_blank')}
+                        className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                      >
+                        <Download size={14} /> Télécharger
+                      </button>
+                    </div>
                   </div>
                 );
               })}
-            
+
             {/* Documents administratifs signés */}
             {documents
               .filter(d => d.user_id === client.id && d.statut === 'Signé')
@@ -1741,12 +1757,20 @@ const ClientDetailView = ({
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => window.open(doc.url || doc.file_url, '_blank')}
-                    className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
-                  >
-                    <Download size={14} /> Télécharger
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setViewingDocId && setViewingDocId(doc.id)}
+                      className="flex items-center gap-2 bg-white text-indigo-700 px-4 py-2 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                    >
+                      <Eye size={14} /> Voir
+                    </button>
+                    <button
+                      onClick={() => window.open(doc.url || doc.file_url, '_blank')}
+                      className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                    >
+                      <Download size={14} /> Télécharger
+                    </button>
+                  </div>
                 </div>
               ))}
 
@@ -1971,7 +1995,11 @@ const ClientDetailView = ({
                     </div>
                   </div>
                 </div>
-                <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
+                  <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
+                  <button onClick={async () => { if (window.confirm(`Supprimer "${doc.nom}" ?`)) { await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); } }} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
+                </div>
               </div>
               );
             }) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
@@ -1997,7 +2025,7 @@ const AdminClientsView = ({
   setTargetSessionForAddition, setViewingSession,
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -2014,7 +2042,7 @@ const AdminClientsView = ({
           client={selectedClient} formateurs={formateurs} assignFormateur={assignFormateur}
           handleModuleChange={handleModuleChange} modules={modules} supabase={supabase}
           fetchUtilisateurs={fetchUtilisateurs} onBack={() => setExpandedClientId(null)}
-          sessions={sessions} fetchSessions={fetchSessions} documents={documents}
+          sessions={sessions} fetchSessions={fetchSessions} documents={documents} fetchDocuments={fetchDocuments}
           handleGenerateDocx={handleGenerateDocx} documentTemplates={documentTemplates}
           pedagogicalResources={pedagogicalResources}
           handleDownloadResource={handleDownloadResource}
@@ -2033,6 +2061,7 @@ const AdminClientsView = ({
           lastModifiedSessionId={lastModifiedSessionId}
           setDocSettingsTarget={setDocSettingsTarget}
           setIsDocSettingsOpen={setIsDocSettingsOpen}
+          setViewingDocId={setViewingDocId}
         />
       );
     }
@@ -5777,16 +5806,20 @@ export default function App() {
     const sessionId = signingSessionId;
     if (!sessionId) return;
 
-    const updateData = {
-      signature_formateur: formateurSig,
-      statut_formateur: 'Signé',
-      date_signature_formateur: new Date().toISOString(),
-    };
+    const updateData = {};
+
+    if (formateurSig) {
+      updateData.signature_formateur = formateurSig;
+      updateData.statut_formateur = 'Signé';
+      updateData.date_signature_formateur = new Date().toISOString();
+      updateData.statut = 'Signé';
+    }
 
     if (clientSig) {
       updateData.signature_client = clientSig;
-      updateData.statut = 'Signé';
+      updateData.statut_client = 'Signé';
       updateData.date_signature_client = new Date().toISOString();
+      if (!formateurSig) updateData.statut = 'Signé';
     }
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
@@ -7038,6 +7071,7 @@ export default function App() {
             lastModifiedSessionId={lastModifiedSessionId}
             setDocSettingsTarget={setDocSettingsTarget}
             setIsDocSettingsOpen={setIsDocSettingsOpen}
+            setViewingDocId={setViewingDocId}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -7200,6 +7234,7 @@ export default function App() {
         onClose={() => setSigningSessionId(null)}
         onSave={handleEmargementSave}
         sessionTitle={(() => { const s = sessions.find(s => s.id === signingSessionId); return s?.ressource_titre || s?.nom; })()}
+        signerRole={userRole}
       />
 
       <SessionItemModal
