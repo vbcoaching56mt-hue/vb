@@ -322,110 +322,30 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
 /**
- * Convertit un Blob DOCX en Blob PDF via une API tierce (ConvertAPI) pour une fidélité totale.
- * En cas d'échec ou d'absence de clé, utilise le rendu local dégradé via docx-preview.
+ * Convertit un Blob DOCX en Blob PDF via ConvertAPI (rendu pixel-perfect).
+ * Lance une erreur si la clé est manquante ou si l'API échoue — pas de fallback HTML.
  */
 const convertDocxBlobToPdf = async (docxBlob) => {
   const secret = process.env.REACT_APP_CONVERT_API_SECRET || process.env.REACT_APP_CONVERTAPI_SECRET;
-  
-  if (secret) {
-    try {
-      const formData = new FormData();
-      formData.append('File', new File([docxBlob], 'document.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-      
-      const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${secret}`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        throw new Error(`ConvertAPI error: ${response.statusText}`);
-      }
-      
-      const result = await response.json();
-      if (result.Files && result.Files.length > 0) {
-        const fileData = result.Files[0].FileData;
-        const byteCharacters = atob(fileData);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        return new Blob([byteArray], { type: 'application/pdf' });
-      }
-    } catch (err) {
-      console.warn("ConvertAPI failed, falling back to local docx-preview:", err);
-      toast.error("Échec API Conversion, utilisation du rendu local dégradé.", { id: 'gen-doc' });
-    }
-  } else {
-    console.warn("Clé ConvertAPI manquante. Utilisation du rendu local dégradé.");
-  }
+  if (!secret) throw new Error('Clé ConvertAPI manquante (REACT_APP_CONVERT_API_SECRET). Conversion impossible.');
 
-  // --- Fallback local via docx-preview ---
-  if (!window.docx) throw new Error('docx-preview non disponible');
+  const formData = new FormData();
+  formData.append('File', new File([docxBlob], 'document.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
 
-  const DOC_W = 816;
-  const SCALE = 2;
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = `width:${DOC_W}px;position:absolute;left:-9999px;top:0;background:#fff;`;
-  const styleEl = document.createElement('style');
-  styleEl.textContent = [
-    '.docx-wrapper{background:#fff!important;padding:0!important;}',
-    '.docx-wrapper>section{box-shadow:none!important;margin:0!important;background:#fff!important;}',
-    'ins,del{background:transparent!important;text-decoration:none!important;}',
-    'table{table-layout:fixed!important;border-collapse:collapse!important;}',
-    'td,th{word-wrap:break-word!important;word-break:break-word!important;overflow:hidden!important;}',
-  ].join('');
-  wrapper.appendChild(styleEl);
-  document.body.appendChild(wrapper);
+  const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${secret}`, {
+    method: 'POST',
+    body: formData,
+  });
 
-  try {
-    const arrayBuffer = await docxBlob.arrayBuffer();
-    await window.docx.renderAsync(arrayBuffer, wrapper, null, {
-      renderHeaders: true,
-      renderFooters: true,
-      renderChanges: false,
-      ignoreLastRenderedPageBreak: false,
-    });
+  if (!response.ok) throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
 
-    await new Promise(r => setTimeout(r, 1200));
+  const result = await response.json();
+  if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
 
-    const canvas = await html2canvas(wrapper, {
-      scale: SCALE,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      width: DOC_W,
-      height: wrapper.scrollHeight,
-      windowWidth: DOC_W,
-    });
-
-    document.body.removeChild(wrapper);
-
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    const pdfW = pdf.internal.pageSize.getWidth();
-    const pdfH = pdf.internal.pageSize.getHeight();
-    const pageH_px = Math.round(pdfH * canvas.width / pdfW);
-    const nPages = Math.ceil(canvas.height / pageH_px);
-
-    for (let i = 0; i < nPages; i++) {
-      if (i > 0) pdf.addPage();
-      const sliceH = Math.min(pageH_px, canvas.height - i * pageH_px);
-      const pg = document.createElement('canvas');
-      pg.width = canvas.width;
-      pg.height = sliceH;
-      const ctx = pg.getContext('2d');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, pg.width, pg.height);
-      ctx.drawImage(canvas, 0, -i * pageH_px);
-      const imgData = pg.toDataURL('image/jpeg', 0.97);
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH * sliceH / pageH_px);
-    }
-    return pdf.output('blob');
-  } catch (err) {
-    if (wrapper.parentNode) document.body.removeChild(wrapper);
-    throw err;
-  }
+  const byteCharacters = atob(result.Files[0].FileData);
+  const byteArray = new Uint8Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) byteArray[i] = byteCharacters.charCodeAt(i);
+  return new Blob([byteArray], { type: 'application/pdf' });
 };
 
 const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, supabase: passedSupabase }) => {
@@ -439,7 +359,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
-  const docxContainerRef = useRef(null);
   const sigCanvasRef = useRef(null);
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef(null);
@@ -498,14 +417,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setPdfError(null);
       setBlobUrl(null);
 
-      // Pour les fichiers Word : Office Online avec l'URL publique directement
-      const isWordFile = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
-      if (isWordFile) {
-        setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`);
-        setLoadingPdf(false);
-        return;
-      }
-
       const initialExtracted = extractBucketPath(pdfUrl);
       if (!initialExtracted) {
         setPdfError('Chemin de fichier invalide');
@@ -561,25 +472,17 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           throw new Error(lastError || 'Fichier introuvable');
         }
 
-        // Si c'est un Word, rendu via docx-preview ou Office Online en fallback
         const isWord = finalPath.toLowerCase().endsWith('.docx') || finalPath.toLowerCase().endsWith('.doc');
         if (isWord) {
-          let rendered = false;
-          if (window.docx && docxContainerRef.current) {
-            try {
-              const response = await fetch(finalSignedUrl);
-              const arrayBuffer = await response.arrayBuffer();
-              await window.docx.renderAsync(arrayBuffer, docxContainerRef.current);
-              setBlobUrl(finalSignedUrl);
-              rendered = true;
-            } catch (renderErr) {
-              console.warn('[DocumentViewerModal] docx-preview échoué, fallback Office Online:', renderErr.message);
-            }
-          }
-          if (!rendered) {
-            setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`);
-          }
-          setLoadingPdf(false);
+          // Conversion DOCX → PDF via ConvertAPI : rendu pixel-perfect, pas de HTML
+          const docxBytes = await fetch(finalSignedUrl).then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status} lors du téléchargement du DOCX`);
+            return r.arrayBuffer();
+          });
+          const pdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+          const objectUrl = URL.createObjectURL(pdfBlob);
+          if (!cancelled) setBlobUrl(objectUrl);
+          else URL.revokeObjectURL(objectUrl);
         } else {
           setBlobUrl(finalSignedUrl);
         }
@@ -634,17 +537,9 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       </div>
     );
     if (blobUrl) {
-      const isWord = pdfUrl?.toLowerCase().endsWith('.docx') || pdfUrl?.toLowerCase().endsWith('.doc');
-      if (isWord && !blobUrl.includes('officeapps.live.com')) {
-        return (
-          <div className="w-full h-full overflow-auto bg-white p-4 docx-container text-left">
-            <div ref={docxContainerRef} />
-          </div>
-        );
-      }
       return (
         <iframe
-          src={blobUrl + (isWord ? '' : '#toolbar=0&navpanes=0')}
+          src={blobUrl + '#toolbar=0&navpanes=0'}
           title={pdfTitle}
           className="w-full h-full border-0"
           allowFullScreen
