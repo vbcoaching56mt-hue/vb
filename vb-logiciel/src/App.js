@@ -708,7 +708,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                       const canvas = sigCanvasRef.current;
                       let sigDataUrl = null;
                       if (canvas && hasSig) {
-                        const tmp = document.createElement('canvas');
+                        const tmp = window.document.createElement('canvas');
                         tmp.width = canvas.width; tmp.height = canvas.height;
                         const ctx = tmp.getContext('2d');
                         ctx.drawImage(canvas, 0, 0);
@@ -6631,19 +6631,27 @@ export default function App() {
         path = decodeURIComponent(urlMatch[2]);
       }
 
-      const { data: signData, error: signErr } = await supabase.storage
-        .from(bucket).createSignedUrl(path, 300);
-      if (signErr || !signData?.signedUrl) throw new Error('Lecture document impossible : ' + signErr?.message);
+      // Résolution de l'URL de téléchargement : URL publique directe ou signed URL
+      let fetchUrl = docUrl;
+      if (!docUrl.startsWith('http')) {
+        // Chemin relatif → URL publique
+        fetchUrl = supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+      }
+      // Si l'URL publique échoue (bucket privé), on tente une signed URL
+      const testResp = await fetch(fetchUrl, { method: 'HEAD' }).catch(() => null);
+      if (!testResp || !testResp.ok) {
+        const { data: signData, error: signErr } = await supabase.storage.from(bucket).createSignedUrl(path, 300);
+        if (signErr || !signData?.signedUrl) throw new Error('Lecture document impossible : ' + (signErr?.message || 'URL inaccessible'));
+        fetchUrl = signData.signedUrl;
+      }
 
       if (isDocx) {
-        // Ancien document DOCX stocké avant la mise à jour : on le télécharge et on le convertit en PDF
         toast.loading('Conversion du document DOCX en PDF…', { id: TOAST_ID });
-        const docxBytes = await fetch(signData.signedUrl).then(r => r.arrayBuffer());
+        const docxBytes = await fetch(fetchUrl).then(r => r.arrayBuffer());
         const tempPdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
         targetPdfBytes = await tempPdfBlob.arrayBuffer();
       } else {
-        // Le document est déjà un PDF
-        targetPdfBytes = await fetch(signData.signedUrl).then(r => {
+        targetPdfBytes = await fetch(fetchUrl).then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.arrayBuffer();
         });
