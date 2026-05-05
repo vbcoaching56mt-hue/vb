@@ -6427,8 +6427,7 @@ export default function App() {
       const zip = new PizZip(arrayBuffer);
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
-      doc.setData(dataToMerge);
-      doc.render();
+      doc.render(dataToMerge);
       
       const docxBlob = doc.getZip().generate({
         type: 'blob',
@@ -6449,49 +6448,45 @@ export default function App() {
       }
 
       // Upload du PDF (pas du DOCX)
+      toast.loading('Upload du PDF…', { id: 'gen-doc' });
       const pdfFile = new File([pdfBlob], finalFileName, { type: 'application/pdf' });
       const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, pdfFile);
-      if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
+      if (uploadError) throw uploadError;
 
-        const docToInsert = {
-          nom: `${type} - ${targetName}`,
-          type_document: 'Administratif',
-          url: publicUrl,
-          signe_par_client: false,
-          signe_par_formateur: false,
-          docx_data: dataToMerge,
-          visible_admin: true,
-        };
+      const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
-        if (effectiveIsForFormateur || formateurId) {
-          docToInsert.assigned_formateur_id = targetId;
-          docToInsert.visible_formateur = true;
-          docToInsert.visible_client = false;
-        } else {
-          docToInsert.user_id = targetId;
-          docToInsert.visible_client = true;
-          docToInsert.visible_formateur = true;
-          // Si on génère pour un client, on lie aussi le formateur assigné s'il existe
-          if (finalClient && finalClient.formateur_id) {
-            docToInsert.assigned_formateur_id = finalClient.formateur_id;
-          }
-        }
+      const docToInsert = {
+        nom: `${type} - ${targetName}`,
+        type_document: 'Administratif',
+        url: publicUrl,
+        signe_par_client: false,
+        signe_par_formateur: false,
+        visible_admin: true,
+      };
 
-        // Tentative d'insert avec docx_data ; si la colonne n'existe pas encore, on réessaie sans
-        let { error: insertError } = await supabase.from('documents').insert([docToInsert]);
-        if (insertError && insertError.message?.includes('docx_data')) {
-          const { docx_data: _omit, ...docWithoutData } = docToInsert;
-          const { error: insertError2 } = await supabase.from('documents').insert([docWithoutData]);
-          if (insertError2) throw insertError2;
-        } else if (insertError) {
-          throw insertError;
-        }
-        await fetchDocuments();
-        toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      if (effectiveIsForFormateur || formateurId) {
+        docToInsert.assigned_formateur_id = targetId;
+        docToInsert.visible_formateur = true;
+        docToInsert.visible_client = false;
       } else {
-        throw uploadError;
+        docToInsert.user_id = targetId;
+        docToInsert.visible_client = true;
+        docToInsert.visible_formateur = true;
+        if (finalClient && finalClient.formateur_id) {
+          docToInsert.assigned_formateur_id = finalClient.formateur_id;
+        }
       }
+
+      console.log('Données envoyées à Supabase :', JSON.stringify(docToInsert, null, 2));
+
+      const { error: insertError } = await supabase.from('documents').insert([docToInsert]);
+      if (insertError) {
+        console.error('Erreur insert Supabase :', insertError);
+        throw new Error(`Erreur Supabase : ${insertError.message || insertError.details || JSON.stringify(insertError)}`);
+      }
+
+      await fetchDocuments();
+      toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
     } catch (error) {
       console.error("Docx Error:", error);
       toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
