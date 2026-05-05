@@ -4200,24 +4200,31 @@ const DocumentsView = ({
   );
 };
 
-const AccueilView = ({ setActiveTab, clientProgress }) => (
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions }) => (
   <div className="flex flex-col items-center justify-center pt-10 md:pt-20 animate-fade-in">
     <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-6 border border-gray-100">
       <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
     </div>
     <h1 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">Bonjour.</h1>
-    <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression Qualiopi et accédez à vos séances.</p>
+    <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression et accédez à vos séances.</p>
 
-    {/* Barre de Progression Qualiopi */}
+    {/* Barre de Progression */}
     <div className="w-full max-w-3xl mt-8 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
       <div className="flex justify-between items-center mb-2">
-        <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">Progression Qualiopi</span>
+        <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">
+          {moduleName ? `Progression du ${moduleName}` : 'Progression du parcours'}
+        </span>
         <span className="text-sm font-black text-rose-500">{clientProgress}%</span>
       </div>
       <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
         <div className="h-full bg-rose-500 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
       </div>
-      <p className="text-[10px] text-gray-400 mt-2 italic text-left">Mise à jour automatique par signature électronique (Qualiopi).</p>
+      <div className="flex items-center justify-between mt-2">
+        <p className="text-[10px] text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
+        {totalSessions > 0 && (
+          <p className="text-[10px] text-gray-400 font-semibold">{signedSessions} / {totalSessions} séances émargées</p>
+        )}
+      </div>
     </div>
 
     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
@@ -7977,7 +7984,21 @@ export default function App() {
             fetchClientSkills={fetchClientSkills}
             supabase={supabase}
           />}
-          {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
+          {activeTab === 'accueil' && (() => {
+            const _client = clients.find(c => c.id === currentUserId);
+            const _module = modules.find(m => String(m.id) === String(_client?.module_id));
+            const _clientSessions = sessions.filter(s => String(s.client_id) === String(currentUserId));
+            const _signed = _clientSessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
+            const _total = _clientSessions.length;
+            const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
+            return <AccueilView
+              setActiveTab={setActiveTab}
+              clientProgress={_progress}
+              moduleName={_module?.nom || null}
+              totalSessions={_total}
+              signedSessions={_signed}
+            />;
+          })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
