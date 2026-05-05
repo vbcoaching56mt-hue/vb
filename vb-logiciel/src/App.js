@@ -2462,10 +2462,10 @@ const FormateurDetailView = ({
                     )}
                     <button
                       onClick={() => setDocToDelete(doc)}
-                      className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                      className="p-2 text-red-400 hover:text-red-700 hover:bg-red-50 rounded-xl transition-all border border-red-200 hover:border-red-400"
                       title="Supprimer ce document"
                     >
-                      <Trash2 size={18} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
