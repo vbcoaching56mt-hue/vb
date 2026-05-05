@@ -5926,8 +5926,11 @@ export default function App() {
   };
 
   const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (!session) return;
+    const session = sessions.find(s => String(s.id) === String(sessionId));
+    if (!session) {
+      toast.error('Session introuvable (id: ' + sessionId + ')');
+      return;
+    }
 
     setLastModifiedSessionId(sessionId);
     const updateData = {};
@@ -6598,8 +6601,11 @@ export default function App() {
   };
 
   const handleDocumentSignatureSave = async (docId, signatureDataUrl = null) => {
-    const doc = documents.find(d => d.id === docId);
-    if (!doc) return;
+    const doc = documents.find(d => String(d.id) === String(docId));
+    if (!doc) {
+      toast.error('Document introuvable (id: ' + docId + ')');
+      return;
+    }
 
     const TOAST_ID = 'sign-doc';
     toast.loading('Signature du document en cours…', { id: TOAST_ID });
@@ -7458,7 +7464,8 @@ export default function App() {
         onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl) => {
           const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
-          const isDocument = documents.some(d => d.id === sessionOrDoc.id);
+          const isDocument = documents.some(d => String(d.id) === String(sessionOrDoc.id));
+          console.log('[sign] sessionOrDoc.id=', sessionOrDoc.id, 'isDocument=', isDocument, 'documents ids=', documents.map(d => d.id));
           if (isDocument) {
             await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl);
           } else {
