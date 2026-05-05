@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -4996,6 +4996,425 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) =>
 // COMPOSANT PRINCIPAL
 // ==========================================
 
+const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formateurs }) => {
+  const [fiches, setFiches] = useState([]);
+  const [assignedFiches, setAssignedFiches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterSector, setFilterSector] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // States pour Admin/Formateur
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newFiche, setNewFiche] = useState({ title: '', sector: '', studies: '', skills: '', hourly_rate: '', average_salary: '', description: '', extra_info: '', career_evolution: '', working_conditions: '', qualities: '' });
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [ficheToAssign, setFicheToAssign] = useState(null);
+  const [selectedClientToAssign, setSelectedClientToAssign] = useState('');
+  const [selectedFiche, setSelectedFiche] = useState(null);
+
+  const fetchFiches = async () => {
+    setLoading(true);
+    if (userRole === 'admin' || userRole === 'formateur') {
+      const { data, error } = await supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+      if (data) setFiches(data);
+    } else if (userRole === 'client') {
+      const { data, error } = await supabase
+        .from('client_job_sheets')
+        .select('*, job_sheets(*)')
+        .eq('client_id', currentUserId);
+      if (data) setAssignedFiches(data.map(d => d.job_sheets).filter(Boolean));
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchFiches();
+  }, [userRole, currentUserId]);
+
+  const handleAddFiche = async (e) => {
+    e.preventDefault();
+    if (!newFiche.title || !newFiche.sector) return toast.error("Titre et secteur requis");
+    const { error } = await supabase.from('job_sheets').insert([newFiche]);
+    if (error) return toast.error("Erreur d'ajout : " + error.message);
+    toast.success("Fiche métier ajoutée !");
+    setIsAddModalOpen(false);
+    setNewFiche({ title: '', sector: '', studies: '', skills: '', hourly_rate: '', average_salary: '', description: '', extra_info: '', career_evolution: '', working_conditions: '', qualities: '' });
+    fetchFiches();
+  };
+
+  const handleAssignFiche = async () => {
+    if (!ficheToAssign || !selectedClientToAssign) return toast.error("Sélectionnez un client");
+    const { error } = await supabase.from('client_job_sheets').insert([{
+      job_sheet_id: ficheToAssign.id,
+      client_id: selectedClientToAssign,
+      assigned_by_formateur_id: userRole === 'formateur' ? currentUserId : null
+    }]);
+    if (error) {
+      if (error.code === '23505') return toast.error("Ce client a déjà reçu cette fiche !");
+      return toast.error("Erreur d'assignation : " + error.message);
+    }
+    toast.success("Fiche assignée avec succès !");
+    setIsAssignModalOpen(false);
+    setFicheToAssign(null);
+  };
+
+  const sectors = [...new Set((userRole === 'client' ? assignedFiches : fiches).map(f => f?.sector))].filter(Boolean);
+  const displayFiches = (userRole === 'client' ? assignedFiches : fiches)
+    .filter(f => filterSector ? f?.sector === filterSector : true)
+    .filter(f => {
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      const matchTitle = f?.title?.toLowerCase().includes(q);
+      const matchSkills = f?.skills?.toLowerCase().includes(q);
+      const matchSector = f?.sector?.toLowerCase().includes(q);
+      return matchTitle || matchSkills || matchSector;
+    })
+    .filter(Boolean);
+
+  // Pour le select client
+  const availableClients = userRole === 'formateur' ? clients.filter(c => c.formateur_id === currentUserId) : clients;
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Fiches Métiers</h2>
+          <p className="text-gray-500 text-sm mt-1">
+            {userRole === 'client' ? "Découvrez les métiers sélectionnés pour vous." : "Explorez et gérez le référentiel des métiers."}
+          </p>
+        </div>
+        <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+          {/* Barre de recherche */}
+          <div className="relative w-full md:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input
+              type="text"
+              placeholder="Rechercher un métier..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+            />
+          </div>
+          {sectors.length > 0 && (
+            <select
+              value={filterSector}
+              onChange={(e) => setFilterSector(e.target.value)}
+              className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-rose-500 transition-all w-full md:w-auto"
+            >
+              <option value="">Tous les secteurs</option>
+              {sectors.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {(userRole === 'admin' || userRole === 'formateur') && (
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="flex items-center justify-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 whitespace-nowrap w-full md:w-auto"
+            >
+              <Plus size={18} /> Nouvelle Fiche
+            </button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center items-center h-64"><div className="w-10 h-10 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div></div>
+      ) : displayFiches.length === 0 ? (
+        <div className="bg-white p-10 rounded-2xl text-center border border-gray-100 shadow-sm flex flex-col items-center">
+          <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4 text-gray-300">
+            {searchQuery || filterSector ? <Search size={32} /> : <Briefcase size={32} />}
+          </div>
+          <h3 className="text-xl font-black text-gray-800 mb-2">
+            {searchQuery || filterSector ? "Aucun métier ne correspond à votre recherche" : "Aucune fiche métier trouvée"}
+          </h3>
+          <p className="text-gray-500">
+            {searchQuery || filterSector 
+              ? "Essayez avec d'autres mots-clés ou modifiez vos filtres." 
+              : (userRole === 'client' ? "Votre conseiller ne vous a pas encore assigné de fiches métiers." : "Le référentiel est actuellement vide.")}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm font-bold text-gray-500 px-1">{displayFiches.length} métier{displayFiches.length > 1 ? 's' : ''} trouvé{displayFiches.length > 1 ? 's' : ''}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {displayFiches.map(fiche => (
+            <div 
+              key={fiche.id} 
+              className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-shadow group flex flex-col cursor-pointer relative"
+              onClick={() => setSelectedFiche(fiche)}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <span className="bg-indigo-50 text-indigo-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">{fiche.sector}</span>
+                {(userRole === 'admin' || userRole === 'formateur') && (
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setFicheToAssign(fiche); setIsAssignModalOpen(true); }} 
+                    className="text-gray-400 hover:text-rose-500 transition-colors p-1 z-10" 
+                    title="Envoyer à un bénéficiaire"
+                  >
+                    <Users size={18} />
+                  </button>
+                )}
+              </div>
+              <h3 className="text-lg font-extrabold text-gray-900 mb-2 leading-tight group-hover:text-rose-600 transition-colors">{fiche.title}</h3>
+              <p className="text-sm text-gray-600 mb-4 flex-1 line-clamp-3" title={fiche.description}>{fiche.description}</p>
+              
+              <div className="space-y-2 mt-auto pt-4 border-t border-gray-50">
+                {fiche.average_salary && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400 font-medium">Salaire moyen :</span>
+                    <span className="font-bold text-gray-700">{fiche.average_salary} €</span>
+                  </div>
+                )}
+                {fiche.studies && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400 font-medium">Études :</span>
+                    <span className="font-semibold text-gray-700 truncate w-3/5 text-right" title={fiche.studies}>{fiche.studies}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal Ajout */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-black text-gray-900 mb-6">Ajouter une fiche métier</h3>
+            <form onSubmit={handleAddFiche} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Titre du métier *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.title} onChange={e => setNewFiche({...newFiche, title: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Secteur *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.sector} onChange={e => setNewFiche({...newFiche, sector: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Études conseillées</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.studies} onChange={e => setNewFiche({...newFiche, studies: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Salaire moyen (€)</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.average_salary} onChange={e => setNewFiche({...newFiche, average_salary: e.target.value})} /></div>
+              </div>
+              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Missions principales *</label><textarea required rows={3} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.description} onChange={e => setNewFiche({...newFiche, description: e.target.value})} /></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Compétences techniques</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.skills} onChange={e => setNewFiche({...newFiche, skills: e.target.value})} placeholder="Ex: React, Node.js" /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Qualités requises</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.qualities} onChange={e => setNewFiche({...newFiche, qualities: e.target.value})} placeholder="Ex: Rigueur, Empathie" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Évolution de carrière</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.career_evolution} onChange={e => setNewFiche({...newFiche, career_evolution: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Conditions de travail</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.working_conditions} onChange={e => setNewFiche({...newFiche, working_conditions: e.target.value})} placeholder="Ex: Bureau, Télétravail, Déplacements" /></div>
+              </div>
+              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Informations supplémentaires</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.extra_info} onChange={e => setNewFiche({...newFiche, extra_info: e.target.value})} /></div>
+              
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-50">
+                <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
+                <button type="submit" className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg">Enregistrer la fiche</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Assignation */}
+      {isAssignModalOpen && ficheToAssign && (
+        <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-md border border-gray-100">
+            <h3 className="text-xl font-black text-gray-900 mb-2">Envoyer une fiche métier</h3>
+            <p className="text-sm text-gray-500 mb-6">Assignez la fiche <strong className="text-gray-900">"{ficheToAssign.title}"</strong> à un bénéficiaire.</p>
+            
+            <div className="mb-6">
+              <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Sélectionner un bénéficiaire</label>
+              <select className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 text-sm font-semibold text-gray-700" value={selectedClientToAssign} onChange={e => setSelectedClientToAssign(e.target.value)}>
+                <option value="">-- Choisir un client --</option>
+                {availableClients.map(c => <option key={c.id} value={c.id}>{c.nom} ({c.email_contact})</option>)}
+              </select>
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <button onClick={() => { setIsAssignModalOpen(false); setFicheToAssign(null); setSelectedClientToAssign(''); }} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
+              <button onClick={handleAssignFiche} disabled={!selectedClientToAssign} className="px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">Envoyer au client</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Détails Fiche */}
+      {selectedFiche && (
+        <div className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedFiche(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col relative" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSelectedFiche(null)} className="absolute top-6 right-6 w-10 h-10 bg-white hover:bg-gray-100 text-gray-500 rounded-full flex items-center justify-center transition-colors shadow-sm z-10">
+              <X size={20} />
+            </button>
+            
+            {/* Bannière visuelle selon secteur */}
+            <div className={`h-24 md:h-32 w-full ${(() => {
+              const s = (selectedFiche.sector || '').toLowerCase();
+              if (s.includes('it') || s.includes('numérique')) return 'bg-gradient-to-r from-blue-500 to-indigo-600';
+              if (s.includes('santé') || s.includes('social')) return 'bg-gradient-to-r from-emerald-400 to-teal-500';
+              if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-gradient-to-r from-amber-400 to-orange-500';
+              if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-gradient-to-r from-purple-500 to-pink-500';
+              if (s.includes('administration') || s.includes('gestion')) return 'bg-gradient-to-r from-slate-500 to-gray-600';
+              return 'bg-gradient-to-r from-rose-500 to-red-500';
+            })()} relative`} id="modal-banner">
+               <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white to-transparent"></div>
+            </div>
+            
+            <div id="fiche-modal-content" className="bg-white">
+              <div className="p-8 md:p-10 border-b border-gray-100 relative">
+                <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 mb-4">
+                  <span className={`text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider ${(() => {
+                    const s = (selectedFiche.sector || '').toLowerCase();
+                    if (s.includes('it') || s.includes('numérique')) return 'bg-blue-50 text-blue-600';
+                    if (s.includes('santé') || s.includes('social')) return 'bg-emerald-50 text-emerald-600';
+                    if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-amber-50 text-amber-600';
+                    if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-purple-50 text-purple-600';
+                    if (s.includes('administration') || s.includes('gestion')) return 'bg-slate-50 text-slate-600';
+                    return 'bg-rose-50 text-rose-600';
+                  })()}`}>{selectedFiche.sector}</span>
+                  
+                  <button 
+                    onClick={async () => {
+                      const element = document.getElementById('fiche-modal-content');
+                      if (!element) return;
+                      const tId = toast.loading('Génération du PDF en cours...');
+                      try {
+                        const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+                        const imgData = canvas.toDataURL('image/png');
+                        const pdf = new jsPDF('p', 'mm', 'a4');
+                        const pdfWidth = pdf.internal.pageSize.getWidth();
+                        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                        pdf.save(`Fiche_Metier_${selectedFiche.title.replace(/\s+/g, '_')}.pdf`);
+                        toast.success('PDF téléchargé avec succès !', { id: tId });
+                      } catch (error) {
+                        toast.error('Erreur lors de la génération', { id: tId });
+                      }
+                    }}
+                    className="flex items-center justify-center gap-2 bg-gray-50 text-gray-700 hover:bg-gray-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors border border-gray-200"
+                  >
+                    <Download size={16} /> Télécharger en PDF
+                  </button>
+                </div>
+                
+                <h2 className="text-3xl md:text-4xl font-black text-gray-900 leading-tight mb-6">{selectedFiche.title}</h2>
+                
+                {/* Qualités requises (Tags) */}
+                {selectedFiche.qualities && (
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wider mr-2">Qualités :</span>
+                    {selectedFiche.qualities.split(',').map((quality, index) => (
+                      <span key={index} className="bg-amber-50 border border-amber-100 text-amber-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">
+                        {quality.trim()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Compétences Techniques (Tags) */}
+                {selectedFiche.skills && (
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wider mr-2">Technique :</span>
+                    {selectedFiche.skills.split(',').map((skill, index) => (
+                      <span key={index} className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">
+                        {skill.trim()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Contenu principal en 2 colonnes */}
+              <div className="p-8 md:p-10 flex flex-col lg:flex-row gap-10">
+                
+                {/* Colonne Gauche (Principal) */}
+                <div className="flex-1 space-y-10">
+                  <section>
+                    <h3 className="text-xl font-black text-gray-900 mb-4 flex items-center gap-2">
+                      <FileCheck className="text-rose-500" size={24} /> Missions principales
+                    </h3>
+                    <p className="text-gray-700 text-lg leading-relaxed">{selectedFiche.description}</p>
+                  </section>
+                  
+                  {(selectedFiche.career_evolution || selectedFiche.extra_info) && (
+                    <section>
+                      <h3 className="text-xl font-black text-gray-900 mb-4 flex items-center gap-2">
+                        <TrendingUp className="text-blue-500" size={24} /> Évolution de carrière
+                      </h3>
+                      <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
+                        {selectedFiche.career_evolution && <p className="text-gray-800 text-base leading-relaxed mb-3">{selectedFiche.career_evolution}</p>}
+                        {selectedFiche.extra_info && <p className="text-blue-900 text-sm font-medium">{selectedFiche.extra_info}</p>}
+                      </div>
+                    </section>
+                  )}
+                </div>
+                
+                {/* Colonne Droite (Infos Clés) */}
+                <div className="lg:w-80 space-y-6">
+                  {selectedFiche.working_conditions && (
+                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-purple-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
+                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <MapPin size={16} className="text-purple-400" /> Conditions de travail
+                      </h4>
+                      <p className="font-semibold text-gray-800">{selectedFiche.working_conditions}</p>
+                    </div>
+                  )}
+
+                  {selectedFiche.studies && (
+                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
+                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <FileText size={16} className="text-indigo-400" /> Formation requise
+                      </h4>
+                      <p className="font-semibold text-gray-800">{selectedFiche.studies}</p>
+                    </div>
+                  )}
+                  
+                  {(selectedFiche.average_salary || selectedFiche.hourly_rate) && (
+                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
+                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <Briefcase size={16} className="text-emerald-400" /> Rémunération
+                      </h4>
+                      <div className="space-y-3 mt-4">
+                        {selectedFiche.average_salary && (
+                          <div className="flex flex-col">
+                            <span className="text-gray-500 text-xs uppercase font-bold">Salaire moyen</span>
+                            <span className="font-black text-gray-900 text-xl">{selectedFiche.average_salary} € <span className="text-sm font-medium text-gray-500">/ mois</span></span>
+                          </div>
+                        )}
+                        {selectedFiche.hourly_rate && (
+                          <div className="flex flex-col mt-2">
+                            <span className="text-gray-500 text-xs uppercase font-bold">Taux horaire</span>
+                            <span className="font-black text-gray-900 text-xl">{selectedFiche.hourly_rate} € <span className="text-sm font-medium text-gray-500">/ h</span></span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+              </div>
+            </div>
+
+            {(userRole === 'admin' || userRole === 'formateur') && (
+              <div className="p-6 md:p-8 bg-gray-50 border-t border-gray-100 flex justify-between items-center rounded-b-3xl">
+                <p className="text-sm text-gray-500 font-medium">Vous pensez que ce métier correspond à l'un de vos bénéficiaires ?</p>
+                <button 
+                  onClick={() => { setFicheToAssign(selectedFiche); setSelectedFiche(null); setIsAssignModalOpen(true); }}
+                  className="flex items-center gap-2 bg-gray-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-800 transition-colors shadow-lg"
+                >
+                  <Users size={18} /> Assigner
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const getInitials = (name) => {
+  if (!name || typeof name !== 'string') return 'U';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'U';
+  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -7152,13 +7571,21 @@ export default function App() {
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
               </button>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
+              </button>
             </>
           )}
 
           {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <Users className="w-5 h-5 mr-3" /> Mes Clients
-            </button>
+            <>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Users className="w-5 h-5 mr-3" /> Mes Clients
+              </button>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
+              </button>
+            </>
           )}
 
           {userRole === 'client' && (
@@ -7167,6 +7594,7 @@ export default function App() {
               <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
               <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
             </>
           )}
 
@@ -7201,19 +7629,35 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className="text-right mr-2">
-              <p className="text-sm font-bold text-gray-800 leading-tight">
-                {userRole === 'admin' && "Profil Admin"}
-                {userRole === 'formateur' && (formateurs.find(f => f.id === currentUserId)?.nom || "Coach")}
-                {userRole === 'client' && (clients.find(c => c.id === currentUserId)?.nom || "Bénéficiaire")}
-              </p>
-            </div>
-            <div
-              onClick={() => setActiveTab('profil')}
-              className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105"
-            >
-              {userRole === 'admin' ? "AD" : (userRole === 'formateur' ? "CH" : "CL")}
-            </div>
+            {(() => {
+              let displayName = "";
+              let rawName = "";
+              if (userRole === 'admin') {
+                displayName = "Profil Admin";
+              } else if (userRole === 'formateur') {
+                rawName = formateurs.find(f => f.id === currentUserId)?.nom;
+                displayName = rawName || "Coach";
+              } else if (userRole === 'client') {
+                rawName = clients.find(c => c.id === currentUserId)?.nom;
+                displayName = rawName || "Bénéficiaire";
+              }
+              
+              return (
+                <>
+                  <div className="text-right mr-2">
+                    <p className="text-sm font-bold text-gray-800 leading-tight">
+                      {displayName}
+                    </p>
+                  </div>
+                  <div
+                    onClick={() => setActiveTab('profil')}
+                    className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105 title={displayName}"
+                  >
+                    {userRole === 'admin' ? "AD" : getInitials(rawName)}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </header>
 
@@ -7225,6 +7669,13 @@ export default function App() {
             formateurs={formateurs}
             clients={clients}
             userRole={userRole}
+          />}
+          {activeTab === 'fiches_metiers' && <FichesMetiersView
+            userRole={userRole}
+            currentUserId={currentUserId}
+            supabase={supabase}
+            clients={clients}
+            formateurs={formateurs}
           />}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
