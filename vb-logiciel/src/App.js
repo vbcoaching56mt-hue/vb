@@ -61,16 +61,15 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
-// --- Données du Graphique Ancres de Carrière ---
-const radarData = [
-  { subject: 'Technique', A: 5.5, fullMark: 6 },
-  { subject: 'Management', A: 2.0, fullMark: 6 },
-  { subject: 'Autonomie', A: 3.8, fullMark: 6 },
-  { subject: 'Sécurité', A: 5.8, fullMark: 6 },
-  { subject: 'Entrepreneur', A: 1.5, fullMark: 6 },
-  { subject: 'Service', A: 3.0, fullMark: 6 },
-  { subject: 'Défi', A: 2.5, fullMark: 6 },
-  { subject: 'Lifestyle', A: 4.2, fullMark: 6 },
+const ANCHOR_KEYS = [
+  { key: 'score_technique', label: 'Technique' },
+  { key: 'score_management', label: 'Management' },
+  { key: 'score_autonomie', label: 'Autonomie' },
+  { key: 'score_securite', label: 'Sécurité' },
+  { key: 'score_entrepreneur', label: 'Entrepreneur' },
+  { key: 'score_service', label: 'Service' },
+  { key: 'score_defi', label: 'Défi' },
+  { key: 'score_lifestyle', label: 'Lifestyle' },
 ];
 
 
@@ -3030,12 +3029,15 @@ const FormateurView = ({
   handleGenerateDocx, documents, fetchUtilisateurs, documentTemplates,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
-  handleSignDocument, setViewingDocId
+  handleSignDocument, setViewingDocId,
+  clientSkills, fetchClientSkills, supabase
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
+  const [bilanDraft, setBilanDraft] = React.useState({});
+  const [savingBilan, setSavingBilan] = React.useState(false);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // Documents administratifs propres au formateur (envoyés par l'admin)
@@ -3046,8 +3048,8 @@ const FormateurView = ({
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
 
   React.useEffect(() => {
-    // Reset tab when expanded client changes
     setFormateurClientTab('seances');
+    setBilanDraft({});
   }, [expandedClientId]);
 
   const onTimeChange = (sessionId, field, value) => {
@@ -3231,6 +3233,7 @@ const FormateurView = ({
                     <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
                     <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-rose-600 text-rose-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
                     <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
+                    <button onClick={() => setFormateurClientTab('bilan')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'bilan' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Bilan</button>
                   </div>
 
                   {formateurClientTab === 'administratif' && (
@@ -3572,6 +3575,94 @@ const FormateurView = ({
                   )}
                   </>
                 )}
+
+                  {formateurClientTab === 'bilan' && (() => {
+                    const existingSkill = (clientSkills || []).find(s => s.client_id === client.id) || {};
+                    const getValue = (key) => bilanDraft[key] !== undefined ? bilanDraft[key] : (parseFloat(existingSkill[key]) || 0);
+                    const getText = (key) => bilanDraft[key] !== undefined ? bilanDraft[key] : (existingSkill[key] || '');
+
+                    const handleSaveBilan = async () => {
+                      setSavingBilan(true);
+                      const payload = {
+                        client_id: client.id,
+                        updated_at: new Date().toISOString(),
+                      };
+                      ANCHOR_KEYS.forEach(({ key }) => { payload[key] = getValue(key); });
+                      payload.top_skill_1 = getText('top_skill_1');
+                      payload.top_skill_2 = getText('top_skill_2');
+                      payload.top_skill_3 = getText('top_skill_3');
+                      payload.target_job = getText('target_job');
+                      const { error } = await supabase.from('client_skills').upsert(payload, { onConflict: 'client_id' });
+                      if (!error) {
+                        toast.success('Bilan sauvegardé !');
+                        await fetchClientSkills();
+                        setBilanDraft({});
+                      } else {
+                        toast.error('Erreur sauvegarde : ' + error.message);
+                      }
+                      setSavingBilan(false);
+                    };
+
+                    return (
+                      <div className="space-y-6">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
+                          <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Ancres de Carrière</h4>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {ANCHOR_KEYS.map(({ key, label }) => (
+                            <div key={key} className="bg-gray-50 rounded-2xl p-4">
+                              <div className="flex justify-between items-center mb-2">
+                                <label className="font-bold text-gray-700 text-sm">{label}</label>
+                                <span className="text-rose-500 font-black text-lg w-8 text-right">{getValue(key)}</span>
+                              </div>
+                              <input
+                                type="range" min="0" max="10" step="0.5"
+                                value={getValue(key)}
+                                onChange={e => setBilanDraft(prev => ({ ...prev, [key]: parseFloat(e.target.value) }))}
+                                className="w-full accent-rose-500"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 pt-2">
+                          <span className="w-2 h-5 bg-indigo-500 rounded-full"></span>
+                          <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Points Forts</h4>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {['top_skill_1', 'top_skill_2', 'top_skill_3'].map((key, i) => (
+                            <div key={key}>
+                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Point fort {i + 1}</label>
+                              <input
+                                type="text"
+                                value={getText(key)}
+                                onChange={e => setBilanDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                                placeholder="Ex: Rigueur"
+                                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 bg-white"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Métier cible</label>
+                          <input
+                            type="text"
+                            value={getText('target_job')}
+                            onChange={e => setBilanDraft(prev => ({ ...prev, target_job: e.target.value }))}
+                            placeholder="Ex: Développeur Full-Stack"
+                            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 bg-white"
+                          />
+                        </div>
+                        <button
+                          onClick={handleSaveBilan}
+                          disabled={savingBilan}
+                          className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-rose-100 disabled:opacity-50"
+                        >
+                          {savingBilan ? <><Clock size={16} className="animate-spin" /> Sauvegarde...</> : <><Save size={16} /> Sauvegarder le bilan</>}
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -4370,50 +4461,96 @@ const SessionsView = ({
   );
 };
 
-const BilanView = ({ handleDownloadPDF }) => (
-  <div className="space-y-6 max-w-5xl mx-auto">
-    <div className="flex flex-col md:flex-row md:items-center justify-between">
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Connaissance de soi</h1>
-        <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
-      </div>
-      <button onClick={handleDownloadPDF} className="mt-4 md:mt-0 bg-gray-900 hover:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium shadow-md transition-all text-sm flex items-center w-fit">
-        <DownloadIcon /> Télécharger la synthèse
-      </button>
-    </div>
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Intérêts Dominants</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 hover:bg-indigo-100 transition-colors group">
-            <div className="w-12 h-12 bg-indigo-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><Users /></div>
-            <h3 className="font-bold text-indigo-900 text-lg">Conventionnel</h3>
-            <p className="text-xs text-indigo-700 mt-1">Profil respectueux des normes.</p>
+const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
+  const skill = (clientSkills || []).find(s => s.client_id === clientId) || null;
+
+  if (!skill) {
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Connaissance de soi</h1>
+          <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
+        </div>
+        <div className="bg-white rounded-3xl p-12 shadow-sm border border-gray-100 flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mb-4">
+            <Clock className="text-amber-400" size={32} />
           </div>
-          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-5 hover:bg-emerald-100 transition-colors group">
-            <div className="w-12 h-12 bg-emerald-500 text-white rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 shadow-sm transition-transform"><Settings /></div>
-            <h3 className="font-bold text-emerald-900 text-lg">Investigateur</h3>
-            <p className="text-xs text-emerald-700 mt-1">Goût prononcé pour la technique.</p>
-          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Synthèse en cours de préparation</h2>
+          <p className="text-gray-500 text-sm">Votre formateur est en train de préparer votre synthèse.</p>
         </div>
       </div>
-      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md flex flex-col items-center">
-        <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
-        <div className="w-full h-[250px] relative -ml-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <RadarChart cx="50%" cy="50%" outerRadius="65%" data={radarData}>
-              <PolarGrid stroke="#f3f4f6" />
-              <PolarAngleAxis dataKey="subject" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 500 }} />
-              <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-              <Radar name="Score" dataKey="A" stroke="#f43f5e" strokeWidth={3} fill="#fb7185" fillOpacity={0.4} />
-            </RadarChart>
-          </ResponsiveContainer>
+    );
+  }
+
+  const dynamicRadarData = ANCHOR_KEYS.map(({ key, label }) => ({
+    subject: label,
+    A: parseFloat(skill[key]) || 0,
+    fullMark: 10,
+  }));
+  const topAncres = [...dynamicRadarData].sort((a, b) => b.A - a.A).slice(0, 2);
+  const topSkills = [skill.top_skill_1, skill.top_skill_2, skill.top_skill_3].filter(Boolean);
+
+  return (
+    <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="flex flex-col md:flex-row md:items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Connaissance de soi</h1>
+          <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
         </div>
-        <p className="text-sm text-gray-600 bg-gray-50 py-2 px-4 rounded-lg w-full text-center">Dominantes : <strong className="text-gray-900">Sécurité (5.8)</strong> et <strong className="text-gray-900">Technique (5.5)</strong></p>
+        <button onClick={handleDownloadPDF} className="mt-4 md:mt-0 bg-gray-900 hover:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium shadow-md transition-all text-sm flex items-center w-fit">
+          <DownloadIcon /> Télécharger la synthèse
+        </button>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Points Forts</h2>
+          <div className="space-y-3">
+            {topSkills.length > 0 ? topSkills.map((sk, i) => (
+              <div key={i} className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-3">
+                <div className="w-8 h-8 bg-indigo-500 text-white rounded-xl flex items-center justify-center font-bold text-sm shrink-0">{i + 1}</div>
+                <span className="font-semibold text-indigo-900">{sk}</span>
+              </div>
+            )) : (
+              <p className="text-sm text-gray-400 italic">Aucun point fort renseigné.</p>
+            )}
+            {skill.target_job && (
+              <div className="mt-4 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-center gap-3">
+                <TrendingUp className="text-emerald-600 shrink-0" size={20} />
+                <div>
+                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Métier cible</p>
+                  <p className="font-semibold text-emerald-900 mt-0.5">{skill.target_job}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md flex flex-col items-center">
+          <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
+          <div className="w-full h-[250px] relative -ml-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart cx="50%" cy="50%" outerRadius="65%" data={dynamicRadarData}>
+                <PolarGrid stroke="#f3f4f6" />
+                <PolarAngleAxis dataKey="subject" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 500 }} />
+                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
+                <Radar name="Score" dataKey="A" stroke="#f43f5e" strokeWidth={3} fill="#fb7185" fillOpacity={0.4} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+          {topAncres.length > 0 && (
+            <p className="text-sm text-gray-600 bg-gray-50 py-2 px-4 rounded-lg w-full text-center">
+              Dominantes : {topAncres.map((a, i) => (
+                <React.Fragment key={a.subject}>
+                  <strong className="text-gray-900">{a.subject} ({a.A})</strong>
+                  {i < topAncres.length - 1 && ' et '}
+                </React.Fragment>
+              ))}
+            </p>
+          )}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const ExercicesView = ({ setActiveTab }) => (
   <div className="space-y-6 animate-fade-in relative h-[calc(100vh-140px)] flex flex-col max-w-5xl mx-auto">
@@ -5543,6 +5680,7 @@ export default function App() {
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
+  const [clientSkills, setClientSkills] = useState([]);
 
 
 
@@ -5634,6 +5772,11 @@ export default function App() {
       });
       setDocumentTemplates(templates);
     }
+  };
+
+  const fetchClientSkills = async () => {
+    const { data, error } = await supabase.from('client_skills').select('*');
+    if (!error && data) setClientSkills(data);
   };
 
   const fetchPedagogicalResources = async () => {
@@ -7437,6 +7580,7 @@ export default function App() {
     fetchModules();
     fetchSessions();
     fetchPedagogicalResources();
+    fetchClientSkills();
 
     // Détection des liens d'invitation ou de récupération de mot de passe
     supabase.auth.onAuthStateChange((event, session) => {
@@ -7824,10 +7968,13 @@ export default function App() {
             setViewingSession={setViewingSession}
             handleSignDocument={handleSignDocument}
             setViewingDocId={setViewingDocId}
+            clientSkills={clientSkills}
+            fetchClientSkills={fetchClientSkills}
+            supabase={supabase}
           />}
           {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} />}
+          {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
           {activeTab === 'modélothèque' && <DocumentsView
             sessions={sessions}
