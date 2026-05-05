@@ -337,7 +337,10 @@ const convertDocxBlobToPdf = async (docxBlob) => {
     body: formData,
   });
 
-  if (!response.ok) throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('ConvertAPI : clé API invalide ou crédits épuisés. Vérifiez votre compte sur convertapi.com et la variable REACT_APP_CONVERT_API_SECRET dans Vercel.');
+    throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
+  }
 
   const result = await response.json();
   if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
