@@ -1086,7 +1086,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
 };
 
 // --- Composant Modal pour l'ajout d'éléments personnalisés par le Formateur ---
-const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, clientSessions = [] }) => {
+const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, clientSessions = [], preSelectedSessionId = null, preSelectedLabel = null }) => {
   const [choice, setChoice] = useState('existing'); // 'existing' or 'new'
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [type, setType] = useState('signature');
@@ -1094,7 +1094,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
   const [isToSign, setIsToSign] = useState(false);
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  
+
   // States for 'new' choice
   const [newDate, setNewDate] = useState('');
   const [newStart, setNewStart] = useState('');
@@ -1108,12 +1108,12 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
       setIsToSign(false);
       setSelectedResourceId('');
       setIsUploading(false);
-      setSelectedSessionId('');
+      setSelectedSessionId(preSelectedSessionId || '');
       setNewDate('');
       setNewStart('');
       setNewEnd('');
     }
-  }, [isOpen]);
+  }, [isOpen, preSelectedSessionId]);
 
   const handleFileUpload = async (file) => {
     if (!file) return;
@@ -1159,72 +1159,88 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
         </div>
 
         <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
-          {/* Choix de la destination */}
-          <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
-            <button 
-              onClick={() => setChoice('existing')}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'existing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Séance Existante
-            </button>
-            <button 
-              onClick={() => setChoice('new')}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'new' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Nouvelle Séance
-            </button>
-          </div>
 
-          {choice === 'existing' ? (
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
-              <select 
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
-                value={selectedSessionId}
-                onChange={e => setSelectedSessionId(e.target.value)}
-              >
-                <option value="">-- Sélectionner --</option>
-                {uniqueSessionOptions.map(s => (
-                  <option key={s.id} value={s.id}>SÉANCE {s.numero_seance} {s.nom ? `(${s.nom.split(' - ')[0]})` : ''}</option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="space-y-4 animate-fade-in">
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
-                  <input 
-                    type="date"
-                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                    value={newDate}
-                    onChange={e => setNewDate(e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
-                    <input 
-                      type="time"
-                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                      value={newStart}
-                      onChange={e => setNewStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
-                    <input 
-                      type="time"
-                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                      value={newEnd}
-                      onChange={e => setNewEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
+          {/* Contexte séance : badge si pré-sélectionné, sinon toggle + sélecteur */}
+          {preSelectedSessionId ? (
+            <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3">
+              <div className="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center shrink-0">
+                <Layout size={14} />
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Ajout dans</p>
+                <p className="text-sm font-black text-indigo-900">{preSelectedLabel || 'Séance sélectionnée'}</p>
               </div>
             </div>
+          ) : (
+            <>
+              <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
+                <button
+                  onClick={() => setChoice('existing')}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'existing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Séance Existante
+                </button>
+                <button
+                  onClick={() => setChoice('new')}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'new' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Nouvelle Séance
+                </button>
+              </div>
+
+              {choice === 'existing' ? (
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
+                  <select
+                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
+                    value={selectedSessionId}
+                    onChange={e => setSelectedSessionId(e.target.value)}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    {uniqueSessionOptions.map(s => (
+                      <option key={s.id} value={s.id}>SÉANCE {s.numero_seance} {s.nom ? `(${s.nom.split(' - ')[0]})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
+                      <input
+                        type="date"
+                        className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                        value={newDate}
+                        onChange={e => setNewDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
+                        <input
+                          type="time"
+                          className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                          value={newStart}
+                          onChange={e => setNewStart(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
+                        <input
+                          type="time"
+                          className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                          value={newEnd}
+                          onChange={e => setNewEnd(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
+          {/* Titre */}
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
             <input
@@ -1236,6 +1252,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             />
           </div>
 
+          {/* Type d'activité */}
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Type d'activité</label>
             <div className="grid grid-cols-3 gap-2">
@@ -1256,6 +1273,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             </div>
           </div>
 
+          {/* Fichier / Ressource */}
           {(type === 'document' || type === 'exercice') && (
             <div className="space-y-4">
               <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fichier / Ressource</label>
@@ -1311,10 +1329,16 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
         <div className="p-6 bg-gray-50 flex gap-3">
           <button onClick={onClose} className="flex-1 py-4 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">Annuler</button>
           <button
-            disabled={!title || isUploading || ((type === 'document' || type === 'exercice') && !selectedResourceId) || (choice === 'existing' && !selectedSessionId)}
+            disabled={
+              !title ||
+              isUploading ||
+              ((type === 'document' || type === 'exercice') && !selectedResourceId) ||
+              (!preSelectedSessionId && choice === 'existing' && !selectedSessionId)
+            }
             onClick={() => {
-              const sessionData = choice === 'existing' 
-                ? clientSessions.find(s => s.id === selectedSessionId) 
+              const effectiveSessionId = preSelectedSessionId || selectedSessionId;
+              const sessionData = (preSelectedSessionId || choice === 'existing')
+                ? clientSessions.find(s => s.id === effectiveSessionId)
                 : { date: newDate, heure_debut: newStart, heure_fin: newEnd, isNewSession: true };
 
               onSave({
@@ -1322,7 +1346,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 type,
                 resourceId: selectedResourceId,
                 isToSign: type === 'signature' ? true : isToSign,
-                sessionChoice: choice,
+                sessionChoice: preSelectedSessionId ? 'existing' : choice,
                 sessionData
               });
               onClose();
@@ -3641,7 +3665,11 @@ const FormateurView = ({
                                   <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
                                     <button
                                       onClick={() => {
-                                        setTargetSessionForAddition(group);
+                                        setTargetSessionForAddition({
+                                          ...group,
+                                          clientId: client.id,
+                                          preSelectedSessionId: group.items[0]?.id
+                                        });
                                         setIsSessionItemModalOpen(true);
                                       }}
                                       className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
@@ -8284,6 +8312,8 @@ export default function App() {
         supabase={supabase}
         onSave={handleAddSessionItem}
         clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId)}
+        preSelectedSessionId={targetSessionForAddition?.preSelectedSessionId || null}
+        preSelectedLabel={targetSessionForAddition?.numero ? `SÉANCE ${targetSessionForAddition.numero}` : null}
       />
 
       {/* Visionneuse PDF pour docs de la modélothèque */}
