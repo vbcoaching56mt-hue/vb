@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -62,14 +62,14 @@ const resolveFileUrl = (rawUrl) => {
 };
 
 const ANCHOR_KEYS = [
-  { key: 'score_technique', label: 'Technique' },
-  { key: 'score_management', label: 'Management' },
-  { key: 'score_autonomie', label: 'Autonomie' },
-  { key: 'score_securite', label: 'Sécurité' },
-  { key: 'score_entrepreneur', label: 'Entrepreneur' },
-  { key: 'score_service', label: 'Service' },
-  { key: 'score_defi', label: 'Défi' },
-  { key: 'score_lifestyle', label: 'Lifestyle' },
+  { key: 'score_technique', label: 'Expertise Technique', description: "Le contenu du travail est votre motivation. Vous cherchez à être expert et reconnu par vos pairs." },
+  { key: 'score_management', label: 'Compétence Managériale', description: "Vous avez un désir intense de diriger, de contrôler et de prendre des décisions stratégiques." },
+  { key: 'score_autonomie', label: 'Autonomie / Indépendance', description: "Vous cherchez avant tout à être libre dans vos décisions et refusez les réglementations restrictives." },
+  { key: 'score_securite', label: 'Sécurité / Stabilité', description: "Vous valorisez la stabilité de l'emploi et la pérennité de l'entreprise avant tout." },
+  { key: 'score_entrepreneur', label: 'Créativité / Entrepreneuriat', description: "Vous avez un besoin impérieux de créer de nouvelles activités et de vaincre les obstacles par votre ténacité." },
+  { key: 'score_service', label: 'Dévouement / Service', description: "Votre carrière est une cause. Vous voulez réaliser quelque chose qui a de la valeur, comme aider les autres." },
+  { key: 'score_defi', label: 'Défi Pur', description: "Vous définissez votre vie par la compétition. Seuls les problèmes insolubles vous attirent." },
+  { key: 'score_lifestyle', label: 'Style de vie', description: "L'équilibre entre vie privée et vie professionnelle est votre priorité absolue." },
 ];
 
 
@@ -1811,7 +1811,7 @@ const ClientDetailView = ({
 
             {/* Documents administratifs signés */}
             {documents
-              .filter(d => d.user_id === client.id && d.statut === 'Signé')
+              .filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client))
               .map(doc => (
                 <div key={doc.id} className="flex items-center justify-between p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100 hover:border-emerald-300 transition-all group">
                   <div className="flex items-center gap-4">
@@ -1843,7 +1843,7 @@ const ClientDetailView = ({
               ))}
 
             {(sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 &&
-              documents.filter(d => d.user_id === client.id && d.statut === 'Signé').length === 0) && (
+              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client)).length === 0) && (
               <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                 <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
               </div>
@@ -3030,7 +3030,7 @@ const FormateurView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
-  clientSkills, fetchClientSkills, supabase
+  clientSkills, fetchClientSkills, supabase, fetchDocuments
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -3038,6 +3038,10 @@ const FormateurView = ({
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
   const [bilanDraft, setBilanDraft] = React.useState({});
   const [savingBilan, setSavingBilan] = React.useState(false);
+  const [uploadingClientId, setUploadingClientId] = React.useState(null);
+  const [clientDocFile, setClientDocFile] = React.useState(null);
+  const [clientDocName, setClientDocName] = React.useState('');
+  const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // Documents administratifs propres au formateur (envoyés par l'admin)
@@ -3084,6 +3088,43 @@ const FormateurView = ({
     const h = Math.floor(diff / 60);
     const m = diff % 60;
     return `${h}h${m > 0 ? ` ${m}min` : ''}`;
+  };
+
+  const handleUploadForClient = async (clientId) => {
+    if (!clientDocFile || !clientDocName.trim()) {
+      toast.error('Veuillez renseigner un nom et choisir un fichier.');
+      return;
+    }
+    setIsUploadingClientDoc(true);
+    const ext = clientDocFile.name.split('.').pop();
+    const safeN = clientDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const fileName = `formateur_${currentUserId}/${Date.now()}_${safeN}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(fileName, clientDocFile);
+    if (upErr) {
+      toast.error('Erreur upload : ' + upErr.message);
+      setIsUploadingClientDoc(false);
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+    const { error: dbErr } = await supabase.from('documents').insert({
+      nom: clientDocName.trim(),
+      type_document: 'Administratif',
+      user_id: clientId,
+      assigned_formateur_id: currentUserId,
+      url: publicUrl,
+      visible_client: false,
+      visible_formateur: true
+    });
+    if (!dbErr) {
+      toast.success('Document ajouté au dossier client !');
+      setClientDocFile(null);
+      setClientDocName('');
+      setUploadingClientId(null);
+      if (fetchDocuments) fetchDocuments();
+    } else {
+      toast.error('Erreur base de données : ' + dbErr.message);
+    }
+    setIsUploadingClientDoc(false);
   };
 
   return (
@@ -3245,9 +3286,8 @@ const FormateurView = ({
                       
                       {(() => {
                         const adminDocs = documents.filter(d =>
-                          (d.user_id === client.id || d.assigned_formateur_id === currentUserId) &&
-                          (d.assigned_formateur_id === currentUserId || d.visible_formateur) &&
-                          d.type_document === 'Administratif'
+                          d.user_id === client.id &&
+                          (d.type_document === 'Administratif' || d.type_document === 'Contrat' || d.type_document === 'Mission')
                         );
                         
                         if (adminDocs.length === 0) return (
@@ -3298,6 +3338,53 @@ const FormateurView = ({
                           </div>
                         );
                       })()}
+
+                      {/* Upload formateur — ajouter un document au dossier client */}
+                      <div className="mt-6 pt-5 border-t border-dashed border-gray-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="w-2 h-4 bg-indigo-400 rounded-full"></span>
+                          <h4 className="font-black text-gray-700 text-xs uppercase tracking-tight">Ajouter un document au dossier client</h4>
+                        </div>
+                        {uploadingClientId === client.id ? (
+                          <div className="bg-indigo-50 rounded-2xl p-4 space-y-3 border border-indigo-100">
+                            <input
+                              type="text"
+                              value={clientDocName}
+                              onChange={e => setClientDocName(e.target.value)}
+                              placeholder="Nom du document (ex: Facture finale)"
+                              className="w-full bg-white border border-gray-200 text-gray-900 text-sm rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-300"
+                            />
+                            <input
+                              type="file"
+                              onChange={e => setClientDocFile(e.target.files[0] || null)}
+                              className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
+                              accept=".pdf,.doc,.docx,image/*"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleUploadForClient(client.id)}
+                                disabled={isUploadingClientDoc}
+                                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black py-2.5 rounded-xl transition-all disabled:opacity-50"
+                              >
+                                {isUploadingClientDoc ? 'Envoi en cours...' : 'Envoyer le document'}
+                              </button>
+                              <button
+                                onClick={() => { setUploadingClientId(null); setClientDocFile(null); setClientDocName(''); }}
+                                className="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 text-xs font-bold rounded-xl hover:bg-gray-50 transition-all"
+                              >
+                                Annuler
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setUploadingClientId(client.id)}
+                            className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-black px-4 py-2.5 rounded-xl border border-indigo-100 transition-all"
+                          >
+                            <Upload size={14} /> Insérer un document (facture, justificatif...)
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -3305,7 +3392,8 @@ const FormateurView = ({
                     <div className="mb-4">
                       {(() => {
                         const signedSessions = clientSessions.filter(s =>
-                          s.statut === 'Signé' && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
+                          (s.statut === 'Signé' || s.statut_client === 'Signé') &&
+                          (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
                         );
                         if (signedSessions.length === 0) return (
                           <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
@@ -3326,7 +3414,7 @@ const FormateurView = ({
                               <tbody className="divide-y divide-gray-50 bg-white">
                                 {signedSessions.map(session => {
                                   const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
-                                  const dateSign = session.date_signature_formateur || session.date_signature || session.updated_at;
+                                  const dateSign = session.date_signature_client || session.date_signature_formateur || session.date_signature || session.updated_at;
                                   return (
                                     <tr key={session.id} className="hover:bg-gray-50 transition-colors">
                                       <td className="px-4 py-3">
@@ -4200,24 +4288,31 @@ const DocumentsView = ({
   );
 };
 
-const AccueilView = ({ setActiveTab, clientProgress }) => (
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions }) => (
   <div className="flex flex-col items-center justify-center pt-10 md:pt-20 animate-fade-in">
     <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-6 border border-gray-100">
       <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
     </div>
     <h1 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">Bonjour.</h1>
-    <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression Qualiopi et accédez à vos séances.</p>
+    <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression et accédez à vos séances.</p>
 
-    {/* Barre de Progression Qualiopi */}
+    {/* Barre de Progression */}
     <div className="w-full max-w-3xl mt-8 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
       <div className="flex justify-between items-center mb-2">
-        <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">Progression Qualiopi</span>
+        <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">
+          {moduleName ? `Progression du ${moduleName}` : 'Progression du parcours'}
+        </span>
         <span className="text-sm font-black text-rose-500">{clientProgress}%</span>
       </div>
       <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
         <div className="h-full bg-rose-500 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
       </div>
-      <p className="text-[10px] text-gray-400 mt-2 italic text-left">Mise à jour automatique par signature électronique (Qualiopi).</p>
+      <div className="flex items-center justify-between mt-2">
+        <p className="text-[10px] text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
+        {totalSessions > 0 && (
+          <p className="text-[10px] text-gray-400 font-semibold">{signedSessions} / {totalSessions} séances émargées</p>
+        )}
+      </div>
     </div>
 
     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
@@ -4482,10 +4577,11 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
     );
   }
 
-  const dynamicRadarData = ANCHOR_KEYS.map(({ key, label }) => ({
+  const dynamicRadarData = ANCHOR_KEYS.map(({ key, label, description }) => ({
     subject: label,
     A: parseFloat(skill[key]) || 0,
     fullMark: 10,
+    description,
   }));
   const topAncres = [...dynamicRadarData].sort((a, b) => b.A - a.A).slice(0, 2);
   const topSkills = [skill.top_skill_1, skill.top_skill_2, skill.top_skill_3].filter(Boolean);
@@ -4537,14 +4633,18 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
             </ResponsiveContainer>
           </div>
           {topAncres.length > 0 && (
-            <p className="text-sm text-gray-600 bg-gray-50 py-2 px-4 rounded-lg w-full text-center">
-              Dominantes : {topAncres.map((a, i) => (
-                <React.Fragment key={a.subject}>
-                  <strong className="text-gray-900">{a.subject} ({a.A})</strong>
-                  {i < topAncres.length - 1 && ' et '}
-                </React.Fragment>
+            <div className="w-full mt-2 space-y-2">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Vos dominantes</p>
+              {topAncres.map((a, i) => (
+                <div key={a.subject} className={`rounded-2xl p-4 border ${i === 0 ? 'bg-rose-50 border-rose-100' : 'bg-indigo-50 border-indigo-100'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-sm font-bold ${i === 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{a.subject}</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${i === 0 ? 'bg-rose-200 text-rose-800' : 'bg-indigo-200 text-indigo-800'}`}>{a.A} / 10</span>
+                  </div>
+                  <p className="text-xs text-gray-600 italic">{a.description}</p>
+                </div>
               ))}
-            </p>
+            </div>
           )}
         </div>
       </div>
@@ -4552,24 +4652,60 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   );
 };
 
-const ExercicesView = ({ setActiveTab }) => (
-  <div className="space-y-6 animate-fade-in relative h-[calc(100vh-140px)] flex flex-col max-w-5xl mx-auto">
-    <div className="flex justify-between items-center mb-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Outils Pédagogiques</h1>
-        <p className="text-gray-500 text-lg">Retrouvez les évaluations actives et passées.</p>
+const ExercicesView = ({ setActiveTab, sessions, currentUserId }) => {
+  const exerciseSessions = (sessions || [])
+    .filter(s => String(s.client_id) === String(currentUserId) && s.type_activite === 'exercice')
+    .sort((a, b) => (a.numero_seance || 0) - (b.numero_seance || 0));
+
+  return (
+    <div className="space-y-6 animate-fade-in relative flex flex-col max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Outils Pédagogiques</h1>
+          <p className="text-gray-500 text-lg">Exercices assignés par votre accompagnateur.</p>
+        </div>
       </div>
+
+      {exerciseSessions.length === 0 ? (
+        <div className="bg-white py-20 text-center rounded-3xl border border-dashed border-gray-200">
+          <FileText className="mx-auto text-gray-200 mb-4" size={40} />
+          <p className="text-gray-400 italic">Aucun exercice prévu pour le moment.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+          {exerciseSessions.map(s => {
+            const isDone = s.statut_client === 'Signé' || s.statut === 'Signé';
+            const isUpcoming = s.date && new Date(s.date) > new Date();
+            return (
+              <div key={s.id} className="bg-white border-2 border-gray-100 rounded-3xl p-6 relative overflow-hidden group hover:shadow-md transition-shadow">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                <h3 className="text-xl font-bold text-gray-800 mb-2">{s.ressource_titre || s.nom || `Exercice séance ${s.numero_seance}`}</h3>
+                {s.date && (
+                  <p className="text-gray-400 text-sm mb-4">
+                    {isUpcoming ? `Prévu le ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}` : `Du ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`}
+                  </p>
+                )}
+                <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
+                  {isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
+                </span>
+                {s.ressource_url && !isUpcoming && (
+                  <a
+                    href={s.ressource_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-4 block text-center px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-colors"
+                  >
+                    Accéder à l'exercice ↗
+                  </a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full cursor-pointer" onClick={() => setActiveTab('bilan')}>
-      <div className="bg-white border-2 border-green-100 rounded-3xl p-6 relative overflow-hidden group hover:shadow-md transition-shadow">
-        <div className="absolute top-0 right-0 w-24 h-24 bg-green-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-        <h3 className="text-xl font-bold text-gray-800 mb-2">Test des Ancres de Carrière</h3>
-        <p className="text-gray-500 text-sm mb-4">Exercice de 40 questions. Permet de définir vos dominantes professionnelles.</p>
-        <span className="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">✔ Terminé</span>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole }) => {
   const user = userRole === 'admin' ? { nom: 'Administrateur', email: 'admin@vb-coaching.fr' } : (userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : clients.find(c => c.id === currentUserId));
@@ -4727,58 +4863,151 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
   );
 };
 
-const RessourcesView = ({ pedagogicalResources, supabase }) => {
-  const handleDownload = async (fileName) => {
+const RessourcesView = ({ pedagogicalResources, supabase, currentUserId }) => {
+  const [persoResources, setPersoResources] = React.useState([]);
+  const [uploadFile, setUploadFile] = React.useState(null);
+  const [uploadName, setUploadName] = React.useState('');
+  const [isUploading, setIsUploading] = React.useState(false);
+  const [showUploadForm, setShowUploadForm] = React.useState(false);
+
+  const fetchPersoResources = React.useCallback(async () => {
+    if (!currentUserId) return;
+    const { data } = await supabase.storage
+      .from('ressources-pedagogiques')
+      .list(`formateur-perso/${currentUserId}`);
+    if (data) setPersoResources(data.filter(f => f.name !== '.emptyFolderPlaceholder'));
+  }, [supabase, currentUserId]);
+
+  React.useEffect(() => { fetchPersoResources(); }, [fetchPersoResources]);
+
+  const handleDownloadShared = async (fileName) => {
     const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(fileName, 60);
-    if (!error && data) {
-      window.open(data.signedUrl, '_blank');
-    } else {
-      toast.error('Erreur lors du téléchargement : ' + error?.message);
-    }
+    if (!error && data) window.open(data.signedUrl, '_blank');
+    else toast.error('Erreur téléchargement : ' + error?.message);
   };
 
-  return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ressources Pédagogiques</h1>
-          <p className="text-gray-500 text-lg">Bibliothèque de documents partagés par l'administration.</p>
+  const handleDownloadPerso = async (fileName) => {
+    const path = `formateur-perso/${currentUserId}/${fileName}`;
+    const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(path, 60);
+    if (!error && data) window.open(data.signedUrl, '_blank');
+    else toast.error('Erreur téléchargement : ' + error?.message);
+  };
+
+  const handlePersonalUpload = async () => {
+    if (!uploadFile || !uploadName.trim()) { toast.error('Renseignez un nom et sélectionnez un fichier.'); return; }
+    setIsUploading(true);
+    const ext = uploadFile.name.split('.').pop();
+    const safeN = uploadName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const path = `formateur-perso/${currentUserId}/${Date.now()}_${safeN}.${ext}`;
+    const { error } = await supabase.storage.from('ressources-pedagogiques').upload(path, uploadFile);
+    if (error) { toast.error('Erreur upload : ' + error.message); }
+    else {
+      toast.success('Document enregistré dans votre espace !');
+      setUploadFile(null); setUploadName(''); setShowUploadForm(false);
+      fetchPersoResources();
+    }
+    setIsUploading(false);
+  };
+
+  const ResourceCard = ({ name, displayName, onDownload, accent = 'emerald' }) => (
+    <div className={`bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group`}>
+      <div className="flex items-center justify-between mb-4">
+        <div className={`w-12 h-12 bg-${accent}-50 text-${accent}-600 rounded-2xl flex items-center justify-center group-hover:bg-${accent}-600 group-hover:text-white transition-colors`}>
+          <FileText size={24} />
         </div>
+        <button onClick={onDownload} className={`text-gray-400 hover:text-${accent}-600 transition-colors`}>
+          <Download size={20} />
+        </button>
       </div>
+      <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={displayName}>{displayName}</h3>
+      <button
+        onClick={onDownload}
+        className={`mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-${accent}-600 hover:text-white hover:border-${accent}-600 transition-all uppercase tracking-wider`}
+      >
+        Télécharger
+      </button>
+    </div>
+  );
 
-      {pedagogicalResources.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pedagogicalResources.map(res => (
-            <div key={res.name} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                  <FileText size={24} />
-                </div>
-                <button
-                  onClick={() => handleDownload(res.name)}
-                  className="text-gray-400 hover:text-emerald-600 transition-colors"
-                >
-                  <Download size={20} />
-                </button>
-              </div>
-              <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={res.name.split('_').slice(1).join('_')}>
-                {res.name.split('_').slice(1).join('_') || res.name}
-              </h3>
-              <p className="text-[10px] text-gray-400">Ajouté le {new Date(res.created_at).toLocaleDateString()}</p>
+  return (
+    <div className="space-y-10 animate-fade-in max-w-5xl mx-auto">
 
+      {/* Section 1 : Mes documents personnels */}
+      <div>
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon Espace Documents</h1>
+            <p className="text-gray-500 text-lg">Stockez vos supports de cours, assurances, et documents personnels.</p>
+          </div>
+          <button
+            onClick={() => setShowUploadForm(v => !v)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-100 transition-all"
+          >
+            <Upload size={16} /> Ajouter un document
+          </button>
+        </div>
+
+        {showUploadForm && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 mb-6 space-y-3">
+            <input
+              type="text"
+              value={uploadName}
+              onChange={e => setUploadName(e.target.value)}
+              placeholder="Nom du document (ex: Attestation Assurance 2025)"
+              className="w-full bg-white border border-gray-200 text-gray-900 text-sm rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <input
+              type="file"
+              onChange={e => setUploadFile(e.target.files[0] || null)}
+              className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            />
+            <div className="flex gap-2">
               <button
-                onClick={() => handleDownload(res.name)}
-                className="mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all uppercase tracking-wider"
+                onClick={handlePersonalUpload}
+                disabled={isUploading}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-black py-2.5 rounded-xl transition-all disabled:opacity-50"
               >
-                Télécharger
+                {isUploading ? 'Envoi...' : 'Enregistrer'}
+              </button>
+              <button
+                onClick={() => { setShowUploadForm(false); setUploadFile(null); setUploadName(''); }}
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-600 text-sm font-bold rounded-xl hover:bg-gray-50 transition-all"
+              >
+                Annuler
               </button>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="bg-white py-20 text-center rounded-3xl border border-dashed border-gray-200">
-          <FileText className="mx-auto text-gray-200 mb-4" size={48} />
-          <p className="text-gray-400 italic">Aucune ressource disponible pour le moment.</p>
+          </div>
+        )}
+
+        {persoResources.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {persoResources.map(res => {
+              const displayName = res.name.replace(/^\d+_/, '').replace(/_/g, ' ');
+              return <ResourceCard key={res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadPerso(res.name)} accent="indigo" />;
+            })}
+          </div>
+        ) : (
+          <div className="bg-white py-14 text-center rounded-3xl border border-dashed border-gray-200">
+            <FileText className="mx-auto text-gray-200 mb-4" size={40} />
+            <p className="text-gray-400 italic text-sm">Aucun document personnel. Cliquez sur "Ajouter un document" pour commencer.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Section 2 : Ressources partagées par l'administration */}
+      {pedagogicalResources.length > 0 && (
+        <div>
+          <div className="mb-5">
+            <h2 className="text-xl font-extrabold text-gray-700 tracking-tight">Bibliothèque Partagée</h2>
+            <p className="text-gray-400 text-sm">Documents mis à disposition par l'administration.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pedagogicalResources.map(res => {
+              const displayName = res.name.split('_').slice(1).join('_') || res.name;
+              return <ResourceCard key={res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadShared(res.name)} accent="emerald" />;
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -7971,11 +8200,26 @@ export default function App() {
             clientSkills={clientSkills}
             fetchClientSkills={fetchClientSkills}
             supabase={supabase}
+            fetchDocuments={fetchDocuments}
           />}
-          {activeTab === 'accueil' && <AccueilView setActiveTab={setActiveTab} clientProgress={currentUserId ? Math.min(100, Math.round(((clients.find(c => c.id === currentUserId)?.seances_effectuees || 0) / (clients.find(c => c.id === currentUserId)?.seances_totales || 10)) * 100)) : 0} />}
+          {activeTab === 'accueil' && (() => {
+            const _client = clients.find(c => c.id === currentUserId);
+            const _module = modules.find(m => String(m.id) === String(_client?.module_id));
+            const _clientSessions = sessions.filter(s => String(s.client_id) === String(currentUserId));
+            const _signed = _clientSessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
+            const _total = _clientSessions.length;
+            const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
+            return <AccueilView
+              setActiveTab={setActiveTab}
+              clientProgress={_progress}
+              moduleName={_module?.nom || null}
+              totalSessions={_total}
+              signedSessions={_signed}
+            />;
+          })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
-          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
+          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} />}
           {activeTab === 'modélothèque' && <DocumentsView
             sessions={sessions}
             documents={documents}
@@ -8012,7 +8256,7 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             onUpdateTemplateDestination={handleUpdateTemplateDestination}
           />}
-          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
+          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
 
           {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
         </main>
