@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
-  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload
+import {
+  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
+  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -5809,6 +5809,374 @@ const getInitials = (name) => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+// ==========================================
+// AUTOMATION SETTINGS VIEW
+// ==========================================
+const TRIGGER_LABELS = {
+  no_signature: 'Relance émargement non signé',
+  reminder_before_session: 'Rappel avant séance',
+  welcome: 'Email de bienvenue',
+};
+
+const TRIGGER_VARS = {
+  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  welcome: ['{{client_name}}'],
+};
+
+const EMPTY_FORM = {
+  trigger_type: 'no_signature',
+  delay_days: 3,
+  email_subject: '',
+  email_body: '',
+  is_active: true,
+};
+
+function AutomationSettingsView({ supabase }) {
+  const [settings, setSettings] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+
+  const fetchSettings = async () => {
+    const { data } = await supabase
+      .from('automation_settings')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (data) setSettings(data);
+  };
+
+  const fetchLogs = async () => {
+    const { data } = await supabase
+      .from('automation_logs')
+      .select('*')
+      .order('sent_at', { ascending: false })
+      .limit(50);
+    if (data) setLogs(data);
+  };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    if (showLogs) fetchLogs();
+  }, [showLogs]);
+
+  const openAdd = () => {
+    setForm(EMPTY_FORM);
+    setEditingId(null);
+    setIsAdding(true);
+  };
+
+  const openEdit = (s) => {
+    setForm({
+      trigger_type: s.trigger_type,
+      delay_days: s.delay_days,
+      email_subject: s.email_subject,
+      email_body: s.email_body,
+      is_active: s.is_active,
+    });
+    setEditingId(s.id);
+    setIsAdding(true);
+  };
+
+  const cancelForm = () => {
+    setIsAdding(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  };
+
+  const saveForm = async () => {
+    if (!form.email_subject.trim() || !form.email_body.trim()) {
+      toast.error('Sujet et corps du mail sont requis.');
+      return;
+    }
+    setIsSaving(true);
+    const payload = { ...form, updated_at: new Date().toISOString() };
+    if (editingId) {
+      const { error } = await supabase
+        .from('automation_settings')
+        .update(payload)
+        .eq('id', editingId);
+      if (error) { toast.error('Erreur lors de la mise à jour.'); setIsSaving(false); return; }
+      toast.success('Relance mise à jour.');
+    } else {
+      const { error } = await supabase.from('automation_settings').insert(payload);
+      if (error) { toast.error('Erreur lors de la création.'); setIsSaving(false); return; }
+      toast.success('Relance créée.');
+    }
+    setIsSaving(false);
+    cancelForm();
+    fetchSettings();
+  };
+
+  const toggleActive = async (s) => {
+    const { error } = await supabase
+      .from('automation_settings')
+      .update({ is_active: !s.is_active, updated_at: new Date().toISOString() })
+      .eq('id', s.id);
+    if (error) { toast.error('Erreur de mise à jour.'); return; }
+    fetchSettings();
+  };
+
+  const deleteSetting = async (id) => {
+    if (!window.confirm('Supprimer cette relance ?')) return;
+    const { error } = await supabase.from('automation_settings').delete().eq('id', id);
+    if (error) { toast.error('Erreur lors de la suppression.'); return; }
+    toast.success('Relance supprimée.');
+    fetchSettings();
+  };
+
+  const triggerManual = async () => {
+    setIsTesting(true);
+    try {
+      const resp = await fetch('/api/automation/process', { method: 'GET' });
+      const json = await resp.json();
+      if (resp.ok) toast.success(`Exécution terminée — ${json.sent} email(s) envoyé(s).`);
+      else toast.error(`Erreur : ${json.error}`);
+    } catch (e) {
+      toast.error('Impossible de contacter la fonction de workflow.');
+    }
+    setIsTesting(false);
+    if (showLogs) fetchLogs();
+  };
+
+  const insertVar = (varName) => {
+    setForm(f => ({ ...f, email_body: f.email_body + varName }));
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* En-tête */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center">
+            <Bell className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Paramètres de Relance</h1>
+            <p className="text-sm text-gray-500">Automatisations email pilotées par Vercel Cron (chaque jour à 8h)</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={triggerManual}
+            disabled={isTesting}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all disabled:opacity-50"
+          >
+            <Clock className="w-4 h-4" />
+            {isTesting ? 'En cours…' : 'Tester maintenant'}
+          </button>
+          <button
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 transition-all shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Nouvelle relance
+          </button>
+        </div>
+      </div>
+
+      {/* Formulaire Ajout / Édition */}
+      {isAdding && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-rose-100">
+          <h2 className="text-base font-bold text-gray-800 mb-4">
+            {editingId ? 'Modifier la relance' : 'Créer une relance'}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Type de déclencheur</label>
+              <select
+                value={form.trigger_type}
+                onChange={e => setForm(f => ({ ...f, trigger_type: e.target.value }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+              >
+                <option value="no_signature">Relance émargement non signé</option>
+                <option value="reminder_before_session">Rappel avant séance</option>
+                <option value="welcome">Email de bienvenue (nouveau client)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                {form.trigger_type === 'no_signature'
+                  ? 'Délai après la séance (jours)'
+                  : form.trigger_type === 'reminder_before_session'
+                  ? 'Jours avant la séance'
+                  : 'Jours après la création du compte'}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.delay_days}
+                onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+              />
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Objet du mail</label>
+            <input
+              type="text"
+              placeholder="Ex : Rappel — votre émargement est en attente"
+              value={form.email_subject}
+              onChange={e => setForm(f => ({ ...f, email_subject: e.target.value }))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+            />
+          </div>
+          <div className="mb-2">
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Corps du mail</label>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {(TRIGGER_VARS[form.trigger_type] || []).map(v => (
+                <button
+                  key={v}
+                  onClick={() => insertVar(v)}
+                  className="text-xs px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-mono"
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <textarea
+              rows={6}
+              placeholder="Bonjour {{client_name}},&#10;&#10;Nous n'avons pas encore reçu votre émargement pour {{session_title}} du {{session_date}}."
+              value={form.email_body}
+              onChange={e => setForm(f => ({ ...f, email_body: e.target.value }))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300 font-mono resize-y"
+            />
+          </div>
+          <div className="flex items-center justify-between mt-4">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <span className="text-sm font-medium text-gray-700">Activer immédiatement</span>
+              <button onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))} className="focus:outline-none">
+                {form.is_active
+                  ? <ToggleRight className="w-6 h-6 text-rose-500" />
+                  : <ToggleLeft className="w-6 h-6 text-gray-400" />}
+              </button>
+            </label>
+            <div className="flex gap-2">
+              <button onClick={cancelForm} className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
+                Annuler
+              </button>
+              <button
+                onClick={saveForm}
+                disabled={isSaving}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 disabled:opacity-50 transition-all"
+              >
+                <Save className="w-4 h-4" />
+                {isSaving ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Liste des relances */}
+      <div className="space-y-3">
+        {settings.length === 0 && !isAdding && (
+          <div className="bg-white rounded-2xl p-10 text-center border border-dashed border-gray-200">
+            <Bell className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-400 text-sm">Aucune relance configurée. Cliquez sur "Nouvelle relance" pour commencer.</p>
+          </div>
+        )}
+        {settings.map(s => (
+          <div key={s.id} className={`bg-white rounded-2xl p-5 shadow-sm border transition-all ${s.is_active ? 'border-gray-100' : 'border-dashed border-gray-200 opacity-60'}`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${s.is_active ? 'bg-rose-50' : 'bg-gray-100'}`}>
+                  <Mail className={`w-4 h-4 ${s.is_active ? 'text-rose-500' : 'text-gray-400'}`} />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-800 text-sm">{TRIGGER_LABELS[s.trigger_type]}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {s.trigger_type === 'no_signature'
+                      ? `Si non signé après ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`
+                      : s.trigger_type === 'reminder_before_session'
+                      ? `${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} avant la séance`
+                      : `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggleActive(s)}
+                  title={s.is_active ? 'Désactiver' : 'Activer'}
+                  className="focus:outline-none"
+                >
+                  {s.is_active
+                    ? <ToggleRight className="w-6 h-6 text-rose-500 hover:text-rose-700" />
+                    : <ToggleLeft className="w-6 h-6 text-gray-300 hover:text-gray-500" />}
+                </button>
+                <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-all">
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button onClick={() => deleteSetting(s.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 pl-12">
+              <p className="text-xs text-gray-500 font-medium">Objet : <span className="font-normal text-gray-700">{s.email_subject || <em>—</em>}</span></p>
+              <p className="text-xs text-gray-400 mt-1 line-clamp-2 font-mono whitespace-pre-wrap">{s.email_body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Journal des envois */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowLogs(v => !v)}
+          className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-all"
+        >
+          <div className="flex items-center gap-2 font-semibold text-gray-700 text-sm">
+            <History className="w-4 h-4 text-gray-400" />
+            Journal des envois (50 derniers)
+          </div>
+          {showLogs ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </button>
+        {showLogs && (
+          <div className="border-t border-gray-100 overflow-x-auto">
+            {logs.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Aucun envoi enregistré.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 text-gray-500">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-semibold">Date d'envoi</th>
+                    <th className="text-left px-4 py-2 font-semibold">Email destinataire</th>
+                    <th className="text-left px-4 py-2 font-semibold">Type</th>
+                    <th className="text-left px-4 py-2 font-semibold">Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map(log => (
+                    <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                      <td className="px-4 py-2 text-gray-600">
+                        {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                      </td>
+                      <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
+                      <td className="px-4 py-2 text-gray-500">{log.reference_type || '—'}</td>
+                      <td className="px-4 py-2">
+                        <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-md font-medium">
+                          {log.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -7975,6 +8343,9 @@ export default function App() {
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
+              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Bell className="w-5 h-5 mr-3" /> Relances Auto
+              </button>
             </>
           )}
 
@@ -8141,6 +8512,9 @@ export default function App() {
             documentTemplates={documentTemplates}
             handleGenerateDocx={handleGenerateDocx}
             setViewingDocId={setViewingDocId}
+          />}
+          {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
+            supabase={supabase}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
