@@ -5936,6 +5936,10 @@ function AutomationSettingsView({ supabase }) {
     setIsTesting(true);
     try {
       const resp = await fetch('/api/automation/process', { method: 'GET' });
+      if (resp.status === 404) {
+        toast.error('Fonction non disponible — déployez l\'application sur Vercel pour activer les relances automatiques.');
+        return;
+      }
       const json = await resp.json();
       if (resp.ok) toast.success(`Exécution terminée — ${json.sent} email(s) envoyé(s).`);
       else toast.error(`Erreur : ${json.error}`);
@@ -8514,7 +8518,7 @@ export default function App() {
             setViewingDocId={setViewingDocId}
           />}
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
-            supabase={supabase}
+            supabase={supabaseAdmin}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
