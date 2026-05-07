@@ -5812,11 +5812,15 @@ const getInitials = (name) => {
 // ==========================================
 // AUTOMATION SETTINGS VIEW
 // ==========================================
+const KNOWN_TRIGGER_TYPES = ['no_signature', 'reminder_before_session', 'welcome'];
+
 const TRIGGER_LABELS = {
   no_signature: 'Relance émargement non signé',
   reminder_before_session: 'Rappel avant séance',
   welcome: 'Email de bienvenue',
 };
+
+const getTriggerLabel = (type) => TRIGGER_LABELS[type] || type;
 
 const TRIGGER_VARS = {
   no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
@@ -5841,6 +5845,7 @@ function AutomationSettingsView({ supabase }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [customTriggerName, setCustomTriggerName] = useState('');
 
   const fetchSettings = async () => {
     const { data } = await supabase
@@ -5870,17 +5875,20 @@ function AutomationSettingsView({ supabase }) {
   const openAdd = () => {
     setForm(EMPTY_FORM);
     setEditingId(null);
+    setCustomTriggerName('');
     setIsAdding(true);
   };
 
   const openEdit = (s) => {
+    const isCustom = !KNOWN_TRIGGER_TYPES.includes(s.trigger_type);
     setForm({
-      trigger_type: s.trigger_type,
+      trigger_type: isCustom ? '__custom__' : s.trigger_type,
       delay_days: s.delay_days,
       email_subject: s.email_subject,
       email_body: s.email_body,
       is_active: s.is_active,
     });
+    setCustomTriggerName(isCustom ? s.trigger_type : '');
     setEditingId(s.id);
     setIsAdding(true);
   };
@@ -5889,6 +5897,7 @@ function AutomationSettingsView({ supabase }) {
     setIsAdding(false);
     setEditingId(null);
     setForm(EMPTY_FORM);
+    setCustomTriggerName('');
   };
 
   const saveForm = async () => {
@@ -5896,8 +5905,15 @@ function AutomationSettingsView({ supabase }) {
       toast.error('Sujet et corps du mail sont requis.');
       return;
     }
+    if (form.trigger_type === '__custom__' && !customTriggerName.trim()) {
+      toast.error('Veuillez donner un nom au type personnalisé.');
+      return;
+    }
     setIsSaving(true);
-    const payload = { ...form, updated_at: new Date().toISOString() };
+    const resolvedTriggerType = form.trigger_type === '__custom__'
+      ? customTriggerName.trim().toLowerCase().replace(/\s+/g, '_')
+      : form.trigger_type;
+    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString() };
     if (editingId) {
       const { error } = await supabase
         .from('automation_settings')
@@ -6002,7 +6018,17 @@ function AutomationSettingsView({ supabase }) {
                 <option value="no_signature">Relance émargement non signé</option>
                 <option value="reminder_before_session">Rappel avant séance</option>
                 <option value="welcome">Email de bienvenue (nouveau client)</option>
+                <option value="__custom__">+ Type personnalisé…</option>
               </select>
+              {form.trigger_type === '__custom__' && (
+                <input
+                  type="text"
+                  placeholder="Nom du type (ex : newsletter_mensuelle)"
+                  value={customTriggerName}
+                  onChange={e => setCustomTriggerName(e.target.value)}
+                  className="mt-2 w-full border border-rose-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+                />
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">
@@ -6010,7 +6036,9 @@ function AutomationSettingsView({ supabase }) {
                   ? 'Délai après la séance (jours)'
                   : form.trigger_type === 'reminder_before_session'
                   ? 'Jours avant la séance'
-                  : 'Jours après la création du compte'}
+                  : form.trigger_type === 'welcome'
+                  ? 'Jours après la création du compte'
+                  : 'Fréquence de répétition (jours)'}
               </label>
               <input
                 type="number"
@@ -6034,7 +6062,7 @@ function AutomationSettingsView({ supabase }) {
           <div className="mb-2">
             <label className="block text-xs font-semibold text-gray-500 mb-1">Corps du mail</label>
             <div className="flex flex-wrap gap-1 mb-2">
-              {(TRIGGER_VARS[form.trigger_type] || []).map(v => (
+              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => (
                 <button
                   key={v}
                   onClick={() => insertVar(v)}
@@ -6094,13 +6122,15 @@ function AutomationSettingsView({ supabase }) {
                   <Mail className={`w-4 h-4 ${s.is_active ? 'text-rose-500' : 'text-gray-400'}`} />
                 </div>
                 <div>
-                  <p className="font-semibold text-gray-800 text-sm">{TRIGGER_LABELS[s.trigger_type]}</p>
+                  <p className="font-semibold text-gray-800 text-sm">{getTriggerLabel(s.trigger_type)}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {s.trigger_type === 'no_signature'
                       ? `Si non signé après ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`
                       : s.trigger_type === 'reminder_before_session'
                       ? `${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} avant la séance`
-                      : `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`}
+                      : s.trigger_type === 'welcome'
+                      ? `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`
+                      : `Envoi répété tous les ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`}
                   </p>
                 </div>
               </div>
