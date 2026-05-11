@@ -903,6 +903,114 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
   );
 };
 
+const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
+  const [dragOver, setDragOver] = React.useState(false);
+  const [selectedFile, setSelectedFile] = React.useState(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) { setSelectedFile(null); setDragOver(false); setIsSubmitting(false); }
+  }, [isOpen]);
+
+  if (!isOpen || !session) return null;
+
+  const exerciceName = session.ressource_titre || session.nom || 'Exercice';
+  const fileUrl = session.file_url || session.ressource_url;
+  const hasSubmitted = !!session.reponse_url;
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) setSelectedFile(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!selectedFile) return;
+    setIsSubmitting(true);
+    await onSubmit(session.id, selectedFile);
+    setIsSubmitting(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
+      <div className="bg-white rounded-[32px] w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden animate-slide-up max-h-[90vh] flex flex-col">
+        <div className="bg-emerald-600 p-8 text-white relative shrink-0">
+          <p className="text-emerald-200 text-[10px] font-black uppercase tracking-widest mb-2">⚙️ Votre Exercice</p>
+          <h2 className="text-2xl font-black leading-tight">{exerciceName}</h2>
+          {session.instructions && (
+            <p className="text-emerald-100 text-sm mt-3 leading-relaxed opacity-90">{session.instructions}</p>
+          )}
+          <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+        </div>
+
+        <div className="p-8 space-y-6 overflow-y-auto">
+          {hasSubmitted && (
+            <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <span className="text-2xl">📬</span>
+              <div>
+                <p className="font-black text-amber-800 text-sm">Terminé — En attente de correction</p>
+                <p className="text-amber-600 text-xs mt-0.5">Votre formateur va corriger votre rendu prochainement.</p>
+              </div>
+            </div>
+          )}
+
+          {fileUrl && (
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
+              <button
+                onClick={() => window.open(fileUrl, '_blank')}
+                className="w-full flex items-center justify-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl text-emerald-700 font-bold hover:bg-emerald-100 transition-all"
+              >
+                <Download size={18} /> Télécharger le modèle d'exercice
+              </button>
+            </div>
+          )}
+
+          <div>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">{fileUrl ? '2.' : '1.'} Déposer votre rendu</p>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer ${dragOver ? 'border-emerald-500 bg-emerald-50 scale-[1.01]' : selectedFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-gray-200 bg-gray-50 hover:border-emerald-300 hover:bg-emerald-50/30'}`}
+            >
+              <input
+                type="file"
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                onChange={e => { const f = e.target.files[0]; if (f) setSelectedFile(f); }}
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip"
+              />
+              {selectedFile ? (
+                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                  <span className="text-3xl">📎</span>
+                  <p className="font-bold text-emerald-700 text-sm">{selectedFile.name}</p>
+                  <p className="text-xs text-gray-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} Mo</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                  <span className="text-3xl">📁</span>
+                  <p className="font-bold text-gray-600 text-sm">Déposez votre exercice complété ici</p>
+                  <p className="text-xs text-gray-400">ou cliquez pour parcourir vos fichiers</p>
+                  <p className="text-[10px] text-gray-300 mt-1">PDF, Word, Excel, Images</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            disabled={!selectedFile || isSubmitting}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-2xl shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Envoi en cours...' : hasSubmitted ? 'Envoyer une nouvelle version' : 'Envoyer au formateur'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -2122,6 +2230,18 @@ const ClientDetailView = ({
                           >
                             <Eye size={20} />
                           </button>
+                          {s.reponse_url && (
+                            <a
+                              href={s.reponse_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="relative p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                              title="Voir le rendu"
+                            >
+                              <FileCheck size={18} />
+                              <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse"></span>
+                            </a>
+                          )}
                           <button
                             onClick={() => handleDeleteSession(s.id)}
                             className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
@@ -3758,12 +3878,18 @@ const FormateurView = ({
                                                   </label>
                                                 )}
                                               {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                <button
-                                                  onClick={() => window.open(session.reponse_url, '_blank')}
-                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                <a
+                                                  href={session.reponse_url}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="relative text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1.5"
                                                 >
-                                                  Voir Réponse
-                                                </button>
+                                                  <span className="relative flex h-2 w-2">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                                                  </span>
+                                                  Voir le rendu
+                                                </a>
                                               )}
                                               <button
                                                 onClick={() => handleDeleteSession(session)}
@@ -4481,6 +4607,7 @@ const SessionsView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
 }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
+  const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   const calculateDuration = (start, end) => {
     if (!start || !end) return null;
@@ -4652,29 +4779,16 @@ const SessionsView = ({
 
                               if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
                                 return (
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                    >
-                                      Télécharger
-                                    </button>
-                                    <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                      {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
-                                      <input
-                                        type="file"
-                                        className="hidden"
-                                        onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                      />
-                                    </label>
+                                  <div className="flex gap-2 items-center">
                                     {session.reponse_url && (
-                                      <button
-                                        onClick={() => window.open(session.reponse_url, '_blank')}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
-                                      >
-                                        Ma Réponse ↗
-                                      </button>
+                                      <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">Rendu envoyé</span>
                                     )}
+                                    <button
+                                      onClick={() => setExerciceModalSession(session)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                                    >
+                                      {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+                                    </button>
                                   </div>
                                 );
                               }
@@ -4699,6 +4813,12 @@ const SessionsView = ({
         </div>
       </div>
 
+      <ExerciceModal
+        isOpen={!!exerciceModalSession}
+        onClose={() => setExerciceModalSession(null)}
+        session={exerciceModalSession}
+        onSubmit={handleUploadExerciseResponse}
+      />
     </div>
   );
 };
@@ -4799,10 +4919,11 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   );
 };
 
-const ExercicesView = ({ setActiveTab, sessions, currentUserId }) => {
+const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExerciseResponse }) => {
   const exerciseSessions = (sessions || [])
     .filter(s => String(s.client_id) === String(currentUserId) && s.type_activite === 'exercice')
     .sort((a, b) => (a.numero_seance || 0) - (b.numero_seance || 0));
+  const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   return (
     <div className="space-y-6 animate-fade-in relative flex flex-col max-w-5xl mx-auto">
@@ -4832,24 +4953,31 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId }) => {
                     {isUpcoming ? `Prévu le ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}` : `Du ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`}
                   </p>
                 )}
-                <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
-                  {isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
-                </span>
-                {s.ressource_url && !isUpcoming && (
-                  <a
-                    href={s.ressource_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-4 block text-center px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-colors"
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${s.reponse_url ? 'bg-amber-100 text-amber-700' : isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
+                    {s.reponse_url ? '📬 En attente de correction' : isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
+                  </span>
+                </div>
+                {!isUpcoming && (
+                  <button
+                    onClick={() => setExerciceModalSession(s)}
+                    className="mt-4 block w-full text-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors"
                   >
-                    Accéder à l'exercice ↗
-                  </a>
+                    {s.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+                  </button>
                 )}
               </div>
             );
           })}
         </div>
       )}
+
+      <ExerciceModal
+        isOpen={!!exerciceModalSession}
+        onClose={() => setExerciceModalSession(null)}
+        session={exerciceModalSession}
+        onSubmit={handleUploadExerciseResponse}
+      />
     </div>
   );
 };
@@ -7688,13 +7816,13 @@ export default function App() {
       const fileExt = file.name.split('.').pop();
       const fileName = `${sessionId}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
-        .from('exercices-reponses')
+        .from('exercice-returns')
         .upload(fileName, file);
 
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage
-        .from('exercices-reponses')
+        .from('exercice-returns')
         .getPublicUrl(fileName);
 
       const { error: updateError } = await supabase
@@ -8830,7 +8958,7 @@ export default function App() {
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
-          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} />}
+          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'modélothèque' && <DocumentsView
             sessions={sessions}
             documents={documents}
