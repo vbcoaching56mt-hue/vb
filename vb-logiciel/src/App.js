@@ -903,31 +903,25 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = fileName; // On met à la racine du bucket pour simplifier
+      const filePath = fileName;
 
-      console.log('StepResourceModal: Tentative upload vers documents...', filePath);
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(filePath, file, { cacheControl: '3600', upsert: true });
 
+      let publicUrl;
       if (uploadError) {
-        console.error('StepResourceModal: Échec upload Storage:', uploadError);
-        // Fallback sur ressources-pedagogiques
-        console.log('StepResourceModal: Tentative de repli sur ressources-pedagogiques...');
         const { error: fallbackError } = await supabase.storage
           .from('ressources-pedagogiques')
           .upload(filePath, file, { cacheControl: '3600', upsert: true });
-        
-        if (fallbackError) {
-          throw fallbackError;
-        }
+        if (fallbackError) throw fallbackError;
+        ({ data: { publicUrl } } = supabase.storage.from('ressources-pedagogiques').getPublicUrl(filePath));
+      } else {
+        ({ data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath));
       }
 
-      // Link the uploaded file
-      setSelectedResourceId(filePath); // Store the full storage path
-      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, "")); // Auto-title if empty
-
-      console.log('File successfully uploaded and linked:', filePath);
+      setSelectedResourceId(publicUrl);
+      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
     } catch (err) {
       console.error('Error uploading file in modal:', err);
       alert('Erreur lors de l\'import du fichier : ' + err.message);
@@ -988,7 +982,6 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
           {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Source du Fichier</label>
                 <div className="space-y-3">
                   <select
                     className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
@@ -1030,7 +1023,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
                   </label>
                   {selectedResourceId && !isUploading && (
                     <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                      ✓ Fichier lié : {selectedResourceId}
+                      ✓ Fichier importé avec succès
                     </p>
                   )}
                 </div>
@@ -4441,9 +4434,7 @@ const SessionsView = ({
                             </div>
                           </div>
                         </td>
-                        <td className="py-4 text-xs italic text-gray-400">
-                          {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
-                        </td>
+                        <td className="py-4"></td>
                         <td className="py-4 text-center">
                           <div className="flex flex-col gap-1 items-center">
                             <div className="flex items-center gap-1.5">
