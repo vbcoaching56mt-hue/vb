@@ -913,6 +913,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
   });
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [instructions, setInstructions] = useState('');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -926,6 +927,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
       });
       setSelectedResourceId('');
       setIsUploading(false);
+      setInstructions('');
     }
   }, [isOpen]);
 
@@ -1011,6 +1013,19 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
             />
           </div>
 
+          {type === 'exercice' && (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <textarea
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
+                placeholder="Décrivez ici les consignes pour votre client..."
+                rows={4}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
+
           {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
               <div>
@@ -1095,7 +1110,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                onSave({ type, title, metadata, resourceId: selectedResourceId });
+                onSave({ type, title, metadata, resourceId: selectedResourceId, instructions: type === 'exercice' ? instructions : null });
                 onClose(); // Instant feedback
               }}
               disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
@@ -6904,7 +6919,8 @@ export default function App() {
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
-      ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
+      ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1,
+      ...(stepData.instructions ? { instructions: stepData.instructions } : {})
     }]);
 
     if (error) {
