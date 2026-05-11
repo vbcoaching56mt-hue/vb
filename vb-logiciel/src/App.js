@@ -350,7 +350,7 @@ const convertDocxBlobToPdf = async (docxBlob) => {
   return new Blob([byteArray], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -371,7 +371,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const pdfUrl = resolveFileUrl(url || document?.url);
   const pdfTitle = title || document?.nom || 'Document';
   const isValidUrl = !!pdfUrl; // resolveFileUrl garantit une URL https si non null
-  const isAttestation = mode === 'sign' && /autorisation.*conservation|conservation.*autoris/i.test(pdfTitle);
 
   // Nouvelle approche : signed URL → iframe directe (pas de fetch, pas de CORS)
   // createSignedUrl génère un lien temporaire que l'iframe peut charger sans restriction
@@ -633,7 +632,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 <p className="text-sm text-gray-500">Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".</p>
               </div>
               <div className="p-5">
-                {isAttestation && (
+                {isInteractiveConsent && (
                   <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
                     <p className="text-sm font-bold text-amber-800 mb-3">Avant de signer, indiquez votre choix :</p>
                     <label className="flex items-center gap-3 cursor-pointer mb-2 select-none">
@@ -752,10 +751,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl, isAttestation ? documentChoice : null);
+                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null);
                     }}
-                    disabled={!agreed || (isAttestation && !documentChoice)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isAttestation || documentChoice)) ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice)) ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -7123,17 +7122,19 @@ export default function App() {
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
 
-      // Overlay case cochée pour l'Attestation d'autorisation de conservation
-      // Coordonnées à ajuster selon le positionnement exact des cases dans le PDF source
+      // Overlay consentement interactif — config extensible par modèle de document SaaS
+      // Clé : identifiant du modèle (session.consent_template). 'default' = Attestation VB.
+      // Coordonnées en points pdf-lib (origine bas-gauche). À calibrer selon chaque PDF source.
+      const CONSENT_OVERLAYS = {
+        default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
+      };
+
       if (session.document_choice) {
-        const attestationPage = pages[0];
-        // AUTORISE_Y et REFUSE_Y : coordonnées depuis le bas de la page (système pdf-lib)
-        const CHECKBOX_X = 67;
-        const AUTORISE_Y = 318;
-        const REFUSE_Y = 291;
-        const checkY = session.document_choice === 'autorise' ? AUTORISE_Y : REFUSE_Y;
-        attestationPage.drawText('X', {
-          x: CHECKBOX_X,
+        const overlay = CONSENT_OVERLAYS[session.consent_template] || CONSENT_OVERLAYS.default;
+        const consentPage = pages[overlay.pageIndex];
+        const checkY = session.document_choice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
+        consentPage.drawText('X', {
+          x: overlay.checkboxX,
           y: checkY,
           size: 12,
           font: helveticaBold,
@@ -7867,7 +7868,7 @@ export default function App() {
     }
   };
 
-  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null) => {
+  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null, documentChoice = null) => {
     const doc = documents.find(d => String(d.id) === String(docId));
     if (!doc) {
       toast.error('Document introuvable (id: ' + docId + ')');
@@ -7932,7 +7933,18 @@ export default function App() {
       const pages = pdfDoc.getPages();
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
-      
+
+      // Overlay consentement interactif — même config que overlaySignatureOnPdf
+      const CONSENT_OVERLAYS = {
+        default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
+      };
+      if (documentChoice) {
+        const overlay = CONSENT_OVERLAYS[doc.consent_template] || CONSENT_OVERLAYS.default;
+        const consentPage = pages[overlay.pageIndex];
+        const checkY = documentChoice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
+        consentPage.drawText('X', { x: overlay.checkboxX, y: checkY, size: 12, font: helveticaBold, color: rgb(0, 0, 0) });
+      }
+
       // Coordonnées pour la zone "Le sous-traitant" (droite de la page)
       const xPos = width / 2 + 10;
       let yOffset = 112;
@@ -7982,6 +7994,7 @@ export default function App() {
         statut: 'Signé',
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
+        ...(documentChoice ? { document_choice: documentChoice } : {}),
       };
       const { error: dbError } = await supabase.from('documents').update(updateData).eq('id', docId);
       if (dbError) throw dbError;
@@ -8794,14 +8807,14 @@ export default function App() {
         }
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
+        isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
         onClose={() => setViewingSession(null)}
         onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl, documentChoice) => {
           const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
           const isDocument = documents.some(d => String(d.id) === String(sessionOrDoc.id));
-          console.log('[sign] sessionOrDoc.id=', sessionOrDoc.id, 'isDocument=', isDocument, 'documents ids=', documents.map(d => d.id));
           if (isDocument) {
-            await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl);
+            await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           } else {
             await handleSessionSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           }
