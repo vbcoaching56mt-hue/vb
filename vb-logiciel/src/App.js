@@ -1300,6 +1300,20 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             </div>
           </div>
 
+          {/* Énoncé / Consignes — uniquement pour les exercices */}
+          {type === 'exercice' && (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <textarea
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
+                placeholder="Décrivez ici les consignes pour votre client..."
+                rows={4}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
+
           {/* Fichier / Ressource */}
           {(type === 'document' || type === 'exercice') && (
             <div className="space-y-4">
@@ -1334,19 +1348,6 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                   ))}
                 </select>
               </div>
-            </div>
-          )}
-
-          {type === 'exercice' && (
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes</label>
-              <textarea
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
-                placeholder="Décrivez les consignes de l'exercice pour le bénéficiaire..."
-                rows={4}
-                value={instructions}
-                onChange={e => setInstructions(e.target.value)}
-              />
             </div>
           )}
 
