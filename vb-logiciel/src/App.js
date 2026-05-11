@@ -1011,6 +1011,98 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
   );
 };
 
+const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
+  const [statut, setStatut] = React.useState('');
+  const [commentaire, setCommentaire] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && session) {
+      setStatut(session.correction_statut || '');
+      setCommentaire(session.correction_commentaire || '');
+    }
+  }, [isOpen, session]);
+
+  if (!isOpen || !session) return null;
+
+  const handleSave = async () => {
+    if (!statut) return;
+    setSaving(true);
+    try {
+      await onSave(session.id, statut, commentaire);
+      onClose();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-indigo-600 px-6 py-5">
+          <h2 className="text-lg font-black text-white">Correction de l'exercice</h2>
+          <p className="text-indigo-200 text-sm mt-0.5 truncate">{session.ressource_titre || session.nom}</p>
+        </div>
+        <div className="p-6 space-y-5">
+          {session.reponse_url && (
+            <a
+              href={session.reponse_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 w-full px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-700 font-bold text-sm hover:bg-emerald-100 transition-colors"
+            >
+              <FileCheck size={18} />
+              Ouvrir le rendu du client
+              <span className="ml-auto text-emerald-400">↗</span>
+            </a>
+          )}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Statut de correction</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setStatut('Validé')}
+                className={`flex-1 py-3 rounded-2xl font-bold text-sm border-2 transition-all ${statut === 'Validé' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200 hover:border-green-300'}`}
+              >
+                ✅ Validé
+              </button>
+              <button
+                onClick={() => setStatut('À corriger')}
+                className={`flex-1 py-3 rounded-2xl font-bold text-sm border-2 transition-all ${statut === 'À corriger' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300'}`}
+              >
+                📝 À corriger
+              </button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Commentaire (optionnel)</p>
+            <textarea
+              value={commentaire}
+              onChange={e => setCommentaire(e.target.value)}
+              rows={4}
+              placeholder="Votre retour pour le client..."
+              className="w-full px-4 py-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} className="flex-1 py-3 rounded-2xl font-bold text-sm bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
+              Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!statut || saving}
+              className="flex-1 py-3 rounded-2xl font-bold text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -1752,9 +1844,10 @@ const ClientDetailView = ({
   setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
+  const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [draggedItemId, setDraggedItemId] = React.useState(null);
   const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -2232,16 +2325,14 @@ const ClientDetailView = ({
                           </button>
                           {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
                             s.reponse_url ? (
-                              <a
-                                href={s.reponse_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="relative p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                                title="Voir le rendu"
+                              <button
+                                onClick={() => setCorrectionModalSession(s)}
+                                className={`relative p-2.5 rounded-xl transition-all ${s.correction_statut === 'Validé' ? 'text-green-600 hover:bg-green-50' : s.correction_statut === 'À corriger' ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                                title="Corriger le rendu"
                               >
                                 <FileCheck size={18} />
-                                <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse"></span>
-                              </a>
+                                <span className={`absolute top-1.5 right-1.5 block h-2 w-2 rounded-full ring-2 ring-white ${s.correction_statut === 'Validé' ? 'bg-green-500' : s.correction_statut === 'À corriger' ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`}></span>
+                              </button>
                             ) : (
                               <span className="relative p-2.5 text-gray-300 rounded-xl" title="Aucun rendu">
                                 <FileCheck size={18} />
@@ -2312,6 +2403,12 @@ const ClientDetailView = ({
           </div>
         </div>
       )}
+      <CorrectionModal
+        isOpen={!!correctionModalSession}
+        onClose={() => setCorrectionModalSession(null)}
+        session={correctionModalSession}
+        onSave={handleSaveCorrection}
+      />
     </div>
   );
 };
@@ -2332,7 +2429,7 @@ const AdminClientsView = ({
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -2370,6 +2467,7 @@ const AdminClientsView = ({
           setIsDocSettingsOpen={setIsDocSettingsOpen}
           setViewingDocId={setViewingDocId}
           handleMoveSessionItem={handleMoveSessionItem}
+          handleSaveCorrection={handleSaveCorrection}
         />
       );
     }
@@ -3271,10 +3369,11 @@ const FormateurView = ({
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
-  handleMoveSessionItem
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
+  const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
   const [bilanDraft, setBilanDraft] = React.useState({});
@@ -3885,18 +3984,24 @@ const FormateurView = ({
                                                 )}
                                               {(userRole === 'admin' || userRole === 'formateur') && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
                                                 session.reponse_url ? (
-                                                  <a
-                                                    href={session.reponse_url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="relative text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1.5"
+                                                  <button
+                                                    onClick={() => setCorrectionModalSession(session)}
+                                                    className={`relative text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                                   >
-                                                    <span className="relative flex h-2 w-2">
-                                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-                                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
-                                                    </span>
-                                                    Voir le rendu
-                                                  </a>
+                                                    {session.correction_statut === 'Validé' ? (
+                                                      <>✅ Validé</>
+                                                    ) : session.correction_statut === 'À corriger' ? (
+                                                      <>📝 À corriger</>
+                                                    ) : (
+                                                      <>
+                                                        <span className="relative flex h-2 w-2">
+                                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                                                        </span>
+                                                        Corriger
+                                                      </>
+                                                    )}
+                                                  </button>
                                                 ) : (
                                                   <span className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 flex items-center gap-1.5">
                                                     Aucun rendu
@@ -4046,6 +4151,12 @@ const FormateurView = ({
         )}
       </div>
       )}
+      <CorrectionModal
+        isOpen={!!correctionModalSession}
+        onClose={() => setCorrectionModalSession(null)}
+        session={correctionModalSession}
+        onSave={handleSaveCorrection}
+      />
     </div>
   );
 };
@@ -4793,7 +4904,9 @@ const SessionsView = ({
                                 return (
                                   <div className="flex gap-2 items-center">
                                     {session.reponse_url && (
-                                      <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">Rendu envoyé</span>
+                                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                        {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
+                                      </span>
                                     )}
                                     <button
                                       onClick={() => setExerciceModalSession(session)}
@@ -4966,10 +5079,16 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2 items-center">
-                  <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${s.reponse_url ? 'bg-amber-100 text-amber-700' : isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
-                    {s.reponse_url ? '📬 En attente de correction' : isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${s.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : s.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : s.reponse_url ? 'bg-indigo-100 text-indigo-700' : isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
+                    {s.correction_statut === 'Validé' ? '✅ Validé' : s.correction_statut === 'À corriger' ? '📝 À corriger' : s.reponse_url ? '📬 En attente de correction' : isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
                   </span>
                 </div>
+                {s.correction_commentaire && (
+                  <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du coach</p>
+                    <p className="text-xs text-gray-600 leading-relaxed">{s.correction_commentaire}</p>
+                  </div>
+                )}
                 {!isUpcoming && (
                   <button
                     onClick={() => setExerciceModalSession(s)}
@@ -7861,6 +7980,15 @@ export default function App() {
     }
   };
 
+  const handleSaveCorrection = async (sessionId, statut, commentaire) => {
+    const { error } = await supabase.from('sessions')
+      .update({ correction_statut: statut, correction_commentaire: commentaire })
+      .eq('id', sessionId);
+    if (error) throw error;
+    await fetchSessions();
+    toast.success('Correction enregistrée !');
+  };
+
   const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null) => {
     try {
       const templateInfo = documentTemplates[type];
@@ -8847,6 +8975,7 @@ export default function App() {
             setIsDocSettingsOpen={setIsDocSettingsOpen}
             setViewingDocId={setViewingDocId}
             handleMoveSessionItem={handleMoveSessionItem}
+            handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -8958,6 +9087,7 @@ export default function App() {
             supabase={supabase}
             fetchDocuments={fetchDocuments}
             handleMoveSessionItem={handleMoveSessionItem}
+            handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'accueil' && (() => {
             const _client = clients.find(c => c.id === currentUserId);
