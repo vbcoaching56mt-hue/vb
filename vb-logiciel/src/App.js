@@ -365,11 +365,13 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef(null);
   const [hasSig, setHasSig] = useState(false);
+  const [documentChoice, setDocumentChoice] = useState(null); // 'autorise' | 'refuse' | null
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
   const pdfTitle = title || document?.nom || 'Document';
   const isValidUrl = !!pdfUrl; // resolveFileUrl garantit une URL https si non null
+  const isAttestation = mode === 'sign' && /autorisation.*conservation|conservation.*autoris/i.test(pdfTitle);
 
   // Nouvelle approche : signed URL → iframe directe (pas de fetch, pas de CORS)
   // createSignedUrl génère un lien temporaire que l'iframe peut charger sans restriction
@@ -505,6 +507,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setAgreed(false);
       setBlobUrl(null);
       setPdfError(null);
+      setDocumentChoice(null);
     }
 
     return () => { cancelled = true; };
@@ -630,6 +633,36 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 <p className="text-sm text-gray-500">Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".</p>
               </div>
               <div className="p-5">
+                {isAttestation && (
+                  <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                    <p className="text-sm font-bold text-amber-800 mb-3">Avant de signer, indiquez votre choix :</p>
+                    <label className="flex items-center gap-3 cursor-pointer mb-2 select-none">
+                      <input
+                        type="radio"
+                        name="documentChoice"
+                        value="autorise"
+                        checked={documentChoice === 'autorise'}
+                        onChange={() => setDocumentChoice('autorise')}
+                        className="w-4 h-4 accent-green-600 shrink-0"
+                      />
+                      <span className="text-sm text-gray-700 font-medium">J'autorise la conservation de mes documents personnels</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="documentChoice"
+                        value="refuse"
+                        checked={documentChoice === 'refuse'}
+                        onChange={() => setDocumentChoice('refuse')}
+                        className="w-4 h-4 accent-red-600 shrink-0"
+                      />
+                      <span className="text-sm text-gray-700 font-medium">Je n'autorise pas la conservation de mes documents personnels</span>
+                    </label>
+                    {!documentChoice && (
+                      <p className="text-xs text-amber-700 mt-2 italic">Ce choix est obligatoire pour débloquer la signature.</p>
+                    )}
+                  </div>
+                )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-rose-500 shrink-0" />
                   <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
@@ -719,10 +752,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl);
+                      onSave(sigDataUrl, isAttestation ? documentChoice : null);
                     }}
-                    disabled={!agreed}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${agreed ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isAttestation && !documentChoice)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isAttestation || documentChoice)) ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -7090,6 +7123,24 @@ export default function App() {
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
 
+      // Overlay case cochée pour l'Attestation d'autorisation de conservation
+      // Coordonnées à ajuster selon le positionnement exact des cases dans le PDF source
+      if (session.document_choice) {
+        const attestationPage = pages[0];
+        // AUTORISE_Y et REFUSE_Y : coordonnées depuis le bas de la page (système pdf-lib)
+        const CHECKBOX_X = 67;
+        const AUTORISE_Y = 318;
+        const REFUSE_Y = 291;
+        const checkY = session.document_choice === 'autorise' ? AUTORISE_Y : REFUSE_Y;
+        attestationPage.drawText('X', {
+          x: CHECKBOX_X,
+          y: checkY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0, 0, 0),
+        });
+      }
+
       const formateur = formateurs.find(f => f.id === session.formateur_id);
       const signerName = (role === 'formateur' || role === 'admin')
         ? (formateur?.nom || 'Le Formateur')
@@ -7137,7 +7188,7 @@ export default function App() {
     }
   };
 
-  const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
+  const handleSessionSignatureSave = async (sessionId, signatureDataUrl, documentChoice) => {
     const session = sessions.find(s => String(s.id) === String(sessionId));
     if (!session) {
       toast.error('Session introuvable (id: ' + sessionId + ')');
@@ -7156,6 +7207,10 @@ export default function App() {
       updateData.date_signature_client = new Date().toISOString();
       updateData.statut_client = 'Signé';
       updateData.statut = 'Signé';
+    }
+
+    if (documentChoice) {
+      updateData.document_choice = documentChoice;
     }
 
     // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
@@ -8740,7 +8795,7 @@ export default function App() {
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
         onClose={() => setViewingSession(null)}
-        onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl) => {
+        onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl, documentChoice) => {
           const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
           const isDocument = documents.some(d => String(d.id) === String(sessionOrDoc.id));
@@ -8748,7 +8803,7 @@ export default function App() {
           if (isDocument) {
             await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl);
           } else {
-            await handleSessionSignatureSave(sessionOrDoc.id, signatureDataUrl);
+            await handleSessionSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           }
         } : undefined}
       />
