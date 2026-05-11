@@ -2230,17 +2230,23 @@ const ClientDetailView = ({
                           >
                             <Eye size={20} />
                           </button>
-                          {s.reponse_url && (
-                            <a
-                              href={s.reponse_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="relative p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
-                              title="Voir le rendu"
-                            >
-                              <FileCheck size={18} />
-                              <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse"></span>
-                            </a>
+                          {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
+                            s.reponse_url ? (
+                              <a
+                                href={s.reponse_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="relative p-2.5 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                                title="Voir le rendu"
+                              >
+                                <FileCheck size={18} />
+                                <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse"></span>
+                              </a>
+                            ) : (
+                              <span className="relative p-2.5 text-gray-300 rounded-xl" title="Aucun rendu">
+                                <FileCheck size={18} />
+                              </span>
+                            )
                           )}
                           <button
                             onClick={() => handleDeleteSession(s.id)}
@@ -3877,19 +3883,25 @@ const FormateurView = ({
                                                     />
                                                   </label>
                                                 )}
-                                              {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                <a
-                                                  href={session.reponse_url}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="relative text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1.5"
-                                                >
-                                                  <span className="relative flex h-2 w-2">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                                              {(userRole === 'admin' || userRole === 'formateur') && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                                session.reponse_url ? (
+                                                  <a
+                                                    href={session.reponse_url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="relative text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1.5"
+                                                  >
+                                                    <span className="relative flex h-2 w-2">
+                                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                                                    </span>
+                                                    Voir le rendu
+                                                  </a>
+                                                ) : (
+                                                  <span className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 flex items-center gap-1.5">
+                                                    Aucun rendu
                                                   </span>
-                                                  Voir le rendu
-                                                </a>
+                                                )
                                               )}
                                               <button
                                                 onClick={() => handleDeleteSession(session)}
@@ -7814,7 +7826,13 @@ export default function App() {
   const handleUploadExerciseResponse = async (sessionId, file) => {
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `${sessionId}_${Date.now()}.${fileExt}`;
+      const targetSession = sessions.find(s => s.id === sessionId);
+      const client = clients.find(c => c.id === targetSession?.client_id);
+      const normalize = (str) => (str || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toUpperCase();
+      const nomClient = normalize(client?.nom_complet || client?.nom || 'CLIENT');
+      const nomExercice = normalize(targetSession?.ressource_titre || 'EXERCICE');
+      const date = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
+      const fileName = `${nomClient}_${nomExercice}_${date}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
         .from('exercice-returns')
         .upload(fileName, file);
