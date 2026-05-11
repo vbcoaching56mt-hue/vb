@@ -1033,6 +1033,7 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
       onClose();
     } catch (e) {
       console.error(e);
+      toast.error('Erreur lors de l\'enregistrement : ' + (e.message || 'Erreur inconnue'));
     } finally {
       setSaving(false);
     }
