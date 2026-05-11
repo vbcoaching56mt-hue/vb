@@ -1119,6 +1119,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
   const [isToSign, setIsToSign] = useState(false);
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [instructions, setInstructions] = useState('');
 
   // States for 'new' choice
   const [newDate, setNewDate] = useState('');
@@ -1137,6 +1138,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
       setNewDate('');
       setNewStart('');
       setNewEnd('');
+      setInstructions('');
     }
   }, [isOpen, preSelectedSessionId]);
 
@@ -1335,6 +1337,19 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             </div>
           )}
 
+          {type === 'exercice' && (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes</label>
+              <textarea
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
+                placeholder="Décrivez les consignes de l'exercice pour le bénéficiaire..."
+                rows={4}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
+
           {type === 'document' && (
             <div className="flex items-center gap-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
               <input
@@ -1372,7 +1387,8 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 resourceId: selectedResourceId,
                 isToSign: type === 'signature' ? true : isToSign,
                 sessionChoice: preSelectedSessionId ? 'existing' : choice,
-                sessionData
+                sessionData,
+                instructions: type === 'exercice' ? instructions : null
               });
               onClose();
             }}
@@ -1611,9 +1627,12 @@ const ClientDetailView = ({
   handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition,
   setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
+  handleMoveSessionItem
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
+  const [draggedItemId, setDraggedItemId] = React.useState(null);
+  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
@@ -1947,14 +1966,36 @@ const ClientDetailView = ({
               }, {});
 
               return Object.values(grouped).sort((a, b) => (a.numero || 0) - (b.numero || 0)).map((group, gIdx) => (
-                <div key={gIdx} className="border border-gray-100 rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm">
+                <div
+                  key={gIdx}
+                  className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${dragOverGroupNum === group.numero ? 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100' : 'border-gray-100'}`}
+                  onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
+                  onDragLeave={() => setDragOverGroupNum(null)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    if (draggedItemId && handleMoveSessionItem) {
+                      const src = sessions.find(s => s.id === draggedItemId);
+                      if (src && src.numero_seance !== group.numero) {
+                        const firstItem = group.items[0];
+                        handleMoveSessionItem(draggedItemId, group.numero, firstItem?.date, firstItem?.heure_debut, firstItem?.heure_fin);
+                      }
+                    }
+                    setDraggedItemId(null);
+                    setDragOverGroupNum(null);
+                  }}
+                >
                   <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">
                         {group.numero || '?'}
                       </div>
                       <div>
-                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">SÉANCE {group.numero}</h4>
+                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
+                          SÉANCE {group.numero}
+                          {dragOverGroupNum === group.numero && draggedItemId && (
+                            <span className="ml-3 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                          )}
+                        </h4>
                         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Planification globale</p>
                       </div>
                     </div>
@@ -2005,7 +2046,13 @@ const ClientDetailView = ({
                       const clientRequired = sMeta.requiresClientSignature !== false;
                       const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
                       return (
-                      <div key={s.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
+                      <div
+                        key={s.id}
+                        draggable
+                        onDragStart={e => { setDraggedItemId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
+                        onDragEnd={() => { setDraggedItemId(null); setDragOverGroupNum(null); }}
+                        className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${draggedItemId === s.id ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
+                      >
                         <div className="flex items-center gap-4">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                             s.type_activite === 'Exercice' ? 'bg-amber-50 text-amber-600' :
@@ -2142,7 +2189,8 @@ const AdminClientsView = ({
   setTargetSessionForAddition, setViewingSession,
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
+  handleMoveSessionItem
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -2179,6 +2227,7 @@ const AdminClientsView = ({
           setDocSettingsTarget={setDocSettingsTarget}
           setIsDocSettingsOpen={setIsDocSettingsOpen}
           setViewingDocId={setViewingDocId}
+          handleMoveSessionItem={handleMoveSessionItem}
         />
       );
     }
@@ -3079,7 +3128,8 @@ const FormateurView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
-  clientSkills, fetchClientSkills, supabase, fetchDocuments
+  clientSkills, fetchClientSkills, supabase, fetchDocuments,
+  handleMoveSessionItem
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -3091,6 +3141,8 @@ const FormateurView = ({
   const [clientDocFile, setClientDocFile] = React.useState(null);
   const [clientDocName, setClientDocName] = React.useState('');
   const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
+  const [draggedSessionId, setDraggedSessionId] = React.useState(null);
+  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // Documents administratifs propres au formateur (envoyés par l'admin)
@@ -3542,12 +3594,30 @@ const FormateurView = ({
 
                                 return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
                                   <React.Fragment key={gIdx}>
-                                    {/* Folder Header Row */}
-                                    <tr className="bg-indigo-50/30">
+                                    {/* Folder Header Row — Drop zone */}
+                                    <tr
+                                      className={`transition-all ${dragOverGroupNum === group.numero ? 'bg-indigo-100 outline outline-2 outline-indigo-400' : 'bg-indigo-50/30'}`}
+                                      onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
+                                      onDragLeave={() => setDragOverGroupNum(null)}
+                                      onDrop={e => {
+                                        e.preventDefault();
+                                        if (draggedSessionId && handleMoveSessionItem) {
+                                          const src = sessions.find(s => s.id === draggedSessionId);
+                                          if (src && src.numero_seance !== group.numero) {
+                                            handleMoveSessionItem(draggedSessionId, group.numero, group.date, group.debut, group.fin);
+                                          }
+                                        }
+                                        setDraggedSessionId(null);
+                                        setDragOverGroupNum(null);
+                                      }}
+                                    >
                                       <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
                                         <div className="flex items-center gap-2 text-xs">
                                           <Layout size={12} className="text-indigo-600" />
                                           <span>SÉANCE {group.numero} : {group.nom}</span>
+                                          {dragOverGroupNum === group.numero && draggedSessionId && (
+                                            <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                                          )}
                                         </div>
                                       </td>
                                       <td className="px-4 py-3">
@@ -3586,10 +3656,17 @@ const FormateurView = ({
                                       </td>
                                 </tr>
 
-                                {/* Nested Items */}
+                                {/* Nested Items — Draggable */}
                                 {group.items.map(session => (
-                                  <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
+                                  <tr
+                                    key={session.id}
+                                    draggable
+                                    onDragStart={e => { setDraggedSessionId(session.id); e.dataTransfer.effectAllowed = 'move'; }}
+                                    onDragEnd={() => { setDraggedSessionId(null); setDragOverGroupNum(null); }}
+                                    className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${draggedSessionId === session.id ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
+                                  >
                                     <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
+                                      <span className="text-[8px] text-gray-300 mr-0.5" title="Glisser pour déplacer">⠿</span>
                                       <span className="text-[14px]">
                                         {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
                                       </span>
@@ -4463,6 +4540,9 @@ const SessionsView = ({
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
                               <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                              {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -7309,7 +7389,7 @@ export default function App() {
       type_activite: data.type,
       file_url: data.resourceId,
       ressource_url: data.resourceId,
-      metadata: { 
+      metadata: {
         isCustom: true,
         documentType: data.type === 'signature' ? 'signature' : (data.isToSign ? 'signature' : 'info')
       },
@@ -7318,7 +7398,8 @@ export default function App() {
       statut_formateur: 'À venir',
       date: date,
       heure_debut: debut,
-      heure_fin: fin
+      heure_fin: fin,
+      ...(data.instructions ? { instructions: data.instructions } : {})
     }]);
 
 
@@ -7329,6 +7410,22 @@ export default function App() {
     } else {
       console.error("Erreur ajout item:", error);
       toast.error("Erreur lors de l'ajout.");
+    }
+  };
+
+  const handleMoveSessionItem = async (sessionId, targetNumeroSeance, targetDate, targetDebut, targetFin) => {
+    const { error } = await supabase.from('sessions').update({
+      numero_seance: targetNumeroSeance,
+      date: targetDate || null,
+      heure_debut: targetDebut || null,
+      heure_fin: targetFin || null,
+    }).eq('id', sessionId);
+
+    if (!error) {
+      await fetchSessions();
+      toast.success("Activité déplacée avec succès !");
+    } else {
+      toast.error("Erreur lors du déplacement : " + error.message);
     }
   };
 
@@ -8586,6 +8683,7 @@ export default function App() {
             setDocSettingsTarget={setDocSettingsTarget}
             setIsDocSettingsOpen={setIsDocSettingsOpen}
             setViewingDocId={setViewingDocId}
+            handleMoveSessionItem={handleMoveSessionItem}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -8696,6 +8794,7 @@ export default function App() {
             fetchClientSkills={fetchClientSkills}
             supabase={supabase}
             fetchDocuments={fetchDocuments}
+            handleMoveSessionItem={handleMoveSessionItem}
           />}
           {activeTab === 'accueil' && (() => {
             const _client = clients.find(c => c.id === currentUserId);
