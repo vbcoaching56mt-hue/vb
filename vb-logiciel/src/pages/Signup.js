@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClientConfig';
+import { supabase, supabaseAdmin } from '../supabaseClientConfig';
 
 const initDefaultTemplatesForOrg = async (orgId) => {
-  const { data: module } = await supabase.from('modules')
+  const { data: module } = await supabaseAdmin.from('modules')
     .insert([{ nom: 'Bilan de Compétences 24h', seances_prevues: 8, organisation_id: orgId }])
     .select().single();
   if (!module) return;
@@ -13,11 +13,11 @@ const initDefaultTemplatesForOrg = async (orgId) => {
     "Séance 7 — Plan d'Action", 'Séance 8 — Synthèse & Restitution'
   ];
   for (let i = 0; i < templates.length; i++) {
-    const { data: tpl } = await supabase.from('module_session_templates')
+    const { data: tpl } = await supabaseAdmin.from('module_session_templates')
       .insert([{ module_id: module.id, titre: templates[i], ordre: i + 1 }])
       .select().single();
     if (tpl) {
-      await supabase.from('module_step_resources').insert([{
+      await supabaseAdmin.from('module_step_resources').insert([{
         template_id: tpl.id, titre: 'Émargement de présence', type: 'signature', ordre: 1,
         metadata: { requiresClientSignature: true, requiresTrainerSignature: false }
       }]);
@@ -48,20 +48,30 @@ const SignupPage = () => {
     }
     setIsLoading(true);
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password
-      });
-      if (authError) throw authError;
-
-      const { data: org, error: orgError } = await supabase
+      // 1. Créer l'organisation en premier (service role → bypass RLS)
+      const { data: org, error: orgError } = await supabaseAdmin
         .from('organisations')
         .insert([{ nom: orgName.trim() }])
         .select()
         .single();
       if (orgError) throw orgError;
 
-      const { error: userError } = await supabase.from('utilisateurs').insert([{
+      // 2. Créer le compte Auth (emailRedirectTo → redirige vers l'app après confirmation)
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          emailRedirectTo: window.location.origin + '/'
+        }
+      });
+      if (authError) {
+        // Rollback : supprimer l'org créée si l'auth échoue
+        await supabaseAdmin.from('organisations').delete().eq('id', org.id);
+        throw authError;
+      }
+
+      // 3. Créer l'admin dans utilisateurs (service role → bypass RLS)
+      const { error: userError } = await supabaseAdmin.from('utilisateurs').insert([{
         nom: adminName.trim(),
         email: email.trim(),
         role: 'admin',
@@ -69,6 +79,7 @@ const SignupPage = () => {
       }]);
       if (userError) throw userError;
 
+      // 4. Injecter les templates par défaut
       await initDefaultTemplatesForOrg(org.id);
 
       if (authData.session) {
@@ -90,7 +101,7 @@ const SignupPage = () => {
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
           <p className="text-gray-500 mb-6">
             Un lien de confirmation a été envoyé à <strong>{email}</strong>.
-            Cliquez dessus pour activer votre compte.
+            Cliquez dessus pour activer votre compte et accéder à votre espace.
           </p>
           <button
             onClick={() => window.location.replace('/')}
