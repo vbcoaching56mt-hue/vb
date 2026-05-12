@@ -9,6 +9,7 @@ import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseAdmin } from './supabaseClientConfig';
+import SetupOrganisationPage from './pages/SetupOrganisation';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -6879,18 +6880,17 @@ export default function App() {
       
       if (session?.user?.email) {
         console.log('[App] Session trouvée pour:', session.user.email);
-        
-        // Chercher le rôle
-        const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).single();
+
+        // Utilise supabaseAdmin pour bypasser RLS et toujours trouver le profil
+        const { data: userData } = await supabaseAdmin.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
         if (userData && userData.role) {
           handleLogin(userData.role, userData.id, userData.organisation_id);
         } else {
-          // Chercher côté client
-          const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', session.user.email).single();
+          const { data: clientData } = await supabaseAdmin.from('clients').select('id').ilike('email_contact', session.user.email).maybeSingle();
           if (clientData) {
             handleLogin('client', clientData.id);
           } else {
-            // Session active mais aucun profil → afficher setup inline
+            // Session active mais aucun profil → setup inline
             setNeedsSetup(true);
           }
         }
@@ -9066,12 +9066,8 @@ export default function App() {
   }
 
   if (needsSetup) {
-    // Rendu inline — pas de navigation, session garantie disponible
-    const SetupOrganisationPage = require('./pages/SetupOrganisation').default;
     return (
-      <SetupOrganisationPage
-        onComplete={() => { window.location.replace('/'); }}
-      />
+      <SetupOrganisationPage />
     );
   }
 
