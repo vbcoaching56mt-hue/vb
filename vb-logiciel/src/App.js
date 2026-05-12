@@ -5909,10 +5909,110 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) =>
 };
 
 // ==========================================
+// PARAMÈTRES ORGANISME (ADMIN)
+// ==========================================
+
+const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved }) => {
+  const [nom, setNom] = useState(orgSettings?.nom || '');
+  const [siret, setSiret] = useState(orgSettings?.siret || '');
+  const [adresse, setAdresse] = useState(orgSettings?.adresse || '');
+  const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (orgSettings) {
+      setNom(orgSettings.nom || '');
+      setSiret(orgSettings.siret || '');
+      setAdresse(orgSettings.adresse || '');
+      setLogoUrl(orgSettings.logo_url || '');
+    }
+  }, [orgSettings]);
+
+  const handleLogoUpload = async (file) => {
+    if (!file) return;
+    setIsUploading(true);
+    const ext = file.name.split('.').pop();
+    const path = `${currentOrgId}/logo.${ext}`;
+    const { error } = await supabase.storage.from('logos').upload(path, file, { upsert: true });
+    if (error) { toast.error("Erreur upload logo : " + error.message); setIsUploading(false); return; }
+    const { data } = supabase.storage.from('logos').getPublicUrl(path);
+    setLogoUrl(data.publicUrl);
+    setIsUploading(false);
+    toast.success("Logo uploadé !");
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    const { error } = await supabase.from('organisations').update({ nom, siret, adresse, logo_url: logoUrl }).eq('id', currentOrgId);
+    if (error) { toast.error("Erreur : " + error.message); }
+    else { toast.success("Paramètres sauvegardés !"); onSaved({ nom, siret, adresse, logo_url: logoUrl }); }
+    setIsSaving(false);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 className="text-2xl font-black text-gray-900 tracking-tight">Paramètres de l'organisme</h2>
+        <p className="text-gray-500 text-sm mt-1">Ces informations apparaîtront sur vos documents officiels.</p>
+      </div>
+
+      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo de l'organisme</label>
+          <div className="flex items-center gap-6">
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo organisme" className="w-24 h-24 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
+            ) : (
+              <div className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 bg-gray-50">
+                <Upload className="w-8 h-8" />
+              </div>
+            )}
+            <div>
+              <input type="file" accept="image/*" id="logo-upload" className="hidden"
+                onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }} />
+              <label htmlFor="logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                {isUploading ? 'Chargement...' : 'Changer le logo'}
+              </label>
+              <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
+          <input type="text" value={nom} onChange={e => setNom(e.target.value)}
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Numéro SIRET</label>
+          <input type="text" value={siret} onChange={e => setSiret(e.target.value)} placeholder="ex : 123 456 789 00010"
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse</label>
+          <textarea value={adresse} onChange={e => setAdresse(e.target.value)} rows={3}
+            placeholder="ex : 1 rue de la Formation, 75000 Paris"
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all resize-none" />
+        </div>
+
+        <button onClick={handleSave} disabled={isSaving}
+          className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+          <Save className="w-4 h-4" />
+          {isSaving ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
 // COMPOSANT PRINCIPAL
 // ==========================================
 
-const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formateurs }) => {
+const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
   const [fiches, setFiches] = useState([]);
   const [assignedFiches, setAssignedFiches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5930,7 +6030,9 @@ const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formate
   const fetchFiches = async () => {
     setLoading(true);
     if (userRole === 'admin' || userRole === 'formateur') {
-      const { data, error } = await supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+      let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+      if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+      const { data, error } = await q;
       if (data) setFiches(data);
     } else if (userRole === 'client') {
       const { data, error } = await supabase
@@ -5949,7 +6051,7 @@ const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formate
   const handleAddFiche = async (e) => {
     e.preventDefault();
     if (!newFiche.title || !newFiche.sector) return toast.error("Titre et secteur requis");
-    const { error } = await supabase.from('job_sheets').insert([newFiche]);
+    const { error } = await supabase.from('job_sheets').insert([{ ...newFiche, organisation_id: currentOrgId }]);
     if (error) return toast.error("Erreur d'ajout : " + error.message);
     toast.success("Fiche métier ajoutée !");
     setIsAddModalOpen(false);
@@ -6764,6 +6866,7 @@ export default function App() {
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
   const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
   const [currentOrgId, setCurrentOrgId] = useState(null);
+  const [orgSettings, setOrgSettings] = useState(null);
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -6971,6 +7074,12 @@ export default function App() {
     if (!error && data) setClientSkills(data);
   };
 
+  const fetchOrgSettings = async () => {
+    if (!currentOrgId) return;
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse').eq('id', currentOrgId).single();
+    if (data) setOrgSettings(data);
+  };
+
   const fetchPedagogicalResources = async () => {
     const { data, error } = await supabase.storage.from('ressources-pedagogiques').list();
     if (!error && data) {
@@ -7154,7 +7263,8 @@ export default function App() {
           nom_complet: newUserName,
           email_contact: newUserEmail,
           telephone: clientPhone,
-          formateur_id: null // Pas de formateur sélectionné pour l'ajout manuel simple
+          formateur_id: null,
+          organisation_id: currentOrgId
         }]);
       error = clientError;
     } else {
@@ -7164,6 +7274,7 @@ export default function App() {
           nom: newUserName,
           email: newUserEmail,
           role: newUserRole,
+          organisation_id: currentOrgId
         }])
         .select();
       error = userError;
@@ -7234,7 +7345,7 @@ export default function App() {
   const handleAddModule = async (e) => {
     e.preventDefault();
     if (!newModuleName.trim()) return;
-    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances) }]);
+    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances), organisation_id: currentOrgId }]);
     if (!error) { 
       await fetchModules(); 
       setNewModuleName(''); 
@@ -8849,6 +8960,7 @@ export default function App() {
     fetchSessions();
     fetchPedagogicalResources();
     fetchClientSkills();
+    fetchOrgSettings();
 
     // Détection des liens d'invitation ou de récupération de mot de passe
     supabase.auth.onAuthStateChange((event, session) => {
@@ -8998,6 +9110,9 @@ export default function App() {
               <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
               </button>
+              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Settings className="w-5 h-5 mr-3" /> Paramètres
+              </button>
             </>
           )}
 
@@ -9097,10 +9212,19 @@ export default function App() {
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
             currentUserId={currentUserId}
+            currentOrgId={currentOrgId}
             supabase={supabase}
             clients={clients}
             formateurs={formateurs}
           />}
+          {activeTab === 'parametres_org' && userRole === 'admin' && (
+            <OrganisationSettingsView
+              supabase={supabase}
+              currentOrgId={currentOrgId}
+              orgSettings={orgSettings}
+              onSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
+            />
+          )}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
             newUserName={newUserName} setNewUserName={setNewUserName}
