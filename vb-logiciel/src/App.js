@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp, 
-  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck, 
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search
+import {
+  Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
+  Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -350,7 +350,7 @@ const convertDocxBlobToPdf = async (docxBlob) => {
   return new Blob([byteArray], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -365,6 +365,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef(null);
   const [hasSig, setHasSig] = useState(false);
+  const [documentChoice, setDocumentChoice] = useState(null); // 'autorise' | 'refuse' | null
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -505,6 +506,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setAgreed(false);
       setBlobUrl(null);
       setPdfError(null);
+      setDocumentChoice(null);
     }
 
     return () => { cancelled = true; };
@@ -630,6 +632,36 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 <p className="text-sm text-gray-500">Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".</p>
               </div>
               <div className="p-5">
+                {isInteractiveConsent && (
+                  <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                    <p className="text-sm font-bold text-amber-800 mb-3">Avant de signer, indiquez votre choix :</p>
+                    <label className="flex items-center gap-3 cursor-pointer mb-2 select-none">
+                      <input
+                        type="radio"
+                        name="documentChoice"
+                        value="autorise"
+                        checked={documentChoice === 'autorise'}
+                        onChange={() => setDocumentChoice('autorise')}
+                        className="w-4 h-4 accent-green-600 shrink-0"
+                      />
+                      <span className="text-sm text-gray-700 font-medium">J'autorise la conservation de mes documents personnels</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer select-none">
+                      <input
+                        type="radio"
+                        name="documentChoice"
+                        value="refuse"
+                        checked={documentChoice === 'refuse'}
+                        onChange={() => setDocumentChoice('refuse')}
+                        className="w-4 h-4 accent-red-600 shrink-0"
+                      />
+                      <span className="text-sm text-gray-700 font-medium">Je n'autorise pas la conservation de mes documents personnels</span>
+                    </label>
+                    {!documentChoice && (
+                      <p className="text-xs text-amber-700 mt-2 italic">Ce choix est obligatoire pour débloquer la signature.</p>
+                    )}
+                  </div>
+                )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-rose-500 shrink-0" />
                   <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
@@ -719,10 +751,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl);
+                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null);
                     }}
-                    disabled={!agreed}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${agreed ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice)) ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -871,6 +903,207 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
   );
 };
 
+const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
+  const [dragOver, setDragOver] = React.useState(false);
+  const [selectedFile, setSelectedFile] = React.useState(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) { setSelectedFile(null); setDragOver(false); setIsSubmitting(false); }
+  }, [isOpen]);
+
+  if (!isOpen || !session) return null;
+
+  const exerciceName = session.ressource_titre || session.nom || 'Exercice';
+  const fileUrl = session.file_url || session.ressource_url;
+  const hasSubmitted = !!session.reponse_url;
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) setSelectedFile(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!selectedFile) return;
+    setIsSubmitting(true);
+    await onSubmit(session.id, selectedFile);
+    setIsSubmitting(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
+      <div className="bg-white rounded-[32px] w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden animate-slide-up max-h-[90vh] flex flex-col">
+        <div className="bg-emerald-600 p-8 text-white relative shrink-0">
+          <p className="text-emerald-200 text-[10px] font-black uppercase tracking-widest mb-2">⚙️ Votre Exercice</p>
+          <h2 className="text-2xl font-black leading-tight">{exerciceName}</h2>
+          {session.instructions && (
+            <p className="text-emerald-100 text-sm mt-3 leading-relaxed opacity-90">{session.instructions}</p>
+          )}
+          <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+        </div>
+
+        <div className="p-8 space-y-6 overflow-y-auto">
+          {hasSubmitted && (
+            <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <span className="text-2xl">📬</span>
+              <div>
+                <p className="font-black text-amber-800 text-sm">Terminé — En attente de correction</p>
+                <p className="text-amber-600 text-xs mt-0.5">Votre formateur va corriger votre rendu prochainement.</p>
+              </div>
+            </div>
+          )}
+
+          {fileUrl && (
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
+              <button
+                onClick={() => window.open(fileUrl, '_blank')}
+                className="w-full flex items-center justify-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl text-emerald-700 font-bold hover:bg-emerald-100 transition-all"
+              >
+                <Download size={18} /> Télécharger le modèle d'exercice
+              </button>
+            </div>
+          )}
+
+          <div>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">{fileUrl ? '2.' : '1.'} Déposer votre rendu</p>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer ${dragOver ? 'border-emerald-500 bg-emerald-50 scale-[1.01]' : selectedFile ? 'border-emerald-400 bg-emerald-50/50' : 'border-gray-200 bg-gray-50 hover:border-emerald-300 hover:bg-emerald-50/30'}`}
+            >
+              <input
+                type="file"
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                onChange={e => { const f = e.target.files[0]; if (f) setSelectedFile(f); }}
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip"
+              />
+              {selectedFile ? (
+                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                  <span className="text-3xl">📎</span>
+                  <p className="font-bold text-emerald-700 text-sm">{selectedFile.name}</p>
+                  <p className="text-xs text-gray-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} Mo</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2 pointer-events-none">
+                  <span className="text-3xl">📁</span>
+                  <p className="font-bold text-gray-600 text-sm">Déposez votre exercice complété ici</p>
+                  <p className="text-xs text-gray-400">ou cliquez pour parcourir vos fichiers</p>
+                  <p className="text-[10px] text-gray-300 mt-1">PDF, Word, Excel, Images</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            disabled={!selectedFile || isSubmitting}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-4 rounded-2xl shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Envoi en cours...' : hasSubmitted ? 'Envoyer une nouvelle version' : 'Envoyer au formateur'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
+  const [statut, setStatut] = React.useState('');
+  const [commentaire, setCommentaire] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && session) {
+      setStatut(session.correction_statut || '');
+      setCommentaire(session.correction_commentaire || '');
+    }
+  }, [isOpen, session]);
+
+  if (!isOpen || !session) return null;
+
+  const handleSave = async () => {
+    if (!statut) return;
+    setSaving(true);
+    try {
+      await onSave(session.id, statut, commentaire);
+      onClose();
+    } catch (e) {
+      console.error(e);
+      toast.error('Erreur lors de l\'enregistrement : ' + (e.message || 'Erreur inconnue'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-indigo-600 px-6 py-5">
+          <h2 className="text-lg font-black text-white">Correction de l'exercice</h2>
+          <p className="text-indigo-200 text-sm mt-0.5 truncate">{session.ressource_titre || session.nom}</p>
+        </div>
+        <div className="p-6 space-y-5">
+          {session.reponse_url && (
+            <a
+              href={session.reponse_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 w-full px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-700 font-bold text-sm hover:bg-emerald-100 transition-colors"
+            >
+              <FileCheck size={18} />
+              Ouvrir le rendu du client
+              <span className="ml-auto text-emerald-400">↗</span>
+            </a>
+          )}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Statut de correction</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setStatut('Validé')}
+                className={`flex-1 py-3 rounded-2xl font-bold text-sm border-2 transition-all ${statut === 'Validé' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200 hover:border-green-300'}`}
+              >
+                ✅ Validé
+              </button>
+              <button
+                onClick={() => setStatut('À corriger')}
+                className={`flex-1 py-3 rounded-2xl font-bold text-sm border-2 transition-all ${statut === 'À corriger' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300'}`}
+              >
+                📝 À corriger
+              </button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">Commentaire (optionnel)</p>
+            <textarea
+              value={commentaire}
+              onChange={e => setCommentaire(e.target.value)}
+              rows={4}
+              placeholder="Votre retour pour le client..."
+              className="w-full px-4 py-3 rounded-2xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} className="flex-1 py-3 rounded-2xl font-bold text-sm bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
+              Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!statut || saving}
+              className="flex-1 py-3 rounded-2xl font-bold text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -881,6 +1114,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
   });
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [instructions, setInstructions] = useState('');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -894,6 +1128,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
       });
       setSelectedResourceId('');
       setIsUploading(false);
+      setInstructions('');
     }
   }, [isOpen]);
 
@@ -903,31 +1138,25 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = fileName; // On met à la racine du bucket pour simplifier
+      const filePath = fileName;
 
-      console.log('StepResourceModal: Tentative upload vers documents...', filePath);
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(filePath, file, { cacheControl: '3600', upsert: true });
 
+      let publicUrl;
       if (uploadError) {
-        console.error('StepResourceModal: Échec upload Storage:', uploadError);
-        // Fallback sur ressources-pedagogiques
-        console.log('StepResourceModal: Tentative de repli sur ressources-pedagogiques...');
         const { error: fallbackError } = await supabase.storage
           .from('ressources-pedagogiques')
           .upload(filePath, file, { cacheControl: '3600', upsert: true });
-        
-        if (fallbackError) {
-          throw fallbackError;
-        }
+        if (fallbackError) throw fallbackError;
+        ({ data: { publicUrl } } = supabase.storage.from('ressources-pedagogiques').getPublicUrl(filePath));
+      } else {
+        ({ data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath));
       }
 
-      // Link the uploaded file
-      setSelectedResourceId(filePath); // Store the full storage path
-      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, "")); // Auto-title if empty
-
-      console.log('File successfully uploaded and linked:', filePath);
+      setSelectedResourceId(publicUrl);
+      if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
     } catch (err) {
       console.error('Error uploading file in modal:', err);
       alert('Erreur lors de l\'import du fichier : ' + err.message);
@@ -985,10 +1214,22 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
             />
           </div>
 
+          {type === 'exercice' && (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <textarea
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
+                placeholder="Décrivez ici les consignes pour votre client..."
+                rows={4}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
+
           {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Source du Fichier</label>
                 <div className="space-y-3">
                   <select
                     className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
@@ -1030,7 +1271,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
                   </label>
                   {selectedResourceId && !isUploading && (
                     <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                      ✓ Fichier lié : {selectedResourceId}
+                      ✓ Fichier importé avec succès
                     </p>
                   )}
                 </div>
@@ -1070,7 +1311,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                onSave({ type, title, metadata, resourceId: selectedResourceId });
+                onSave({ type, title, metadata, resourceId: selectedResourceId, instructions: type === 'exercice' ? instructions : null });
                 onClose(); // Instant feedback
               }}
               disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
@@ -1086,7 +1327,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
 };
 
 // --- Composant Modal pour l'ajout d'éléments personnalisés par le Formateur ---
-const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, clientSessions = [] }) => {
+const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, clientSessions = [], preSelectedSessionId = null, preSelectedLabel = null }) => {
   const [choice, setChoice] = useState('existing'); // 'existing' or 'new'
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [type, setType] = useState('signature');
@@ -1094,7 +1335,8 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
   const [isToSign, setIsToSign] = useState(false);
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  
+  const [instructions, setInstructions] = useState('');
+
   // States for 'new' choice
   const [newDate, setNewDate] = useState('');
   const [newStart, setNewStart] = useState('');
@@ -1108,12 +1350,13 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
       setIsToSign(false);
       setSelectedResourceId('');
       setIsUploading(false);
-      setSelectedSessionId('');
+      setSelectedSessionId(preSelectedSessionId || '');
       setNewDate('');
       setNewStart('');
       setNewEnd('');
+      setInstructions('');
     }
-  }, [isOpen]);
+  }, [isOpen, preSelectedSessionId]);
 
   const handleFileUpload = async (file) => {
     if (!file) return;
@@ -1159,72 +1402,88 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
         </div>
 
         <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
-          {/* Choix de la destination */}
-          <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
-            <button 
-              onClick={() => setChoice('existing')}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'existing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Séance Existante
-            </button>
-            <button 
-              onClick={() => setChoice('new')}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'new' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Nouvelle Séance
-            </button>
-          </div>
 
-          {choice === 'existing' ? (
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
-              <select 
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
-                value={selectedSessionId}
-                onChange={e => setSelectedSessionId(e.target.value)}
-              >
-                <option value="">-- Sélectionner --</option>
-                {uniqueSessionOptions.map(s => (
-                  <option key={s.id} value={s.id}>SÉANCE {s.numero_seance} {s.nom ? `(${s.nom.split(' - ')[0]})` : ''}</option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="space-y-4 animate-fade-in">
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
-                  <input 
-                    type="date"
-                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                    value={newDate}
-                    onChange={e => setNewDate(e.target.value)}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
-                    <input 
-                      type="time"
-                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                      value={newStart}
-                      onChange={e => setNewStart(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
-                    <input 
-                      type="time"
-                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
-                      value={newEnd}
-                      onChange={e => setNewEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
+          {/* Contexte séance : badge si pré-sélectionné, sinon toggle + sélecteur */}
+          {preSelectedSessionId ? (
+            <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3">
+              <div className="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center shrink-0">
+                <Layout size={14} />
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Ajout dans</p>
+                <p className="text-sm font-black text-indigo-900">{preSelectedLabel || 'Séance sélectionnée'}</p>
               </div>
             </div>
+          ) : (
+            <>
+              <div className="flex p-1 bg-gray-100 rounded-2xl gap-1">
+                <button
+                  onClick={() => setChoice('existing')}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'existing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Séance Existante
+                </button>
+                <button
+                  onClick={() => setChoice('new')}
+                  className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all ${choice === 'new' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Nouvelle Séance
+                </button>
+              </div>
+
+              {choice === 'existing' ? (
+                <div>
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
+                  <select
+                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
+                    value={selectedSessionId}
+                    onChange={e => setSelectedSessionId(e.target.value)}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    {uniqueSessionOptions.map(s => (
+                      <option key={s.id} value={s.id}>SÉANCE {s.numero_seance} {s.nom ? `(${s.nom.split(' - ')[0]})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
+                      <input
+                        type="date"
+                        className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                        value={newDate}
+                        onChange={e => setNewDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
+                        <input
+                          type="time"
+                          className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                          value={newStart}
+                          onChange={e => setNewStart(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
+                        <input
+                          type="time"
+                          className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
+                          value={newEnd}
+                          onChange={e => setNewEnd(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
+          {/* Titre */}
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
             <input
@@ -1236,6 +1495,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             />
           </div>
 
+          {/* Type d'activité */}
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Type d'activité</label>
             <div className="grid grid-cols-3 gap-2">
@@ -1256,6 +1516,21 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
             </div>
           </div>
 
+          {/* Énoncé / Consignes — uniquement pour les exercices */}
+          {type === 'exercice' && (
+            <div>
+              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <textarea
+                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
+                placeholder="Décrivez ici les consignes pour votre client..."
+                rows={4}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Fichier / Ressource */}
           {(type === 'document' || type === 'exercice') && (
             <div className="space-y-4">
               <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fichier / Ressource</label>
@@ -1311,10 +1586,16 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
         <div className="p-6 bg-gray-50 flex gap-3">
           <button onClick={onClose} className="flex-1 py-4 text-sm font-bold text-gray-500 hover:text-gray-900 transition-colors">Annuler</button>
           <button
-            disabled={!title || isUploading || ((type === 'document' || type === 'exercice') && !selectedResourceId) || (choice === 'existing' && !selectedSessionId)}
+            disabled={
+              !title ||
+              isUploading ||
+              ((type === 'document' || type === 'exercice') && !selectedResourceId) ||
+              (!preSelectedSessionId && choice === 'existing' && !selectedSessionId)
+            }
             onClick={() => {
-              const sessionData = choice === 'existing' 
-                ? clientSessions.find(s => s.id === selectedSessionId) 
+              const effectiveSessionId = preSelectedSessionId || selectedSessionId;
+              const sessionData = (preSelectedSessionId || choice === 'existing')
+                ? clientSessions.find(s => s.id === effectiveSessionId)
                 : { date: newDate, heure_debut: newStart, heure_fin: newEnd, isNewSession: true };
 
               onSave({
@@ -1322,8 +1603,9 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 type,
                 resourceId: selectedResourceId,
                 isToSign: type === 'signature' ? true : isToSign,
-                sessionChoice: choice,
-                sessionData
+                sessionChoice: preSelectedSessionId ? 'existing' : choice,
+                sessionData,
+                instructions: type === 'exercice' ? instructions : null
               });
               onClose();
             }}
@@ -1340,6 +1622,144 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 // ==========================================
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
+
+const initDefaultTemplatesForOrg = async (supabase, orgId) => {
+  const { data: module } = await supabase.from('modules')
+    .insert([{ nom: 'Bilan de Compétences 24h', seances_prevues: 8, organisation_id: orgId }])
+    .select().single();
+  if (!module) return;
+  const templates = [
+    'Séance 1 — Accueil & Cadrage', 'Séance 2 — Parcours Professionnel',
+    'Séance 3 — Compétences & Ressources', 'Séance 4 — Analyse des Motivations',
+    'Séance 5 — Exploration des Métiers', 'Séance 6 — Projet Professionnel',
+    "Séance 7 — Plan d'Action", 'Séance 8 — Synthèse & Restitution'
+  ];
+  for (let i = 0; i < templates.length; i++) {
+    const { data: tpl } = await supabase.from('module_session_templates')
+      .insert([{ module_id: module.id, titre: templates[i], ordre: i + 1 }])
+      .select().single();
+    if (tpl) {
+      await supabase.from('module_step_resources').insert([{
+        template_id: tpl.id, titre: 'Émargement de présence', type: 'signature', ordre: 1,
+        metadata: { requiresClientSignature: true, requiresTrainerSignature: false }
+      }]);
+    }
+  }
+};
+
+const SignupView = ({ supabase, onComplete }) => {
+  const [orgName, setOrgName] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (password !== confirmPassword) {
+      setError('Les mots de passe ne correspondent pas.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Le mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      // 1. Créer le compte Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email: email.trim(), password });
+      if (authError) throw authError;
+
+      // 2. Créer l'organisation
+      const { data: org, error: orgError } = await supabase.from('organisations')
+        .insert([{ nom: orgName.trim() }]).select().single();
+      if (orgError) throw orgError;
+
+      // 3. Créer l'entrée admin dans utilisateurs
+      const { error: userError } = await supabase.from('utilisateurs').insert([{
+        nom: adminName.trim(),
+        email: email.trim(),
+        role: 'admin',
+        organisation_id: org.id
+      }]);
+      if (userError) throw userError;
+
+      // 4. Injecter les templates par défaut
+      await initDefaultTemplatesForOrg(supabase, org.id);
+
+      // 5. Si la session est directement disponible, connecter
+      if (authData.session) {
+        onComplete();
+      } else {
+        setNeedsConfirmation(true);
+      }
+    } catch (err) {
+      setError(err.message || 'Une erreur est survenue.');
+    }
+    setIsLoading(false);
+  };
+
+  if (needsConfirmation) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6">VB</div>
+          <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
+          <p className="text-gray-500 mb-6">Un lien de confirmation a été envoyé à <strong>{email}</strong>. Cliquez dessus pour activer votre compte.</p>
+          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="text-sm font-bold text-rose-500 hover:text-rose-600">Retour à la connexion</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in">
+        <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
+        <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
+            <input type="text" required value={orgName} onChange={e => setOrgName(e.target.value)} placeholder="ex : Mon Organisme Formation" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Votre nom complet</label>
+            <input type="text" required value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="ex : Marie Dupont" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse email</label>
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="votre@email.com" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Mot de passe</label>
+            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="8 caractères minimum" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Confirmer le mot de passe</label>
+            <input type="password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Répéter le mot de passe" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+          </div>
+
+          {error && <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{error}</p>}
+
+          <button type="submit" disabled={isLoading} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+            {isLoading ? 'Création en cours...' : 'Créer mon espace'}
+          </button>
+        </form>
+
+        <p className="text-center text-sm text-gray-500 mt-6">
+          Déjà inscrit ?{' '}
+          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="font-bold text-rose-500 hover:text-rose-600">Se connecter</button>
+        </p>
+      </div>
+    </div>
+  );
+};
 
 const LoginView = ({ handleLogin, supabase, successMessage }) => {
   const [email, setEmail] = useState(() => {
@@ -1384,12 +1804,12 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
       // D'abord chercher dans utilisateurs (formateurs/admin)
       const { data: userData, error: dbError } = await supabase
         .from('utilisateurs')
-        .select('role, id')
+        .select('role, id, organisation_id')
         .eq('email', userEmail)
         .single();
 
       if (userData && userData.role) {
-        handleLogin(userData.role, userData.id);
+        handleLogin(userData.role, userData.id, userData.organisation_id);
         setIsLoading(false);
         return;
       }
@@ -1549,6 +1969,11 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
             {isLoading ? 'Connexion en cours...' : 'Se connecter'}
           </button>
         </form>
+
+        <p className="text-center text-sm text-gray-500 mt-6">
+          Pas encore de compte ?{' '}
+          <a href="/signup" className="font-bold text-rose-500 hover:text-rose-600">Créer votre espace</a>
+        </p>
       </div>
     </div>
   );
@@ -1562,9 +1987,13 @@ const ClientDetailView = ({
   handleDeleteClient, setIsSessionItemModalOpen, setTargetSessionForAddition,
   setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
+  const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
+  const [draggedItemId, setDraggedItemId] = React.useState(null);
+  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
@@ -1811,7 +2240,7 @@ const ClientDetailView = ({
 
             {/* Documents administratifs signés */}
             {documents
-              .filter(d => d.user_id === client.id && d.statut === 'Signé')
+              .filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client))
               .map(doc => (
                 <div key={doc.id} className="flex items-center justify-between p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100 hover:border-emerald-300 transition-all group">
                   <div className="flex items-center gap-4">
@@ -1843,7 +2272,7 @@ const ClientDetailView = ({
               ))}
 
             {(sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 &&
-              documents.filter(d => d.user_id === client.id && d.statut === 'Signé').length === 0) && (
+              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client)).length === 0) && (
               <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                 <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
               </div>
@@ -1898,14 +2327,36 @@ const ClientDetailView = ({
               }, {});
 
               return Object.values(grouped).sort((a, b) => (a.numero || 0) - (b.numero || 0)).map((group, gIdx) => (
-                <div key={gIdx} className="border border-gray-100 rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm">
+                <div
+                  key={gIdx}
+                  className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${dragOverGroupNum === group.numero ? 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100' : 'border-gray-100'}`}
+                  onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
+                  onDragLeave={() => setDragOverGroupNum(null)}
+                  onDrop={e => {
+                    e.preventDefault();
+                    if (draggedItemId && handleMoveSessionItem) {
+                      const src = sessions.find(s => s.id === draggedItemId);
+                      if (src && src.numero_seance !== group.numero) {
+                        const firstItem = group.items[0];
+                        handleMoveSessionItem(draggedItemId, group.numero, firstItem?.date, firstItem?.heure_debut, firstItem?.heure_fin);
+                      }
+                    }
+                    setDraggedItemId(null);
+                    setDragOverGroupNum(null);
+                  }}
+                >
                   <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">
                         {group.numero || '?'}
                       </div>
                       <div>
-                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">SÉANCE {group.numero}</h4>
+                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
+                          SÉANCE {group.numero}
+                          {dragOverGroupNum === group.numero && draggedItemId && (
+                            <span className="ml-3 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                          )}
+                        </h4>
                         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Planification globale</p>
                       </div>
                     </div>
@@ -1956,7 +2407,13 @@ const ClientDetailView = ({
                       const clientRequired = sMeta.requiresClientSignature !== false;
                       const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
                       return (
-                      <div key={s.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
+                      <div
+                        key={s.id}
+                        draggable
+                        onDragStart={e => { setDraggedItemId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
+                        onDragEnd={() => { setDraggedItemId(null); setDragOverGroupNum(null); }}
+                        className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${draggedItemId === s.id ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
+                      >
                         <div className="flex items-center gap-4">
                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                             s.type_activite === 'Exercice' ? 'bg-amber-50 text-amber-600' :
@@ -2010,6 +2467,22 @@ const ClientDetailView = ({
                           >
                             <Eye size={20} />
                           </button>
+                          {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
+                            s.reponse_url ? (
+                              <button
+                                onClick={() => setCorrectionModalSession(s)}
+                                className={`relative p-2.5 rounded-xl transition-all ${s.correction_statut === 'Validé' ? 'text-green-600 hover:bg-green-50' : s.correction_statut === 'À corriger' ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                                title="Corriger le rendu"
+                              >
+                                <FileCheck size={18} />
+                                <span className={`absolute top-1.5 right-1.5 block h-2 w-2 rounded-full ring-2 ring-white ${s.correction_statut === 'Validé' ? 'bg-green-500' : s.correction_statut === 'À corriger' ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`}></span>
+                              </button>
+                            ) : (
+                              <span className="relative p-2.5 text-gray-300 rounded-xl" title="Aucun rendu">
+                                <FileCheck size={18} />
+                              </span>
+                            )
+                          )}
                           <button
                             onClick={() => handleDeleteSession(s.id)}
                             className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
@@ -2074,6 +2547,12 @@ const ClientDetailView = ({
           </div>
         </div>
       )}
+      <CorrectionModal
+        isOpen={!!correctionModalSession}
+        onClose={() => setCorrectionModalSession(null)}
+        session={correctionModalSession}
+        onSave={handleSaveCorrection}
+      />
     </div>
   );
 };
@@ -2093,7 +2572,8 @@ const AdminClientsView = ({
   setTargetSessionForAddition, setViewingSession,
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
-  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId
+  setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -2130,6 +2610,8 @@ const AdminClientsView = ({
           setDocSettingsTarget={setDocSettingsTarget}
           setIsDocSettingsOpen={setIsDocSettingsOpen}
           setViewingDocId={setViewingDocId}
+          handleMoveSessionItem={handleMoveSessionItem}
+          handleSaveCorrection={handleSaveCorrection}
         />
       );
     }
@@ -3030,14 +3512,22 @@ const FormateurView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
-  clientSkills, fetchClientSkills, supabase
+  clientSkills, fetchClientSkills, supabase, fetchDocuments,
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
+  const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
   const [bilanDraft, setBilanDraft] = React.useState({});
   const [savingBilan, setSavingBilan] = React.useState(false);
+  const [uploadingClientId, setUploadingClientId] = React.useState(null);
+  const [clientDocFile, setClientDocFile] = React.useState(null);
+  const [clientDocName, setClientDocName] = React.useState('');
+  const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
+  const [draggedSessionId, setDraggedSessionId] = React.useState(null);
+  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // Documents administratifs propres au formateur (envoyés par l'admin)
@@ -3084,6 +3574,43 @@ const FormateurView = ({
     const h = Math.floor(diff / 60);
     const m = diff % 60;
     return `${h}h${m > 0 ? ` ${m}min` : ''}`;
+  };
+
+  const handleUploadForClient = async (clientId) => {
+    if (!clientDocFile || !clientDocName.trim()) {
+      toast.error('Veuillez renseigner un nom et choisir un fichier.');
+      return;
+    }
+    setIsUploadingClientDoc(true);
+    const ext = clientDocFile.name.split('.').pop();
+    const safeN = clientDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const fileName = `formateur_${currentUserId}/${Date.now()}_${safeN}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(fileName, clientDocFile);
+    if (upErr) {
+      toast.error('Erreur upload : ' + upErr.message);
+      setIsUploadingClientDoc(false);
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+    const { error: dbErr } = await supabase.from('documents').insert({
+      nom: clientDocName.trim(),
+      type_document: 'Administratif',
+      user_id: clientId,
+      assigned_formateur_id: currentUserId,
+      url: publicUrl,
+      visible_client: false,
+      visible_formateur: true
+    });
+    if (!dbErr) {
+      toast.success('Document ajouté au dossier client !');
+      setClientDocFile(null);
+      setClientDocName('');
+      setUploadingClientId(null);
+      if (fetchDocuments) fetchDocuments();
+    } else {
+      toast.error('Erreur base de données : ' + dbErr.message);
+    }
+    setIsUploadingClientDoc(false);
   };
 
   return (
@@ -3245,9 +3772,8 @@ const FormateurView = ({
                       
                       {(() => {
                         const adminDocs = documents.filter(d =>
-                          (d.user_id === client.id || d.assigned_formateur_id === currentUserId) &&
-                          (d.assigned_formateur_id === currentUserId || d.visible_formateur) &&
-                          d.type_document === 'Administratif'
+                          d.user_id === client.id &&
+                          (d.type_document === 'Administratif' || d.type_document === 'Contrat' || d.type_document === 'Mission')
                         );
                         
                         if (adminDocs.length === 0) return (
@@ -3298,6 +3824,53 @@ const FormateurView = ({
                           </div>
                         );
                       })()}
+
+                      {/* Upload formateur — ajouter un document au dossier client */}
+                      <div className="mt-6 pt-5 border-t border-dashed border-gray-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="w-2 h-4 bg-indigo-400 rounded-full"></span>
+                          <h4 className="font-black text-gray-700 text-xs uppercase tracking-tight">Ajouter un document au dossier client</h4>
+                        </div>
+                        {uploadingClientId === client.id ? (
+                          <div className="bg-indigo-50 rounded-2xl p-4 space-y-3 border border-indigo-100">
+                            <input
+                              type="text"
+                              value={clientDocName}
+                              onChange={e => setClientDocName(e.target.value)}
+                              placeholder="Nom du document (ex: Facture finale)"
+                              className="w-full bg-white border border-gray-200 text-gray-900 text-sm rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-300"
+                            />
+                            <input
+                              type="file"
+                              onChange={e => setClientDocFile(e.target.files[0] || null)}
+                              className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
+                              accept=".pdf,.doc,.docx,image/*"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleUploadForClient(client.id)}
+                                disabled={isUploadingClientDoc}
+                                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black py-2.5 rounded-xl transition-all disabled:opacity-50"
+                              >
+                                {isUploadingClientDoc ? 'Envoi en cours...' : 'Envoyer le document'}
+                              </button>
+                              <button
+                                onClick={() => { setUploadingClientId(null); setClientDocFile(null); setClientDocName(''); }}
+                                className="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 text-xs font-bold rounded-xl hover:bg-gray-50 transition-all"
+                              >
+                                Annuler
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setUploadingClientId(client.id)}
+                            className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-black px-4 py-2.5 rounded-xl border border-indigo-100 transition-all"
+                          >
+                            <Upload size={14} /> Insérer un document (facture, justificatif...)
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -3305,7 +3878,8 @@ const FormateurView = ({
                     <div className="mb-4">
                       {(() => {
                         const signedSessions = clientSessions.filter(s =>
-                          s.statut === 'Signé' && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
+                          (s.statut === 'Signé' || s.statut_client === 'Signé') &&
+                          (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
                         );
                         if (signedSessions.length === 0) return (
                           <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
@@ -3326,7 +3900,7 @@ const FormateurView = ({
                               <tbody className="divide-y divide-gray-50 bg-white">
                                 {signedSessions.map(session => {
                                   const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
-                                  const dateSign = session.date_signature_formateur || session.date_signature || session.updated_at;
+                                  const dateSign = session.date_signature_client || session.date_signature_formateur || session.date_signature || session.updated_at;
                                   return (
                                     <tr key={session.id} className="hover:bg-gray-50 transition-colors">
                                       <td className="px-4 py-3">
@@ -3405,12 +3979,30 @@ const FormateurView = ({
 
                                 return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
                                   <React.Fragment key={gIdx}>
-                                    {/* Folder Header Row */}
-                                    <tr className="bg-indigo-50/30">
+                                    {/* Folder Header Row — Drop zone */}
+                                    <tr
+                                      className={`transition-all ${dragOverGroupNum === group.numero ? 'bg-indigo-100 outline outline-2 outline-indigo-400' : 'bg-indigo-50/30'}`}
+                                      onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
+                                      onDragLeave={() => setDragOverGroupNum(null)}
+                                      onDrop={e => {
+                                        e.preventDefault();
+                                        if (draggedSessionId && handleMoveSessionItem) {
+                                          const src = sessions.find(s => s.id === draggedSessionId);
+                                          if (src && src.numero_seance !== group.numero) {
+                                            handleMoveSessionItem(draggedSessionId, group.numero, group.date, group.debut, group.fin);
+                                          }
+                                        }
+                                        setDraggedSessionId(null);
+                                        setDragOverGroupNum(null);
+                                      }}
+                                    >
                                       <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
                                         <div className="flex items-center gap-2 text-xs">
                                           <Layout size={12} className="text-indigo-600" />
                                           <span>SÉANCE {group.numero} : {group.nom}</span>
+                                          {dragOverGroupNum === group.numero && draggedSessionId && (
+                                            <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                                          )}
                                         </div>
                                       </td>
                                       <td className="px-4 py-3">
@@ -3449,10 +4041,17 @@ const FormateurView = ({
                                       </td>
                                 </tr>
 
-                                {/* Nested Items */}
+                                {/* Nested Items — Draggable */}
                                 {group.items.map(session => (
-                                  <tr key={session.id} className="hover:bg-gray-50/30 transition-colors border-l border-gray-100">
+                                  <tr
+                                    key={session.id}
+                                    draggable
+                                    onDragStart={e => { setDraggedSessionId(session.id); e.dataTransfer.effectAllowed = 'move'; }}
+                                    onDragEnd={() => { setDraggedSessionId(null); setDragOverGroupNum(null); }}
+                                    className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${draggedSessionId === session.id ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
+                                  >
                                     <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
+                                      <span className="text-[8px] text-gray-300 mr-0.5" title="Glisser pour déplacer">⠿</span>
                                       <span className="text-[14px]">
                                         {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
                                       </span>
@@ -3527,13 +4126,31 @@ const FormateurView = ({
                                                     />
                                                   </label>
                                                 )}
-                                              {(userRole === 'admin' || userRole === 'formateur') && session.reponse_url && (
-                                                <button
-                                                  onClick={() => window.open(session.reponse_url, '_blank')}
-                                                  className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
-                                                >
-                                                  Voir Réponse
-                                                </button>
+                                              {(userRole === 'admin' || userRole === 'formateur') && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                                session.reponse_url ? (
+                                                  <button
+                                                    onClick={() => setCorrectionModalSession(session)}
+                                                    className={`relative text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                                  >
+                                                    {session.correction_statut === 'Validé' ? (
+                                                      <>✅ Validé</>
+                                                    ) : session.correction_statut === 'À corriger' ? (
+                                                      <>📝 À corriger</>
+                                                    ) : (
+                                                      <>
+                                                        <span className="relative flex h-2 w-2">
+                                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                                                          <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                                                        </span>
+                                                        Corriger
+                                                      </>
+                                                    )}
+                                                  </button>
+                                                ) : (
+                                                  <span className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 flex items-center gap-1.5">
+                                                    Aucun rendu
+                                                  </span>
+                                                )
                                               )}
                                               <button
                                                 onClick={() => handleDeleteSession(session)}
@@ -3553,7 +4170,11 @@ const FormateurView = ({
                                   <td colSpan="5" className="px-8 py-2 text-left border-l border-gray-100">
                                     <button
                                       onClick={() => {
-                                        setTargetSessionForAddition(group);
+                                        setTargetSessionForAddition({
+                                          ...group,
+                                          clientId: client.id,
+                                          preSelectedSessionId: group.items[0]?.id
+                                        });
                                         setIsSessionItemModalOpen(true);
                                       }}
                                       className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
@@ -3674,6 +4295,12 @@ const FormateurView = ({
         )}
       </div>
       )}
+      <CorrectionModal
+        isOpen={!!correctionModalSession}
+        onClose={() => setCorrectionModalSession(null)}
+        session={correctionModalSession}
+        onSave={handleSaveCorrection}
+      />
     </div>
   );
 };
@@ -4247,6 +4874,7 @@ const SessionsView = ({
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
 }) => {
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
+  const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   const calculateDuration = (start, end) => {
     if (!start || !end) return null;
@@ -4322,12 +4950,13 @@ const SessionsView = ({
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
                               <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                              {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
+                              )}
                             </div>
                           </div>
                         </td>
-                        <td className="py-4 text-xs italic text-gray-400">
-                          {session.ressource_id ? `Ressource : ${session.ressource_id}` : 'Pas de ressource liée'}
-                        </td>
+                        <td className="py-4"></td>
                         <td className="py-4 text-center">
                           <div className="flex flex-col gap-1 items-center">
                             <div className="flex items-center gap-1.5">
@@ -4417,29 +5046,18 @@ const SessionsView = ({
 
                               if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
                                 return (
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => session.ressource_id && handleDownloadResource(session.ressource_id)}
-                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                    >
-                                      Télécharger
-                                    </button>
-                                    <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
-                                      {session.statut === 'Rendu' ? 'Modifier Réponse' : 'Soumettre Réponse'}
-                                      <input
-                                        type="file"
-                                        className="hidden"
-                                        onChange={(e) => e.target.files[0] && handleUploadExerciseResponse(session.id, e.target.files[0])}
-                                      />
-                                    </label>
+                                  <div className="flex gap-2 items-center">
                                     {session.reponse_url && (
-                                      <button
-                                        onClick={() => window.open(session.reponse_url, '_blank')}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-200"
-                                      >
-                                        Ma Réponse ↗
-                                      </button>
+                                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                        {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
+                                      </span>
                                     )}
+                                    <button
+                                      onClick={() => setExerciceModalSession(session)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                                    >
+                                      {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+                                    </button>
                                   </div>
                                 );
                               }
@@ -4464,6 +5082,12 @@ const SessionsView = ({
         </div>
       </div>
 
+      <ExerciceModal
+        isOpen={!!exerciceModalSession}
+        onClose={() => setExerciceModalSession(null)}
+        session={exerciceModalSession}
+        onSubmit={handleUploadExerciseResponse}
+      />
     </div>
   );
 };
@@ -4564,24 +5188,74 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   );
 };
 
-const ExercicesView = ({ setActiveTab }) => (
-  <div className="space-y-6 animate-fade-in relative h-[calc(100vh-140px)] flex flex-col max-w-5xl mx-auto">
-    <div className="flex justify-between items-center mb-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Outils Pédagogiques</h1>
-        <p className="text-gray-500 text-lg">Retrouvez les évaluations actives et passées.</p>
+const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExerciseResponse }) => {
+  const exerciseSessions = (sessions || [])
+    .filter(s => String(s.client_id) === String(currentUserId) && s.type_activite === 'exercice')
+    .sort((a, b) => (a.numero_seance || 0) - (b.numero_seance || 0));
+  const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
+
+  return (
+    <div className="space-y-6 animate-fade-in relative flex flex-col max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Outils Pédagogiques</h1>
+          <p className="text-gray-500 text-lg">Exercices assignés par votre accompagnateur.</p>
+        </div>
       </div>
+
+      {exerciseSessions.length === 0 ? (
+        <div className="bg-white py-20 text-center rounded-3xl border border-dashed border-gray-200">
+          <FileText className="mx-auto text-gray-200 mb-4" size={40} />
+          <p className="text-gray-400 italic">Aucun exercice prévu pour le moment.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+          {exerciseSessions.map(s => {
+            const isDone = s.statut_client === 'Signé' || s.statut === 'Signé';
+            const isUpcoming = s.date && new Date(s.date) > new Date();
+            return (
+              <div key={s.id} className="bg-white border-2 border-gray-100 rounded-3xl p-6 relative overflow-hidden group hover:shadow-md transition-shadow">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                <h3 className="text-xl font-bold text-gray-800 mb-2">{s.ressource_titre || s.nom || `Exercice séance ${s.numero_seance}`}</h3>
+                {s.date && (
+                  <p className="text-gray-400 text-sm mb-4">
+                    {isUpcoming ? `Prévu le ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}` : `Du ${new Date(s.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}`}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide ${s.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : s.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : s.reponse_url ? 'bg-indigo-100 text-indigo-700' : isDone ? 'bg-green-100 text-green-800' : isUpcoming ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'}`}>
+                    {s.correction_statut === 'Validé' ? '✅ Validé' : s.correction_statut === 'À corriger' ? '📝 À corriger' : s.reponse_url ? '📬 En attente de correction' : isDone ? '✔ Terminé' : isUpcoming ? '🔒 À venir' : '⏳ En cours'}
+                  </span>
+                </div>
+                {s.correction_commentaire && (
+                  <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du coach</p>
+                    <p className="text-xs text-gray-600 leading-relaxed">{s.correction_commentaire}</p>
+                  </div>
+                )}
+                {!isUpcoming && (
+                  <button
+                    onClick={() => setExerciceModalSession(s)}
+                    className="mt-4 block w-full text-center px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors"
+                  >
+                    {s.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <ExerciceModal
+        isOpen={!!exerciceModalSession}
+        onClose={() => setExerciceModalSession(null)}
+        session={exerciceModalSession}
+        onSubmit={handleUploadExerciseResponse}
+      />
     </div>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full cursor-pointer" onClick={() => setActiveTab('bilan')}>
-      <div className="bg-white border-2 border-green-100 rounded-3xl p-6 relative overflow-hidden group hover:shadow-md transition-shadow">
-        <div className="absolute top-0 right-0 w-24 h-24 bg-green-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-        <h3 className="text-xl font-bold text-gray-800 mb-2">Test des Ancres de Carrière</h3>
-        <p className="text-gray-500 text-sm mb-4">Exercice de 40 questions. Permet de définir vos dominantes professionnelles.</p>
-        <span className="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">✔ Terminé</span>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole }) => {
   const user = userRole === 'admin' ? { nom: 'Administrateur', email: 'admin@vb-coaching.fr' } : (userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : clients.find(c => c.id === currentUserId));
@@ -4739,58 +5413,151 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
   );
 };
 
-const RessourcesView = ({ pedagogicalResources, supabase }) => {
-  const handleDownload = async (fileName) => {
+const RessourcesView = ({ pedagogicalResources, supabase, currentUserId }) => {
+  const [persoResources, setPersoResources] = React.useState([]);
+  const [uploadFile, setUploadFile] = React.useState(null);
+  const [uploadName, setUploadName] = React.useState('');
+  const [isUploading, setIsUploading] = React.useState(false);
+  const [showUploadForm, setShowUploadForm] = React.useState(false);
+
+  const fetchPersoResources = React.useCallback(async () => {
+    if (!currentUserId) return;
+    const { data } = await supabase.storage
+      .from('ressources-pedagogiques')
+      .list(`formateur-perso/${currentUserId}`);
+    if (data) setPersoResources(data.filter(f => f.name !== '.emptyFolderPlaceholder'));
+  }, [supabase, currentUserId]);
+
+  React.useEffect(() => { fetchPersoResources(); }, [fetchPersoResources]);
+
+  const handleDownloadShared = async (fileName) => {
     const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(fileName, 60);
-    if (!error && data) {
-      window.open(data.signedUrl, '_blank');
-    } else {
-      toast.error('Erreur lors du téléchargement : ' + error?.message);
-    }
+    if (!error && data) window.open(data.signedUrl, '_blank');
+    else toast.error('Erreur téléchargement : ' + error?.message);
   };
 
-  return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ressources Pédagogiques</h1>
-          <p className="text-gray-500 text-lg">Bibliothèque de documents partagés par l'administration.</p>
+  const handleDownloadPerso = async (fileName) => {
+    const path = `formateur-perso/${currentUserId}/${fileName}`;
+    const { data, error } = await supabase.storage.from('ressources-pedagogiques').createSignedUrl(path, 60);
+    if (!error && data) window.open(data.signedUrl, '_blank');
+    else toast.error('Erreur téléchargement : ' + error?.message);
+  };
+
+  const handlePersonalUpload = async () => {
+    if (!uploadFile || !uploadName.trim()) { toast.error('Renseignez un nom et sélectionnez un fichier.'); return; }
+    setIsUploading(true);
+    const ext = uploadFile.name.split('.').pop();
+    const safeN = uploadName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const path = `formateur-perso/${currentUserId}/${Date.now()}_${safeN}.${ext}`;
+    const { error } = await supabase.storage.from('ressources-pedagogiques').upload(path, uploadFile);
+    if (error) { toast.error('Erreur upload : ' + error.message); }
+    else {
+      toast.success('Document enregistré dans votre espace !');
+      setUploadFile(null); setUploadName(''); setShowUploadForm(false);
+      fetchPersoResources();
+    }
+    setIsUploading(false);
+  };
+
+  const ResourceCard = ({ name, displayName, onDownload, accent = 'emerald' }) => (
+    <div className={`bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group`}>
+      <div className="flex items-center justify-between mb-4">
+        <div className={`w-12 h-12 bg-${accent}-50 text-${accent}-600 rounded-2xl flex items-center justify-center group-hover:bg-${accent}-600 group-hover:text-white transition-colors`}>
+          <FileText size={24} />
         </div>
+        <button onClick={onDownload} className={`text-gray-400 hover:text-${accent}-600 transition-colors`}>
+          <Download size={20} />
+        </button>
       </div>
+      <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={displayName}>{displayName}</h3>
+      <button
+        onClick={onDownload}
+        className={`mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-${accent}-600 hover:text-white hover:border-${accent}-600 transition-all uppercase tracking-wider`}
+      >
+        Télécharger
+      </button>
+    </div>
+  );
 
-      {pedagogicalResources.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {pedagogicalResources.map(res => (
-            <div key={res.name} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                  <FileText size={24} />
-                </div>
-                <button
-                  onClick={() => handleDownload(res.name)}
-                  className="text-gray-400 hover:text-emerald-600 transition-colors"
-                >
-                  <Download size={20} />
-                </button>
-              </div>
-              <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={res.name.split('_').slice(1).join('_')}>
-                {res.name.split('_').slice(1).join('_') || res.name}
-              </h3>
-              <p className="text-[10px] text-gray-400">Ajouté le {new Date(res.created_at).toLocaleDateString()}</p>
+  return (
+    <div className="space-y-10 animate-fade-in max-w-5xl mx-auto">
 
+      {/* Section 1 : Mes documents personnels */}
+      <div>
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon Espace Documents</h1>
+            <p className="text-gray-500 text-lg">Stockez vos supports de cours, assurances, et documents personnels.</p>
+          </div>
+          <button
+            onClick={() => setShowUploadForm(v => !v)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-100 transition-all"
+          >
+            <Upload size={16} /> Ajouter un document
+          </button>
+        </div>
+
+        {showUploadForm && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 mb-6 space-y-3">
+            <input
+              type="text"
+              value={uploadName}
+              onChange={e => setUploadName(e.target.value)}
+              placeholder="Nom du document (ex: Attestation Assurance 2025)"
+              className="w-full bg-white border border-gray-200 text-gray-900 text-sm rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <input
+              type="file"
+              onChange={e => setUploadFile(e.target.files[0] || null)}
+              className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            />
+            <div className="flex gap-2">
               <button
-                onClick={() => handleDownload(res.name)}
-                className="mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all uppercase tracking-wider"
+                onClick={handlePersonalUpload}
+                disabled={isUploading}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-black py-2.5 rounded-xl transition-all disabled:opacity-50"
               >
-                Télécharger
+                {isUploading ? 'Envoi...' : 'Enregistrer'}
+              </button>
+              <button
+                onClick={() => { setShowUploadForm(false); setUploadFile(null); setUploadName(''); }}
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-600 text-sm font-bold rounded-xl hover:bg-gray-50 transition-all"
+              >
+                Annuler
               </button>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="bg-white py-20 text-center rounded-3xl border border-dashed border-gray-200">
-          <FileText className="mx-auto text-gray-200 mb-4" size={48} />
-          <p className="text-gray-400 italic">Aucune ressource disponible pour le moment.</p>
+          </div>
+        )}
+
+        {persoResources.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {persoResources.map(res => {
+              const displayName = res.name.replace(/^\d+_/, '').replace(/_/g, ' ');
+              return <ResourceCard key={res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadPerso(res.name)} accent="indigo" />;
+            })}
+          </div>
+        ) : (
+          <div className="bg-white py-14 text-center rounded-3xl border border-dashed border-gray-200">
+            <FileText className="mx-auto text-gray-200 mb-4" size={40} />
+            <p className="text-gray-400 italic text-sm">Aucun document personnel. Cliquez sur "Ajouter un document" pour commencer.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Section 2 : Ressources partagées par l'administration */}
+      {pedagogicalResources.length > 0 && (
+        <div>
+          <div className="mb-5">
+            <h2 className="text-xl font-extrabold text-gray-700 tracking-tight">Bibliothèque Partagée</h2>
+            <p className="text-gray-400 text-sm">Documents mis à disposition par l'administration.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pedagogicalResources.map(res => {
+              const displayName = res.name.split('_').slice(1).join('_') || res.name;
+              return <ResourceCard key={res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadShared(res.name)} accent="emerald" />;
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -5142,10 +5909,110 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) =>
 };
 
 // ==========================================
+// PARAMÈTRES ORGANISME (ADMIN)
+// ==========================================
+
+const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved }) => {
+  const [nom, setNom] = useState(orgSettings?.nom || '');
+  const [siret, setSiret] = useState(orgSettings?.siret || '');
+  const [adresse, setAdresse] = useState(orgSettings?.adresse || '');
+  const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (orgSettings) {
+      setNom(orgSettings.nom || '');
+      setSiret(orgSettings.siret || '');
+      setAdresse(orgSettings.adresse || '');
+      setLogoUrl(orgSettings.logo_url || '');
+    }
+  }, [orgSettings]);
+
+  const handleLogoUpload = async (file) => {
+    if (!file) return;
+    setIsUploading(true);
+    const ext = file.name.split('.').pop();
+    const path = `${currentOrgId}/logo.${ext}`;
+    const { error } = await supabase.storage.from('logos').upload(path, file, { upsert: true });
+    if (error) { toast.error("Erreur upload logo : " + error.message); setIsUploading(false); return; }
+    const { data } = supabase.storage.from('logos').getPublicUrl(path);
+    setLogoUrl(data.publicUrl);
+    setIsUploading(false);
+    toast.success("Logo uploadé !");
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    const { error } = await supabase.from('organisations').update({ nom, siret, adresse, logo_url: logoUrl }).eq('id', currentOrgId);
+    if (error) { toast.error("Erreur : " + error.message); }
+    else { toast.success("Paramètres sauvegardés !"); onSaved({ nom, siret, adresse, logo_url: logoUrl }); }
+    setIsSaving(false);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h2 className="text-2xl font-black text-gray-900 tracking-tight">Paramètres de l'organisme</h2>
+        <p className="text-gray-500 text-sm mt-1">Ces informations apparaîtront sur vos documents officiels.</p>
+      </div>
+
+      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo de l'organisme</label>
+          <div className="flex items-center gap-6">
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo organisme" className="w-24 h-24 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
+            ) : (
+              <div className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 bg-gray-50">
+                <Upload className="w-8 h-8" />
+              </div>
+            )}
+            <div>
+              <input type="file" accept="image/*" id="logo-upload" className="hidden"
+                onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }} />
+              <label htmlFor="logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                {isUploading ? 'Chargement...' : 'Changer le logo'}
+              </label>
+              <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
+          <input type="text" value={nom} onChange={e => setNom(e.target.value)}
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Numéro SIRET</label>
+          <input type="text" value={siret} onChange={e => setSiret(e.target.value)} placeholder="ex : 123 456 789 00010"
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse</label>
+          <textarea value={adresse} onChange={e => setAdresse(e.target.value)} rows={3}
+            placeholder="ex : 1 rue de la Formation, 75000 Paris"
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all resize-none" />
+        </div>
+
+        <button onClick={handleSave} disabled={isSaving}
+          className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+          <Save className="w-4 h-4" />
+          {isSaving ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
 // COMPOSANT PRINCIPAL
 // ==========================================
 
-const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formateurs }) => {
+const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
   const [fiches, setFiches] = useState([]);
   const [assignedFiches, setAssignedFiches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5163,7 +6030,9 @@ const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formate
   const fetchFiches = async () => {
     setLoading(true);
     if (userRole === 'admin' || userRole === 'formateur') {
-      const { data, error } = await supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+      let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+      if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+      const { data, error } = await q;
       if (data) setFiches(data);
     } else if (userRole === 'client') {
       const { data, error } = await supabase
@@ -5182,7 +6051,7 @@ const FichesMetiersView = ({ userRole, currentUserId, supabase, clients, formate
   const handleAddFiche = async (e) => {
     e.preventDefault();
     if (!newFiche.title || !newFiche.sector) return toast.error("Titre et secteur requis");
-    const { error } = await supabase.from('job_sheets').insert([newFiche]);
+    const { error } = await supabase.from('job_sheets').insert([{ ...newFiche, organisation_id: currentOrgId }]);
     if (error) return toast.error("Erreur d'ajout : " + error.message);
     toast.success("Fiche métier ajoutée !");
     setIsAddModalOpen(false);
@@ -5564,6 +6433,408 @@ const getInitials = (name) => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+// ==========================================
+// AUTOMATION SETTINGS VIEW
+// ==========================================
+const KNOWN_TRIGGER_TYPES = ['no_signature', 'reminder_before_session', 'welcome'];
+
+const TRIGGER_LABELS = {
+  no_signature: 'Relance émargement non signé',
+  reminder_before_session: 'Rappel avant séance',
+  welcome: 'Email de bienvenue',
+};
+
+const getTriggerLabel = (type) => TRIGGER_LABELS[type] || type;
+
+const TRIGGER_VARS = {
+  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  welcome: ['{{client_name}}'],
+};
+
+const EMPTY_FORM = {
+  trigger_type: 'no_signature',
+  delay_days: 3,
+  email_subject: '',
+  email_body: '',
+  is_active: true,
+};
+
+function AutomationSettingsView({ supabase }) {
+  const [settings, setSettings] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [customTriggerName, setCustomTriggerName] = useState('');
+
+  const fetchSettings = async () => {
+    const { data } = await supabase
+      .from('automation_settings')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (data) setSettings(data);
+  };
+
+  const fetchLogs = async () => {
+    const { data } = await supabase
+      .from('automation_logs')
+      .select('*')
+      .order('sent_at', { ascending: false })
+      .limit(50);
+    if (data) setLogs(data);
+  };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  useEffect(() => {
+    if (showLogs) fetchLogs();
+  }, [showLogs]);
+
+  const openAdd = () => {
+    setForm(EMPTY_FORM);
+    setEditingId(null);
+    setCustomTriggerName('');
+    setIsAdding(true);
+  };
+
+  const openEdit = (s) => {
+    const isCustom = !KNOWN_TRIGGER_TYPES.includes(s.trigger_type);
+    setForm({
+      trigger_type: isCustom ? '__custom__' : s.trigger_type,
+      delay_days: s.delay_days,
+      email_subject: s.email_subject,
+      email_body: s.email_body,
+      is_active: s.is_active,
+    });
+    setCustomTriggerName(isCustom ? s.trigger_type : '');
+    setEditingId(s.id);
+    setIsAdding(true);
+  };
+
+  const cancelForm = () => {
+    setIsAdding(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setCustomTriggerName('');
+  };
+
+  const saveForm = async () => {
+    if (!form.email_subject.trim() || !form.email_body.trim()) {
+      toast.error('Sujet et corps du mail sont requis.');
+      return;
+    }
+    if (form.trigger_type === '__custom__' && !customTriggerName.trim()) {
+      toast.error('Veuillez donner un nom au type personnalisé.');
+      return;
+    }
+    setIsSaving(true);
+    const resolvedTriggerType = form.trigger_type === '__custom__'
+      ? customTriggerName.trim().toLowerCase().replace(/\s+/g, '_')
+      : form.trigger_type;
+    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString() };
+    if (editingId) {
+      const { error } = await supabase
+        .from('automation_settings')
+        .update(payload)
+        .eq('id', editingId);
+      if (error) { toast.error('Erreur lors de la mise à jour.'); setIsSaving(false); return; }
+      toast.success('Relance mise à jour.');
+    } else {
+      const { error } = await supabase.from('automation_settings').insert(payload);
+      if (error) { toast.error('Erreur lors de la création.'); setIsSaving(false); return; }
+      toast.success('Relance créée.');
+    }
+    setIsSaving(false);
+    cancelForm();
+    fetchSettings();
+  };
+
+  const toggleActive = async (s) => {
+    const { error } = await supabase
+      .from('automation_settings')
+      .update({ is_active: !s.is_active, updated_at: new Date().toISOString() })
+      .eq('id', s.id);
+    if (error) { toast.error('Erreur de mise à jour.'); return; }
+    fetchSettings();
+  };
+
+  const deleteSetting = async (id) => {
+    if (!window.confirm('Supprimer cette relance ?')) return;
+    const { error } = await supabase.from('automation_settings').delete().eq('id', id);
+    if (error) { toast.error('Erreur lors de la suppression.'); return; }
+    toast.success('Relance supprimée.');
+    fetchSettings();
+  };
+
+  const triggerManual = async () => {
+    setIsTesting(true);
+    try {
+      const resp = await fetch('/api/automation/process', { method: 'GET' });
+      if (resp.status === 404) {
+        toast.error('Fonction non disponible — déployez l\'application sur Vercel pour activer les relances automatiques.');
+        return;
+      }
+      const json = await resp.json();
+      if (resp.ok) toast.success(`Exécution terminée — ${json.sent} email(s) envoyé(s).`);
+      else toast.error(`Erreur : ${json.error}`);
+    } catch (e) {
+      toast.error('Impossible de contacter la fonction de workflow.');
+    }
+    setIsTesting(false);
+    if (showLogs) fetchLogs();
+  };
+
+  const insertVar = (varName) => {
+    setForm(f => ({ ...f, email_body: f.email_body + varName }));
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* En-tête */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center">
+            <Bell className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Paramètres de Relance</h1>
+            <p className="text-sm text-gray-500">Automatisations email pilotées par Vercel Cron (chaque jour à 8h)</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={triggerManual}
+            disabled={isTesting}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all disabled:opacity-50"
+          >
+            <Clock className="w-4 h-4" />
+            {isTesting ? 'En cours…' : 'Tester maintenant'}
+          </button>
+          <button
+            onClick={openAdd}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 transition-all shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Nouvelle relance
+          </button>
+        </div>
+      </div>
+
+      {/* Formulaire Ajout / Édition */}
+      {isAdding && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-rose-100">
+          <h2 className="text-base font-bold text-gray-800 mb-4">
+            {editingId ? 'Modifier la relance' : 'Créer une relance'}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Type de déclencheur</label>
+              <select
+                value={form.trigger_type}
+                onChange={e => setForm(f => ({ ...f, trigger_type: e.target.value }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+              >
+                <option value="no_signature">Relance émargement non signé</option>
+                <option value="reminder_before_session">Rappel avant séance</option>
+                <option value="welcome">Email de bienvenue (nouveau client)</option>
+                <option value="__custom__">+ Type personnalisé…</option>
+              </select>
+              {form.trigger_type === '__custom__' && (
+                <input
+                  type="text"
+                  placeholder="Nom du type (ex : newsletter_mensuelle)"
+                  value={customTriggerName}
+                  onChange={e => setCustomTriggerName(e.target.value)}
+                  className="mt-2 w-full border border-rose-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+                />
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                {form.trigger_type === 'no_signature'
+                  ? 'Délai après la séance (jours)'
+                  : form.trigger_type === 'reminder_before_session'
+                  ? 'Jours avant la séance'
+                  : form.trigger_type === 'welcome'
+                  ? 'Jours après la création du compte'
+                  : 'Fréquence de répétition (jours)'}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.delay_days}
+                onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+              />
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Objet du mail</label>
+            <input
+              type="text"
+              placeholder="Ex : Rappel — votre émargement est en attente"
+              value={form.email_subject}
+              onChange={e => setForm(f => ({ ...f, email_subject: e.target.value }))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+            />
+          </div>
+          <div className="mb-2">
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Corps du mail</label>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => (
+                <button
+                  key={v}
+                  onClick={() => insertVar(v)}
+                  className="text-xs px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-mono"
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <textarea
+              rows={6}
+              placeholder="Bonjour {{client_name}},&#10;&#10;Nous n'avons pas encore reçu votre émargement pour {{session_title}} du {{session_date}}."
+              value={form.email_body}
+              onChange={e => setForm(f => ({ ...f, email_body: e.target.value }))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300 font-mono resize-y"
+            />
+          </div>
+          <div className="flex items-center justify-between mt-4">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <span className="text-sm font-medium text-gray-700">Activer immédiatement</span>
+              <button onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))} className="focus:outline-none">
+                {form.is_active
+                  ? <ToggleRight className="w-6 h-6 text-rose-500" />
+                  : <ToggleLeft className="w-6 h-6 text-gray-400" />}
+              </button>
+            </label>
+            <div className="flex gap-2">
+              <button onClick={cancelForm} className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">
+                Annuler
+              </button>
+              <button
+                onClick={saveForm}
+                disabled={isSaving}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 disabled:opacity-50 transition-all"
+              >
+                <Save className="w-4 h-4" />
+                {isSaving ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Liste des relances */}
+      <div className="space-y-3">
+        {settings.length === 0 && !isAdding && (
+          <div className="bg-white rounded-2xl p-10 text-center border border-dashed border-gray-200">
+            <Bell className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-400 text-sm">Aucune relance configurée. Cliquez sur "Nouvelle relance" pour commencer.</p>
+          </div>
+        )}
+        {settings.map(s => (
+          <div key={s.id} className={`bg-white rounded-2xl p-5 shadow-sm border transition-all ${s.is_active ? 'border-gray-100' : 'border-dashed border-gray-200 opacity-60'}`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${s.is_active ? 'bg-rose-50' : 'bg-gray-100'}`}>
+                  <Mail className={`w-4 h-4 ${s.is_active ? 'text-rose-500' : 'text-gray-400'}`} />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-800 text-sm">{getTriggerLabel(s.trigger_type)}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {s.trigger_type === 'no_signature'
+                      ? `Si non signé après ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`
+                      : s.trigger_type === 'reminder_before_session'
+                      ? `${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} avant la séance`
+                      : s.trigger_type === 'welcome'
+                      ? `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`
+                      : `Envoi répété tous les ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggleActive(s)}
+                  title={s.is_active ? 'Désactiver' : 'Activer'}
+                  className="focus:outline-none"
+                >
+                  {s.is_active
+                    ? <ToggleRight className="w-6 h-6 text-rose-500 hover:text-rose-700" />
+                    : <ToggleLeft className="w-6 h-6 text-gray-300 hover:text-gray-500" />}
+                </button>
+                <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-all">
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button onClick={() => deleteSetting(s.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-all">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 pl-12">
+              <p className="text-xs text-gray-500 font-medium">Objet : <span className="font-normal text-gray-700">{s.email_subject || <em>—</em>}</span></p>
+              <p className="text-xs text-gray-400 mt-1 line-clamp-2 font-mono whitespace-pre-wrap">{s.email_body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Journal des envois */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowLogs(v => !v)}
+          className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-all"
+        >
+          <div className="flex items-center gap-2 font-semibold text-gray-700 text-sm">
+            <History className="w-4 h-4 text-gray-400" />
+            Journal des envois (50 derniers)
+          </div>
+          {showLogs ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+        </button>
+        {showLogs && (
+          <div className="border-t border-gray-100 overflow-x-auto">
+            {logs.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Aucun envoi enregistré.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 text-gray-500">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-semibold">Date d'envoi</th>
+                    <th className="text-left px-4 py-2 font-semibold">Email destinataire</th>
+                    <th className="text-left px-4 py-2 font-semibold">Type</th>
+                    <th className="text-left px-4 py-2 font-semibold">Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map(log => (
+                    <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                      <td className="px-4 py-2 text-gray-600">
+                        {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                      </td>
+                      <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
+                      <td className="px-4 py-2 text-gray-500">{log.reference_type || '—'}</td>
+                      <td className="px-4 py-2">
+                        <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-md font-medium">
+                          {log.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -5593,6 +6864,9 @@ export default function App() {
   });
 
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
+  const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
+  const [currentOrgId, setCurrentOrgId] = useState(null);
+  const [orgSettings, setOrgSettings] = useState(null);
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -5604,9 +6878,9 @@ export default function App() {
         console.log('[App] Session trouvée pour:', session.user.email);
         
         // Chercher le rôle
-        const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', session.user.email).single();
+        const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).single();
         if (userData && userData.role) {
-          handleLogin(userData.role, userData.id);
+          handleLogin(userData.role, userData.id, userData.organisation_id);
         } else {
           // Chercher côté client
           const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', session.user.email).single();
@@ -5697,7 +6971,9 @@ export default function App() {
 
 
   const fetchModules = async () => {
-    const { data: mData, error: mErr } = await supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
+    let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
+    if (currentOrgId) mQuery = mQuery.eq('organisation_id', currentOrgId);
+    const { data: mData, error: mErr } = await mQuery;
     if (!mErr && mData) setModules(mData);
 
     const { data: mdData, error: mdErr } = await supabase.from('module_documents').select('*');
@@ -5711,21 +6987,25 @@ export default function App() {
   };
 
   const fetchSessions = async () => {
-    const { data, error } = await supabase.from('sessions').select('*');
+    let q = supabase.from('sessions').select('*');
+    if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+    const { data, error } = await q;
     if (!error && data) setSessions(data);
   };
 
   const fetchUtilisateurs = async () => {
     // 1. Charger les formateurs depuis 'utilisateurs'
-    const { data: formateursData, error: formateursError } = await supabase
+    let fQuery = supabase
       .from('utilisateurs')
       .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
       .eq('role', 'formateur');
+    if (currentOrgId) fQuery = fQuery.eq('organisation_id', currentOrgId);
+    const { data: formateursData, error: formateursError } = await fQuery;
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
-    const { data: clientsData, error: clientsError } = await supabase
-      .from('clients')
-      .select('*');
+    let cQuery = supabase.from('clients').select('*');
+    if (currentOrgId) cQuery = cQuery.eq('organisation_id', currentOrgId);
+    const { data: clientsData, error: clientsError } = await cQuery;
 
     if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
     if (clientsError) console.error("Erreur fetch clients:", clientsError);
@@ -5751,7 +7031,8 @@ export default function App() {
         client_email: c.email_contact,
         adresse_session: c.adresse_postale,
         montant_prestation: c.montant_prestation,
-        modalite_formation: c.modalite_formation || 'Mixte'
+        modalite_formation: c.modalite_formation || 'Mixte',
+        organisation_id: c.organisation_id || null
       }));
       setClients(mappedClients);
     }
@@ -5759,7 +7040,9 @@ export default function App() {
 
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
-    const { data: docsData, error } = await supabase.from('documents').select('*');
+    let dQuery = supabase.from('documents').select('*');
+    if (currentOrgId) dQuery = dQuery.eq('organisation_id', currentOrgId);
+    const { data: docsData, error } = await dQuery;
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
@@ -5789,6 +7072,12 @@ export default function App() {
   const fetchClientSkills = async () => {
     const { data, error } = await supabase.from('client_skills').select('*');
     if (!error && data) setClientSkills(data);
+  };
+
+  const fetchOrgSettings = async () => {
+    if (!currentOrgId) return;
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse').eq('id', currentOrgId).single();
+    if (data) setOrgSettings(data);
   };
 
   const fetchPedagogicalResources = async () => {
@@ -5857,7 +7146,8 @@ export default function App() {
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
-        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null
+        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null,
+        organisation_id: currentOrgId
       }]);
       if (dbError) {
         console.error("Erreur DB clients après invitation:", dbError);
@@ -5868,7 +7158,8 @@ export default function App() {
       const { error: dbError } = await supabase.from('utilisateurs').insert([{
         nom: nom,
         email: email,
-        role: role
+        role: role,
+        organisation_id: currentOrgId
       }]);
       if (dbError) console.error("Erreur DB utilisateurs après invitation:", dbError);
     }
@@ -5880,9 +7171,10 @@ export default function App() {
   };
 
   // --- Actions Navigation ---
-  const handleLogin = (role, id = null) => {
+  const handleLogin = (role, id = null, orgId = null) => {
     setUserRole(role);
     setCurrentUserId(id);
+    setCurrentOrgId(orgId);
     if (role === 'admin') setActiveTab('clients');
     if (role === 'formateur') setActiveTab('clients');
     if (role === 'client') setActiveTab('accueil');
@@ -5892,6 +7184,7 @@ export default function App() {
     await supabase.auth.signOut();
     setUserRole(null);
     setCurrentUserId(null);
+    setCurrentOrgId(null);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
   };
@@ -5970,7 +7263,8 @@ export default function App() {
           nom_complet: newUserName,
           email_contact: newUserEmail,
           telephone: clientPhone,
-          formateur_id: null // Pas de formateur sélectionné pour l'ajout manuel simple
+          formateur_id: null,
+          organisation_id: currentOrgId
         }]);
       error = clientError;
     } else {
@@ -5980,6 +7274,7 @@ export default function App() {
           nom: newUserName,
           email: newUserEmail,
           role: newUserRole,
+          organisation_id: currentOrgId
         }])
         .select();
       error = userError;
@@ -6050,7 +7345,7 @@ export default function App() {
   const handleAddModule = async (e) => {
     e.preventDefault();
     if (!newModuleName.trim()) return;
-    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances) }]);
+    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances), organisation_id: currentOrgId }]);
     if (!error) { 
       await fetchModules(); 
       setNewModuleName(''); 
@@ -6153,7 +7448,8 @@ export default function App() {
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
-      ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1
+      ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1,
+      ...(stepData.instructions ? { instructions: stepData.instructions } : {})
     }]);
 
     if (error) {
@@ -6257,7 +7553,7 @@ export default function App() {
                 module_id: finalModuleId,
                 numero_seance: t.ordre,
                 nom: `${t.titre} - ${res.titre}`, // Rend le nom unique pour la DB
-                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' : 
+                type_activite: (res.type && res.type.toLowerCase().includes('signature')) ? 'signature' :
                                (res.type && res.type.toLowerCase().includes('exercice')) ? 'exercice' : 'document',
                 ressource_id: res.ressource_id || null,
                 file_url: res.file_url || null,
@@ -6265,7 +7561,8 @@ export default function App() {
                 metadata: (typeof res.metadata === 'string' && res.metadata.startsWith('{')) ? JSON.parse(res.metadata) : (res.metadata || {}), // Propagate metadata
                 statut: 'À venir',
                 statut_client: 'À venir',
-                statut_formateur: 'À venir'
+                statut_formateur: 'À venir',
+                organisation_id: client.organisation_id || null
               });
             });
           } else {
@@ -6279,7 +7576,8 @@ export default function App() {
               metadata: {},
               statut: 'À venir',
               statut_client: 'À venir',
-              statut_formateur: 'À venir'
+              statut_formateur: 'À venir',
+              organisation_id: client.organisation_id || null
             });
           }
         }
@@ -6297,7 +7595,8 @@ export default function App() {
               metadata: {},
               statut: 'À venir',
               statut_client: 'À venir',
-              statut_formateur: 'À venir'
+              statut_formateur: 'À venir',
+              organisation_id: client.organisation_id || null
             });
           }
         }
@@ -6452,6 +7751,26 @@ export default function App() {
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
 
+      // Overlay consentement interactif — config extensible par modèle de document SaaS
+      // Clé : identifiant du modèle (session.consent_template). 'default' = Attestation VB.
+      // Coordonnées en points pdf-lib (origine bas-gauche). À calibrer selon chaque PDF source.
+      const CONSENT_OVERLAYS = {
+        default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
+      };
+
+      if (session.document_choice) {
+        const overlay = CONSENT_OVERLAYS[session.consent_template] || CONSENT_OVERLAYS.default;
+        const consentPage = pages[overlay.pageIndex];
+        const checkY = session.document_choice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
+        consentPage.drawText('X', {
+          x: overlay.checkboxX,
+          y: checkY,
+          size: 12,
+          font: helveticaBold,
+          color: rgb(0, 0, 0),
+        });
+      }
+
       const formateur = formateurs.find(f => f.id === session.formateur_id);
       const signerName = (role === 'formateur' || role === 'admin')
         ? (formateur?.nom || 'Le Formateur')
@@ -6499,7 +7818,7 @@ export default function App() {
     }
   };
 
-  const handleSessionSignatureSave = async (sessionId, signatureDataUrl) => {
+  const handleSessionSignatureSave = async (sessionId, signatureDataUrl, documentChoice) => {
     const session = sessions.find(s => String(s.id) === String(sessionId));
     if (!session) {
       toast.error('Session introuvable (id: ' + sessionId + ')');
@@ -6518,6 +7837,10 @@ export default function App() {
       updateData.date_signature_client = new Date().toISOString();
       updateData.statut_client = 'Signé';
       updateData.statut = 'Signé';
+    }
+
+    if (documentChoice) {
+      updateData.document_choice = documentChoice;
     }
 
     // Automatisation de l'archivage: Génère un PDF signé lors de chaque validation s'il y a un document existant
@@ -6615,7 +7938,7 @@ export default function App() {
       type_activite: data.type,
       file_url: data.resourceId,
       ressource_url: data.resourceId,
-      metadata: { 
+      metadata: {
         isCustom: true,
         documentType: data.type === 'signature' ? 'signature' : (data.isToSign ? 'signature' : 'info')
       },
@@ -6624,7 +7947,8 @@ export default function App() {
       statut_formateur: 'À venir',
       date: date,
       heure_debut: debut,
-      heure_fin: fin
+      heure_fin: fin,
+      ...(data.instructions ? { instructions: data.instructions } : {})
     }]);
 
 
@@ -6635,6 +7959,22 @@ export default function App() {
     } else {
       console.error("Erreur ajout item:", error);
       toast.error("Erreur lors de l'ajout.");
+    }
+  };
+
+  const handleMoveSessionItem = async (sessionId, targetNumeroSeance, targetDate, targetDebut, targetFin) => {
+    const { error } = await supabase.from('sessions').update({
+      numero_seance: targetNumeroSeance,
+      date: targetDate || null,
+      heure_debut: targetDebut || null,
+      heure_fin: targetFin || null,
+    }).eq('id', sessionId);
+
+    if (!error) {
+      await fetchSessions();
+      toast.success("Activité déplacée avec succès !");
+    } else {
+      toast.error("Erreur lors du déplacement : " + error.message);
     }
   };
 
@@ -6878,15 +8218,21 @@ export default function App() {
   const handleUploadExerciseResponse = async (sessionId, file) => {
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `${sessionId}_${Date.now()}.${fileExt}`;
+      const targetSession = sessions.find(s => s.id === sessionId);
+      const client = clients.find(c => c.id === targetSession?.client_id);
+      const normalize = (str) => (str || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toUpperCase();
+      const nomClient = normalize(client?.nom_complet || client?.nom || 'CLIENT');
+      const nomExercice = normalize(targetSession?.ressource_titre || 'EXERCICE');
+      const date = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
+      const fileName = `${nomClient}_${nomExercice}_${date}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
-        .from('exercices-reponses')
+        .from('exercice-returns')
         .upload(fileName, file);
 
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage
-        .from('exercices-reponses')
+        .from('exercice-returns')
         .getPublicUrl(fileName);
 
       const { error: updateError } = await supabase
@@ -6905,6 +8251,15 @@ export default function App() {
       console.error('Erreur upload exercice:', error);
       toast.error('Erreur lors de l\'envoi : ' + error.message);
     }
+  };
+
+  const handleSaveCorrection = async (sessionId, statut, commentaire) => {
+    const { error } = await supabase.from('sessions')
+      .update({ correction_statut: statut, correction_commentaire: commentaire })
+      .eq('id', sessionId);
+    if (error) throw error;
+    await fetchSessions();
+    toast.success('Correction enregistrée !');
   };
 
   const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null) => {
@@ -7174,7 +8529,7 @@ export default function App() {
     }
   };
 
-  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null) => {
+  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null, documentChoice = null) => {
     const doc = documents.find(d => String(d.id) === String(docId));
     if (!doc) {
       toast.error('Document introuvable (id: ' + docId + ')');
@@ -7239,7 +8594,18 @@ export default function App() {
       const pages = pdfDoc.getPages();
       const lastPage = pages[pages.length - 1];
       const { width } = lastPage.getSize();
-      
+
+      // Overlay consentement interactif — même config que overlaySignatureOnPdf
+      const CONSENT_OVERLAYS = {
+        default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
+      };
+      if (documentChoice) {
+        const overlay = CONSENT_OVERLAYS[doc.consent_template] || CONSENT_OVERLAYS.default;
+        const consentPage = pages[overlay.pageIndex];
+        const checkY = documentChoice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
+        consentPage.drawText('X', { x: overlay.checkboxX, y: checkY, size: 12, font: helveticaBold, color: rgb(0, 0, 0) });
+      }
+
       // Coordonnées pour la zone "Le sous-traitant" (droite de la page)
       const xPos = width / 2 + 10;
       let yOffset = 112;
@@ -7289,6 +8655,7 @@ export default function App() {
         statut: 'Signé',
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
+        ...(documentChoice ? { document_choice: documentChoice } : {}),
       };
       const { error: dbError } = await supabase.from('documents').update(updateData).eq('id', docId);
       if (dbError) throw dbError;
@@ -7593,6 +8960,7 @@ export default function App() {
     fetchSessions();
     fetchPedagogicalResources();
     fetchClientSkills();
+    fetchOrgSettings();
 
     // Détection des liens d'invitation ou de récupération de mot de passe
     supabase.auth.onAuthStateChange((event, session) => {
@@ -7682,6 +9050,15 @@ export default function App() {
     );
   }
 
+  if (isSignup) {
+    return (
+      <SignupView
+        supabase={supabase}
+        onComplete={() => { window.history.replaceState(null, '', '/'); setIsSignup(false); }}
+      />
+    );
+  }
+
   if (isLoadingSession) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
@@ -7729,6 +9106,12 @@ export default function App() {
               </button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
+              </button>
+              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Bell className="w-5 h-5 mr-3" /> Relances Auto
+              </button>
+              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
             </>
           )}
@@ -7829,10 +9212,19 @@ export default function App() {
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
             currentUserId={currentUserId}
+            currentOrgId={currentOrgId}
             supabase={supabase}
             clients={clients}
             formateurs={formateurs}
           />}
+          {activeTab === 'parametres_org' && userRole === 'admin' && (
+            <OrganisationSettingsView
+              supabase={supabase}
+              currentOrgId={currentOrgId}
+              orgSettings={orgSettings}
+              onSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
+            />
+          )}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
             handleAddUser={handleAddUser}
             newUserName={newUserName} setNewUserName={setNewUserName}
@@ -7877,6 +9269,8 @@ export default function App() {
             setDocSettingsTarget={setDocSettingsTarget}
             setIsDocSettingsOpen={setIsDocSettingsOpen}
             setViewingDocId={setViewingDocId}
+            handleMoveSessionItem={handleMoveSessionItem}
+            handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -7896,6 +9290,9 @@ export default function App() {
             documentTemplates={documentTemplates}
             handleGenerateDocx={handleGenerateDocx}
             setViewingDocId={setViewingDocId}
+          />}
+          {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
+            supabase={supabaseAdmin}
           />}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
@@ -7983,6 +9380,9 @@ export default function App() {
             clientSkills={clientSkills}
             fetchClientSkills={fetchClientSkills}
             supabase={supabase}
+            fetchDocuments={fetchDocuments}
+            handleMoveSessionItem={handleMoveSessionItem}
+            handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'accueil' && (() => {
             const _client = clients.find(c => c.id === currentUserId);
@@ -8001,7 +9401,7 @@ export default function App() {
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
-          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} />}
+          {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'modélothèque' && <DocumentsView
             sessions={sessions}
             documents={documents}
@@ -8038,7 +9438,7 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             onUpdateTemplateDestination={handleUpdateTemplateDestination}
           />}
-          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} />}
+          {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
 
           {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
         </main>
@@ -8066,6 +9466,8 @@ export default function App() {
         supabase={supabase}
         onSave={handleAddSessionItem}
         clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId)}
+        preSelectedSessionId={targetSessionForAddition?.preSelectedSessionId || null}
+        preSelectedLabel={targetSessionForAddition?.numero ? `SÉANCE ${targetSessionForAddition.numero}` : null}
       />
 
       {/* Visionneuse PDF pour docs de la modélothèque */}
@@ -8092,16 +9494,16 @@ export default function App() {
         }
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
+        isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
         onClose={() => setViewingSession(null)}
-        onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl) => {
+        onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl, documentChoice) => {
           const sessionOrDoc = viewingSession.session;
           setViewingSession(null);
           const isDocument = documents.some(d => String(d.id) === String(sessionOrDoc.id));
-          console.log('[sign] sessionOrDoc.id=', sessionOrDoc.id, 'isDocument=', isDocument, 'documents ids=', documents.map(d => d.id));
           if (isDocument) {
-            await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl);
+            await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           } else {
-            await handleSessionSignatureSave(sessionOrDoc.id, signatureDataUrl);
+            await handleSessionSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           }
         } : undefined}
       />
