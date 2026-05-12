@@ -5261,7 +5261,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
 };
 
 const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole }) => {
-  const user = userRole === 'admin' ? { nom: 'Administrateur', email: 'admin@vb-coaching.fr' } : (userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : clients.find(c => c.id === currentUserId));
+  const user = userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : (userRole === 'client' ? clients.find(c => c.id === currentUserId) : null);
 
   const [profileData, setProfileData] = useState({
     nom: user?.nom || '',
@@ -5279,6 +5279,29 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
   const [sameAddress, setSameAddress] = useState(
     !user?.adresse_session || user?.adresse_session === (user?.adresse_formateur || user?.adresse_pro || '')
   );
+
+  // Pour les admins : charger les vraies données depuis la BDD
+  useEffect(() => {
+    if (userRole === 'admin' && currentUserId) {
+      supabase.from('utilisateurs').select('*').eq('id', currentUserId).single()
+        .then(({ data }) => {
+          if (data) {
+            setProfileData(prev => ({
+              ...prev,
+              nom: data.nom || '',
+              email: data.email || '',
+              telephone: data.telephone || '',
+              adresse_formateur: data.adresse_formateur || '',
+              adresse_session: data.adresse_session || '',
+              siret: data.formateur_siret || '',
+              nda: data.formateur_nda || '',
+              compagnie_assurance: data.compagnie_assurance || '',
+              numero_assurance_rcp: data.numero_assurance_rcp || '',
+            }));
+          }
+        });
+    }
+  }, [userRole, currentUserId]);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleUpdate = async () => {
