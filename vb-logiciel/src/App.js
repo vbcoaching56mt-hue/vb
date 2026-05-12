@@ -1761,7 +1761,7 @@ const SignupView = ({ supabase, onComplete }) => {
   );
 };
 
-const LoginView = ({ handleLogin, supabase, successMessage }) => {
+const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   const [email, setEmail] = useState(() => {
     // Tenter de pré-remplir l'email depuis l'URL (#email=... ou ?email=...)
     const params = new URLSearchParams(window.location.hash.substring(1) || window.location.search);
@@ -1827,7 +1827,8 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
         return;
       } else {
         console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
-        window.location.replace('/setup-organisation');
+        onNeedsSetup();
+        setIsLoading(false);
         return;
       }
     }
@@ -6866,6 +6867,7 @@ export default function App() {
 
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
   const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
 
@@ -6887,6 +6889,9 @@ export default function App() {
           const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', session.user.email).single();
           if (clientData) {
             handleLogin('client', clientData.id);
+          } else {
+            // Session active mais aucun profil → afficher setup inline
+            setNeedsSetup(true);
           }
         }
       }
@@ -9060,6 +9065,16 @@ export default function App() {
     );
   }
 
+  if (needsSetup) {
+    // Rendu inline — pas de navigation, session garantie disponible
+    const SetupOrganisationPage = require('./pages/SetupOrganisation').default;
+    return (
+      <SetupOrganisationPage
+        onComplete={() => { window.location.replace('/'); }}
+      />
+    );
+  }
+
   if (isLoadingSession) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
@@ -9070,7 +9085,7 @@ export default function App() {
   }
 
   if (!userRole) {
-    return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} />;
+    return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} onNeedsSetup={() => setNeedsSetup(true)} />;
   }
 
   return (
