@@ -1827,7 +1827,8 @@ const LoginView = ({ handleLogin, supabase, successMessage }) => {
         return;
       } else {
         console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
-        setErrorMsg('Votre compte existe mais n\'est pas encore configuré dans les tables de données. Contactez l\'administrateur.');
+        window.location.replace('/setup-organisation');
+        return;
       }
     }
 
