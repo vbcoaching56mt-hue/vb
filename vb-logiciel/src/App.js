@@ -5260,11 +5260,15 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
   );
 };
 
-const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole }) => {
+const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole, orgSettings, onOrgSaved }) => {
   const user = userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : (userRole === 'client' ? clients.find(c => c.id === currentUserId) : null);
+
+  const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   const [profileData, setProfileData] = useState({
     nom: user?.nom || '',
+    nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
     siret: user?.formateur_siret || '',
@@ -5302,6 +5306,31 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         });
     }
   }, [userRole, currentUserId]);
+
+  // Synchro nom organisme et logo depuis orgSettings
+  useEffect(() => {
+    if (userRole === 'admin' && orgSettings) {
+      setProfileData(prev => ({ ...prev, nom_organisme: orgSettings.nom || '' }));
+      setLogoUrl(orgSettings.logo_url || '');
+    }
+  }, [userRole, orgSettings]);
+
+  const handleLogoUpload = async (file) => {
+    if (!file || !orgSettings?.id) return;
+    setIsUploadingLogo(true);
+    const ext = file.name.split('.').pop();
+    const path = `${orgSettings.id}/logo.${ext}`;
+    const { error } = await supabase.storage.from('logos').upload(path, file, { upsert: true });
+    if (error) { toast.error('Erreur upload logo : ' + error.message); setIsUploadingLogo(false); return; }
+    const { data } = supabase.storage.from('logos').getPublicUrl(path);
+    const newLogoUrl = data.publicUrl;
+    setLogoUrl(newLogoUrl);
+    await supabase.from('organisations').update({ logo_url: newLogoUrl }).eq('id', orgSettings.id);
+    if (onOrgSaved) onOrgSaved({ logo_url: newLogoUrl });
+    setIsUploadingLogo(false);
+    toast.success('Logo mis à jour !');
+  };
+
   const [isSaving, setIsSaving] = useState(false);
 
   const handleUpdate = async () => {
@@ -5326,6 +5355,11 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         numero_assurance_rcp: profileData.numero_assurance_rcp
       }).eq('id', currentUserId);
       error = result.error;
+      if (!error && userRole === 'admin' && orgSettings?.id) {
+        const orgResult = await supabase.from('organisations').update({ nom: profileData.nom_organisme }).eq('id', orgSettings.id);
+        if (orgResult.error) error = orgResult.error;
+        else if (onOrgSaved) onOrgSaved({ nom: profileData.nom_organisme });
+      }
     }
     if (!error) {
       toast.success('Profil mis à jour avec succès !');
@@ -5359,16 +5393,49 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           </div>
         ) : (
           <div className="space-y-8">
+            {/* Logo organisme (admin uniquement) */}
+            {userRole === 'admin' && (
+              <div>
+                <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
+                  <Upload size={16} className="text-indigo-500" /> Logo de votre espace
+                </h3>
+                <div className="flex items-center gap-6">
+                  {logoUrl ? (
+                    <img src={logoUrl} alt="Logo" className="w-24 h-24 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
+                  ) : (
+                    <div className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 bg-gray-50 gap-1">
+                      <Upload size={24} />
+                      <span className="text-xs text-center leading-tight">Votre logo</span>
+                    </div>
+                  )}
+                  <div>
+                    <input type="file" accept="image/*" id="profile-logo-upload" className="hidden"
+                      onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }} />
+                    <label htmlFor="profile-logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                      {isUploadingLogo ? 'Chargement...' : 'Télécharger votre logo'}
+                    </label>
+                    <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Identité */}
             <div>
               <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
                 <FileText size={16} className="text-indigo-500" /> Identité Professionnelle
               </h3>
               <div className="space-y-4">
-                <div>
-                  <label className={labelCls}>Raison Sociale / Nom complet</label>
-                  <input className={inputCls} value={profileData.nom} onChange={e => setProfileData({ ...profileData, nom: e.target.value })} placeholder="Ex: Matthys Coaching" />
-                </div>
+                {userRole === 'admin' ? (
+                  <div>
+                    <label className={labelCls}>Raison Sociale</label>
+                    <input className={inputCls} value={profileData.nom_organisme} onChange={e => setProfileData({ ...profileData, nom_organisme: e.target.value })} placeholder="Nom de votre entreprise" />
+                  </div>
+                ) : (
+                  <div>
+                    <label className={labelCls}>Raison Sociale / Nom complet</label>
+                    <input className={inputCls} value={profileData.nom} onChange={e => setProfileData({ ...profileData, nom: e.target.value })} placeholder="Nom de votre entreprise" />
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className={labelCls}>SIRET</label>
@@ -9207,7 +9274,7 @@ export default function App() {
               let displayName = "";
               let rawName = "";
               if (userRole === 'admin') {
-                displayName = "Profil Admin";
+                displayName = orgSettings?.nom || "Mon espace";
               } else if (userRole === 'formateur') {
                 rawName = formateurs.find(f => f.id === currentUserId)?.nom;
                 displayName = rawName || "Coach";
@@ -9215,7 +9282,7 @@ export default function App() {
                 rawName = clients.find(c => c.id === currentUserId)?.nom;
                 displayName = rawName || "Bénéficiaire";
               }
-              
+
               return (
                 <>
                   <div className="text-right mr-2">
@@ -9223,12 +9290,21 @@ export default function App() {
                       {displayName}
                     </p>
                   </div>
-                  <div
-                    onClick={() => setActiveTab('profil')}
-                    className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105 title={displayName}"
-                  >
-                    {userRole === 'admin' ? "AD" : getInitials(rawName)}
-                  </div>
+                  {userRole === 'admin' && orgSettings?.logo_url ? (
+                    <img
+                      src={orgSettings.logo_url}
+                      alt="Logo"
+                      onClick={() => setActiveTab('profil')}
+                      className="w-10 h-10 rounded-full object-contain bg-white border-2 border-indigo-200 p-0.5 shadow-sm cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all"
+                    />
+                  ) : (
+                    <div
+                      onClick={() => setActiveTab('profil')}
+                      className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-sm text-indigo-700 shadow-sm cursor-pointer hover:bg-indigo-600 hover:text-white transition-all transform hover:scale-105"
+                    >
+                      {userRole === 'admin' ? "AD" : getInitials(rawName)}
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -9243,6 +9319,8 @@ export default function App() {
             formateurs={formateurs}
             clients={clients}
             userRole={userRole}
+            orgSettings={orgSettings}
+            onOrgSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
