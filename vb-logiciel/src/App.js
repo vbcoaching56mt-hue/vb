@@ -202,7 +202,7 @@ const AddressInput = ({ value, onChange }) => {
             className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
             value={parts.codePostal}
             onChange={e => updatePart('codePostal', e.target.value.replace(/\D/g, '').slice(0, 5))}
-            placeholder="56000"
+            placeholder="75000"
             maxLength={5}
           />
         </div>
@@ -212,7 +212,7 @@ const AddressInput = ({ value, onChange }) => {
             className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
             value={parts.ville}
             onChange={e => updatePart('ville', e.target.value)}
-            placeholder="Ex: Vannes"
+            placeholder="Paris"
           />
         </div>
       </div>
@@ -5260,7 +5260,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
   );
 };
 
-const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole, orgSettings, onOrgSaved }) => {
+const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole, orgSettings, onOrgSaved, currentOrgId }) => {
   const user = userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : (userRole === 'client' ? clients.find(c => c.id === currentUserId) : null);
 
   const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
@@ -5316,16 +5316,17 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
   }, [userRole, orgSettings]);
 
   const handleLogoUpload = async (file) => {
-    if (!file || !orgSettings?.id) return;
+    const orgId = orgSettings?.id || currentOrgId;
+    if (!file || !orgId) { toast.error("Impossible d'identifier votre organisation. Réessayez."); return; }
     setIsUploadingLogo(true);
     const ext = file.name.split('.').pop();
-    const path = `${orgSettings.id}/logo.${ext}`;
+    const path = `${orgId}/logo.${ext}`;
     const { error } = await supabase.storage.from('logos').upload(path, file, { upsert: true });
     if (error) { toast.error('Erreur upload logo : ' + error.message); setIsUploadingLogo(false); return; }
     const { data } = supabase.storage.from('logos').getPublicUrl(path);
     const newLogoUrl = data.publicUrl;
     setLogoUrl(newLogoUrl);
-    await supabase.from('organisations').update({ logo_url: newLogoUrl }).eq('id', orgSettings.id);
+    await supabase.from('organisations').update({ logo_url: newLogoUrl }).eq('id', orgId);
     if (onOrgSaved) onOrgSaved({ logo_url: newLogoUrl });
     setIsUploadingLogo(false);
     toast.success('Logo mis à jour !');
@@ -9320,6 +9321,7 @@ export default function App() {
             clients={clients}
             userRole={userRole}
             orgSettings={orgSettings}
+            currentOrgId={currentOrgId}
             onOrgSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
