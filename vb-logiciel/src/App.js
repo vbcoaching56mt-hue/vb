@@ -1830,10 +1830,24 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
         setIsLoading(false);
         return;
       } else {
-        console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
-        onNeedsSetup();
-        setIsLoading(false);
-        return;
+        const metaRole = authData.user?.user_metadata?.role;
+        if (metaRole === 'client') {
+          // La requête clients a été bloquée par RLS mais l'utilisateur est un client :
+          // son clients.id est identique à son UUID Auth
+          handleLogin('client', authData.user.id);
+          setIsLoading(false);
+          return;
+        } else if (metaRole === 'formateur') {
+          setErrorMsg('Profil introuvable. Contactez votre administrateur.');
+          setIsLoading(false);
+          return;
+        } else {
+          // Admin sans organisation → setup
+          console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
+          onNeedsSetup();
+          setIsLoading(false);
+          return;
+        }
       }
     }
 
@@ -7200,8 +7214,13 @@ export default function App() {
           if (clientData) {
             handleLogin('client', clientData.id);
           } else {
-            // Session active mais aucun profil → setup inline
-            setNeedsSetup(true);
+            // Session active mais aucun profil DB trouvé
+            const metaRole = session.user?.user_metadata?.role;
+            if (!metaRole || metaRole === 'admin') {
+              // Admin sans organisation → setup
+              setNeedsSetup(true);
+            }
+            // Client/formateur sans enregistrement DB → ne jamais rediriger vers setup
           }
         }
       }
