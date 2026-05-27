@@ -5433,22 +5433,23 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
-    siret: user?.formateur_siret || '',
-    nda: user?.formateur_nda || '',
+    siret: user?.formateur_siret || orgSettings?.siret || '',
+    nda: user?.formateur_nda || orgSettings?.nda || '',
     email: user?.email || '',
     telephone: user?.telephone || '',
     compagnie_assurance: user?.compagnie_assurance || '',
     numero_assurance_rcp: user?.numero_assurance_rcp || '',
     nomcomplet: user?.nomcomplet_client || user?.nom || '',
-    adresse_client: user?.adresse_postale || ''
+    adresse_client: user?.adresse_postale || '',
+    site_web: orgSettings?.site_web || ''
   });
   const [sameAddress, setSameAddress] = useState(
     !user?.adresse_session || user?.adresse_session === (user?.adresse_formateur || user?.adresse_pro || '')
   );
 
-  // Pour les admins : charger les vraies données depuis la BDD
+  // Pour les admins et formateurs : charger les vraies données depuis la BDD
   useEffect(() => {
-    if (userRole === 'admin' && currentUserId) {
+    if ((userRole === 'admin' || userRole === 'formateur') && currentUserId) {
       supabase.from('utilisateurs').select('*').eq('id', currentUserId).single()
         .then(({ data }) => {
           if (data) {
@@ -5469,10 +5470,16 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     }
   }, [userRole, currentUserId]);
 
-  // Synchro nom organisme et logo depuis orgSettings
+  // Synchro nom organisme, siret, nda, site_web et logo depuis orgSettings (admin)
   useEffect(() => {
     if (userRole === 'admin' && orgSettings) {
-      setProfileData(prev => ({ ...prev, nom_organisme: orgSettings.nom || '' }));
+      setProfileData(prev => ({
+        ...prev,
+        nom_organisme: orgSettings.nom || '',
+        siret: orgSettings.siret || '',
+        nda: orgSettings.nda || '',
+        site_web: orgSettings.site_web || ''
+      }));
       setLogoUrl(orgSettings.logo_url || '');
     }
   }, [userRole, orgSettings]);
@@ -5520,9 +5527,19 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
       }).eq('email', authUser.email);
       error = result.error;
       if (!error && userRole === 'admin' && orgSettings?.id) {
-        const orgResult = await supabase.from('organisations').update({ nom: profileData.nom_organisme }).eq('id', orgSettings.id);
+        const orgResult = await supabase.from('organisations').update({
+          nom: profileData.nom_organisme,
+          siret: profileData.siret,
+          nda: profileData.nda,
+          site_web: profileData.site_web
+        }).eq('id', orgSettings.id);
         if (orgResult.error) error = orgResult.error;
-        else if (onOrgSaved) onOrgSaved({ nom: profileData.nom_organisme });
+        else if (onOrgSaved) onOrgSaved({
+          nom: profileData.nom_organisme,
+          siret: profileData.siret,
+          nda: profileData.nda,
+          site_web: profileData.site_web
+        });
       }
     }
     if (!error) {
@@ -5636,6 +5653,12 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                   <input className={inputCls} type="tel" value={profileData.telephone} onChange={e => setProfileData({ ...profileData, telephone: e.target.value })} placeholder="06..." />
                 </div>
               </div>
+              {userRole === 'admin' && (
+                <div className="mb-4">
+                  <label className={labelCls}>Site internet</label>
+                  <input className={inputCls} type="url" value={profileData.site_web} onChange={e => setProfileData({ ...profileData, site_web: e.target.value })} placeholder="https://www.votresite.fr" />
+                </div>
+              )}
               <div className="space-y-4">
                 <div>
                   <label className={labelCls}>Adresse Siège Social</label>
@@ -7336,7 +7359,7 @@ export default function App() {
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, nda, site_web').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
