@@ -5433,6 +5433,9 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
+    adresse_org: orgSettings?.adresse || '',
+    code_postal_org: orgSettings?.code_postal || '',
+    ville_org: orgSettings?.ville || '',
     siret: user?.formateur_siret || orgSettings?.siret || '',
     nda: user?.formateur_nda || orgSettings?.nda || '',
     email: user?.email || '',
@@ -5470,7 +5473,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     }
   }, [userRole, currentUserId]);
 
-  // Synchro nom organisme, siret, nda, site_web et logo depuis orgSettings (admin)
+  // Synchro nom organisme, siret, nda, site_web, adresse et logo depuis orgSettings (admin)
   useEffect(() => {
     if (userRole === 'admin' && orgSettings) {
       setProfileData(prev => ({
@@ -5478,7 +5481,10 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         nom_organisme: orgSettings.nom || '',
         siret: orgSettings.siret || '',
         nda: orgSettings.nda || '',
-        site_web: orgSettings.site_web || ''
+        site_web: orgSettings.site_web || '',
+        adresse_org: orgSettings.adresse || '',
+        code_postal_org: orgSettings.code_postal || '',
+        ville_org: orgSettings.ville || ''
       }));
       setLogoUrl(orgSettings.logo_url || '');
     }
@@ -5531,14 +5537,20 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           nom: profileData.nom_organisme,
           siret: profileData.siret,
           nda: profileData.nda,
-          site_web: profileData.site_web
+          site_web: profileData.site_web,
+          adresse: profileData.adresse_org,
+          code_postal: profileData.code_postal_org,
+          ville: profileData.ville_org
         }).eq('id', orgSettings.id);
         if (orgResult.error) error = orgResult.error;
         else if (onOrgSaved) onOrgSaved({
           nom: profileData.nom_organisme,
           siret: profileData.siret,
           nda: profileData.nda,
-          site_web: profileData.site_web
+          site_web: profileData.site_web,
+          adresse: profileData.adresse_org,
+          code_postal: profileData.code_postal_org,
+          ville: profileData.ville_org
         });
       }
     }
@@ -5660,19 +5672,40 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                 </div>
               )}
               <div className="space-y-4">
-                <div>
-                  <label className={labelCls}>Adresse Siège Social</label>
-                  <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
-                  <label htmlFor="profSameAddress" className="text-sm text-gray-600 cursor-pointer select-none">Même adresse pour les sessions de formation</label>
-                </div>
-                {!sameAddress && (
-                  <div>
-                    <label className={labelCls}>Adresse de Pratique</label>
-                    <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
-                  </div>
+                {userRole === 'admin' ? (
+                  <>
+                    <div>
+                      <label className={labelCls}>Adresse Siège Social</label>
+                      <input className={inputCls} value={profileData.adresse_org} onChange={e => setProfileData({ ...profileData, adresse_org: e.target.value })} placeholder="N° et nom de rue" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className={labelCls}>Code Postal</label>
+                        <input className={inputCls} value={profileData.code_postal_org} onChange={e => setProfileData({ ...profileData, code_postal_org: e.target.value })} placeholder="75000" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Ville</label>
+                        <input className={inputCls} value={profileData.ville_org} onChange={e => setProfileData({ ...profileData, ville_org: e.target.value })} placeholder="Paris" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className={labelCls}>Adresse Siège Social</label>
+                      <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
+                      <label htmlFor="profSameAddress" className="text-sm text-gray-600 cursor-pointer select-none">Même adresse pour les sessions de formation</label>
+                    </div>
+                    {!sameAddress && (
+                      <div>
+                        <label className={labelCls}>Adresse de Pratique</label>
+                        <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -7359,7 +7392,7 @@ export default function App() {
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, nda, site_web').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
