@@ -1106,7 +1106,7 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
   );
 };
 
-const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase }) => {
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, momentLabel }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [metadata, setMetadata] = useState({
@@ -1174,7 +1174,9 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
       <div className="bg-white rounded-[32px] w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden animate-slide-up">
         <div className="bg-indigo-600 p-8 text-white relative">
           <h2 className="text-2xl font-black">Ajouter un élément</h2>
-          <p className="text-indigo-100 text-sm mt-1 opacity-80">Configurez les détails de l'activité.</p>
+          <p className="text-indigo-100 text-sm mt-1 opacity-80">
+            {momentLabel ? `Zone : ${momentLabel}` : 'Configurez les détails de l\'activité.'}
+          </p>
           <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
         </div>
 
@@ -3656,6 +3658,7 @@ const IngenierieView = ({
         onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); setActiveMoment(null); setActiveMomentModuleId(null); }}
         pedagogicalResources={pedagogicalResources}
         supabase={supabase}
+        momentLabel={activeMoment === 'debut' ? '🟢 Début de Parcours (Onboarding)' : activeMoment === 'fin' ? '🔴 Fin de Parcours (Outro)' : null}
         onSave={(data) => {
           if (activeMoment && activeMomentModuleId) {
             handleAddModuleMomentResource(activeMomentModuleId, activeMoment, data);
