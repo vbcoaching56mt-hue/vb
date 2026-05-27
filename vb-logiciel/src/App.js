@@ -1991,7 +1991,7 @@ const ClientDetailView = ({
   setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem, handleSaveCorrection
+  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
@@ -2309,30 +2309,44 @@ const ClientDetailView = ({
               <h3 className="text-xl font-black text-gray-900">Planning & Supervision</h3>
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">Vue par Blocs de Séances</p>
             </div>
-            <button 
-              onClick={() => {
-                setTargetSessionForAddition({ clientId: client.id, nextNum: clientSessions.length + 1 });
-                setIsSessionItemModalOpen(true);
-              }} 
-              className="bg-indigo-600 hover:bg-black text-white text-xs font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-lg transition-all"
-            >
-              <Plus size={16} /> Ajouter une étape
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handleAddAdminBloc && handleAddAdminBloc(client.id)}
+                className="bg-amber-100 hover:bg-amber-500 text-amber-700 hover:text-white text-xs font-black px-5 py-3.5 rounded-2xl flex items-center gap-2 shadow-sm transition-all border border-amber-200"
+              >
+                <Archive size={16} /> Bloc Administratif
+              </button>
+              <button
+                onClick={() => {
+                  setTargetSessionForAddition({ clientId: client.id, nextNum: clientSessions.length + 1 });
+                  setIsSessionItemModalOpen(true);
+                }}
+                className="bg-indigo-600 hover:bg-black text-white text-xs font-black px-6 py-3.5 rounded-2xl flex items-center gap-2 shadow-lg transition-all"
+              >
+                <Plus size={16} /> Ajouter une étape
+              </button>
+            </div>
           </div>
 
           <div className="space-y-6">
             {(() => {
               const grouped = clientSessions.reduce((acc, s) => {
-                const key = s.numero_seance || 'Sans numéro';
+                const key = (s.numero_seance === null || s.numero_seance === undefined) ? 'Sans numéro' : s.numero_seance;
                 if (!acc[key]) acc[key] = { numero: s.numero_seance, items: [] };
                 acc[key].items.push(s);
                 return acc;
               }, {});
 
-              return Object.values(grouped).sort((a, b) => (a.numero || 0) - (b.numero || 0)).map((group, gIdx) => (
+              return Object.values(grouped).sort((a, b) => (a.numero ?? 999) - (b.numero ?? 999)).map((group, gIdx) => {
+                const isAdminGroup = group.numero === 0 || group.items.some(s => s.is_administrative);
+                return (
                 <div
                   key={gIdx}
-                  className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${dragOverGroupNum === group.numero ? 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100' : 'border-gray-100'}`}
+                  className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${
+                    dragOverGroupNum === group.numero
+                      ? (isAdminGroup ? 'border-amber-400 bg-amber-50/50 shadow-amber-100' : 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100')
+                      : 'border-gray-100'
+                  }`}
                   onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
                   onDragLeave={() => setDragOverGroupNum(null)}
                   onDrop={e => {
@@ -2350,17 +2364,17 @@ const ClientDetailView = ({
                 >
                   <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">
-                        {group.numero || '?'}
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg ${isAdminGroup ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
+                        {isAdminGroup ? <Archive size={22} /> : (group.numero ?? '?')}
                       </div>
                       <div>
                         <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
-                          SÉANCE {group.numero}
+                          {isAdminGroup ? 'BLOC ADMINISTRATIF' : `SÉANCE ${group.numero}`}
                           {dragOverGroupNum === group.numero && draggedItemId && (
-                            <span className="ml-3 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                            <span className={`ml-3 text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse ${isAdminGroup ? 'text-amber-600 bg-amber-100' : 'text-indigo-500 bg-indigo-100'}`}>Déposer ici</span>
                           )}
                         </h4>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Planification globale</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{isAdminGroup ? '7 jours avant la Séance 1' : 'Planification globale'}</p>
                       </div>
                     </div>
                     
@@ -2497,9 +2511,22 @@ const ClientDetailView = ({
                       </div>
                       );
                     })}
+                    {isAdminGroup && (
+                      <button
+                        onClick={() => {
+                          const adminItem = group.items[0];
+                          setTargetSessionForAddition({ clientId: client.id, preSelectedSessionId: adminItem?.id, adminBloc: true });
+                          setIsSessionItemModalOpen(true);
+                        }}
+                        className="text-[10px] font-black bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition-all shadow-sm flex items-center gap-2 mt-2"
+                      >
+                        <Plus size={14} /> Ajouter un élément
+                      </button>
+                    )}
                   </div>
                 </div>
-              ));
+                );
+              });
             })()}
             {clientSessions.length === 0 && (
               <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
@@ -8026,6 +8053,13 @@ export default function App() {
       fin = sessionData.heure_fin;
     }
 
+    const targetGroupItems = sessions.filter(s =>
+      s.client_id === clientId && s.numero_seance === numero
+    );
+    const nextPos = targetGroupItems.length > 0
+      ? Math.max(...targetGroupItems.map(s => s.position || 0)) + 1
+      : 0;
+
     const { error } = await supabase.from('sessions').insert([{
       client_id: clientId,
       module_id: clients.find(c => c.id === clientId)?.module_id,
@@ -8035,6 +8069,8 @@ export default function App() {
       type_activite: data.type,
       file_url: data.resourceId,
       ressource_url: data.resourceId,
+      is_administrative: numero === 0,
+      position: nextPos,
       metadata: {
         isCustom: true,
         documentType: data.type === 'signature' ? 'signature' : (data.isToSign ? 'signature' : 'info')
@@ -8060,11 +8096,23 @@ export default function App() {
   };
 
   const handleMoveSessionItem = async (sessionId, targetNumeroSeance, targetDate, targetDebut, targetFin) => {
+    const movedSession = sessions.find(s => s.id === sessionId);
+    const targetGroupItems = sessions.filter(s =>
+      s.client_id === movedSession?.client_id &&
+      s.numero_seance === targetNumeroSeance &&
+      s.id !== sessionId
+    );
+    const nextPosition = targetGroupItems.length > 0
+      ? Math.max(...targetGroupItems.map(s => s.position || 0)) + 1
+      : 0;
+
     const { error } = await supabase.from('sessions').update({
       numero_seance: targetNumeroSeance,
       date: targetDate || null,
       heure_debut: targetDebut || null,
       heure_fin: targetFin || null,
+      position: nextPosition,
+      is_administrative: targetNumeroSeance === 0,
     }).eq('id', sessionId);
 
     if (!error) {
@@ -8072,6 +8120,47 @@ export default function App() {
       toast.success("Activité déplacée avec succès !");
     } else {
       toast.error("Erreur lors du déplacement : " + error.message);
+    }
+  };
+
+  const handleAddAdminBloc = async (clientId) => {
+    const hasAdminBloc = sessions.some(s => s.client_id === clientId && s.is_administrative);
+    if (hasAdminBloc) {
+      toast.error("Un bloc administratif existe déjà pour ce bénéficiaire.");
+      return;
+    }
+    const regularSessions = sessions.filter(s => s.client_id === clientId && !s.is_administrative);
+    const seance1Date = regularSessions
+      .filter(s => s.numero_seance === 1)
+      .find(s => s.date)?.date;
+    let adminDate = null;
+    if (seance1Date) {
+      const d = new Date(seance1Date);
+      d.setDate(d.getDate() - 7);
+      adminDate = d.toISOString().split('T')[0];
+    }
+    const client = clients.find(c => c.id === clientId);
+    const { error } = await supabase.from('sessions').insert([{
+      client_id: clientId,
+      module_id: client?.module_id || null,
+      organisation_id: currentOrgId,
+      numero_seance: 0,
+      nom: 'Bloc Administratif',
+      ressource_titre: 'Document administratif',
+      type_activite: 'Document PDF',
+      is_administrative: true,
+      position: 0,
+      date: adminDate,
+      statut: 'À venir',
+      statut_client: 'À venir',
+      statut_formateur: 'À venir',
+      metadata: { isCustom: true, documentType: 'info' }
+    }]);
+    if (!error) {
+      await fetchSessions();
+      toast.success("Bloc Administratif créé !");
+    } else {
+      toast.error("Erreur : " + error.message);
     }
   };
 
