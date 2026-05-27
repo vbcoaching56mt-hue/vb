@@ -2074,6 +2074,9 @@ const ClientDetailView = ({
   const [activeId, setActiveId] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+  const [assignedDocs, setAssignedDocs] = React.useState([]);
+  const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
+  const [showAddDocModal, setShowAddDocModal] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -2101,6 +2104,42 @@ const ClientDetailView = ({
     };
     fetchDetailedClient();
   }, [client.id, supabase]);
+
+  React.useEffect(() => {
+    const fetchAssignedDocs = async () => {
+      setIsLoadingAssigned(true);
+      const { data } = await supabase
+        .from('client_documents')
+        .select('*')
+        .eq('client_id', client.id)
+        .order('ordre', { ascending: true });
+      setAssignedDocs(data || []);
+      setIsLoadingAssigned(false);
+    };
+    fetchAssignedDocs();
+  }, [client.id, supabase]);
+
+  const handleRemoveAssignedDoc = async (docId) => {
+    await supabase.from('client_documents').delete().eq('id', docId);
+    setAssignedDocs(prev => prev.filter(d => d.id !== docId));
+  };
+
+  const handleAddAssignedDoc = async (titre, url) => {
+    const { data, error } = await supabase
+      .from('client_documents')
+      .insert([{
+        client_id: client.id,
+        template_titre: titre,
+        template_url: url,
+        destination: 'client',
+        ordre: assignedDocs.length,
+        organisation_id: client.organisation_id
+      }])
+      .select()
+      .single();
+    if (!error && data) setAssignedDocs(prev => [...prev, data]);
+    setShowAddDocModal(false);
+  };
 
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
@@ -2361,19 +2400,93 @@ const ClientDetailView = ({
 
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <div className="pt-6 border-gray-100">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Générateurs Automatiques</h3>
-            <div className="flex gap-2 flex-wrap pt-2">
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'client').map(([key]) => (
-                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
-                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
-                </button>
-              ))}
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'client').length === 0 && (
-                <p className="text-gray-400 italic text-sm">Aucun modèle 'Administratif Client' configuré dans la Modélothèque.</p>
-              )}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800">Documents de ce client</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Personnalisez la liste des documents à générer pour ce bénéficiaire.</p>
             </div>
+            <button
+              onClick={() => setShowAddDocModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> Ajouter un document
+            </button>
           </div>
+
+          {isLoadingAssigned ? (
+            <p className="text-gray-400 text-sm italic">Chargement...</p>
+          ) : assignedDocs.length === 0 ? (
+            <div className="text-center py-10 text-gray-400">
+              <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm italic">Aucun document assigné à ce client.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {assignedDocs.map(doc => (
+                <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleGenerateDocx(client, doc.template_titre)}
+                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                    >
+                      Générer
+                    </button>
+                    <button
+                      onClick={() => handleRemoveAssignedDoc(doc.id)}
+                      className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                      title="Retirer ce document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showAddDocModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document</h4>
+                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle à ajouter au dossier de ce client.</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {Object.entries(documentTemplates || {})
+                    .filter(([titre, tpl]) =>
+                      (tpl.destination || 'client') === 'client' &&
+                      !assignedDocs.some(d => d.template_titre === titre)
+                    )
+                    .map(([titre, tpl]) => (
+                      <button
+                        key={titre}
+                        onClick={() => handleAddAssignedDoc(titre, tpl.url)}
+                        className="w-full flex items-center gap-3 text-left bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 text-gray-700 font-bold text-sm px-4 py-3 rounded-xl border border-gray-100 hover:border-indigo-200 transition-all"
+                      >
+                        <FileText className="w-4 h-4 shrink-0 text-indigo-300" />
+                        {titre}
+                      </button>
+                    ))
+                  }
+                  {Object.entries(documentTemplates || {})
+                    .filter(([titre, tpl]) =>
+                      (tpl.destination || 'client') === 'client' &&
+                      !assignedDocs.some(d => d.template_titre === titre)
+                    ).length === 0 && (
+                    <p className="text-gray-400 text-sm italic text-center py-6">Tous les modèles disponibles sont déjà dans la liste.</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowAddDocModal(false)}
+                  className="mt-4 w-full text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -7490,6 +7603,22 @@ export default function App() {
       if (dbError) {
         console.error("Erreur DB clients après invitation:", dbError);
         toast.error(`Erreur side-effect clients : ${dbError.message}`);
+      } else {
+        // Initialisation automatique des documents depuis la modélothèque
+        const defaultClientDocs = Object.entries(documentTemplates || {})
+          .filter(([, tpl]) => (tpl.destination || 'client') === 'client')
+          .map(([titre, tpl], idx) => ({
+            client_id: newUserId,
+            template_titre: titre,
+            template_url: tpl.url || null,
+            destination: 'client',
+            ordre: idx,
+            organisation_id: currentOrgId
+          }));
+        if (defaultClientDocs.length > 0) {
+          const { error: docsError } = await adminClient.from('client_documents').insert(defaultClientDocs);
+          if (docsError) console.error('Erreur init client_documents:', docsError);
+        }
       }
     } else {
       // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
