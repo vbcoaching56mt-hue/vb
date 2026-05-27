@@ -1106,17 +1106,18 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
   );
 };
 
-const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, momentLabel }) => {
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [metadata, setMetadata] = useState({
     requiresClientSignature: true,
     requiresTrainerSignature: false,
-    documentType: 'signature' // 'info' | 'signature'
+    documentType: 'signature'
   });
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [destination, setDestination] = useState('client');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -1131,6 +1132,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
       setSelectedResourceId('');
       setIsUploading(false);
       setInstructions('');
+      setDestination('client');
     }
   }, [isOpen]);
 
@@ -1233,80 +1235,81 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
 
           {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
-              <div>
-                <div className="space-y-3">
+              <div className="space-y-3">
+                {/* Modélothèque dropdown */}
+                {documentTemplates && Object.keys(documentTemplates).length > 0 && (
                   <select
                     className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                     value={selectedResourceId}
-                    onChange={e => setSelectedResourceId(e.target.value)}
+                    onChange={e => {
+                      const url = e.target.value;
+                      setSelectedResourceId(url);
+                      if (url) {
+                        const entry = Object.entries(documentTemplates).find(([, tpl]) => tpl.url === url);
+                        if (entry && !title) setTitle(entry[0]);
+                      }
+                    }}
                   >
                     <option value="">Sélectionner dans la modélothèque...</option>
-                    {pedagogicalResources.map(r => (
-                      <option key={r.name} value={r.name}>{r.name}</option>
+                    {Object.entries(documentTemplates).map(([nom, tpl]) => (
+                      <option key={nom} value={tpl.url || ''}>{nom}</option>
                     ))}
                   </select>
+                )}
 
-                  <div className="flex items-center gap-4">
-                    <div className="h-px bg-gray-100 flex-1"></div>
-                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
-                    <div className="h-px bg-gray-100 flex-1"></div>
-                  </div>
-
-                  <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier' + ((type === 'signature' || metadata.documentType === 'signature') ? ' (PDF uniquement)' : ' (PDF, Word, Excel)')}
-                    <input
-                      type="file"
-                      className="hidden"
-                      disabled={isUploading}
-                      accept={(type === 'signature' || metadata.documentType === 'signature') ? ".pdf" : ".pdf,.doc,.docx,.xls,.xlsx"}
-                      onChange={(e) => {
-                        const file = e.target.files[0];
-                        if (file) {
-                          const needsSignature = type === 'signature' || metadata.documentType === 'signature';
-                          if (needsSignature && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-                            alert('Erreur : Seuls les fichiers PDF sont autorisés pour les documents nécessitant une signature.');
-                            e.target.value = '';
-                            return;
-                          }
-                          handleFileUpload(file);
-                        }
-                      }}
-                    />
-                  </label>
-                  {selectedResourceId && !isUploading && (
-                    <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                      ✓ Fichier importé avec succès
-                    </p>
-                  )}
+                <div className="flex items-center gap-4">
+                  <div className="h-px bg-gray-100 flex-1"></div>
+                  <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
+                  <div className="h-px bg-gray-100 flex-1"></div>
                 </div>
+
+                <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {isUploading ? 'Importation en cours...' : '📁 Importer un fichier (PDF, Word, Excel)'}
+                  <input
+                    type="file"
+                    className="hidden"
+                    disabled={isUploading}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) handleFileUpload(file);
+                    }}
+                  />
+                </label>
+                {selectedResourceId && !isUploading && (
+                  <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">✓ Fichier sélectionné</p>
+                )}
               </div>
 
               {type === 'document' && (
                 <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
-                  <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Type d'interaction</label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" checked={metadata.documentType === 'info'} onChange={() => setMetadata({ ...metadata, documentType: 'info' })} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-sm font-bold text-gray-700">Lecture seule</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" checked={metadata.documentType === 'signature'} onChange={() => setMetadata({ ...metadata, documentType: 'signature' })} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-sm font-bold text-gray-700">À signer</span>
-                    </label>
+                  {/* Destinataire */}
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Destinataire</label>
+                    <div className="flex gap-4">
+                      {[['client', 'Client'], ['formateur', 'Formateur'], ['both', 'Les deux']].map(([val, lbl]) => (
+                        <label key={val} className="flex items-center gap-2 cursor-pointer">
+                          <input type="radio" checked={destination === val} onChange={() => setDestination(val)} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                          <span className="text-sm font-bold text-gray-700">{lbl}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
 
-                  {metadata.documentType === 'signature' && (
-                    <div className="pt-3 border-t border-indigo-100 mt-2 flex gap-4">
+                  {/* Signature requise */}
+                  <div className="pt-3 border-t border-indigo-100">
+                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Signature</label>
+                    <div className="flex gap-4">
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresTrainerSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
                         <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresClientSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
                         <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
                       </label>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1315,8 +1318,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                onSave({ type, title, metadata, resourceId: selectedResourceId, instructions: type === 'exercice' ? instructions : null });
-                onClose(); // Instant feedback
+                onSave({ type, title, metadata: { ...metadata, destination }, resourceId: selectedResourceId, fileUrl: selectedResourceId.includes('/') ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
+                onClose();
               }}
               disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
@@ -2075,6 +2078,7 @@ const ClientDetailView = ({
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [assignedDocs, setAssignedDocs] = React.useState([]);
+  const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
@@ -2108,16 +2112,18 @@ const ClientDetailView = ({
   React.useEffect(() => {
     const fetchAssignedDocs = async () => {
       setIsLoadingAssigned(true);
-      const { data } = await supabase
-        .from('client_documents')
-        .select('*')
-        .eq('client_id', client.id)
-        .order('ordre', { ascending: true });
-      setAssignedDocs(data || []);
+      const [{ data: clientDocs }, { data: moduleResources }] = await Promise.all([
+        supabase.from('client_documents').select('*').eq('client_id', client.id).order('ordre', { ascending: true }),
+        client.module_id
+          ? supabase.from('module_step_resources').select('*').eq('module_id', client.module_id).eq('type', 'document')
+          : Promise.resolve({ data: [] })
+      ]);
+      setAssignedDocs(clientDocs || []);
+      setModuleDocResources(moduleResources || []);
       setIsLoadingAssigned(false);
     };
     fetchAssignedDocs();
-  }, [client.id, supabase]);
+  }, [client.id, client.module_id, supabase]);
 
   const handleRemoveAssignedDoc = async (docId) => {
     await supabase.from('client_documents').delete().eq('id', docId);
@@ -2403,25 +2409,50 @@ const ClientDetailView = ({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-800">Documents de ce client</h3>
-              <p className="text-xs text-gray-400 mt-0.5">Personnalisez la liste des documents à générer pour ce bénéficiaire.</p>
+              <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
             <button
               onClick={() => setShowAddDocModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
             >
-              <Plus className="w-4 h-4" /> Ajouter un document
+              <Plus className="w-4 h-4" /> Ajouter
             </button>
           </div>
 
           {isLoadingAssigned ? (
             <p className="text-gray-400 text-sm italic">Chargement...</p>
-          ) : assignedDocs.length === 0 ? (
+          ) : (moduleDocResources.length === 0 && assignedDocs.length === 0) ? (
             <div className="text-center py-10 text-gray-400">
               <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm italic">Aucun document assigné à ce client.</p>
+              <p className="text-sm italic">Aucun document configuré pour ce client.</p>
             </div>
           ) : (
             <div className="space-y-2">
+              {moduleDocResources.length > 0 && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
+              )}
+              {moduleDocResources.map(res => (
+                <div key={res.id} className="flex items-center justify-between bg-indigo-50/40 rounded-2xl px-4 py-3 border border-indigo-100">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div>
+                      <span className="text-sm font-bold text-gray-700">{res.titre}</span>
+                      {res.metadata?.requiresClientSignature && (
+                        <span className="ml-2 text-[9px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateDocx(client, res.titre)}
+                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                  >
+                    Générer
+                  </button>
+                </div>
+              ))}
+              {assignedDocs.length > 0 && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
+              )}
               {assignedDocs.map(doc => (
                 <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
                   <div className="flex items-center gap-3">
@@ -2452,12 +2483,12 @@ const ClientDetailView = ({
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
                 <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document</h4>
-                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle à ajouter au dossier de ce client.</p>
+                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle de la modélothèque à ajouter.</p>
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {Object.entries(documentTemplates || {})
-                    .filter(([titre, tpl]) =>
-                      (tpl.destination || 'client') === 'client' &&
-                      !assignedDocs.some(d => d.template_titre === titre)
+                    .filter(([titre]) =>
+                      !assignedDocs.some(d => d.template_titre === titre) &&
+                      !moduleDocResources.some(r => r.titre === titre)
                     )
                     .map(([titre, tpl]) => (
                       <button
@@ -2470,11 +2501,10 @@ const ClientDetailView = ({
                       </button>
                     ))
                   }
-                  {Object.entries(documentTemplates || {})
-                    .filter(([titre, tpl]) =>
-                      (tpl.destination || 'client') === 'client' &&
-                      !assignedDocs.some(d => d.template_titre === titre)
-                    ).length === 0 && (
+                  {Object.entries(documentTemplates || {}).filter(([titre]) =>
+                    !assignedDocs.some(d => d.template_titre === titre) &&
+                    !moduleDocResources.some(r => r.titre === titre)
+                  ).length === 0 && (
                     <p className="text-gray-400 text-sm italic text-center py-6">Tous les modèles disponibles sont déjà dans la liste.</p>
                   )}
                 </div>
@@ -3454,7 +3484,7 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource
+  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource, documentTemplates
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
@@ -3784,6 +3814,7 @@ const IngenierieView = ({
         isOpen={isResourceModalOpen}
         onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); setActiveMoment(null); setActiveMomentModuleId(null); }}
         pedagogicalResources={pedagogicalResources}
+        documentTemplates={documentTemplates}
         supabase={supabase}
         momentLabel={activeMoment === 'debut' ? '🟢 Début de Parcours (Onboarding)' : activeMoment === 'fin' ? '🔴 Fin de Parcours (Outro)' : null}
         onSave={(data) => {
@@ -4699,16 +4730,15 @@ const DocumentsView = ({
               </div>
             </div>
             <div className="mt-4">
-              <label className={`inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              <label className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md">
                 Uploader le Modèle (.docx)
                 <input
                   type="file"
                   className="hidden"
-                  disabled={!newTemplateName}
                   accept=".docx"
                   onChange={(e) => {
                     if (e.target.files[0]) {
-                      handleUploadDocxTemplate(e.target.files[0], newTemplateName, newTemplateDestination);
+                      handleUploadDocxTemplate(e.target.files[0], newTemplateName || null, newTemplateDestination);
                       setNewTemplateName('');
                       setNewTemplateDestination('client');
                     }
@@ -7913,10 +7943,10 @@ export default function App() {
       template_id: templateId,
       titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
       type: stepData.type,
-      // On sépare l'UUID (ressource_id) du chemin texte (file_url)
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
+      destination: stepData.destination || 'client',
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1,
       ...(stepData.instructions ? { instructions: stepData.instructions } : {})
     }]);
@@ -7942,6 +7972,7 @@ export default function App() {
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: stepData.fileUrl || ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
+      destination: stepData.destination || 'client',
       ordre: moduleStepResources.filter(r => r.module_id === moduleId && r.moment === moment).length + 1,
     }]);
     if (error) {
@@ -8595,15 +8626,11 @@ export default function App() {
   const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg) => {
     try {
       const file = fileArg || null;
-      const type = typeArg || newTemplateName;
+      const type = typeArg || newTemplateName || (file ? file.name.replace(/\.[^/.]+$/, '') : null);
       const destination = destinationArg || newTemplateDestination || 'client';
 
       if (!file) {
         toast.error("Veuillez sélectionner un fichier .docx d'abord.");
-        return;
-      }
-      if (!type) {
-        toast.error("Veuillez saisir un nom pour ce type de modèle.");
         return;
       }
 
@@ -9919,6 +9946,7 @@ export default function App() {
             handleRenameFolder={handleRenameFolder}
             handleRenameResource={handleRenameResource}
             handleAddModuleMomentResource={handleAddModuleMomentResource}
+            documentTemplates={documentTemplates}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
