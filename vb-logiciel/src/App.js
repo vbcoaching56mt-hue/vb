@@ -5506,6 +5506,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
       }).eq('id', currentUserId);
       error = result.error;
     } else {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
       const result = await supabase.from('utilisateurs').update({
         nom: profileData.nom,
         email: profileData.email,
@@ -5516,7 +5517,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         formateur_nda: profileData.nda,
         compagnie_assurance: profileData.compagnie_assurance,
         numero_assurance_rcp: profileData.numero_assurance_rcp
-      }).eq('id', currentUserId);
+      }).eq('email', authUser.email);
       error = result.error;
       if (!error && userRole === 'admin' && orgSettings?.id) {
         const orgResult = await supabase.from('organisations').update({ nom: profileData.nom_organisme }).eq('id', orgSettings.id);
@@ -7401,11 +7402,14 @@ export default function App() {
     if (role === 'client') {
       // Pour les clients : on utilise la table 'clients' avec l'UUID de l'Auth
       // CRUCIAL : on utilise adminClient pour outrepasser les règles RLS lors de l'insertion initiale
+      const formateurIntId = formData.formateur_id ? Number(formData.formateur_id) : null;
+      const formateurRecord = formateurIntId ? formateurs.find(f => f.id === formateurIntId) : null;
       const { error: dbError } = await adminClient.from('clients').insert([{
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
-        formateur_id: formData.formateur_id ? Number(formData.formateur_id) : null,
+        formateur_id: formateurIntId,
+        formateur_auth_uid: formateurRecord?.auth_uid || null,
         organisation_id: currentOrgId
       }]);
       if (dbError) {
@@ -7414,11 +7418,13 @@ export default function App() {
       }
     } else {
       // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
+      // On stocke aussi l'auth_uid (UUID Supabase Auth) pour les balises de documents
       const { error: dbError } = await supabase.from('utilisateurs').insert([{
         nom: nom,
         email: email,
         role: role,
-        organisation_id: currentOrgId
+        organisation_id: currentOrgId,
+        auth_uid: newUserId || null
       }]);
       if (dbError) console.error("Erreur DB utilisateurs après invitation:", dbError);
     }
@@ -8630,6 +8636,7 @@ export default function App() {
         dataToMerge = {
           nom: theFormateur.nom || '',
           nom_formateur: theFormateur.nom || '',
+          formateur_nom_complet: theFormateur.nom || '',
           raison_sociale: theFormateur.nom || '',
           adresse_formateur: theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse_client || theFormateur.adresse || '',
           adresse_session: theFormateur.adresse_session || theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse || '',
@@ -8676,6 +8683,7 @@ export default function App() {
         dataToMerge = {
           nom: theCoach.nom || 'Coach',
           nom_formateur: theCoach.nom || 'Coach',
+          formateur_nom_complet: theCoach.nom || '',
           raison_sociale: theCoach.nom || 'Coach',
           adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
           formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
