@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
+import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
 
 
 
@@ -1982,6 +1983,65 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   );
 };
 
+// --- dnd-kit: zone de dépôt séance (carte) ---
+const SessDropZone = ({ zoneId, isAdmin, hasActive, children }) => {
+  const { isOver, setNodeRef } = useDroppable({ id: String(zoneId) });
+  const highlighted = isOver && hasActive;
+  return (
+    <div
+      ref={setNodeRef}
+      className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${
+        highlighted
+          ? (isAdmin ? 'border-amber-400 bg-amber-50/50 shadow-amber-100' : 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100')
+          : 'border-gray-100'
+      }`}
+    >
+      {children(highlighted)}
+    </div>
+  );
+};
+
+// --- dnd-kit: élément déplaçable séance (carte) ---
+const SessDragItem = ({ itemId, activeId, children }) => {
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: String(itemId) });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${String(activeId) === String(itemId) ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
+    >
+      {children}
+    </div>
+  );
+};
+
+// --- dnd-kit: ligne de dépôt (tableau formateur) ---
+const FDropGroupRow = ({ groupNum, hasActive, children }) => {
+  const { isOver, setNodeRef } = useDroppable({ id: `fg-${groupNum}` });
+  const highlighted = isOver && hasActive;
+  return (
+    <tr ref={setNodeRef} className={`transition-all ${highlighted ? 'bg-indigo-100 outline outline-2 outline-indigo-400' : 'bg-indigo-50/30'}`}>
+      {children(highlighted)}
+    </tr>
+  );
+};
+
+// --- dnd-kit: ligne déplaçable (tableau formateur) ---
+const FDragItemRow = ({ sessionId, activeId, children }) => {
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: `fi-${sessionId}` });
+  return (
+    <tr
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${activeId === `fi-${sessionId}` ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
+    >
+      {children}
+    </tr>
+  );
+};
+
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, fetchDocuments,
@@ -1995,8 +2055,7 @@ const ClientDetailView = ({
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
-  const [draggedItemId, setDraggedItemId] = React.useState(null);
-  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
+  const [activeId, setActiveId] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
@@ -2337,196 +2396,193 @@ const ClientDetailView = ({
                 return acc;
               }, {});
 
-              return Object.values(grouped).sort((a, b) => (a.numero ?? 999) - (b.numero ?? 999)).map((group, gIdx) => {
-                const isAdminGroup = group.numero === 0 || group.items.some(s => s.is_administrative);
-                return (
-                <div
-                  key={gIdx}
-                  className={`border rounded-3xl bg-gray-50/50 overflow-hidden shadow-sm transition-all ${
-                    dragOverGroupNum === group.numero
-                      ? (isAdminGroup ? 'border-amber-400 bg-amber-50/50 shadow-amber-100' : 'border-indigo-400 bg-indigo-50/50 shadow-indigo-100')
-                      : 'border-gray-100'
-                  }`}
-                  onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
-                  onDragLeave={() => setDragOverGroupNum(null)}
-                  onDrop={e => {
-                    e.preventDefault();
-                    if (draggedItemId && handleMoveSessionItem) {
-                      const src = sessions.find(s => s.id === draggedItemId);
-                      if (src && src.numero_seance !== group.numero) {
-                        const firstItem = group.items[0];
-                        handleMoveSessionItem(draggedItemId, group.numero, firstItem?.date, firstItem?.heure_debut, firstItem?.heure_fin);
+              return (
+                <DndContext
+                  onDragStart={({ active }) => setActiveId(active.id)}
+                  onDragEnd={({ active, over }) => {
+                    if (over && handleMoveSessionItem) {
+                      const targetNum = over.id === '__admin' ? 0 : Number(over.id);
+                      const src = sessions.find(s => String(s.id) === String(active.id));
+                      if (src && src.numero_seance !== targetNum) {
+                        const targetGroup = Object.values(grouped).find(g => {
+                          const zId = g.numero === 0 ? '__admin' : String(g.numero ?? '__null');
+                          return zId === over.id;
+                        });
+                        const firstItem = targetGroup?.items[0];
+                        handleMoveSessionItem(active.id, targetNum, firstItem?.date, firstItem?.heure_debut, firstItem?.heure_fin);
                       }
                     }
-                    setDraggedItemId(null);
-                    setDragOverGroupNum(null);
+                    setActiveId(null);
                   }}
                 >
-                  <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg ${isAdminGroup ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
-                        {isAdminGroup ? <Archive size={22} /> : (group.numero ?? '?')}
-                      </div>
-                      <div>
-                        <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
-                          {isAdminGroup ? 'BLOC ADMINISTRATIF' : `SÉANCE ${group.numero}`}
-                          {dragOverGroupNum === group.numero && draggedItemId && (
-                            <span className={`ml-3 text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse ${isAdminGroup ? 'text-amber-600 bg-amber-100' : 'text-indigo-500 bg-indigo-100'}`}>Déposer ici</span>
-                          )}
-                        </h4>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{isAdminGroup ? '7 jours avant la Séance 1' : 'Planification globale'}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
-                        <input
-                          type="date"
-                          value={group.items[0]?.date || ''}
-                          onChange={(e) => {
-                            group.items.forEach(s => updateSessionDate(s.id, e.target.value));
-                          }}
-                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                        />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
-                        <input
-                          type="time"
-                          value={editedTimes[group.items[0]?.id]?.start ?? group.items[0]?.heure_debut ?? ''}
-                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
-                          onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
-                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
-                        />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
-                        <input
-                          type="time"
-                          value={editedTimes[group.items[0]?.id]?.end ?? group.items[0]?.heure_fin ?? ''}
-                          onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
-                          onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
-                          className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
-                        />
-                      </div>
-                      {lastModifiedSessionId && group.items.some(s => s.id === lastModifiedSessionId) && (
-                        <div className="flex items-center text-green-500 animate-pulse">
-                          <Check size={16} strokeWidth={3} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  {Object.values(grouped).sort((a, b) => (a.numero ?? 999) - (b.numero ?? 999)).map((group, gIdx) => {
+                    const isAdminGroup = group.numero === 0 || group.items.some(s => s.is_administrative);
+                    const zoneId = group.numero === 0 ? '__admin' : String(group.numero ?? '__null');
+                    return (
+                      <SessDropZone key={gIdx} zoneId={zoneId} isAdmin={isAdminGroup} hasActive={activeId != null}>
+                        {(isGroupOver) => (
+                          <>
+                            <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
+                              <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg ${isAdminGroup ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
+                                  {isAdminGroup ? <Archive size={22} /> : (group.numero ?? '?')}
+                                </div>
+                                <div>
+                                  <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
+                                    {isAdminGroup ? 'BLOC ADMINISTRATIF' : `SÉANCE ${group.numero}`}
+                                    {isGroupOver && activeId && (
+                                      <span className={`ml-3 text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse ${isAdminGroup ? 'text-amber-600 bg-amber-100' : 'text-indigo-500 bg-indigo-100'}`}>Déposer ici</span>
+                                    )}
+                                  </h4>
+                                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{isAdminGroup ? '7 jours avant la Séance 1' : 'Planification globale'}</p>
+                                </div>
+                              </div>
 
-                  <div className="p-4 space-y-3">
-                    {group.items.map(s => {
-                      const sMeta = s.metadata || {};
-                      const clientRequired = sMeta.requiresClientSignature !== false;
-                      const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
-                      return (
-                      <div
-                        key={s.id}
-                        draggable
-                        onDragStart={e => { setDraggedItemId(s.id); e.dataTransfer.effectAllowed = 'move'; }}
-                        onDragEnd={() => { setDraggedItemId(null); setDragOverGroupNum(null); }}
-                        className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${draggedItemId === s.id ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                            s.type_activite === 'Exercice' ? 'bg-amber-50 text-amber-600' :
-                            s.type_activite === 'Document PDF' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'
-                          }`}>
-                            {s.type_activite === 'Exercice' ? <PenTool size={20} /> : <FileText size={20} />}
-                          </div>
-                          <div>
-                            <h5 className="font-bold text-gray-900 text-sm">{s.ressource_titre || s.titre || s.nom || 'Activité'}</h5>
-                            <div className="flex items-center gap-3 mt-1">
-                              <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
-                              <div className="flex items-center gap-2">
-                                {clientRequired ? (
-                                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                    Client: {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Client: N/A</span>
-                                )}
-                                {coachRequired ? (
-                                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                    Coach: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Coach: N/A</span>
+                              <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                                <div className="flex flex-col">
+                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
+                                  <input
+                                    type="date"
+                                    value={group.items[0]?.date || ''}
+                                    onChange={(e) => { group.items.forEach(s => updateSessionDate(s.id, e.target.value)); }}
+                                    className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                  />
+                                </div>
+                                <div className="flex flex-col">
+                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
+                                  <input
+                                    type="time"
+                                    value={editedTimes[group.items[0]?.id]?.start ?? group.items[0]?.heure_debut ?? ''}
+                                    onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                    onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
+                                    className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
+                                  />
+                                </div>
+                                <div className="flex flex-col">
+                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
+                                  <input
+                                    type="time"
+                                    value={editedTimes[group.items[0]?.id]?.end ?? group.items[0]?.heure_fin ?? ''}
+                                    onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                    onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
+                                    className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
+                                  />
+                                </div>
+                                {lastModifiedSessionId && group.items.some(s => s.id === lastModifiedSessionId) && (
+                                  <div className="flex items-center text-green-500 animate-pulse">
+                                    <Check size={16} strokeWidth={3} />
+                                  </div>
                                 )}
                               </div>
                             </div>
-                          </div>
-                        </div>
 
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => { setDocSettingsTarget(s); setIsDocSettingsOpen(true); }}
-                            className="p-2.5 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                            title="Paramètres du document"
-                          >
-                            <Settings size={17} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              const docUrl = s.file_url || s.ressource_url;
-                              if (docUrl) {
-                                setViewingSession({ session: { ...s, file_url: docUrl }, mode: 'view' });
-                              } else {
-                                toast.error("Aucun document lié.");
-                              }
-                            }}
-                            className="p-2.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
-                            title="Consulter"
-                          >
-                            <Eye size={20} />
-                          </button>
-                          {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
-                            s.reponse_url ? (
-                              <button
-                                onClick={() => setCorrectionModalSession(s)}
-                                className={`relative p-2.5 rounded-xl transition-all ${s.correction_statut === 'Validé' ? 'text-green-600 hover:bg-green-50' : s.correction_statut === 'À corriger' ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
-                                title="Corriger le rendu"
-                              >
-                                <FileCheck size={18} />
-                                <span className={`absolute top-1.5 right-1.5 block h-2 w-2 rounded-full ring-2 ring-white ${s.correction_statut === 'Validé' ? 'bg-green-500' : s.correction_statut === 'À corriger' ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`}></span>
-                              </button>
-                            ) : (
-                              <span className="relative p-2.5 text-gray-300 rounded-xl" title="Aucun rendu">
-                                <FileCheck size={18} />
-                              </span>
-                            )
-                          )}
-                          <button
-                            onClick={() => handleDeleteSession(s.id)}
-                            className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                            title="Supprimer"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                      </div>
-                      );
-                    })}
-                    {isAdminGroup && (
-                      <button
-                        onClick={() => {
-                          const adminItem = group.items[0];
-                          setTargetSessionForAddition({ clientId: client.id, preSelectedSessionId: adminItem?.id, adminBloc: true });
-                          setIsSessionItemModalOpen(true);
-                        }}
-                        className="text-[10px] font-black bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition-all shadow-sm flex items-center gap-2 mt-2"
-                      >
-                        <Plus size={14} /> Ajouter un élément
-                      </button>
-                    )}
-                  </div>
-                </div>
-                );
-              });
+                            <div className="p-4 space-y-3">
+                              {group.items.map(s => {
+                                const sMeta = s.metadata || {};
+                                const clientRequired = sMeta.requiresClientSignature !== false;
+                                const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
+                                return (
+                                  <SessDragItem key={s.id} itemId={s.id} activeId={activeId}>
+                                    <div className="flex items-center gap-4">
+                                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                        s.type_activite === 'Exercice' ? 'bg-amber-50 text-amber-600' :
+                                        s.type_activite === 'Document PDF' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'
+                                      }`}>
+                                        {s.type_activite === 'Exercice' ? <PenTool size={20} /> : <FileText size={20} />}
+                                      </div>
+                                      <div>
+                                        <h5 className="font-bold text-gray-900 text-sm">{s.ressource_titre || s.titre || s.nom || 'Activité'}</h5>
+                                        <div className="flex items-center gap-3 mt-1">
+                                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
+                                          <div className="flex items-center gap-2">
+                                            {clientRequired ? (
+                                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                Client: {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
+                                              </span>
+                                            ) : (
+                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Client: N/A</span>
+                                            )}
+                                            {coachRequired ? (
+                                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                Coach: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
+                                              </span>
+                                            ) : (
+                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Coach: N/A</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => { setDocSettingsTarget(s); setIsDocSettingsOpen(true); }}
+                                        className="p-2.5 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                                        title="Paramètres du document"
+                                      >
+                                        <Settings size={17} />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          const docUrl = s.file_url || s.ressource_url;
+                                          if (docUrl) {
+                                            setViewingSession({ session: { ...s, file_url: docUrl }, mode: 'view' });
+                                          } else {
+                                            toast.error("Aucun document lié.");
+                                          }
+                                        }}
+                                        className="p-2.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                        title="Consulter"
+                                      >
+                                        <Eye size={20} />
+                                      </button>
+                                      {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
+                                        s.reponse_url ? (
+                                          <button
+                                            onClick={() => setCorrectionModalSession(s)}
+                                            className={`relative p-2.5 rounded-xl transition-all ${s.correction_statut === 'Validé' ? 'text-green-600 hover:bg-green-50' : s.correction_statut === 'À corriger' ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                                            title="Corriger le rendu"
+                                          >
+                                            <FileCheck size={18} />
+                                            <span className={`absolute top-1.5 right-1.5 block h-2 w-2 rounded-full ring-2 ring-white ${s.correction_statut === 'Validé' ? 'bg-green-500' : s.correction_statut === 'À corriger' ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`}></span>
+                                          </button>
+                                        ) : (
+                                          <span className="relative p-2.5 text-gray-300 rounded-xl" title="Aucun rendu">
+                                            <FileCheck size={18} />
+                                          </span>
+                                        )
+                                      )}
+                                      <button
+                                        onClick={() => handleDeleteSession(s.id)}
+                                        className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                                        title="Supprimer"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </div>
+                                  </SessDragItem>
+                                );
+                              })}
+                              {isAdminGroup && (
+                                <button
+                                  onClick={() => {
+                                    const adminItem = group.items[0];
+                                    setTargetSessionForAddition({ clientId: client.id, preSelectedSessionId: adminItem?.id, adminBloc: true });
+                                    setIsSessionItemModalOpen(true);
+                                  }}
+                                  className="text-[10px] font-black bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition-all shadow-sm flex items-center gap-2 mt-2"
+                                >
+                                  <Plus size={14} /> Ajouter un élément
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </SessDropZone>
+                    );
+                  })}
+                </DndContext>
+              );
             })()}
             {clientSessions.length === 0 && (
               <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
@@ -2603,7 +2659,7 @@ const AdminClientsView = ({
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem, handleSaveCorrection
+  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc
 }) => {
   const clientsGroupedByFormateur = clients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
@@ -2642,6 +2698,7 @@ const AdminClientsView = ({
           setViewingDocId={setViewingDocId}
           handleMoveSessionItem={handleMoveSessionItem}
           handleSaveCorrection={handleSaveCorrection}
+          handleAddAdminBloc={handleAddAdminBloc}
         />
       );
     }
@@ -3268,11 +3325,13 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource
+  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
-  const [editingId, setEditingId] = React.useState(null); // ID du dossier ou de la ressource en edition
+  const [activeMoment, setActiveMoment] = React.useState(null);
+  const [activeMomentModuleId, setActiveMomentModuleId] = React.useState(null);
+  const [editingId, setEditingId] = React.useState(null);
   const [editValue, setEditValue] = React.useState('');
 
   return (
@@ -3347,6 +3406,41 @@ const IngenierieView = ({
                     <h4 className="text-sm font-bold text-indigo-700 flex items-center gap-2">
                       <Layout size={16} /> Modélisation du Parcours
                     </h4>
+
+                    {/* Zone Documents de Début de Parcours */}
+                    {(() => {
+                      const debutResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'debut');
+                      return (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl overflow-hidden">
+                          <div className="bg-emerald-100 px-4 py-3 flex items-center justify-between border-b border-emerald-200">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
+                              <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Documents de Début de Parcours</span>
+                              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-200 px-2 py-0.5 rounded-full">Accessibles immédiatement</span>
+                            </div>
+                            <button
+                              onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                              className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+                            >
+                              <Plus size={12} /> Ajouter
+                            </button>
+                          </div>
+                          <div className="p-3 space-y-2">
+                            {debutResources.length === 0 && <p className="text-[11px] text-emerald-600/60 italic px-1">Aucun document de début.</p>}
+                            {debutResources.map(res => (
+                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-100 text-[11px]">
+                                <div className="flex items-center gap-2">
+                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                  <span className="font-bold text-gray-800">{res.titre}</span>
+                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                </div>
+                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <div className="space-y-4">
                       {templates.map((template, idx) => {
@@ -3455,6 +3549,41 @@ const IngenierieView = ({
                       )}
                     </div>
 
+                    {/* Zone Documents de Fin de Parcours */}
+                    {(() => {
+                      const finResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'fin');
+                      return (
+                        <div className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
+                          <div className="bg-rose-100 px-4 py-3 flex items-center justify-between border-b border-rose-200">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
+                              <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
+                              <span className="text-[9px] font-bold text-rose-600 bg-rose-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
+                            </div>
+                            <button
+                              onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                              className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                            >
+                              <Plus size={12} /> Ajouter
+                            </button>
+                          </div>
+                          <div className="p-3 space-y-2">
+                            {finResources.length === 0 && <p className="text-[11px] text-rose-600/60 italic px-1">Aucun document de fin.</p>}
+                            {finResources.map(res => (
+                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
+                                <div className="flex items-center gap-2">
+                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                  <span className="font-bold text-gray-800">{res.titre}</span>
+                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                </div>
+                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <form
                       onSubmit={async (e) => { e.preventDefault(); await createSessionFolder(mod.id, newStepTitle); }}
                       className="bg-indigo-900 p-4 rounded-2xl shadow-xl space-y-3"
@@ -3524,10 +3653,17 @@ const IngenierieView = ({
 
       <StepResourceModal
         isOpen={isResourceModalOpen}
-        onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); }}
+        onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); setActiveMoment(null); setActiveMomentModuleId(null); }}
         pedagogicalResources={pedagogicalResources}
         supabase={supabase}
-        onSave={(data) => handleAddStepResource(activeFolderId, data)}
+        onSave={(data) => {
+          if (activeMoment && activeMomentModuleId) {
+            handleAddModuleMomentResource(activeMomentModuleId, activeMoment, data);
+            setIsResourceModalOpen(false); setActiveMoment(null); setActiveMomentModuleId(null);
+          } else {
+            handleAddStepResource(activeFolderId, data);
+          }
+        }}
       />
     </div>
   );
@@ -3556,8 +3692,7 @@ const FormateurView = ({
   const [clientDocFile, setClientDocFile] = React.useState(null);
   const [clientDocName, setClientDocName] = React.useState('');
   const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
-  const [draggedSessionId, setDraggedSessionId] = React.useState(null);
-  const [dragOverGroupNum, setDragOverGroupNum] = React.useState(null);
+  const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // Documents administratifs propres au formateur (envoyés par l'admin)
@@ -4002,84 +4137,79 @@ const FormateurView = ({
                               {(() => {
                                 const grouped = clientSessions.reduce((acc, s) => {
                                   const key = s.numero_seance;
-                                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
                                   acc[key].items.push(s);
                                   return acc;
                                 }, {});
 
-                                return Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
-                                  <React.Fragment key={gIdx}>
-                                    {/* Folder Header Row — Drop zone */}
-                                    <tr
-                                      className={`transition-all ${dragOverGroupNum === group.numero ? 'bg-indigo-100 outline outline-2 outline-indigo-400' : 'bg-indigo-50/30'}`}
-                                      onDragOver={e => { e.preventDefault(); setDragOverGroupNum(group.numero); }}
-                                      onDragLeave={() => setDragOverGroupNum(null)}
-                                      onDrop={e => {
-                                        e.preventDefault();
-                                        if (draggedSessionId && handleMoveSessionItem) {
-                                          const src = sessions.find(s => s.id === draggedSessionId);
-                                          if (src && src.numero_seance !== group.numero) {
-                                            handleMoveSessionItem(draggedSessionId, group.numero, group.date, group.debut, group.fin);
-                                          }
+                                return (
+                                  <DndContext
+                                    onDragStart={({ active }) => setFActiveId(active.id)}
+                                    onDragEnd={({ active, over }) => {
+                                      if (over && handleMoveSessionItem) {
+                                        const itemId = String(active.id).replace('fi-', '');
+                                        const src = sessions.find(s => String(s.id) === itemId);
+                                        const targetGroup = Object.values(grouped).find(g => `fg-${g.numero}` === over.id);
+                                        if (src && targetGroup && src.numero_seance !== targetGroup.numero) {
+                                          handleMoveSessionItem(src.id, targetGroup.numero, targetGroup.date, targetGroup.debut, targetGroup.fin);
                                         }
-                                        setDraggedSessionId(null);
-                                        setDragOverGroupNum(null);
-                                      }}
-                                    >
-                                      <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
-                                        <div className="flex items-center gap-2 text-xs">
-                                          <Layout size={12} className="text-indigo-600" />
-                                          <span>SÉANCE {group.numero} : {group.nom}</span>
-                                          {dragOverGroupNum === group.numero && draggedSessionId && (
-                                            <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        <input
-                                          type="date"
-                                          value={group.date || ''}
-                                          onChange={(e) => {
-                                            group.items.forEach(s => updateSessionDate(s.id, e.target.value));
-                                          }}
-                                          className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
-                                        />
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        <div className="flex items-center gap-2">
-                                          <div className="flex flex-col gap-0.5">
+                                      }
+                                      setFActiveId(null);
+                                    }}
+                                  >
+                                    {Object.values(grouped).sort((a, b) => a.numero - b.numero).map((group, gIdx) => (
+                                  <React.Fragment key={gIdx}>
+                                    <FDropGroupRow groupNum={group.numero} hasActive={fActiveId != null}>
+                                      {(isGroupOver) => (
+                                        <>
+                                          <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
+                                            <div className="flex items-center gap-2 text-xs">
+                                              <Layout size={12} className="text-indigo-600" />
+                                              <span>SÉANCE {group.numero} : {group.nom}</span>
+                                              {isGroupOver && fActiveId && (
+                                                <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-4 py-3">
                                             <input
-                                              type="time"
-                                              value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
-                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
-                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                              type="date"
+                                              value={group.date || ''}
+                                              onChange={(e) => { group.items.forEach(s => updateSessionDate(s.id, e.target.value)); }}
+                                              className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
                                             />
-                                            <input
-                                              type="time"
-                                              value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
-                                              onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
-                                              className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
-                                            />
-                                          </div>
-                                          <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
-                                            <Save size={14} />
-                                          </button>
-                                        </div>
-                                      </td>
-                                      <td colSpan="2" className="px-4 py-3 text-right">
-                                        <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
-                                      </td>
-                                </tr>
+                                          </td>
+                                          <td className="px-4 py-3">
+                                            <div className="flex items-center gap-2">
+                                              <div className="flex flex-col gap-0.5">
+                                                <input
+                                                  type="time"
+                                                  value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
+                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                                  className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                                />
+                                                <input
+                                                  type="time"
+                                                  value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
+                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                                  className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                                />
+                                              </div>
+                                              <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
+                                                <Save size={14} />
+                                              </button>
+                                            </div>
+                                          </td>
+                                          <td colSpan="2" className="px-4 py-3 text-right">
+                                            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+                                          </td>
+                                        </>
+                                      )}
+                                    </FDropGroupRow>
 
                                 {/* Nested Items — Draggable */}
                                 {group.items.map(session => (
-                                  <tr
-                                    key={session.id}
-                                    draggable
-                                    onDragStart={e => { setDraggedSessionId(session.id); e.dataTransfer.effectAllowed = 'move'; }}
-                                    onDragEnd={() => { setDraggedSessionId(null); setDragOverGroupNum(null); }}
-                                    className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${draggedSessionId === session.id ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
-                                  >
+                                  <FDragItemRow key={session.id} sessionId={session.id} activeId={fActiveId}>
                                     <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
                                       <span className="text-[8px] text-gray-300 mr-0.5" title="Glisser pour déplacer">⠿</span>
                                       <span className="text-[14px]">
@@ -4193,7 +4323,7 @@ const FormateurView = ({
                                         })()}
                                       </div>
                                     </td>
-                                  </tr>
+                                  </FDragItemRow>
                                 ))}
                                 {/* Footer row with Add button */}
                                 <tr className="bg-gray-50/20">
@@ -4214,8 +4344,10 @@ const FormateurView = ({
                                   </td>
                                 </tr>
                               </React.Fragment>
-                            ));
-                          })()}
+                            ))}
+                          </DndContext>
+                        );
+                      })()}
                         </tbody>
                       </table>
                     </div>
@@ -7586,6 +7718,27 @@ export default function App() {
     setIsAddingStepResource(false);
   };
 
+  const handleAddModuleMomentResource = async (moduleId, moment, stepData) => {
+    setIsAddingStepResource(true);
+    const { error } = await supabase.from('module_step_resources').insert([{
+      module_id: moduleId,
+      moment: moment,
+      template_id: null,
+      titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
+      type: stepData.type,
+      ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
+      file_url: stepData.fileUrl || ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
+      metadata: stepData.metadata,
+      ordre: moduleStepResources.filter(r => r.module_id === moduleId && r.moment === moment).length + 1,
+    }]);
+    if (error) {
+      toast.error("Erreur lors de l'ajout : " + error.message);
+    } else {
+      await fetchModules();
+    }
+    setIsAddingStepResource(false);
+  };
+
   const handleDeleteFolder = async (folderId) => {
     if (!window.confirm("Supprimer ce dossier et tout son contenu ?")) return;
     const { error } = await supabase.from('module_session_templates').delete().eq('id', folderId);
@@ -9475,6 +9628,7 @@ export default function App() {
             setViewingDocId={setViewingDocId}
             handleMoveSessionItem={handleMoveSessionItem}
             handleSaveCorrection={handleSaveCorrection}
+            handleAddAdminBloc={handleAddAdminBloc}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
@@ -9549,6 +9703,7 @@ export default function App() {
             handleAddStepResource={handleAddStepResource}
             handleRenameFolder={handleRenameFolder}
             handleRenameResource={handleRenameResource}
+            handleAddModuleMomentResource={handleAddModuleMomentResource}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
