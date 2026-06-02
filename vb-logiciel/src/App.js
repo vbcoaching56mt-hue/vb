@@ -4919,11 +4919,11 @@ const DocumentsView = ({
             </div>
             <div className="mt-4">
               <label className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md">
-                Uploader le Modèle (.docx)
+                Uploader le Modèle (.docx, .pdf)
                 <input
                   type="file"
                   className="hidden"
-                  accept=".docx"
+                  accept=".docx, .pdf"
                   onChange={(e) => {
                     if (e.target.files[0]) {
                       handleUploadDocxTemplate(e.target.files[0], newTemplateName || null, newTemplateDestination, newTemplateClassification);
@@ -4958,7 +4958,7 @@ const DocumentsView = ({
                     <div className="flex items-center gap-2">
                       <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
                         Mettre à jour
-                        <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key, dest)} />
+                        <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key, dest)} />
                       </label>
                       <button 
                         onClick={() => {
@@ -8936,11 +8936,12 @@ export default function App() {
       const classification = classificationArg || newTemplateClassification || 'telechargeable';
 
       if (!file) {
-        toast.error("Veuillez sélectionner un fichier .docx d'abord.");
+        toast.error("Veuillez sélectionner un fichier .docx ou .pdf d'abord.");
         return;
       }
 
-      const fileName = `template_${type}_${Date.now()}.docx`;
+      const fileExt = file.name.split('.').pop().toLowerCase();
+      const fileName = `template_${type}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
       if (uploadError) throw uploadError;
 
@@ -8951,20 +8952,21 @@ export default function App() {
       }));
 
       // Sauvegarder dans module_step_resources (Source unifiée)
-      const { data: existing } = await supabase.from('module_step_resources').select('id, metadata').eq('titre', type);
+      const { data: existing } = await supabase.from('module_step_resources').select('id, metadata').eq('titre', type).eq('type', 'document');
 
       const metadataObj = { classification };
       if (existing && existing.length > 0) {
         const oldMeta = (typeof existing[0].metadata === 'string' && existing[0].metadata.startsWith('{')) ? JSON.parse(existing[0].metadata) : (existing[0].metadata || {});
         const newMeta = JSON.stringify({ ...oldMeta, classification });
-        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination, metadata: newMeta }).eq('id', existing[0].id);
+        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination, metadata: newMeta, extension: fileExt }).eq('id', existing[0].id);
       } else {
         await supabase.from('module_step_resources').insert([{
           titre: type,
           file_url: publicUrl,
           type: 'document',
           destination,
-          metadata: JSON.stringify(metadataObj)
+          metadata: JSON.stringify(metadataObj),
+          extension: fileExt
         }]);
       }
 
@@ -8973,7 +8975,7 @@ export default function App() {
       if (existingDoc && existingDoc.length > 0) {
         const oldMeta = (typeof existingDoc[0].metadata === 'string' && existingDoc[0].metadata.startsWith('{')) ? JSON.parse(existingDoc[0].metadata) : (existingDoc[0].metadata || {});
         const newMeta = { ...oldMeta, classification };
-        await supabase.from('documents').update({ url: publicUrl, metadata: newMeta }).eq('id', existingDoc[0].id);
+        await supabase.from('documents').update({ url: publicUrl, metadata: newMeta, extension: fileExt }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: type,
@@ -8981,7 +8983,8 @@ export default function App() {
           url: publicUrl,
           visible_client: false,
           visible_formateur: false,
-          metadata: { classification }
+          metadata: { classification },
+          extension: fileExt
         }]);
       }
 
@@ -8999,15 +9002,16 @@ export default function App() {
             signe_par_formateur: false,
             signe_par_client: false,
             visible_formateur: true,
+            extension: fileExt
           }));
           await supabase.from('documents').insert(docsToInsert);
           await fetchDocuments();
           toast.success(`Modèle "${type}" enregistré et distribué à ${allFormateurs.length} formateur(s) pour signature.`);
         } else {
-          toast.success(`Modèle Word pour "${type}" enregistré.`);
+          toast.success(`Modèle pour "${type}" enregistré.`);
         }
       } else {
-        toast.success(`Modèle Word pour "${type}" enregistré avec succès.`);
+        toast.success(`Modèle pour "${type}" enregistré avec succès.`);
       }
     } catch (err) {
       console.error("Upload Template Error:", err);
