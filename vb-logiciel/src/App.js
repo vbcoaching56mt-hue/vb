@@ -4744,6 +4744,7 @@ const DocumentsView = ({
   const [documentGroups, setDocumentGroups] = React.useState([]);
   const [newGroupName, setNewGroupName] = React.useState('');
   const [isCreatingGroup, setIsCreatingGroup] = React.useState(false);
+  const [selectedTemplateFile, setSelectedTemplateFile] = React.useState(null);
 
   const fetchDocumentGroups = React.useCallback(async () => {
     const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
@@ -4882,8 +4883,8 @@ const DocumentsView = ({
 
           <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><FileText size={18}/> Nouveau Modèle</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="md:col-span-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
                 <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Nom du modèle</label>
                 <input
                   type="text"
@@ -4905,35 +4906,41 @@ const DocumentsView = ({
                   <option value="a_generer">⚙️ À générer</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Destination</label>
-                <select
-                  className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-medium"
-                  value={newTemplateDestination}
-                  onChange={(e) => setNewTemplateDestination(e.target.value)}
-                >
-                  <option value="client">📁 Client</option>
-                  <option value="formateur">📋 Formateur</option>
-                </select>
-              </div>
             </div>
-            <div className="mt-4">
-              <label className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md">
-                Uploader le Modèle (.docx, .pdf)
+            <div className="mt-4 flex flex-wrap gap-4 items-center">
+              <label className="inline-flex items-center gap-2 bg-white text-amber-600 border border-amber-600 hover:bg-amber-50 px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-sm">
+                {selectedTemplateFile ? selectedTemplateFile.name : 'Sélectionner un fichier (.docx, .pdf)'}
                 <input
                   type="file"
                   className="hidden"
                   accept=".docx, .pdf"
                   onChange={(e) => {
                     if (e.target.files[0]) {
-                      handleUploadDocxTemplate(e.target.files[0], newTemplateName || null, newTemplateDestination, newTemplateClassification);
-                      setNewTemplateName('');
-                      setNewTemplateDestination('client');
-                      setNewTemplateClassification('telechargeable');
+                      const f = e.target.files[0];
+                      setSelectedTemplateFile(f);
+                      if (!newTemplateName) {
+                        setNewTemplateName(f.name.replace(/\.[^/.]+$/, ''));
+                      }
                     }
                   }}
                 />
               </label>
+              <button
+                onClick={async () => {
+                  if (!selectedTemplateFile || !newTemplateName) {
+                     toast.error("Veuillez sélectionner un fichier et renseigner un nom.");
+                     return;
+                  }
+                  await handleUploadDocxTemplate(selectedTemplateFile, newTemplateName, 'client', newTemplateClassification);
+                  setNewTemplateName('');
+                  setNewTemplateClassification('telechargeable');
+                  setSelectedTemplateFile(null);
+                }}
+                disabled={!selectedTemplateFile || !newTemplateName}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-md disabled:opacity-50"
+              >
+                Créer le document
+              </button>
             </div>
           </div>
 
