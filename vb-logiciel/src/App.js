@@ -3470,6 +3470,32 @@ const AdminFormateursView = ({
     </div>
   );
 };
+const DroppableMomentZone = ({ id, children, className }) => {
+  const { isOver, setNodeRef } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={`${className} transition-all ${isOver ? 'ring-2 ring-indigo-500 scale-[1.01]' : ''}`}>
+      {children}
+    </div>
+  );
+};
+
+const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `drag-grp-${resourceId}` });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm cursor-grab active:cursor-grabbing hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
+    >
+      <div className="flex items-center gap-3">
+        <Layout size={16} className="text-indigo-600" />
+        <span className="font-bold text-indigo-900">Groupe de documents : {group?.nom || 'Groupe Inconnu'}</span>
+      </div>
+      <button onClick={(e) => { e.stopPropagation(); onDelete(resourceId); }} className="text-gray-300 hover:text-red-500 transition-colors p-1"><Trash2 size={14} /></button>
+    </div>
+  );
+};
 
 const IngenierieView = ({
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
@@ -3492,6 +3518,28 @@ const IngenierieView = ({
   const [activeMomentModuleId, setActiveMomentModuleId] = React.useState(null);
   const [editingId, setEditingId] = React.useState(null);
   const [editValue, setEditValue] = React.useState('');
+
+  const [documentGroups, setDocumentGroups] = React.useState([]);
+
+  React.useEffect(() => {
+    const fetchGroups = async () => {
+      const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+      if (!error && data) setDocumentGroups(data);
+    };
+    fetchGroups();
+  }, [supabase]);
+
+  const handleGroupDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over) return;
+    const resourceId = String(active.id).replace('drag-grp-', '');
+    const overIdParts = String(over.id).split('-'); // expected 'drop-{moduleId}-{moment}'
+    if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
+      const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
+      const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
+      if (!error) fetchModules();
+    }
+  };
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -3561,7 +3609,8 @@ const IngenierieView = ({
 
                 {/* Interface de Modélisation du Parcours */}
                 {modelingModuleId === mod.id && (
-                  <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in space-y-6">
+                  <DndContext onDragEnd={handleGroupDragEnd}>
+                    <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in space-y-6">
                     <h4 className="text-sm font-bold text-indigo-700 flex items-center gap-2">
                       <Layout size={16} /> Modélisation du Parcours
                     </h4>
@@ -3570,34 +3619,54 @@ const IngenierieView = ({
                     {(() => {
                       const debutResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'debut');
                       return (
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl overflow-hidden">
-                          <div className="bg-emerald-100 px-4 py-3 flex items-center justify-between border-b border-emerald-200">
+                        <DroppableMomentZone id={`drop-${mod.id}-debut`} className="bg-emerald-50 border border-emerald-200 rounded-2xl overflow-hidden">
+                          <div className="bg-emerald-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-emerald-200 gap-2">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
                               <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Documents de Début de Parcours</span>
                               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-200 px-2 py-0.5 rounded-full">Accessibles immédiatement</span>
                             </div>
-                            <button
-                              onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                              className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
-                            >
-                              <Plus size={12} /> Ajouter
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <select 
+                                onChange={async (e) => {
+                                  if(!e.target.value) return;
+                                  const grpId = e.target.value;
+                                  const grpName = e.target.options[e.target.selectedIndex].text;
+                                  await handleAddModuleMomentResource(mod.id, 'debut', 'document_group', null, grpName, null, null, grpId);
+                                  e.target.value = '';
+                                }}
+                                className="text-[10px] font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                              >
+                                <option value="">+ Groupe...</option>
+                                {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
+                              </select>
+                              <button
+                                onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                                className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+                              >
+                                <Plus size={12} /> Fichier
+                              </button>
+                            </div>
                           </div>
                           <div className="p-3 space-y-2">
                             {debutResources.length === 0 && <p className="text-[11px] text-emerald-600/60 italic px-1">Aucun document de début.</p>}
-                            {debutResources.map(res => (
-                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-100 text-[11px]">
-                                <div className="flex items-center gap-2">
-                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
-                                  <span className="font-bold text-gray-800">{res.titre}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                            {debutResources.map(res => {
+                              if (res.type === 'document_group') {
+                                return <DraggableGroupBlock key={res.id} resourceId={res.id} group={documentGroups.find(g => g.id === res.document_group_id)} onDelete={handleDeleteStepResource} />;
+                              }
+                              return (
+                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-100 text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                    <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
                                 </div>
-                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
-                        </div>
+                        </DroppableMomentZone>
                       );
                     })()}
 
@@ -3712,34 +3781,54 @@ const IngenierieView = ({
                     {(() => {
                       const finResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'fin');
                       return (
-                        <div className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
-                          <div className="bg-rose-100 px-4 py-3 flex items-center justify-between border-b border-rose-200">
+                        <DroppableMomentZone id={`drop-${mod.id}-fin`} className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
+                          <div className="bg-rose-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-rose-200 gap-2">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
                               <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
                               <span className="text-[9px] font-bold text-rose-600 bg-rose-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
                             </div>
-                            <button
-                              onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                              className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
-                            >
-                              <Plus size={12} /> Ajouter
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <select 
+                                onChange={async (e) => {
+                                  if(!e.target.value) return;
+                                  const grpId = e.target.value;
+                                  const grpName = e.target.options[e.target.selectedIndex].text;
+                                  await handleAddModuleMomentResource(mod.id, 'fin', 'document_group', null, grpName, null, null, grpId);
+                                  e.target.value = '';
+                                }}
+                                className="text-[10px] font-bold text-rose-800 bg-white border border-rose-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                              >
+                                <option value="">+ Groupe...</option>
+                                {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
+                              </select>
+                              <button
+                                onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                                className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                              >
+                                <Plus size={12} /> Fichier
+                              </button>
+                            </div>
                           </div>
                           <div className="p-3 space-y-2">
                             {finResources.length === 0 && <p className="text-[11px] text-rose-600/60 italic px-1">Aucun document de fin.</p>}
-                            {finResources.map(res => (
-                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
-                                <div className="flex items-center gap-2">
-                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
-                                  <span className="font-bold text-gray-800">{res.titre}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                            {finResources.map(res => {
+                              if (res.type === 'document_group') {
+                                return <DraggableGroupBlock key={res.id} resourceId={res.id} group={documentGroups.find(g => g.id === res.document_group_id)} onDelete={handleDeleteStepResource} />;
+                              }
+                              return (
+                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                    <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
                                 </div>
-                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
-                        </div>
+                        </DroppableMomentZone>
                       );
                     })()}
 
@@ -3755,6 +3844,7 @@ const IngenierieView = ({
                       </div>
                     </form>
                   </div>
+                  </DndContext>
                 )}
               </div>
             );
@@ -4640,7 +4730,8 @@ const DocumentsView = ({
   handleSignatureSave, documentTemplates, handleUploadDocxTemplate,
   newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete,
   newTemplateDestination, setNewTemplateDestination, supabase,
-  onUpdateTemplateDestination
+  onUpdateTemplateDestination,
+  newTemplateClassification, setNewTemplateClassification, fetchDocuments
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [modelesTab, setModelesTab] = React.useState('modeles');
@@ -4648,6 +4739,59 @@ const DocumentsView = ({
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
+
+  // Groupes de documents
+  const [documentGroups, setDocumentGroups] = React.useState([]);
+  const [newGroupName, setNewGroupName] = React.useState('');
+  const [isCreatingGroup, setIsCreatingGroup] = React.useState(false);
+
+  const fetchDocumentGroups = React.useCallback(async () => {
+    const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+    if (!error && data) setDocumentGroups(data);
+  }, [supabase]);
+
+  React.useEffect(() => {
+    if (isAdmin) fetchDocumentGroups();
+  }, [isAdmin, fetchDocumentGroups]);
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    setIsCreatingGroup(true);
+    const { error } = await supabase.from('document_groups').insert([{ nom: newGroupName.trim() }]);
+    setIsCreatingGroup(false);
+    if (!error) {
+      setNewGroupName('');
+      fetchDocumentGroups();
+      toast.success("Groupe créé avec succès.");
+    } else {
+      toast.error("Erreur de création du groupe : " + error.message);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce groupe ? Les documents qui y sont associés seront détachés.")) {
+      await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
+      const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
+      if (!error) {
+        fetchDocumentGroups();
+        if (fetchDocuments) fetchDocuments();
+        toast.success("Groupe supprimé.");
+      } else {
+        toast.error("Erreur lors de la suppression : " + error.message);
+      }
+    }
+  };
+
+  const handleToggleDocumentGroup = async (templateId, nextGroupId) => {
+    if (!templateId) return;
+    const { error } = await supabase.from('module_step_resources').update({ document_group_id: nextGroupId }).eq('id', templateId);
+    if (!error) {
+      if (fetchDocuments) fetchDocuments();
+      toast.success(nextGroupId ? "Document associé au groupe." : "Document détaché du groupe.");
+    } else {
+      toast.error("Erreur d'association : " + error.message);
+    }
+  };
 
   // Group clients by their documents
   const clientsWithDocs = React.useMemo(() => {
@@ -4672,7 +4816,7 @@ const DocumentsView = ({
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-        {isClient ? "Mes Documents" : "Gestion Documentaire"}
+        {isClient ? "Mes Documents" : "Gestion des documents"}
       </h1>
       <p className="text-gray-500 text-lg">Consultez et {isClient ? 'signez vos' : 'vérifiez les'} fichiers légaux ou de synthèse.</p>
 
@@ -4697,16 +4841,48 @@ const DocumentsView = ({
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-start">
             <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Ma Modélothèque
+              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
             </h2>
             <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono">
               <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
             </div>
           </div>
 
+          <div className="mb-8 p-5 bg-indigo-50 rounded-2xl border border-indigo-100">
+            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><Layout size={18}/> Groupes de documents</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="Nouveau groupe (ex: Pack de début)"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="text-sm p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 w-full max-w-xs"
+              />
+              <button
+                onClick={handleCreateGroup}
+                disabled={isCreatingGroup || !newGroupName.trim()}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm transition-all shadow-md disabled:opacity-50"
+              >
+                Créer
+              </button>
+            </div>
+            {documentGroups.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {documentGroups.map(g => (
+                  <div key={g.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-indigo-200 text-sm font-bold text-indigo-800 shadow-sm">
+                    {g.nom}
+                    <button onClick={() => handleDeleteGroup(g.id)} className="text-gray-400 hover:text-red-500 transition-colors ml-1">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><FileText size={18}/> Nouveau Modèle</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Nom du modèle</label>
                 <input
@@ -4718,14 +4894,26 @@ const DocumentsView = ({
                 />
               </div>
               <div>
+                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Classification</label>
+                <select
+                  className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+                  value={newTemplateClassification}
+                  onChange={(e) => setNewTemplateClassification(e.target.value)}
+                >
+                  <option value="telechargeable">📥 Téléchargeable</option>
+                  <option value="a_signer">✍️ À signer</option>
+                  <option value="a_generer">⚙️ À générer</option>
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Destination</label>
                 <select
                   className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-medium"
                   value={newTemplateDestination}
                   onChange={(e) => setNewTemplateDestination(e.target.value)}
                 >
-                  <option value="client">📁 Administratif Client</option>
-                  <option value="formateur">📋 Administratif Formateur</option>
+                  <option value="client">📁 Client</option>
+                  <option value="formateur">📋 Formateur</option>
                 </select>
               </div>
             </div>
@@ -4738,9 +4926,10 @@ const DocumentsView = ({
                   accept=".docx"
                   onChange={(e) => {
                     if (e.target.files[0]) {
-                      handleUploadDocxTemplate(e.target.files[0], newTemplateName || null, newTemplateDestination);
+                      handleUploadDocxTemplate(e.target.files[0], newTemplateName || null, newTemplateDestination, newTemplateClassification);
                       setNewTemplateName('');
                       setNewTemplateDestination('client');
+                      setNewTemplateClassification('telechargeable');
                     }
                   }}
                 />
@@ -4753,11 +4942,18 @@ const DocumentsView = ({
               const dest = tpl.destination || 'client';
               return (
                 <div key={key} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'
                     }`}>
                       {dest === 'formateur' ? '📋 Formateur' : '📁 Client'}
+                    </span>
+                    <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
+                      tpl.classification === 'a_generer' ? 'bg-purple-100 text-purple-600' :
+                      tpl.classification === 'a_signer' ? 'bg-orange-100 text-orange-600' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>
+                      {tpl.classification === 'a_generer' ? '⚙️ À générer' : tpl.classification === 'a_signer' ? '✍️ À signer' : '📥 Téléchargeable'}
                     </span>
                     <div className="flex items-center gap-2">
                       <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
@@ -4779,12 +4975,23 @@ const DocumentsView = ({
                   <p className="text-[10px] text-gray-500 truncate mb-3">{tpl?.name || "Modèle chargé"}</p>
                   {/* Modifier la destination inline */}
                   <select
-                    className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors"
+                    className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors mb-2"
                     value={dest}
                     onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(key, e.target.value)}
                   >
-                    <option value="client">📁 Administratif Client</option>
-                    <option value="formateur">📋 Administratif Formateur</option>
+                    <option value="client">📁 Client</option>
+                    <option value="formateur">📋 Formateur</option>
+                  </select>
+                  {/* Associer à un groupe */}
+                  <select
+                    className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
+                    value={tpl.document_group_id || ''}
+                    onChange={(e) => handleToggleDocumentGroup(tpl.id, e.target.value || null)}
+                  >
+                    <option value="">-- Sans groupe --</option>
+                    {documentGroups.map(g => (
+                      <option key={g.id} value={g.id}>{g.nom}</option>
+                    ))}
                   </select>
                 </div>
               );
@@ -4966,7 +5173,7 @@ const DocumentsView = ({
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      {!doc.signe_par_client && (
+                      {(!doc.signe_par_client && (doc.type_document === 'À signer' || (!doc.metadata && (doc.type_document === 'Contrat' || String(doc.nom).toLowerCase().includes('contrat') || String(doc.nom).toLowerCase().includes('convention'))))) && (
                         <button onClick={() => setSigningDocId(doc.id)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer Document</button>
                       )}
                       {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Votré signature Validée</span>}
@@ -4978,13 +5185,25 @@ const DocumentsView = ({
                 );
 
                 if (clientDocTab === 'avant') {
-                  const items = clientDocs.filter(d => d.type_document === 'Contrat' || String(d.nom).toLowerCase().includes('contrat') || String(d.nom).toLowerCase().includes('convention') || String(d.nom).toLowerCase().includes('devis'));
+                  const items = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return moment === 'debut';
+                    return d.type_document === 'Contrat' || String(d.nom).toLowerCase().includes('contrat') || String(d.nom).toLowerCase().includes('convention') || String(d.nom).toLowerCase().includes('devis');
+                  });
                   return items.length > 0 ? items.map(renderDocRow) : <p className="text-sm text-gray-500 italic py-4">Aucun document administratif en attente de validation.</p>;
                 } else if (clientDocTab === 'fin') {
-                  const items = clientDocs.filter(d => d.type_document === 'Évaluation' || String(d.nom).toLowerCase().includes('attestation') || String(d.nom).toLowerCase().includes('bilan'));
+                  const items = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return moment === 'fin';
+                    return d.type_document === 'Évaluation' || String(d.nom).toLowerCase().includes('attestation') || String(d.nom).toLowerCase().includes('bilan');
+                  });
                   return items.length > 0 ? items.map(renderDocRow) : <p className="text-sm text-gray-500 italic py-4">Les documents de fin de parcours apparaîtront ici.</p>;
                 } else if (clientDocTab === 'supports') {
-                  const supportDocs = clientDocs.filter(d => !['Contrat', 'Évaluation'].includes(d.type_document) && !String(d.nom).toLowerCase().includes('contrat') && !String(d.nom).toLowerCase().includes('attestation') && !String(d.nom).toLowerCase().includes('convention'));
+                  const supportDocs = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return false;
+                    return !['Contrat', 'Évaluation'].includes(d.type_document) && !String(d.nom).toLowerCase().includes('contrat') && !String(d.nom).toLowerCase().includes('attestation') && !String(d.nom).toLowerCase().includes('convention');
+                  });
                   const unlockedSessions = clientSessions.filter(s => s.ressource_url && new Date(s.date) <= currentDate);
                   const lockedSessions = clientSessions.filter(s => s.ressource_url && new Date(s.date) > currentDate);
 
@@ -7438,6 +7657,7 @@ export default function App() {
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [newTemplateDestination, setNewTemplateDestination] = useState('client'); // 'client' | 'formateur'
+  const [newTemplateClassification, setNewTemplateClassification] = useState('telechargeable'); // 'a_generer' | 'a_signer' | 'telechargeable'
   const [pedagogicalResources, setPedagogicalResources] = useState([]);
   const [newResourceName, setNewResourceName] = useState('');
   const [isUploadingResource, setIsUploadingResource] = useState(false);
@@ -7531,7 +7751,16 @@ export default function App() {
       modsData.forEach(m => {
         // Mapping schema : titre -> nom, file_url -> url, destination -> routing
         if (m.titre && m.file_url) {
-          templates[m.titre] = { url: m.file_url, name: m.titre, destination: m.destination || 'client' };
+          const parsedMeta = (typeof m.metadata === 'string' && m.metadata.startsWith('{')) ? JSON.parse(m.metadata) : (m.metadata || {});
+          templates[m.titre] = {
+            id: m.id,
+            url: m.file_url,
+            name: m.titre,
+            destination: m.destination || 'client',
+            classification: parsedMeta.classification || 'telechargeable',
+            document_group_id: m.document_group_id || null,
+            metadata: parsedMeta
+          };
         }
       });
       setDocumentTemplates(templates);
@@ -7793,6 +8022,79 @@ export default function App() {
     }
     setIsAddingUser(false);
   };
+  const instantiateDocument = async (client, templateResource, moment) => {
+    const meta = typeof templateResource.metadata === 'string' && templateResource.metadata.startsWith('{') ? JSON.parse(templateResource.metadata) : (templateResource.metadata || {});
+    const classification = meta.classification || 'telechargeable';
+    
+    let docId = null;
+
+    if (classification === 'a_generer') {
+      try {
+        console.log(`Génération auto du document ${templateResource.titre} pour le client ${client.id}`);
+        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
+        if (generatedDoc) docId = generatedDoc.id;
+      } catch (e) {
+        console.error("Erreur génération automatique :", e);
+      }
+    } else {
+      const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
+        user_id: client.id,
+        organisation_id: client.organisation_id,
+        nom: templateResource.titre,
+        url: templateResource.file_url,
+        type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
+        visible_client: moment === 'debut',
+        visible_formateur: true,
+        metadata: { moment, template_id: templateResource.id, classification }
+      }]).select().single();
+      
+      if (!insertErr && newDoc) docId = newDoc.id;
+    }
+
+    if (docId) {
+      await supabase.from('client_documents').insert([{
+        client_id: client.id,
+        document_id: docId,
+        module_id: client.module_id,
+        status: 'pending',
+        moment: moment,
+        metadata: { classification }
+      }]);
+    }
+  };
+
+  const distributeDocumentsForModule = async (client, moduleId) => {
+    try {
+      console.log(`[distributeDocuments] Distribution auto pour client ${client.id} / module ${moduleId}`);
+      const { data: resources, error: resErr } = await supabase
+        .from('module_step_resources')
+        .select('*')
+        .eq('module_id', moduleId)
+        .in('moment', ['debut', 'fin']);
+      
+      if (resErr || !resources || resources.length === 0) return;
+
+      for (const res of resources) {
+        if (res.type === 'document_group' && res.document_group_id) {
+          const { data: groupDocs, error: grpErr } = await supabase
+            .from('module_step_resources')
+            .select('*')
+            .eq('document_group_id', res.document_group_id);
+            
+          if (!grpErr && groupDocs) {
+            for (const doc of groupDocs) {
+              if (doc.type === 'document') await instantiateDocument(client, doc, res.moment);
+            }
+          }
+        } else if (res.type === 'document') {
+          await instantiateDocument(client, res, res.moment);
+        }
+      }
+      fetchDocuments();
+    } catch (e) {
+      console.error("[distributeDocuments] Erreur :", e);
+    }
+  };
 
   const handleModuleChange = async (clientId, moduleId) => {
     console.log('[handleModuleChange] Début. clientId:', clientId, 'moduleId:', moduleId);
@@ -7831,6 +8133,9 @@ export default function App() {
       console.log('[handleModuleChange] Déclenchement de generateSessions...');
       // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
+      
+      // 3.5. Distribution automatique des documents
+      await distributeDocumentsForModule(compatibleClient, finalModuleId);
     } else {
       console.warn('[handleModuleChange] Conditions non remplies pour generateSessions:', { hasClient: !!updatedClient, hasModule: !!finalModuleId });
     }
@@ -8623,11 +8928,12 @@ export default function App() {
     }
   };
 
-  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg) => {
+  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg, classificationArg) => {
     try {
       const file = fileArg || null;
       const type = typeArg || newTemplateName || (file ? file.name.replace(/\.[^/.]+$/, '') : null);
       const destination = destinationArg || newTemplateDestination || 'client';
+      const classification = classificationArg || newTemplateClassification || 'telechargeable';
 
       if (!file) {
         toast.error("Veuillez sélectionner un fichier .docx d'abord.");
@@ -8641,34 +8947,41 @@ export default function App() {
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
       setDocumentTemplates(prev => ({
         ...prev,
-        [type]: { url: publicUrl, name: file.name, destination }
+        [type]: { url: publicUrl, name: file.name, destination, classification }
       }));
 
       // Sauvegarder dans module_step_resources (Source unifiée)
-      const { data: existing } = await supabase.from('module_step_resources').select('id').eq('titre', type);
+      const { data: existing } = await supabase.from('module_step_resources').select('id, metadata').eq('titre', type);
 
+      const metadataObj = { classification };
       if (existing && existing.length > 0) {
-        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination }).eq('id', existing[0].id);
+        const oldMeta = (typeof existing[0].metadata === 'string' && existing[0].metadata.startsWith('{')) ? JSON.parse(existing[0].metadata) : (existing[0].metadata || {});
+        const newMeta = JSON.stringify({ ...oldMeta, classification });
+        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination, metadata: newMeta }).eq('id', existing[0].id);
       } else {
         await supabase.from('module_step_resources').insert([{
           titre: type,
           file_url: publicUrl,
           type: 'document',
-          destination
+          destination,
+          metadata: JSON.stringify(metadataObj)
         }]);
       }
 
       // Sync avec documents
-      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
+      const { data: existingDoc } = await supabase.from('documents').select('id, metadata').eq('nom', type).eq('type_document', 'Modèle Référence');
       if (existingDoc && existingDoc.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
+        const oldMeta = (typeof existingDoc[0].metadata === 'string' && existingDoc[0].metadata.startsWith('{')) ? JSON.parse(existingDoc[0].metadata) : (existingDoc[0].metadata || {});
+        const newMeta = { ...oldMeta, classification };
+        await supabase.from('documents').update({ url: publicUrl, metadata: newMeta }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: type,
           type_document: 'Modèle Référence',
           url: publicUrl,
           visible_client: false,
-          visible_formateur: false
+          visible_formateur: false,
+          metadata: { classification }
         }]);
       }
 
@@ -8841,7 +9154,7 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -8959,7 +9272,7 @@ export default function App() {
 
       // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
       const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
-      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId) {
+      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
         saveAs(pdfBlob, finalFileName);
       }
 
@@ -8995,17 +9308,19 @@ export default function App() {
 
       console.log('Données envoyées à Supabase :', JSON.stringify(docToInsert, null, 2));
 
-      const { error: insertError } = await supabase.from('documents').insert([docToInsert]);
+      const { data: insertedDocs, error: insertError } = await supabase.from('documents').insert([docToInsert]).select();
       if (insertError) {
         console.error('Erreur insert Supabase :', insertError);
         throw new Error(`Erreur Supabase : ${insertError.message || insertError.details || JSON.stringify(insertError)}`);
       }
 
       await fetchDocuments();
-      toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      if (!isAutoGenerate) toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
-      toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      if (!isAutoGenerate) toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      return null;
     }
   };
 
@@ -9685,8 +10000,8 @@ export default function App() {
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FileText className="w-5 h-5 mr-3" /> Modélothèque
+              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FileText className="w-5 h-5 mr-3" /> Gestion des documents
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
@@ -10004,7 +10319,7 @@ export default function App() {
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
-          {activeTab === 'modélothèque' && <DocumentsView
+          {activeTab === 'gestion_documents' && <DocumentsView
             sessions={sessions}
             documents={documents}
             clients={clients}
@@ -10034,6 +10349,9 @@ export default function App() {
             setNewTemplateName={setNewTemplateName}
             newTemplateDestination={newTemplateDestination}
             setNewTemplateDestination={setNewTemplateDestination}
+            newTemplateClassification={newTemplateClassification}
+            setNewTemplateClassification={setNewTemplateClassification}
+            fetchDocuments={fetchDocuments}
             setIsDeleteModalOpen={setIsDeleteModalOpen}
             setTargetToDelete={setTargetToDelete}
             supabase={supabase}
