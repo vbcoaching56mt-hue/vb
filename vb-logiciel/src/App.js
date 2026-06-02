@@ -5034,8 +5034,8 @@ const DocumentsView = ({
                 </div>
               );
             })}
-            {Object.keys(documentTemplates || {}).length === 0 && (
-              <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle .docx enregistré.</div>
+            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).length === 0 && (
+              <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle enregistré.</div>
             )}
           </div>
         </div>
@@ -7779,6 +7779,7 @@ export default function App() {
     let dQuery = supabase.from('documents').select('*');
     if (currentOrgId) dQuery = dQuery.eq('organisation_id', currentOrgId);
     const { data: docsData, error } = await dQuery;
+    console.log('[fetchDocuments] Récupération de TOUS les documents de la DB:', docsData, error);
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
