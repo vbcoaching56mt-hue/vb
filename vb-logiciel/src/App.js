@@ -4745,6 +4745,7 @@ const DocumentsView = ({
   const [newGroupName, setNewGroupName] = React.useState('');
   const [isCreatingGroup, setIsCreatingGroup] = React.useState(false);
   const [selectedTemplateFile, setSelectedTemplateFile] = React.useState(null);
+  const [expandedGroupId, setExpandedGroupId] = React.useState(null);
 
   const fetchDocumentGroups = React.useCallback(async () => {
     const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
@@ -4783,9 +4784,9 @@ const DocumentsView = ({
     }
   };
 
-  const handleToggleDocumentGroup = async (templateId, nextGroupId) => {
-    if (!templateId) return;
-    const { error } = await supabase.from('module_step_resources').update({ document_group_id: nextGroupId }).eq('id', templateId);
+  const handleToggleDocumentGroup = async (docId, nextGroupId) => {
+    if (!docId) return;
+    const { error } = await supabase.from('documents').update({ document_group_id: nextGroupId }).eq('id', docId);
     if (!error) {
       if (fetchDocuments) fetchDocuments();
       toast.success(nextGroupId ? "Document associé au groupe." : "Document détaché du groupe.");
@@ -4868,15 +4869,40 @@ const DocumentsView = ({
               </button>
             </div>
             {documentGroups.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {documentGroups.map(g => (
-                  <div key={g.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-indigo-200 text-sm font-bold text-indigo-800 shadow-sm">
-                    {g.nom}
-                    <button onClick={() => handleDeleteGroup(g.id)} className="text-gray-400 hover:text-red-500 transition-colors ml-1">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+              <div className="flex flex-col gap-3">
+                {documentGroups.map(g => {
+                  const groupDocs = documents.filter(d => d.document_group_id === g.id);
+                  return (
+                    <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
+                      <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-indigo-50 transition-colors" onClick={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}>
+                        <div className="font-bold text-indigo-800 flex items-center gap-2">
+                          {expandedGroupId === g.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                          {g.nom} <span className="text-xs font-normal text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">{groupDocs.length} doc(s)</span>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteGroup(g.id); }} className="text-gray-400 hover:text-red-500 transition-colors p-1">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                      {expandedGroupId === g.id && (
+                        <div className="p-3 bg-indigo-50/50 border-t border-indigo-100">
+                          {groupDocs.length > 0 ? (
+                            <ul className="space-y-2">
+                              {groupDocs.map(d => (
+                                <li key={d.id} className="text-sm text-gray-700 flex items-center gap-2">
+                                  <FileText size={14} className="text-indigo-400" />
+                                  {d.nom}
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase">({d.extension || 'docx'})</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500 italic">Aucun document dans ce groupe.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4945,10 +4971,11 @@ const DocumentsView = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Object.entries(documentTemplates || {}).map(([key, tpl]) => {
-              const dest = tpl.destination || 'client';
+            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).map((doc) => {
+              const classif = typeof doc.metadata === 'object' && doc.metadata ? doc.metadata.classification : 'telechargeable';
+              const dest = doc.visible_formateur ? 'formateur' : 'client';
               return (
-                <div key={key} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative">
+                <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'
@@ -4956,20 +4983,23 @@ const DocumentsView = ({
                       {dest === 'formateur' ? '📋 Formateur' : '📁 Client'}
                     </span>
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
-                      tpl.classification === 'a_generer' ? 'bg-purple-100 text-purple-600' :
-                      tpl.classification === 'a_signer' ? 'bg-orange-100 text-orange-600' :
+                      classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
+                      classif === 'a_signer' ? 'bg-orange-100 text-orange-600' :
                       'bg-slate-100 text-slate-600'
                     }`}>
-                      {tpl.classification === 'a_generer' ? '⚙️ À générer' : tpl.classification === 'a_signer' ? '✍️ À signer' : '📥 Téléchargeable'}
+                      {classif === 'a_generer' ? '⚙️ À générer' : classif === 'a_signer' ? '✍️ À signer' : '📥 Téléchargeable'}
                     </span>
-                    <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full uppercase">
+                      .{doc.extension || 'docx'}
+                    </span>
+                    <div className="flex items-center gap-2 ml-auto">
                       <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
                         Mettre à jour
-                        <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key, dest)} />
+                        <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
                       <button 
                         onClick={() => {
-                          setTargetToDelete({ id: key, type: 'template' });
+                          setTargetToDelete({ id: doc.id, type: 'document' });
                           setIsDeleteModalOpen(true);
                         }}
                         className="p-1.5 text-gray-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
@@ -4978,28 +5008,29 @@ const DocumentsView = ({
                       </button>
                     </div>
                   </div>
-                  <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
-                  <p className="text-[10px] text-gray-500 truncate mb-3">{tpl?.name || "Modèle chargé"}</p>
-                  {/* Modifier la destination inline */}
-                  <select
-                    className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors mb-2"
-                    value={dest}
-                    onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(key, e.target.value)}
-                  >
-                    <option value="client">📁 Client</option>
-                    <option value="formateur">📋 Formateur</option>
-                  </select>
-                  {/* Associer à un groupe */}
-                  <select
-                    className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
-                    value={tpl.document_group_id || ''}
-                    onChange={(e) => handleToggleDocumentGroup(tpl.id, e.target.value || null)}
-                  >
-                    <option value="">-- Sans groupe --</option>
-                    {documentGroups.map(g => (
-                      <option key={g.id} value={g.id}>{g.nom}</option>
-                    ))}
-                  </select>
+                  <h3 className="font-bold text-gray-900 text-sm mb-1">{doc.nom}</h3>
+                  <div className="mt-auto pt-4 space-y-2">
+                    {/* Modifier la destination inline */}
+                    <select
+                      className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors"
+                      value={dest}
+                      onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(doc.id, e.target.value)}
+                    >
+                      <option value="client">📁 Client</option>
+                      <option value="formateur">📋 Formateur</option>
+                    </select>
+                    {/* Associer à un groupe */}
+                    <select
+                      className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
+                      value={doc.document_group_id || ''}
+                      onChange={(e) => handleToggleDocumentGroup(doc.id, e.target.value || null)}
+                    >
+                      <option value="">-- Sans groupe --</option>
+                      {documentGroups.map(g => (
+                        <option key={g.id} value={g.id}>{g.nom}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               );
             })}
