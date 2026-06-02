@@ -4786,7 +4786,7 @@ const DocumentsView = ({
 
   const handleToggleDocumentGroup = async (docId, nextGroupId) => {
     if (!docId) return;
-    const { error } = await supabase.from('documents').update({ document_group_id: nextGroupId }).eq('id', docId);
+    const { error } = await supabase.from('documents').update({ group_id: nextGroupId }).eq('id', docId);
     if (!error) {
       if (fetchDocuments) fetchDocuments();
       toast.success(nextGroupId ? "Document associé au groupe." : "Document détaché du groupe.");
@@ -4871,7 +4871,7 @@ const DocumentsView = ({
             {documentGroups.length > 0 && (
               <div className="flex flex-col gap-3">
                 {documentGroups.map(g => {
-                  const groupDocs = documents.filter(d => d.document_group_id === g.id);
+                  const groupDocs = documents.filter(d => d.group_id === g.id);
                   return (
                     <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
                       <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-indigo-50 transition-colors" onClick={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}>
@@ -5022,7 +5022,7 @@ const DocumentsView = ({
                     {/* Associer à un groupe */}
                     <select
                       className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
-                      value={doc.document_group_id || ''}
+                      value={doc.group_id || ''}
                       onChange={(e) => handleToggleDocumentGroup(doc.id, e.target.value || null)}
                     >
                       <option value="">-- Sans groupe --</option>
@@ -7776,9 +7776,7 @@ export default function App() {
 
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
-    let dQuery = supabase.from('documents').select('*');
-    if (currentOrgId) dQuery = dQuery.eq('organisation_id', currentOrgId);
-    const { data: docsData, error } = await dQuery;
+    const { data: docsData, error } = await supabase.from('documents').select('*');
     console.log('[fetchDocuments] Récupération de TOUS les documents de la DB:', docsData, error);
     if (!error && docsData) setDocuments(docsData);
 
@@ -9010,19 +9008,14 @@ export default function App() {
       }
 
       // Sync avec documents
-      const { data: existingDoc } = await supabase.from('documents').select('id, metadata').eq('nom', type).eq('type_document', 'Modèle Référence');
+      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type);
       if (existingDoc && existingDoc.length > 0) {
-        const oldMeta = (typeof existingDoc[0].metadata === 'string' && existingDoc[0].metadata.startsWith('{')) ? JSON.parse(existingDoc[0].metadata) : (existingDoc[0].metadata || {});
-        const newMeta = { ...oldMeta, classification };
-        await supabase.from('documents').update({ url: publicUrl, metadata: newMeta, extension: fileExt }).eq('id', existingDoc[0].id);
+        await supabase.from('documents').update({ url: publicUrl, extension: fileExt }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: type,
-          type_document: 'Modèle Référence',
+          type_action: 'Modèle Référence',
           url: publicUrl,
-          visible_client: false,
-          visible_formateur: false,
-          metadata: { classification },
           extension: fileExt
         }]);
       }
