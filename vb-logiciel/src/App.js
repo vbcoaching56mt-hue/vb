@@ -5822,13 +5822,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
     (async () => {
-      // Récupère TOUS les types (document + document_group), sauf les signatures
+      // Récupère TOUS les types (document + document_group + NULL), sauf les signatures
+      // Note: .neq('type','signature') en SQL exclut aussi les NULL → on utilise .or() pour les inclure
       const { data, error } = await supabase
         .from('module_step_resources')
         .select('id, titre, file_url, moment, metadata, extension, type, ordre, document_group_id')
         .eq('module_id', moduleId)
         .in('moment', ['debut', 'fin'])
-        .neq('type', 'signature')
+        .or('type.is.null,type.neq.signature')
         .order('ordre', { ascending: true });
 
       if (!error && data) {
@@ -8215,25 +8216,27 @@ export default function App() {
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
     try {
+      // Utiliser supabaseAdmin pour contourner RLS sur toutes les opérations de suppression
       // 1. Supprimer les séances
-      await supabase.from('sessions').delete().eq('client_id', clientId);
+      await supabaseAdmin.from('sessions').delete().eq('client_id', clientId);
       // 2. Supprimer les documents
-      await supabase.from('documents').delete().eq('user_id', clientId);
-      // 3. Supprimer le client
-      await supabase.from('clients').delete().eq('id', clientId);
+      await supabaseAdmin.from('documents').delete().eq('user_id', clientId);
+      // 3. Supprimer le client (DOIT être en dernier avant Auth)
+      const { error: deleteErr } = await supabaseAdmin.from('clients').delete().eq('id', clientId);
+      if (deleteErr) throw new Error("Erreur suppression client table : " + deleteErr.message);
       // 4. Supprimer le compte Auth (si possible)
       await supabaseAdmin.auth.admin.deleteUser(clientId);
-      
+
       toast.success("Client et toutes ses données supprimés avec succès.");
       setExpandedClientId(null);
-      fetchUtilisateurs();
-      fetchSessions();
-      fetchDocuments();
+      await fetchUtilisateurs();
+      await fetchSessions();
+      await fetchDocuments();
     } catch (err) {
       console.error("Erreur suppression client:", err);
-      // On continue même si deleteUser échoue (ex: pas de compte auth)
+      toast.error("Erreur lors de la suppression : " + err.message);
       setExpandedClientId(null);
-      fetchUtilisateurs();
+      await fetchUtilisateurs();
     }
   };
 
@@ -10655,7 +10658,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabaseAdmin} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
