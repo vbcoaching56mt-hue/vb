@@ -5815,6 +5815,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
+  const [groupNames, setGroupNames] = React.useState({}); // { groupId: nom }
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -5844,6 +5845,23 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           console.log('[ClientDocumentsView] après filtre signature:', filtered.length, 'ressources');
           setModuleResources(filtered);
           setDebugInfo({ count: filtered.length, moduleId, rawCount: data?.length });
+
+          // ─── Résolution des noms de groupes via document_groups ───
+          const groupIds = filtered
+            .filter(r => r.type === 'document_group' && r.document_group_id)
+            .map(r => r.document_group_id);
+          if (groupIds.length > 0) {
+            const { data: grpData } = await supabase
+              .from('document_groups')
+              .select('id, nom')
+              .in('id', groupIds);
+            if (grpData) {
+              const nameMap = {};
+              grpData.forEach(g => { nameMap[g.id] = g.nom; });
+              setGroupNames(nameMap);
+              console.log('[ClientDocumentsView] noms groupes résolus:', nameMap);
+            }
+          }
         }
       } catch (e) {
         console.error('[ClientDocumentsView] Exception:', e);
@@ -5912,9 +5930,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     // Les docs du groupe sont dans la table documents avec group_id = document_group_id
     const groupDocs = (documents || []).filter(d => d.group_id === resource.document_group_id);
     const isExpanded = expandedGroupId === resource.id;
-    const groupName = resource.titre && resource.titre !== 'Document' && resource.titre !== 'Groupe'
-      ? resource.titre
-      : 'Groupe de documents';
+    // Priorité : nom depuis document_groups > titre si non générique > fallback
+    const groupName = groupNames[resource.document_group_id]
+      || (resource.titre && resource.titre !== 'Document' && resource.titre !== 'Groupe' ? resource.titre : null)
+      || 'Groupe de documents';
 
     return (
       <div key={resource.id} className="border border-indigo-100 rounded-2xl overflow-hidden bg-white hover:border-indigo-200 transition-colors">
