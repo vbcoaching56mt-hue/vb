@@ -1106,17 +1106,18 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
   );
 };
 
-const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supabase, momentLabel }) => {
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [metadata, setMetadata] = useState({
     requiresClientSignature: true,
     requiresTrainerSignature: false,
-    documentType: 'signature' // 'info' | 'signature'
+    documentType: 'signature'
   });
   const [selectedResourceId, setSelectedResourceId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [destination, setDestination] = useState('client');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -1131,6 +1132,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
       setSelectedResourceId('');
       setIsUploading(false);
       setInstructions('');
+      setDestination('client');
     }
   }, [isOpen]);
 
@@ -1233,80 +1235,81 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
 
           {type !== 'signature' && (
             <div className="space-y-4 animate-slide-up">
-              <div>
-                <div className="space-y-3">
+              <div className="space-y-3">
+                {/* Modélothèque dropdown */}
+                {documentTemplates && Object.keys(documentTemplates).length > 0 && (
                   <select
                     className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                     value={selectedResourceId}
-                    onChange={e => setSelectedResourceId(e.target.value)}
+                    onChange={e => {
+                      const url = e.target.value;
+                      setSelectedResourceId(url);
+                      if (url) {
+                        const entry = Object.entries(documentTemplates).find(([, tpl]) => tpl.url === url);
+                        if (entry && !title) setTitle(entry[0]);
+                      }
+                    }}
                   >
                     <option value="">Sélectionner dans la modélothèque...</option>
-                    {pedagogicalResources.map(r => (
-                      <option key={r.name} value={r.name}>{r.name}</option>
+                    {Object.entries(documentTemplates).map(([nom, tpl]) => (
+                      <option key={nom} value={tpl.url || ''}>{nom}</option>
                     ))}
                   </select>
+                )}
 
-                  <div className="flex items-center gap-4">
-                    <div className="h-px bg-gray-100 flex-1"></div>
-                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
-                    <div className="h-px bg-gray-100 flex-1"></div>
-                  </div>
-
-                  <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploading ? 'Importation en cours...' : '📁 Importer un fichier' + ((type === 'signature' || metadata.documentType === 'signature') ? ' (PDF uniquement)' : ' (PDF, Word, Excel)')}
-                    <input
-                      type="file"
-                      className="hidden"
-                      disabled={isUploading}
-                      accept={(type === 'signature' || metadata.documentType === 'signature') ? ".pdf" : ".pdf,.doc,.docx,.xls,.xlsx"}
-                      onChange={(e) => {
-                        const file = e.target.files[0];
-                        if (file) {
-                          const needsSignature = type === 'signature' || metadata.documentType === 'signature';
-                          if (needsSignature && file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-                            alert('Erreur : Seuls les fichiers PDF sont autorisés pour les documents nécessitant une signature.');
-                            e.target.value = '';
-                            return;
-                          }
-                          handleFileUpload(file);
-                        }
-                      }}
-                    />
-                  </label>
-                  {selectedResourceId && !isUploading && (
-                    <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                      ✓ Fichier importé avec succès
-                    </p>
-                  )}
+                <div className="flex items-center gap-4">
+                  <div className="h-px bg-gray-100 flex-1"></div>
+                  <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
+                  <div className="h-px bg-gray-100 flex-1"></div>
                 </div>
+
+                <label className={`w-full flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-200 text-gray-500 font-bold text-xs cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-all ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {isUploading ? 'Importation en cours...' : '📁 Importer un fichier (PDF, Word, Excel)'}
+                  <input
+                    type="file"
+                    className="hidden"
+                    disabled={isUploading}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) handleFileUpload(file);
+                    }}
+                  />
+                </label>
+                {selectedResourceId && !isUploading && (
+                  <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">✓ Fichier sélectionné</p>
+                )}
               </div>
 
               {type === 'document' && (
                 <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
-                  <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Type d'interaction</label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" checked={metadata.documentType === 'info'} onChange={() => setMetadata({ ...metadata, documentType: 'info' })} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-sm font-bold text-gray-700">Lecture seule</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="radio" checked={metadata.documentType === 'signature'} onChange={() => setMetadata({ ...metadata, documentType: 'signature' })} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-sm font-bold text-gray-700">À signer</span>
-                    </label>
+                  {/* Destinataire */}
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Destinataire</label>
+                    <div className="flex gap-4">
+                      {[['client', 'Client'], ['formateur', 'Formateur'], ['both', 'Les deux']].map(([val, lbl]) => (
+                        <label key={val} className="flex items-center gap-2 cursor-pointer">
+                          <input type="radio" checked={destination === val} onChange={() => setDestination(val)} className="rounded-full text-indigo-600 focus:ring-indigo-500" />
+                          <span className="text-sm font-bold text-gray-700">{lbl}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
 
-                  {metadata.documentType === 'signature' && (
-                    <div className="pt-3 border-t border-indigo-100 mt-2 flex gap-4">
+                  {/* Signature requise */}
+                  <div className="pt-3 border-t border-indigo-100">
+                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Signature</label>
+                    <div className="flex gap-4">
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresTrainerSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
                         <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresClientSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
                         <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
                       </label>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1315,8 +1318,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, supa
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                onSave({ type, title, metadata, resourceId: selectedResourceId, instructions: type === 'exercice' ? instructions : null });
-                onClose(); // Instant feedback
+                onSave({ type, title, metadata: { ...metadata, destination }, resourceId: selectedResourceId, fileUrl: selectedResourceId.includes('/') ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
+                onClose();
               }}
               disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
@@ -1830,10 +1833,24 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
         setIsLoading(false);
         return;
       } else {
-        console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
-        onNeedsSetup();
-        setIsLoading(false);
-        return;
+        const metaRole = authData.user?.user_metadata?.role;
+        if (metaRole === 'client') {
+          // La requête clients a été bloquée par RLS mais l'utilisateur est un client :
+          // son clients.id est identique à son UUID Auth
+          handleLogin('client', authData.user.id);
+          setIsLoading(false);
+          return;
+        } else if (metaRole === 'formateur') {
+          setErrorMsg('Profil introuvable. Contactez votre administrateur.');
+          setIsLoading(false);
+          return;
+        } else {
+          // Admin sans organisation → setup
+          console.error('Utilisateur non trouvé dans les DBs:', dbError || clientError);
+          onNeedsSetup();
+          setIsLoading(false);
+          return;
+        }
       }
     }
 
@@ -2060,6 +2077,10 @@ const ClientDetailView = ({
   const [activeId, setActiveId] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+  const [assignedDocs, setAssignedDocs] = React.useState([]);
+  const [moduleDocResources, setModuleDocResources] = React.useState([]);
+  const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
+  const [showAddDocModal, setShowAddDocModal] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -2088,8 +2109,75 @@ const ClientDetailView = ({
     fetchDetailedClient();
   }, [client.id, supabase]);
 
+  React.useEffect(() => {
+    const fetchAssignedDocs = async () => {
+      setIsLoadingAssigned(true);
+      const [{ data: clientDocs }, { data: moduleResources }] = await Promise.all([
+        supabase.from('client_documents').select('*').eq('client_id', client.id).order('ordre', { ascending: true }),
+        client.module_id
+          ? supabase.from('module_step_resources').select('*').eq('module_id', client.module_id).eq('type', 'document')
+          : Promise.resolve({ data: [] })
+      ]);
+      setAssignedDocs(clientDocs || []);
+      setModuleDocResources(moduleResources || []);
+      setIsLoadingAssigned(false);
+    };
+    fetchAssignedDocs();
+  }, [client.id, client.module_id, supabase]);
+
+  const handleRemoveAssignedDoc = async (docId) => {
+    await supabase.from('client_documents').delete().eq('id', docId);
+    setAssignedDocs(prev => prev.filter(d => d.id !== docId));
+  };
+
+  const handleAddAssignedDoc = async (titre, url) => {
+    const { data, error } = await supabase
+      .from('client_documents')
+      .insert([{
+        client_id: client.id,
+        template_titre: titre,
+        template_url: url,
+        destination: 'client',
+        ordre: assignedDocs.length,
+        organisation_id: client.organisation_id
+      }])
+      .select()
+      .single();
+    if (!error && data) setAssignedDocs(prev => [...prev, data]);
+    setShowAddDocModal(false);
+  };
+
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
+
+  const handleResendInvite = async () => {
+    const email = client.email || client.email_contact || clientInfo.client_email;
+    if (!email) return toast.error("Aucun email trouvé pour ce client.");
+    const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) return toast.error("Clé de service non configurée.");
+    const { createClient } = await import('@supabase/supabase-js');
+    const adminClient = createClient(process.env.REACT_APP_SUPABASE_URL, serviceKey);
+
+    // Essai 1 : invitation classique (compte pas encore créé → email "Définir mon mot de passe")
+    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
+    if (!inviteError) {
+      toast.success(`Email d'invitation envoyé à ${email}.`);
+      return;
+    }
+
+    // Essai 2 : compte existant → envoyer un email "Réinitialiser / définir mon mot de passe"
+    // L'utilisateur reçoit un email avec un lien cliquable, exactement comme l'invitation initiale.
+    if (inviteError.message?.toLowerCase().includes('already')) {
+      const { error: resetError } = await adminClient.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+      if (resetError) return toast.error(`Erreur : ${resetError.message}`);
+      toast.success(`Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`, { duration: 6000 });
+      return;
+    }
+
+    toast.error(`Erreur : ${inviteError.message}`);
+  };
 
   const handleSaveClientInfo = async () => {
     setIsSavingInfo(true);
@@ -2162,6 +2250,13 @@ const ClientDetailView = ({
             className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
           >
             <Download size={16} /> Récapitulatif Général
+          </button>
+          <button
+            onClick={handleResendInvite}
+            title="Renvoyer le lien d'invitation par email"
+            className="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+          >
+            <Mail size={16} /> Renvoyer le lien
           </button>
           <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
             {client.status || 'Actif'}
@@ -2347,19 +2442,117 @@ const ClientDetailView = ({
 
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <div className="pt-6 border-gray-100">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Générateurs Automatiques</h3>
-            <div className="flex gap-2 flex-wrap pt-2">
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'client').map(([key]) => (
-                <button key={key} onClick={() => handleGenerateDocx(client, key)} className="bg-indigo-50 flex items-center text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
-                  <FileText className="w-4 h-4 mr-2" /> Générer {key}
-                </button>
-              ))}
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'client').length === 0 && (
-                <p className="text-gray-400 italic text-sm">Aucun modèle 'Administratif Client' configuré dans la Modélothèque.</p>
-              )}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800">Documents de ce client</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
+            <button
+              onClick={() => setShowAddDocModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> Ajouter
+            </button>
           </div>
+
+          {isLoadingAssigned ? (
+            <p className="text-gray-400 text-sm italic">Chargement...</p>
+          ) : (moduleDocResources.length === 0 && assignedDocs.length === 0) ? (
+            <div className="text-center py-10 text-gray-400">
+              <FileText className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm italic">Aucun document configuré pour ce client.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {moduleDocResources.length > 0 && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
+              )}
+              {moduleDocResources.map(res => (
+                <div key={res.id} className="flex items-center justify-between bg-indigo-50/40 rounded-2xl px-4 py-3 border border-indigo-100">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div>
+                      <span className="text-sm font-bold text-gray-700">{res.titre}</span>
+                      {res.metadata?.requiresClientSignature && (
+                        <span className="ml-2 text-[9px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateDocx(client, res.titre)}
+                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                  >
+                    Générer
+                  </button>
+                </div>
+              ))}
+              {assignedDocs.length > 0 && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
+              )}
+              {assignedDocs.map(doc => (
+                <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleGenerateDocx(client, doc.template_titre)}
+                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                    >
+                      Générer
+                    </button>
+                    <button
+                      onClick={() => handleRemoveAssignedDoc(doc.id)}
+                      className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                      title="Retirer ce document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showAddDocModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document</h4>
+                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle de la modélothèque à ajouter.</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {Object.entries(documentTemplates || {})
+                    .filter(([titre]) =>
+                      !assignedDocs.some(d => d.template_titre === titre) &&
+                      !moduleDocResources.some(r => r.titre === titre)
+                    )
+                    .map(([titre, tpl]) => (
+                      <button
+                        key={titre}
+                        onClick={() => handleAddAssignedDoc(titre, tpl.url)}
+                        className="w-full flex items-center gap-3 text-left bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 text-gray-700 font-bold text-sm px-4 py-3 rounded-xl border border-gray-100 hover:border-indigo-200 transition-all"
+                      >
+                        <FileText className="w-4 h-4 shrink-0 text-indigo-300" />
+                        {titre}
+                      </button>
+                    ))
+                  }
+                  {Object.entries(documentTemplates || {}).filter(([titre]) =>
+                    !assignedDocs.some(d => d.template_titre === titre) &&
+                    !moduleDocResources.some(r => r.titre === titre)
+                  ).length === 0 && (
+                    <p className="text-gray-400 text-sm italic text-center py-6">Tous les modèles disponibles sont déjà dans la liste.</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowAddDocModal(false)}
+                  className="mt-4 w-full text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -3313,6 +3506,32 @@ const AdminFormateursView = ({
     </div>
   );
 };
+const DroppableMomentZone = ({ id, children, className }) => {
+  const { isOver, setNodeRef } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={`${className} transition-all ${isOver ? 'ring-2 ring-indigo-500 scale-[1.01]' : ''}`}>
+      {children}
+    </div>
+  );
+};
+
+const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `drag-grp-${resourceId}` });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm cursor-grab active:cursor-grabbing hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
+    >
+      <div className="flex items-center gap-3">
+        <Layout size={16} className="text-indigo-600" />
+        <span className="font-bold text-indigo-900">Groupe de documents : {group?.nom || 'Groupe Inconnu'}</span>
+      </div>
+      <button onClick={(e) => { e.stopPropagation(); onDelete(resourceId); }} className="text-gray-300 hover:text-red-500 transition-colors p-1"><Trash2 size={14} /></button>
+    </div>
+  );
+};
 
 const IngenierieView = ({
   modules, moduleDocuments, handleAddModule, handleLinkDocument,
@@ -3327,7 +3546,7 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource
+  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
@@ -3335,6 +3554,28 @@ const IngenierieView = ({
   const [activeMomentModuleId, setActiveMomentModuleId] = React.useState(null);
   const [editingId, setEditingId] = React.useState(null);
   const [editValue, setEditValue] = React.useState('');
+
+  const [documentGroups, setDocumentGroups] = React.useState([]);
+
+  React.useEffect(() => {
+    const fetchGroups = async () => {
+      const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+      if (!error && data) setDocumentGroups(data);
+    };
+    fetchGroups();
+  }, [supabase]);
+
+  const handleGroupDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over) return;
+    const resourceId = String(active.id).replace('drag-grp-', '');
+    const overIdParts = String(over.id).split('-'); // expected 'drop-{moduleId}-{moment}'
+    if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
+      const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
+      const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
+      if (!error) fetchModules();
+    }
+  };
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
@@ -3396,15 +3637,17 @@ const IngenierieView = ({
                     </div>
                   </form>
                 ) : (
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
                     <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
+                    <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
                   </div>
                 )}
 
                 {/* Interface de Modélisation du Parcours */}
                 {modelingModuleId === mod.id && (
-                  <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in space-y-6">
+                  <DndContext onDragEnd={handleGroupDragEnd}>
+                    <div className="mt-6 pt-6 border-t border-purple-100 animate-fade-in space-y-6">
                     <h4 className="text-sm font-bold text-indigo-700 flex items-center gap-2">
                       <Layout size={16} /> Modélisation du Parcours
                     </h4>
@@ -3413,34 +3656,54 @@ const IngenierieView = ({
                     {(() => {
                       const debutResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'debut');
                       return (
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl overflow-hidden">
-                          <div className="bg-emerald-100 px-4 py-3 flex items-center justify-between border-b border-emerald-200">
+                        <DroppableMomentZone id={`drop-${mod.id}-debut`} className="bg-emerald-50 border border-emerald-200 rounded-2xl overflow-hidden">
+                          <div className="bg-emerald-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-emerald-200 gap-2">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
                               <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Documents de Début de Parcours</span>
                               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-200 px-2 py-0.5 rounded-full">Accessibles immédiatement</span>
                             </div>
-                            <button
-                              onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                              className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
-                            >
-                              <Plus size={12} /> Ajouter
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <select 
+                                onChange={async (e) => {
+                                  if(!e.target.value) return;
+                                  const grpId = e.target.value;
+                                  const grpName = e.target.options[e.target.selectedIndex].text;
+                                  await handleAddModuleMomentResource(mod.id, 'debut', 'document_group', null, grpName, null, null, grpId);
+                                  e.target.value = '';
+                                }}
+                                className="text-[10px] font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                              >
+                                <option value="">+ Groupe...</option>
+                                {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
+                              </select>
+                              <button
+                                onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                                className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+                              >
+                                <Plus size={12} /> Fichier
+                              </button>
+                            </div>
                           </div>
                           <div className="p-3 space-y-2">
                             {debutResources.length === 0 && <p className="text-[11px] text-emerald-600/60 italic px-1">Aucun document de début.</p>}
-                            {debutResources.map(res => (
-                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-100 text-[11px]">
-                                <div className="flex items-center gap-2">
-                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
-                                  <span className="font-bold text-gray-800">{res.titre}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                            {debutResources.map(res => {
+                              if (res.type === 'document_group') {
+                                return <DraggableGroupBlock key={res.id} resourceId={res.id} group={documentGroups.find(g => g.id === res.document_group_id)} onDelete={handleDeleteStepResource} />;
+                              }
+                              return (
+                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-100 text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                    <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
                                 </div>
-                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
-                        </div>
+                        </DroppableMomentZone>
                       );
                     })()}
 
@@ -3555,34 +3818,54 @@ const IngenierieView = ({
                     {(() => {
                       const finResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'fin');
                       return (
-                        <div className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
-                          <div className="bg-rose-100 px-4 py-3 flex items-center justify-between border-b border-rose-200">
+                        <DroppableMomentZone id={`drop-${mod.id}-fin`} className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
+                          <div className="bg-rose-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-rose-200 gap-2">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
                               <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
                               <span className="text-[9px] font-bold text-rose-600 bg-rose-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
                             </div>
-                            <button
-                              onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                              className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
-                            >
-                              <Plus size={12} /> Ajouter
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <select 
+                                onChange={async (e) => {
+                                  if(!e.target.value) return;
+                                  const grpId = e.target.value;
+                                  const grpName = e.target.options[e.target.selectedIndex].text;
+                                  await handleAddModuleMomentResource(mod.id, 'fin', 'document_group', null, grpName, null, null, grpId);
+                                  e.target.value = '';
+                                }}
+                                className="text-[10px] font-bold text-rose-800 bg-white border border-rose-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                              >
+                                <option value="">+ Groupe...</option>
+                                {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
+                              </select>
+                              <button
+                                onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
+                                className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                              >
+                                <Plus size={12} /> Fichier
+                              </button>
+                            </div>
                           </div>
                           <div className="p-3 space-y-2">
                             {finResources.length === 0 && <p className="text-[11px] text-rose-600/60 italic px-1">Aucun document de fin.</p>}
-                            {finResources.map(res => (
-                              <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
-                                <div className="flex items-center gap-2">
-                                  <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
-                                  <span className="font-bold text-gray-800">{res.titre}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                            {finResources.map(res => {
+                              if (res.type === 'document_group') {
+                                return <DraggableGroupBlock key={res.id} resourceId={res.id} group={documentGroups.find(g => g.id === res.document_group_id)} onDelete={handleDeleteStepResource} />;
+                              }
+                              return (
+                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
+                                  <div className="flex items-center gap-2">
+                                    <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
+                                    <span className="font-bold text-gray-800">{res.titre}</span>
+                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
                                 </div>
-                                <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
-                        </div>
+                        </DroppableMomentZone>
                       );
                     })()}
 
@@ -3598,6 +3881,7 @@ const IngenierieView = ({
                       </div>
                     </form>
                   </div>
+                  </DndContext>
                 )}
               </div>
             );
@@ -3657,6 +3941,7 @@ const IngenierieView = ({
         isOpen={isResourceModalOpen}
         onClose={() => { setIsResourceModalOpen(false); setActiveFolderId(null); setActiveMoment(null); setActiveMomentModuleId(null); }}
         pedagogicalResources={pedagogicalResources}
+        documentTemplates={documentTemplates}
         supabase={supabase}
         momentLabel={activeMoment === 'debut' ? '🟢 Début de Parcours (Onboarding)' : activeMoment === 'fin' ? '🔴 Fin de Parcours (Outro)' : null}
         onSave={(data) => {
@@ -4482,7 +4767,8 @@ const DocumentsView = ({
   handleSignatureSave, documentTemplates, handleUploadDocxTemplate,
   newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete,
   newTemplateDestination, setNewTemplateDestination, supabase,
-  onUpdateTemplateDestination
+  onUpdateTemplateDestination,
+  newTemplateClassification, setNewTemplateClassification, fetchDocuments
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [modelesTab, setModelesTab] = React.useState('modeles');
@@ -4490,6 +4776,61 @@ const DocumentsView = ({
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
+
+  // Groupes de documents
+  const [documentGroups, setDocumentGroups] = React.useState([]);
+  const [newGroupName, setNewGroupName] = React.useState('');
+  const [isCreatingGroup, setIsCreatingGroup] = React.useState(false);
+  const [selectedTemplateFile, setSelectedTemplateFile] = React.useState(null);
+  const [expandedGroupId, setExpandedGroupId] = React.useState(null);
+
+  const fetchDocumentGroups = React.useCallback(async () => {
+    const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+    if (!error && data) setDocumentGroups(data);
+  }, [supabase]);
+
+  React.useEffect(() => {
+    if (isAdmin) fetchDocumentGroups();
+  }, [isAdmin, fetchDocumentGroups]);
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    setIsCreatingGroup(true);
+    const { error } = await supabase.from('document_groups').insert([{ nom: newGroupName.trim() }]);
+    setIsCreatingGroup(false);
+    if (!error) {
+      setNewGroupName('');
+      fetchDocumentGroups();
+      toast.success("Groupe créé avec succès.");
+    } else {
+      toast.error("Erreur de création du groupe : " + error.message);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce groupe ? Les documents qui y sont associés seront détachés.")) {
+      await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
+      const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
+      if (!error) {
+        fetchDocumentGroups();
+        if (fetchDocuments) fetchDocuments();
+        toast.success("Groupe supprimé.");
+      } else {
+        toast.error("Erreur lors de la suppression : " + error.message);
+      }
+    }
+  };
+
+  const handleToggleDocumentGroup = async (docId, nextGroupId) => {
+    if (!docId) return;
+    const { error } = await supabase.from('documents').update({ group_id: nextGroupId }).eq('id', docId);
+    if (!error) {
+      if (fetchDocuments) fetchDocuments();
+      toast.success(nextGroupId ? "Document associé au groupe." : "Document détaché du groupe.");
+    } else {
+      toast.error("Erreur d'association : " + error.message);
+    }
+  };
 
   // Group clients by their documents
   const clientsWithDocs = React.useMemo(() => {
@@ -4514,7 +4855,7 @@ const DocumentsView = ({
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-        {isClient ? "Mes Documents" : "Gestion Documentaire"}
+        {isClient ? "Mes Documents" : "Gestion des documents"}
       </h1>
       <p className="text-gray-500 text-lg">Consultez et {isClient ? 'signez vos' : 'vérifiez les'} fichiers légaux ou de synthèse.</p>
 
@@ -4539,17 +4880,74 @@ const DocumentsView = ({
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <div className="flex justify-between items-start">
             <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Ma Modélothèque
+              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
             </h2>
             <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono">
               <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
             </div>
           </div>
 
+          <div className="mb-8 p-5 bg-indigo-50 rounded-2xl border border-indigo-100">
+            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><Layout size={18}/> Groupes de documents</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="Nouveau groupe (ex: Pack de début)"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                className="text-sm p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 w-full max-w-xs"
+              />
+              <button
+                onClick={handleCreateGroup}
+                disabled={isCreatingGroup || !newGroupName.trim()}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm transition-all shadow-md disabled:opacity-50"
+              >
+                Créer
+              </button>
+            </div>
+            {documentGroups.length > 0 && (
+              <div className="flex flex-col gap-3">
+                {documentGroups.map(g => {
+                  const groupDocs = documents.filter(d => d.group_id === g.id);
+                  return (
+                    <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
+                      <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-indigo-50 transition-colors" onClick={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}>
+                        <div className="font-bold text-indigo-800 flex items-center gap-2">
+                          {expandedGroupId === g.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                          {g.nom} <span className="text-xs font-normal text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">{groupDocs.length} doc(s)</span>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteGroup(g.id); }} className="text-gray-400 hover:text-red-500 transition-colors p-1">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                      {expandedGroupId === g.id && (
+                        <div className="p-3 bg-indigo-50/50 border-t border-indigo-100">
+                          {groupDocs.length > 0 ? (
+                            <ul className="space-y-2">
+                              {groupDocs.map(d => (
+                                <li key={d.id} className="text-sm text-gray-700 flex items-center gap-2">
+                                  <FileText size={14} className="text-indigo-400" />
+                                  {d.nom}
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase">({d.extension || 'docx'})</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500 italic">Aucun document dans ce groupe.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><FileText size={18}/> Nouveau Modèle</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
                 <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Nom du modèle</label>
                 <input
                   type="text"
@@ -4560,56 +4958,85 @@ const DocumentsView = ({
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Destination</label>
+                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Classification</label>
                 <select
                   className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-medium"
-                  value={newTemplateDestination}
-                  onChange={(e) => setNewTemplateDestination(e.target.value)}
+                  value={newTemplateClassification}
+                  onChange={(e) => setNewTemplateClassification(e.target.value)}
                 >
-                  <option value="client">📁 Administratif Client</option>
-                  <option value="formateur">📋 Administratif Formateur</option>
+                  <option value="telechargeable">📥 Téléchargeable</option>
+                  <option value="a_signer">✍️ À signer</option>
+                  <option value="a_generer">⚙️ À générer</option>
                 </select>
               </div>
             </div>
-            <div className="mt-4">
-              <label className={`inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${!newTemplateName ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                Uploader le Modèle (.docx)
+            <div className="mt-4 flex flex-wrap gap-4 items-center">
+              <label className="inline-flex items-center gap-2 bg-white text-amber-600 border border-amber-600 hover:bg-amber-50 px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-sm">
+                {selectedTemplateFile ? selectedTemplateFile.name : 'Sélectionner un fichier (.docx, .pdf)'}
                 <input
                   type="file"
                   className="hidden"
-                  disabled={!newTemplateName}
-                  accept=".docx"
+                  accept=".docx, .pdf"
                   onChange={(e) => {
                     if (e.target.files[0]) {
-                      handleUploadDocxTemplate(e.target.files[0], newTemplateName, newTemplateDestination);
-                      setNewTemplateName('');
-                      setNewTemplateDestination('client');
+                      const f = e.target.files[0];
+                      setSelectedTemplateFile(f);
+                      if (!newTemplateName) {
+                        setNewTemplateName(f.name.replace(/\.[^/.]+$/, ''));
+                      }
                     }
                   }}
                 />
               </label>
+              <button
+                onClick={async () => {
+                  if (!selectedTemplateFile || !newTemplateName) {
+                     toast.error("Veuillez sélectionner un fichier et renseigner un nom.");
+                     return;
+                  }
+                  await handleUploadDocxTemplate(selectedTemplateFile, newTemplateName, 'client', newTemplateClassification);
+                  setNewTemplateName('');
+                  setNewTemplateClassification('telechargeable');
+                  setSelectedTemplateFile(null);
+                }}
+                disabled={!selectedTemplateFile || !newTemplateName}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-md disabled:opacity-50"
+              >
+                Créer le document
+              </button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Object.entries(documentTemplates || {}).map(([key, tpl]) => {
-              const dest = tpl.destination || 'client';
+            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).map((doc) => {
+              const classif = typeof doc.metadata === 'object' && doc.metadata ? doc.metadata.classification : 'telechargeable';
+              const dest = doc.visible_formateur ? 'formateur' : 'client';
               return (
-                <div key={key} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative">
-                  <div className="flex items-center justify-between mb-2">
+                <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'
                     }`}>
                       {dest === 'formateur' ? '📋 Formateur' : '📁 Client'}
                     </span>
-                    <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
+                      classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
+                      classif === 'a_signer' ? 'bg-orange-100 text-orange-600' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>
+                      {classif === 'a_generer' ? '⚙️ À générer' : classif === 'a_signer' ? '✍️ À signer' : '📥 Téléchargeable'}
+                    </span>
+                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full uppercase">
+                      .{doc.extension || 'docx'}
+                    </span>
+                    <div className="flex items-center gap-2 ml-auto">
                       <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
                         Mettre à jour
-                        <input type="file" className="hidden" accept=".docx" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], key, dest)} />
+                        <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
                       <button 
                         onClick={() => {
-                          setTargetToDelete({ id: key, type: 'template' });
+                          setTargetToDelete({ id: doc.nom, type: 'template' });
                           setIsDeleteModalOpen(true);
                         }}
                         className="p-1.5 text-gray-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
@@ -4618,22 +5045,34 @@ const DocumentsView = ({
                       </button>
                     </div>
                   </div>
-                  <h3 className="font-bold text-gray-900 text-sm mb-1">{key}</h3>
-                  <p className="text-[10px] text-gray-500 truncate mb-3">{tpl?.name || "Modèle chargé"}</p>
-                  {/* Modifier la destination inline */}
-                  <select
-                    className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors"
-                    value={dest}
-                    onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(key, e.target.value)}
-                  >
-                    <option value="client">📁 Administratif Client</option>
-                    <option value="formateur">📋 Administratif Formateur</option>
-                  </select>
+                  <h3 className="font-bold text-gray-900 text-sm mb-1">{doc.nom}</h3>
+                  <div className="mt-auto pt-4 space-y-2">
+                    {/* Modifier la destination inline */}
+                    <select
+                      className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors"
+                      value={dest}
+                      onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(doc.id, e.target.value)}
+                    >
+                      <option value="client">📁 Client</option>
+                      <option value="formateur">📋 Formateur</option>
+                    </select>
+                    {/* Associer à un groupe */}
+                    <select
+                      className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
+                      value={doc.group_id || ''}
+                      onChange={(e) => handleToggleDocumentGroup(doc.id, e.target.value || null)}
+                    >
+                      <option value="">-- Sans groupe --</option>
+                      {documentGroups.map(g => (
+                        <option key={g.id} value={g.id}>{g.nom}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               );
             })}
-            {Object.keys(documentTemplates || {}).length === 0 && (
-              <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle .docx enregistré.</div>
+            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).length === 0 && (
+              <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle enregistré.</div>
             )}
           </div>
         </div>
@@ -4809,7 +5248,7 @@ const DocumentsView = ({
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      {!doc.signe_par_client && (
+                      {(!doc.signe_par_client && (doc.type_document === 'À signer' || (!doc.metadata && (doc.type_document === 'Contrat' || String(doc.nom).toLowerCase().includes('contrat') || String(doc.nom).toLowerCase().includes('convention'))))) && (
                         <button onClick={() => setSigningDocId(doc.id)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer Document</button>
                       )}
                       {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Votré signature Validée</span>}
@@ -4821,13 +5260,25 @@ const DocumentsView = ({
                 );
 
                 if (clientDocTab === 'avant') {
-                  const items = clientDocs.filter(d => d.type_document === 'Contrat' || String(d.nom).toLowerCase().includes('contrat') || String(d.nom).toLowerCase().includes('convention') || String(d.nom).toLowerCase().includes('devis'));
+                  const items = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return moment === 'debut';
+                    return d.type_document === 'Contrat' || String(d.nom).toLowerCase().includes('contrat') || String(d.nom).toLowerCase().includes('convention') || String(d.nom).toLowerCase().includes('devis');
+                  });
                   return items.length > 0 ? items.map(renderDocRow) : <p className="text-sm text-gray-500 italic py-4">Aucun document administratif en attente de validation.</p>;
                 } else if (clientDocTab === 'fin') {
-                  const items = clientDocs.filter(d => d.type_document === 'Évaluation' || String(d.nom).toLowerCase().includes('attestation') || String(d.nom).toLowerCase().includes('bilan'));
+                  const items = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return moment === 'fin';
+                    return d.type_document === 'Évaluation' || String(d.nom).toLowerCase().includes('attestation') || String(d.nom).toLowerCase().includes('bilan');
+                  });
                   return items.length > 0 ? items.map(renderDocRow) : <p className="text-sm text-gray-500 italic py-4">Les documents de fin de parcours apparaîtront ici.</p>;
                 } else if (clientDocTab === 'supports') {
-                  const supportDocs = clientDocs.filter(d => !['Contrat', 'Évaluation'].includes(d.type_document) && !String(d.nom).toLowerCase().includes('contrat') && !String(d.nom).toLowerCase().includes('attestation') && !String(d.nom).toLowerCase().includes('convention'));
+                  const supportDocs = clientDocs.filter(d => {
+                    const moment = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata.moment : null;
+                    if (moment) return false;
+                    return !['Contrat', 'Évaluation'].includes(d.type_document) && !String(d.nom).toLowerCase().includes('contrat') && !String(d.nom).toLowerCase().includes('attestation') && !String(d.nom).toLowerCase().includes('convention');
+                  });
                   const unlockedSessions = clientSessions.filter(s => s.ressource_url && new Date(s.date) <= currentDate);
                   const lockedSessions = clientSessions.filter(s => s.ressource_url && new Date(s.date) > currentDate);
 
@@ -5433,6 +5884,9 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
+    adresse_org: orgSettings?.adresse || '',
+    code_postal_org: orgSettings?.code_postal || '',
+    ville_org: orgSettings?.ville || '',
     siret: user?.formateur_siret || orgSettings?.siret || '',
     nda: user?.formateur_nda || orgSettings?.nda || '',
     email: user?.email || '',
@@ -5470,7 +5924,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     }
   }, [userRole, currentUserId]);
 
-  // Synchro nom organisme, siret, nda, site_web et logo depuis orgSettings (admin)
+  // Synchro nom organisme, siret, nda, site_web, adresse et logo depuis orgSettings (admin)
   useEffect(() => {
     if (userRole === 'admin' && orgSettings) {
       setProfileData(prev => ({
@@ -5478,7 +5932,10 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         nom_organisme: orgSettings.nom || '',
         siret: orgSettings.siret || '',
         nda: orgSettings.nda || '',
-        site_web: orgSettings.site_web || ''
+        site_web: orgSettings.site_web || '',
+        adresse_org: orgSettings.adresse || '',
+        code_postal_org: orgSettings.code_postal || '',
+        ville_org: orgSettings.ville || ''
       }));
       setLogoUrl(orgSettings.logo_url || '');
     }
@@ -5531,14 +5988,20 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           nom: profileData.nom_organisme,
           siret: profileData.siret,
           nda: profileData.nda,
-          site_web: profileData.site_web
+          site_web: profileData.site_web,
+          adresse: profileData.adresse_org,
+          code_postal: profileData.code_postal_org,
+          ville: profileData.ville_org
         }).eq('id', orgSettings.id);
         if (orgResult.error) error = orgResult.error;
         else if (onOrgSaved) onOrgSaved({
           nom: profileData.nom_organisme,
           siret: profileData.siret,
           nda: profileData.nda,
-          site_web: profileData.site_web
+          site_web: profileData.site_web,
+          adresse: profileData.adresse_org,
+          code_postal: profileData.code_postal_org,
+          ville: profileData.ville_org
         });
       }
     }
@@ -5660,19 +6123,40 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                 </div>
               )}
               <div className="space-y-4">
-                <div>
-                  <label className={labelCls}>Adresse Siège Social</label>
-                  <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
-                  <label htmlFor="profSameAddress" className="text-sm text-gray-600 cursor-pointer select-none">Même adresse pour les sessions de formation</label>
-                </div>
-                {!sameAddress && (
-                  <div>
-                    <label className={labelCls}>Adresse de Pratique</label>
-                    <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
-                  </div>
+                {userRole === 'admin' ? (
+                  <>
+                    <div>
+                      <label className={labelCls}>Adresse Siège Social</label>
+                      <input className={inputCls} value={profileData.adresse_org} onChange={e => setProfileData({ ...profileData, adresse_org: e.target.value })} placeholder="N° et nom de rue" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className={labelCls}>Code Postal</label>
+                        <input className={inputCls} value={profileData.code_postal_org} onChange={e => setProfileData({ ...profileData, code_postal_org: e.target.value })} placeholder="75000" />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Ville</label>
+                        <input className={inputCls} value={profileData.ville_org} onChange={e => setProfileData({ ...profileData, ville_org: e.target.value })} placeholder="Paris" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className={labelCls}>Adresse Siège Social</label>
+                      <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
+                      <label htmlFor="profSameAddress" className="text-sm text-gray-600 cursor-pointer select-none">Même adresse pour les sessions de formation</label>
+                    </div>
+                    {!sameAddress && (
+                      <div>
+                        <label className={labelCls}>Adresse de Pratique</label>
+                        <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -7167,8 +7651,13 @@ export default function App() {
           if (clientData) {
             handleLogin('client', clientData.id);
           } else {
-            // Session active mais aucun profil → setup inline
-            setNeedsSetup(true);
+            // Session active mais aucun profil DB trouvé
+            const metaRole = session.user?.user_metadata?.role;
+            if (!metaRole || metaRole === 'admin') {
+              // Admin sans organisation → setup
+              setNeedsSetup(true);
+            }
+            // Client/formateur sans enregistrement DB → ne jamais rediriger vers setup
           }
         }
       }
@@ -7243,6 +7732,7 @@ export default function App() {
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [newTemplateDestination, setNewTemplateDestination] = useState('client'); // 'client' | 'formateur'
+  const [newTemplateClassification, setNewTemplateClassification] = useState('telechargeable'); // 'a_generer' | 'a_signer' | 'telechargeable'
   const [pedagogicalResources, setPedagogicalResources] = useState([]);
   const [newResourceName, setNewResourceName] = useState('');
   const [isUploadingResource, setIsUploadingResource] = useState(false);
@@ -7323,9 +7813,8 @@ export default function App() {
 
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
-    let dQuery = supabase.from('documents').select('*');
-    if (currentOrgId) dQuery = dQuery.eq('organisation_id', currentOrgId);
-    const { data: docsData, error } = await dQuery;
+    const { data: docsData, error } = await supabase.from('documents').select('*');
+    console.log('[fetchDocuments] Récupération de TOUS les documents de la DB:', docsData, error);
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
@@ -7336,7 +7825,16 @@ export default function App() {
       modsData.forEach(m => {
         // Mapping schema : titre -> nom, file_url -> url, destination -> routing
         if (m.titre && m.file_url) {
-          templates[m.titre] = { url: m.file_url, name: m.titre, destination: m.destination || 'client' };
+          const parsedMeta = (typeof m.metadata === 'string' && m.metadata.startsWith('{')) ? JSON.parse(m.metadata) : (m.metadata || {});
+          templates[m.titre] = {
+            id: m.id,
+            url: m.file_url,
+            name: m.titre,
+            destination: m.destination || 'client',
+            classification: parsedMeta.classification || 'telechargeable',
+            document_group_id: m.document_group_id || null,
+            metadata: parsedMeta
+          };
         }
       });
       setDocumentTemplates(templates);
@@ -7359,7 +7857,7 @@ export default function App() {
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, nda, site_web').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
@@ -7438,6 +7936,22 @@ export default function App() {
       if (dbError) {
         console.error("Erreur DB clients après invitation:", dbError);
         toast.error(`Erreur side-effect clients : ${dbError.message}`);
+      } else {
+        // Initialisation automatique des documents depuis la modélothèque
+        const defaultClientDocs = Object.entries(documentTemplates || {})
+          .filter(([, tpl]) => (tpl.destination || 'client') === 'client')
+          .map(([titre, tpl], idx) => ({
+            client_id: newUserId,
+            template_titre: titre,
+            template_url: tpl.url || null,
+            destination: 'client',
+            ordre: idx,
+            organisation_id: currentOrgId
+          }));
+        if (defaultClientDocs.length > 0) {
+          const { error: docsError } = await adminClient.from('client_documents').insert(defaultClientDocs);
+          if (docsError) console.error('Erreur init client_documents:', docsError);
+        }
       }
     } else {
       // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
@@ -7582,6 +8096,88 @@ export default function App() {
     }
     setIsAddingUser(false);
   };
+  const instantiateDocument = async (client, templateResource, moment) => {
+    const meta = typeof templateResource.metadata === 'string' && templateResource.metadata.startsWith('{') ? JSON.parse(templateResource.metadata) : (templateResource.metadata || {});
+    const classification = meta.classification || 'telechargeable';
+
+    // Anti-doublon : ne pas recréer un document déjà existant pour ce client
+    const { data: existing } = await supabase.from('documents')
+      .select('id').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
+    if (existing) return;
+
+    let docId = null;
+
+    if (classification === 'a_generer') {
+      try {
+        console.log(`Génération auto du document ${templateResource.titre} pour le client ${client.id}`);
+        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
+        if (generatedDoc) docId = generatedDoc.id;
+      } catch (e) {
+        console.error("Erreur génération automatique :", e);
+      }
+    } else {
+      const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
+        user_id: client.id,
+        organisation_id: client.organisation_id,
+        nom: templateResource.titre,
+        url: templateResource.file_url,
+        type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
+        visible_client: moment === 'debut',
+        visible_formateur: true,
+        metadata: { moment, template_id: templateResource.id, classification }
+      }]).select().single();
+
+      if (insertErr) {
+        console.error('[instantiateDocument] Erreur insertion document:', insertErr.message, { client: client.id, doc: templateResource.titre });
+        return;
+      }
+      if (newDoc) docId = newDoc.id;
+    }
+
+    if (docId) {
+      await supabase.from('client_documents').insert([{
+        client_id: client.id,
+        document_id: docId,
+        module_id: client.module_id,
+        status: 'pending',
+        moment: moment,
+        metadata: { classification }
+      }]);
+    }
+  };
+
+  const distributeDocumentsForModule = async (client, moduleId) => {
+    try {
+      console.log(`[distributeDocuments] Distribution auto pour client ${client.id} / module ${moduleId}`);
+      const { data: resources, error: resErr } = await supabase
+        .from('module_step_resources')
+        .select('*')
+        .eq('module_id', moduleId)
+        .in('moment', ['debut', 'fin']);
+      
+      if (resErr || !resources || resources.length === 0) return;
+
+      for (const res of resources) {
+        if (res.type === 'document_group' && res.document_group_id) {
+          const { data: groupDocs, error: grpErr } = await supabase
+            .from('module_step_resources')
+            .select('*')
+            .eq('document_group_id', res.document_group_id);
+            
+          if (!grpErr && groupDocs) {
+            for (const doc of groupDocs) {
+              if (doc.type === 'document') await instantiateDocument(client, doc, res.moment);
+            }
+          }
+        } else if (res.type === 'document') {
+          await instantiateDocument(client, res, res.moment);
+        }
+      }
+      fetchDocuments();
+    } catch (e) {
+      console.error("[distributeDocuments] Erreur :", e);
+    }
+  };
 
   const handleModuleChange = async (clientId, moduleId) => {
     console.log('[handleModuleChange] Début. clientId:', clientId, 'moduleId:', moduleId);
@@ -7620,6 +8216,9 @@ export default function App() {
       console.log('[handleModuleChange] Déclenchement de generateSessions...');
       // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
+      
+      // 3.5. Distribution automatique des documents
+      await distributeDocumentsForModule(compatibleClient, finalModuleId);
     } else {
       console.warn('[handleModuleChange] Conditions non remplies pour generateSessions:', { hasClient: !!updatedClient, hasModule: !!finalModuleId });
     }
@@ -7732,10 +8331,10 @@ export default function App() {
       template_id: templateId,
       titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
       type: stepData.type,
-      // On sépare l'UUID (ressource_id) du chemin texte (file_url)
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: (stepData.fileUrl) ? stepData.fileUrl : ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
+      destination: stepData.destination || 'client',
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1,
       ...(stepData.instructions ? { instructions: stepData.instructions } : {})
     }]);
@@ -7752,7 +8351,7 @@ export default function App() {
 
   const handleAddModuleMomentResource = async (moduleId, moment, stepData) => {
     setIsAddingStepResource(true);
-    const { error } = await supabase.from('module_step_resources').insert([{
+    const { data: newResource, error } = await supabase.from('module_step_resources').insert([{
       module_id: moduleId,
       moment: moment,
       template_id: null,
@@ -7761,14 +8360,45 @@ export default function App() {
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: stepData.fileUrl || ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
+      destination: stepData.destination || 'client',
       ordre: moduleStepResources.filter(r => r.module_id === moduleId && r.moment === moment).length + 1,
-    }]);
+    }]).select().single();
     if (error) {
       toast.error("Erreur lors de l'ajout : " + error.message);
     } else {
+      // Auto-distribuer ce document aux clients déjà assignés à ce module
+      if ((moment === 'debut' || moment === 'fin') && newResource && stepData.type === 'document') {
+        const assignedClients = clients.filter(c =>
+          String(c.module_id) === String(moduleId) &&
+          (!currentOrgId || String(c.organisation_id) === String(currentOrgId))
+        );
+        for (const client of assignedClients) {
+          await instantiateDocument(client, newResource, moment);
+        }
+        if (assignedClients.length > 0) {
+          toast.success(`✅ Document distribué à ${assignedClients.length} client(s) existant(s)`);
+        }
+      }
       await fetchModules();
     }
     setIsAddingStepResource(false);
+  };
+
+  // Redistribue manuellement tous les documents début/fin d'un module à ses clients (sans toucher aux séances)
+  const handleRedistributeModuleDocs = async (moduleId) => {
+    const assignedClients = clients.filter(c =>
+      String(c.module_id) === String(moduleId) &&
+      (!currentOrgId || String(c.organisation_id) === String(currentOrgId))
+    );
+    if (assignedClients.length === 0) {
+      toast('Aucun client assigné à ce module.'); return;
+    }
+    toast('Redistribution en cours...');
+    for (const client of assignedClients) {
+      await distributeDocumentsForModule(client, moduleId);
+    }
+    await fetchDocuments();
+    toast.success(`✅ Documents redistribués à ${assignedClients.length} client(s)`);
   };
 
   const handleDeleteFolder = async (folderId) => {
@@ -8411,56 +9041,60 @@ export default function App() {
     }
   };
 
-  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg) => {
+  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg, classificationArg) => {
     try {
       const file = fileArg || null;
-      const type = typeArg || newTemplateName;
+      const type = typeArg || newTemplateName || (file ? file.name.replace(/\.[^/.]+$/, '') : null);
       const destination = destinationArg || newTemplateDestination || 'client';
+      const classification = classificationArg || newTemplateClassification || 'telechargeable';
 
       if (!file) {
-        toast.error("Veuillez sélectionner un fichier .docx d'abord.");
-        return;
-      }
-      if (!type) {
-        toast.error("Veuillez saisir un nom pour ce type de modèle.");
+        toast.error("Veuillez sélectionner un fichier .docx ou .pdf d'abord.");
         return;
       }
 
-      const fileName = `template_${type}_${Date.now()}.docx`;
+      const fileExt = file.name.split('.').pop().toLowerCase();
+      // Supprime les accents (é→e, à→a, etc.) puis remplace tout ce qui n'est pas alphanumérique par _
+      const safeType = type.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `template_${safeType}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
       setDocumentTemplates(prev => ({
         ...prev,
-        [type]: { url: publicUrl, name: file.name, destination }
+        [type]: { url: publicUrl, name: file.name, destination, classification }
       }));
 
       // Sauvegarder dans module_step_resources (Source unifiée)
-      const { data: existing } = await supabase.from('module_step_resources').select('id').eq('titre', type);
+      const { data: existing } = await supabase.from('module_step_resources').select('id, metadata').eq('titre', type).eq('type', 'document');
 
+      const metadataObj = { classification };
       if (existing && existing.length > 0) {
-        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination }).eq('id', existing[0].id);
+        const oldMeta = (typeof existing[0].metadata === 'string' && existing[0].metadata.startsWith('{')) ? JSON.parse(existing[0].metadata) : (existing[0].metadata || {});
+        const newMeta = JSON.stringify({ ...oldMeta, classification });
+        await supabase.from('module_step_resources').update({ file_url: publicUrl, destination, metadata: newMeta, extension: fileExt }).eq('id', existing[0].id);
       } else {
         await supabase.from('module_step_resources').insert([{
           titre: type,
           file_url: publicUrl,
           type: 'document',
-          destination
+          destination,
+          metadata: JSON.stringify(metadataObj),
+          extension: fileExt
         }]);
       }
 
       // Sync avec documents
-      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type).eq('type_document', 'Modèle Référence');
+      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type);
       if (existingDoc && existingDoc.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
+        await supabase.from('documents').update({ url: publicUrl, extension: fileExt }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: type,
-          type_document: 'Modèle Référence',
+          type_action: 'Modèle Référence',
           url: publicUrl,
-          visible_client: false,
-          visible_formateur: false
+          extension: fileExt
         }]);
       }
 
@@ -8478,15 +9112,16 @@ export default function App() {
             signe_par_formateur: false,
             signe_par_client: false,
             visible_formateur: true,
+            extension: fileExt
           }));
           await supabase.from('documents').insert(docsToInsert);
           await fetchDocuments();
           toast.success(`Modèle "${type}" enregistré et distribué à ${allFormateurs.length} formateur(s) pour signature.`);
         } else {
-          toast.success(`Modèle Word pour "${type}" enregistré.`);
+          toast.success(`Modèle pour "${type}" enregistré.`);
         }
       } else {
-        toast.success(`Modèle Word pour "${type}" enregistré avec succès.`);
+        toast.success(`Modèle pour "${type}" enregistré avec succès.`);
       }
     } catch (err) {
       console.error("Upload Template Error:", err);
@@ -8633,7 +9268,7 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -8751,7 +9386,7 @@ export default function App() {
 
       // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
       const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
-      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId) {
+      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
         saveAs(pdfBlob, finalFileName);
       }
 
@@ -8787,17 +9422,19 @@ export default function App() {
 
       console.log('Données envoyées à Supabase :', JSON.stringify(docToInsert, null, 2));
 
-      const { error: insertError } = await supabase.from('documents').insert([docToInsert]);
+      const { data: insertedDocs, error: insertError } = await supabase.from('documents').insert([docToInsert]).select();
       if (insertError) {
         console.error('Erreur insert Supabase :', insertError);
         throw new Error(`Erreur Supabase : ${insertError.message || insertError.details || JSON.stringify(insertError)}`);
       }
 
       await fetchDocuments();
-      toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      if (!isAutoGenerate) toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
-      toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      if (!isAutoGenerate) toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      return null;
     }
   };
 
@@ -9477,8 +10114,8 @@ export default function App() {
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('modélothèque'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modélothèque' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FileText className="w-5 h-5 mr-3" /> Modélothèque
+              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <FileText className="w-5 h-5 mr-3" /> Gestion des documents
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
@@ -9738,6 +10375,8 @@ export default function App() {
             handleRenameFolder={handleRenameFolder}
             handleRenameResource={handleRenameResource}
             handleAddModuleMomentResource={handleAddModuleMomentResource}
+            handleRedistributeModuleDocs={handleRedistributeModuleDocs}
+            documentTemplates={documentTemplates}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
@@ -9795,7 +10434,7 @@ export default function App() {
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
-          {activeTab === 'modélothèque' && <DocumentsView
+          {activeTab === 'gestion_documents' && <DocumentsView
             sessions={sessions}
             documents={documents}
             clients={clients}
@@ -9825,6 +10464,9 @@ export default function App() {
             setNewTemplateName={setNewTemplateName}
             newTemplateDestination={newTemplateDestination}
             setNewTemplateDestination={setNewTemplateDestination}
+            newTemplateClassification={newTemplateClassification}
+            setNewTemplateClassification={setNewTemplateClassification}
+            fetchDocuments={fetchDocuments}
             setIsDeleteModalOpen={setIsDeleteModalOpen}
             setTargetToDelete={setTargetToDelete}
             supabase={supabase}
