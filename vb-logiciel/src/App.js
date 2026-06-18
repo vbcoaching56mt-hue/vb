@@ -3669,7 +3669,7 @@ const IngenierieView = ({
                                   if(!e.target.value) return;
                                   const grpId = e.target.value;
                                   const grpName = e.target.options[e.target.selectedIndex].text;
-                                  await handleAddModuleMomentResource(mod.id, 'debut', 'document_group', null, grpName, null, null, grpId);
+                                  await handleAddModuleMomentResource(mod.id, 'debut', { type: 'document_group', title: grpName, document_group_id: grpId });
                                   e.target.value = '';
                                 }}
                                 className="text-[10px] font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
@@ -3831,7 +3831,7 @@ const IngenierieView = ({
                                   if(!e.target.value) return;
                                   const grpId = e.target.value;
                                   const grpName = e.target.options[e.target.selectedIndex].text;
-                                  await handleAddModuleMomentResource(mod.id, 'fin', 'document_group', null, grpName, null, null, grpId);
+                                  await handleAddModuleMomentResource(mod.id, 'fin', { type: 'document_group', title: grpName, document_group_id: grpId });
                                   e.target.value = '';
                                 }}
                                 className="text-[10px] font-bold text-rose-800 bg-white border border-rose-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
@@ -5810,6 +5810,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
 // stockées dans la table `documents` avec user_id = currentUserId uniquement.
 const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
+  const [groupDocs, setGroupDocs] = React.useState({}); // { group_id: [doc, ...] }
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
   const [viewingResource, setViewingResource] = React.useState(null);
@@ -5821,17 +5822,42 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
     (async () => {
+      // Récupère TOUS les types (document + document_group), sauf les signatures
       const { data, error } = await supabase
         .from('module_step_resources')
-        .select('id, titre, file_url, moment, metadata, extension, type, ordre')
+        .select('id, titre, file_url, moment, metadata, extension, type, ordre, document_group_id')
         .eq('module_id', moduleId)
         .in('moment', ['debut', 'fin'])
-        .eq('type', 'document')
+        .neq('type', 'signature')
         .order('ordre', { ascending: true });
-      if (!error && data) setModuleResources(data);
+
+      if (!error && data) {
+        setModuleResources(data);
+
+        // Pour les ressources de type document_group, chercher les docs per-client dans la table documents
+        const groupIds = [...new Set(
+          data.filter(r => r.type === 'document_group' && r.document_group_id).map(r => r.document_group_id)
+        )];
+        if (groupIds.length > 0) {
+          const { data: gDocs } = await supabase
+            .from('documents')
+            .select('id, nom, url, signe_par_client, type_document, group_id, metadata')
+            .in('group_id', groupIds)
+            .eq('user_id', currentUserId)
+            .eq('visible_client', true);
+          if (gDocs) {
+            const byGroup = {};
+            gDocs.forEach(d => {
+              if (!byGroup[d.group_id]) byGroup[d.group_id] = [];
+              byGroup[d.group_id].push(d);
+            });
+            setGroupDocs(byGroup);
+          }
+        }
+      }
       setLoading(false);
     })();
-  }, [moduleId, supabase]);
+  }, [moduleId, supabase, currentUserId]);
 
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
@@ -5861,6 +5887,35 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   };
 
   const renderDocCard = (resource) => {
+    // --- Cas document_group : montrer les docs per-client du groupe ---
+    if (resource.type === 'document_group') {
+      const docs = groupDocs[resource.document_group_id] || [];
+      if (docs.length === 0) return null;
+      return (
+        <div key={resource.id} className="space-y-2">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">📂 {resource.titre}</p>
+          {docs.map(d => (
+            <div key={d.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-indigo-200 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
+                <div>
+                  <p className="font-bold text-gray-900 text-sm">{d.nom}</p>
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider">{d.type_document === 'À signer' ? 'À signer' : 'Téléchargeable'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {d.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
+                {d.url && (
+                  <button onClick={() => setViewingResource({ ...d, titre: d.nom, file_url: d.url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // --- Cas document direct (type = 'document' ou null) ---
     const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{') ? JSON.parse(resource.metadata) : (resource.metadata || {});
     const classification = meta.classification || 'telechargeable';
     const signed = isSignedByClient(resource);
@@ -8521,12 +8576,13 @@ export default function App() {
       module_id: moduleId,
       moment: moment,
       template_id: null,
-      titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : 'Document'),
+      titre: stepData.title || (stepData.type === 'signature' ? 'Émargement' : stepData.type === 'document_group' ? stepData.title || 'Groupe' : 'Document'),
       type: stepData.type,
       ressource_id: (stepData.resourceId && !stepData.resourceId.includes('/')) ? stepData.resourceId : null,
       file_url: stepData.fileUrl || ((stepData.resourceId && stepData.resourceId.includes('/')) ? stepData.resourceId : null),
       metadata: stepData.metadata,
       destination: stepData.destination || 'client',
+      document_group_id: stepData.document_group_id || null,
       ordre: moduleStepResources.filter(r => r.module_id === moduleId && r.moment === moment).length + 1,
     }]).select().single();
     if (error) {
