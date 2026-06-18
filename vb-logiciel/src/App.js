@@ -5928,7 +5928,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // ─── Rendu d'un groupe de documents (type === 'document_group') ───
   const renderGroupCard = (resource) => {
     // Les docs du groupe sont dans la table documents avec group_id = document_group_id
-    const groupDocs = (documents || []).filter(d => d.group_id === resource.document_group_id);
+    // Guard : si document_group_id est null (row corrompue), pas de docs
+    const groupDocs = resource.document_group_id
+      ? (documents || []).filter(d => d.group_id === resource.document_group_id)
+      : [];
     const isExpanded = expandedGroupId === resource.id;
     // Priorité : nom depuis document_groups > titre si non générique > fallback
     const groupName = groupNames[resource.document_group_id]
