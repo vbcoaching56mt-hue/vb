@@ -5827,7 +5827,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // Pas de filtre type dans la requête → filtre JS (évite problèmes NULL + PostgREST OR syntax)
         const { data, error } = await supabase
           .from('module_step_resources')
-          .select('id, titre, file_url, moment, metadata, extension, type, ordre, document_group_id')
+          .select('id, titre, file_url, moment, metadata, type, ordre, document_group_id')
           .eq('module_id', moduleId)
           .in('moment', ['debut', 'fin'])
           .order('ordre', { ascending: true });
@@ -5919,7 +5919,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">
               {classification === 'a_signer' ? 'À signer' : 'Téléchargeable'}
-              {resource.extension ? ` · .${resource.extension}` : ''}
             </p>
           </div>
         </div>
