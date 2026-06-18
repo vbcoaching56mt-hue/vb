@@ -5810,55 +5810,75 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
 // stockées dans la table `documents` avec user_id = currentUserId uniquement.
 const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
-  const [groupDocs, setGroupDocs] = React.useState({}); // { group_id: [doc, ...] }
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
   const [viewingResource, setViewingResource] = React.useState(null);
+  const [debugInfo, setDebugInfo] = React.useState(null);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
   const moduleId = currentClient?.module_id;
 
   React.useEffect(() => {
+    console.log('[ClientDocumentsView] currentUserId:', currentUserId, '| clients total:', clients?.length, '| currentClient trouvé:', !!currentClient, '| moduleId:', moduleId);
     if (!moduleId) { setLoading(false); return; }
     (async () => {
-      // Récupère TOUS les types (document + document_group + NULL), sauf les signatures
-      // Note: .neq('type','signature') en SQL exclut aussi les NULL → on utilise .or() pour les inclure
-      const { data, error } = await supabase
-        .from('module_step_resources')
-        .select('id, titre, file_url, moment, metadata, extension, type, ordre, document_group_id')
-        .eq('module_id', moduleId)
-        .in('moment', ['debut', 'fin'])
-        .or('type.is.null,type.neq.signature')
-        .order('ordre', { ascending: true });
+      try {
+        // Pas de filtre type dans la requête → filtre JS (évite problèmes NULL + PostgREST OR syntax)
+        const { data, error } = await supabase
+          .from('module_step_resources')
+          .select('id, titre, file_url, moment, metadata, extension, type, ordre, document_group_id')
+          .eq('module_id', moduleId)
+          .in('moment', ['debut', 'fin'])
+          .order('ordre', { ascending: true });
 
-      if (!error && data) {
-        setModuleResources(data);
+        console.log('[ClientDocumentsView] module_step_resources résultat:', { count: data?.length, error, moduleId, data });
 
-        // Pour les ressources de type document_group, chercher les docs per-client dans la table documents
-        const groupIds = [...new Set(
-          data.filter(r => r.type === 'document_group' && r.document_group_id).map(r => r.document_group_id)
-        )];
-        if (groupIds.length > 0) {
-          const { data: gDocs } = await supabase
-            .from('documents')
-            .select('id, nom, url, signe_par_client, type_document, group_id, metadata')
-            .in('group_id', groupIds)
-            .eq('user_id', currentUserId)
-            .eq('visible_client', true);
-          if (gDocs) {
-            const byGroup = {};
-            gDocs.forEach(d => {
-              if (!byGroup[d.group_id]) byGroup[d.group_id] = [];
-              byGroup[d.group_id].push(d);
-            });
-            setGroupDocs(byGroup);
-          }
+        if (error) {
+          console.error('[ClientDocumentsView] Erreur requête:', error);
+          setDebugInfo({ error: error.message, moduleId });
+        } else {
+          // Filtre JS : exclure les signatures (inclut les NULL et document_group)
+          const filtered = (data || []).filter(r => r.type !== 'signature');
+          console.log('[ClientDocumentsView] après filtre signature:', filtered.length, 'ressources');
+          setModuleResources(filtered);
+          setDebugInfo({ count: filtered.length, moduleId, rawCount: data?.length });
         }
+      } catch (e) {
+        console.error('[ClientDocumentsView] Exception:', e);
+        setDebugInfo({ error: e.message, moduleId });
       }
       setLoading(false);
     })();
   }, [moduleId, supabase, currentUserId]);
+
+  // ─── Source 2 : documents per-client déjà dans la table documents ───
+  // Capture les docs assignés manuellement ou via l'ancienne méthode de synchronisation
+  const clientVisibleDocs = React.useMemo(() => {
+    const myDocs = (documents || []).filter(d =>
+      String(d.user_id) === String(currentUserId) && d.visible_client
+    );
+    console.log('[ClientDocumentsView] documents prop visible pour ce client:', myDocs.length);
+    return myDocs;
+  }, [documents, currentUserId]);
+
+  // Évite les doublons : un doc déjà dans moduleResources (par titre) n'est pas ré-affiché
+  const moduleResourceTitles = React.useMemo(() => new Set(moduleResources.map(r => r.titre)), [moduleResources]);
+
+  const extraDebutDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
+    if (moduleResourceTitles.has(d.nom)) return false;
+    const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
+      (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
+    // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
+    return meta.moment === 'debut' || (!meta.moment && (d.type_document === 'À signer' || d.type_document === 'Contrat' || d.type_document === 'Convention'));
+  }), [clientVisibleDocs, moduleResourceTitles]);
+
+  const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
+    if (moduleResourceTitles.has(d.nom)) return false;
+    const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
+      (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
+    return meta.moment === 'fin';
+  }), [clientVisibleDocs, moduleResourceTitles]);
 
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
@@ -5868,7 +5888,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     if (!signingResource || !currentClient) return;
     const meta = typeof signingResource.metadata === 'string' && signingResource.metadata.startsWith('{')
       ? JSON.parse(signingResource.metadata) : (signingResource.metadata || {});
-    // Création d'une entrée PER-CLIENT dans documents — les templates ne sont jamais modifiés
     const { error } = await supabase.from('documents').insert([{
       user_id: currentUserId,
       organisation_id: currentClient.organisation_id,
@@ -5887,36 +5906,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     toast.success('✅ Document signé avec succès !');
   };
 
-  const renderDocCard = (resource) => {
-    // --- Cas document_group : montrer les docs per-client du groupe ---
-    if (resource.type === 'document_group') {
-      const docs = groupDocs[resource.document_group_id] || [];
-      if (docs.length === 0) return null;
-      return (
-        <div key={resource.id} className="space-y-2">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">📂 {resource.titre}</p>
-          {docs.map(d => (
-            <div key={d.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-indigo-200 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
-                <div>
-                  <p className="font-bold text-gray-900 text-sm">{d.nom}</p>
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider">{d.type_document === 'À signer' ? 'À signer' : 'Téléchargeable'}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap justify-end">
-                {d.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
-                {d.url && (
-                  <button onClick={() => setViewingResource({ ...d, titre: d.nom, file_url: d.url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      );
-    }
-
-    // --- Cas document direct (type = 'document' ou null) ---
+  // ─── Rendu d'une carte de ressource (source module_step_resources) ───
+  const renderResourceCard = (resource) => {
     const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{') ? JSON.parse(resource.metadata) : (resource.metadata || {});
     const classification = meta.classification || 'telechargeable';
     const signed = isSignedByClient(resource);
@@ -5945,6 +5936,25 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     );
   };
 
+  // ─── Rendu d'une carte de document per-client (source documents table) ───
+  const renderDocumentCard = (doc) => (
+    <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-rose-50 text-rose-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
+        <div>
+          <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
+          <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || 'Document'}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap justify-end">
+        {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
+        {(doc.url || doc.file_url) && (
+          <button onClick={() => setViewingResource({ ...doc, titre: doc.nom, file_url: doc.url || doc.file_url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
+        )}
+      </div>
+    </div>
+  );
+
   if (loading) return (
     <div className="flex items-center justify-center py-20">
       <div className="w-8 h-8 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
@@ -5959,8 +5969,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     </div>
   );
 
-  const debutDocs = moduleResources.filter(r => r.moment === 'debut');
-  const finDocs = moduleResources.filter(r => r.moment === 'fin');
+  const debutResources = moduleResources.filter(r => r.moment === 'debut');
+  const finResources = moduleResources.filter(r => r.moment === 'fin');
+  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || extraFinDocs.length > 0;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
@@ -5969,32 +5980,44 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <p className="text-gray-500 text-lg mt-1">Documents administratifs de votre parcours d'accompagnement.</p>
       </div>
 
-      {debutDocs.length > 0 && (
+      {(debutResources.length > 0 || extraDebutDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-emerald-500 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de début de parcours</h2>
             <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-1 rounded-full">Accessibles immédiatement</span>
           </div>
-          <div className="space-y-3">{debutDocs.map(renderDocCard)}</div>
+          <div className="space-y-3">
+            {debutResources.map(renderResourceCard)}
+            {extraDebutDocs.map(renderDocumentCard)}
+          </div>
         </div>
       )}
 
-      {finDocs.length > 0 && (
+      {(finResources.length > 0 || extraFinDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-rose-500 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
           </div>
-          <div className="space-y-3">{finDocs.map(renderDocCard)}</div>
+          <div className="space-y-3">
+            {finResources.map(renderResourceCard)}
+            {extraFinDocs.map(renderDocumentCard)}
+          </div>
         </div>
       )}
 
-      {debutDocs.length === 0 && finDocs.length === 0 && (
-        <div className="text-center py-20 text-gray-400">
+      {!hasAnything && (
+        <div className="text-center py-16 text-gray-400">
           <FileText size={48} className="mx-auto mb-4 text-gray-200" />
           <p className="font-bold text-gray-600">Aucun document pour le moment</p>
-          <p className="text-sm mt-1">Votre accompagnateur n'a pas encore ajouté de documents administratifs.</p>
+          <p className="text-sm mt-1">Votre accompagnateur n'a pas encore ajouté de documents à ce module.</p>
+          {debugInfo && (
+            <p className="text-[10px] font-mono text-gray-300 mt-3">
+              module: {debugInfo.moduleId} · ressources: {debugInfo.count ?? '?'} · docs visibles: {clientVisibleDocs.length}
+              {debugInfo.error && <span className="text-red-400"> · erreur: {debugInfo.error}</span>}
+            </p>
+          )}
         </div>
       )}
 
