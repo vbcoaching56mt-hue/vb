@@ -5908,23 +5908,33 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   // ─── Rendu d'une carte de ressource (source module_step_resources) ───
   const renderResourceCard = (resource) => {
-    const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{') ? JSON.parse(resource.metadata) : (resource.metadata || {});
-    const classification = meta.classification || 'telechargeable';
+    const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{')
+      ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
+      : (resource.metadata || {});
+
+    // Compatibilité double format :
+    //  - ancien format (instantiateDocument) : meta.classification === 'a_signer'
+    //  - nouveau format (StepResourceModal)  : meta.requiresClientSignature === true
+    const needsSignature =
+      meta.classification === 'a_signer' ||
+      meta.requiresClientSignature === true ||
+      meta.documentType === 'signature';
+
+    const label = needsSignature ? 'À signer' : 'Téléchargeable';
     const signed = isSignedByClient(resource);
+
     return (
       <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-rose-50 text-rose-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${needsSignature ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">
-              {classification === 'a_signer' ? 'À signer' : 'Téléchargeable'}
-            </p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {signed && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
-          {!signed && classification === 'a_signer' && (
+          {!signed && needsSignature && resource.file_url && (
             <button onClick={() => setSigningResource(resource)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer le document</button>
           )}
           {resource.file_url && (
