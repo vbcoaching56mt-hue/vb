@@ -5804,6 +5804,172 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   );
 };
 
+// ─── Vue "Mes Documents" client ────────────────────────────────────────────────
+// Lit directement module_step_resources (lecture seule) filtré par le module_id
+// du client connecté. Aucune écriture sur les templates. Les signatures sont
+// stockées dans la table `documents` avec user_id = currentUserId uniquement.
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments }) => {
+  const [moduleResources, setModuleResources] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [signingResource, setSigningResource] = React.useState(null);
+  const [viewingResource, setViewingResource] = React.useState(null);
+
+  // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
+  const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
+  const moduleId = currentClient?.module_id;
+
+  React.useEffect(() => {
+    if (!moduleId) { setLoading(false); return; }
+    (async () => {
+      const { data, error } = await supabase
+        .from('module_step_resources')
+        .select('id, titre, file_url, moment, metadata, extension, type, ordre')
+        .eq('module_id', moduleId)
+        .in('moment', ['debut', 'fin'])
+        .eq('type', 'document')
+        .order('ordre', { ascending: true });
+      if (!error && data) setModuleResources(data);
+      setLoading(false);
+    })();
+  }, [moduleId, supabase]);
+
+  // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
+  const isSignedByClient = (resource) =>
+    (documents || []).some(d => String(d.user_id) === String(currentUserId) && d.nom === resource.titre && d.signe_par_client);
+
+  const handleSignSave = async (signatureDataUrl) => {
+    if (!signingResource || !currentClient) return;
+    const meta = typeof signingResource.metadata === 'string' && signingResource.metadata.startsWith('{')
+      ? JSON.parse(signingResource.metadata) : (signingResource.metadata || {});
+    // Création d'une entrée PER-CLIENT dans documents — les templates ne sont jamais modifiés
+    const { error } = await supabase.from('documents').insert([{
+      user_id: currentUserId,
+      organisation_id: currentClient.organisation_id,
+      nom: signingResource.titre,
+      url: signingResource.file_url,
+      type_document: 'À signer',
+      visible_client: true,
+      visible_formateur: true,
+      signe_par_client: true,
+      signature_client: signatureDataUrl,
+      metadata: { moment: signingResource.moment, template_id: signingResource.id, classification: meta.classification || 'a_signer' }
+    }]);
+    if (error) { toast.error('Erreur lors de la signature : ' + error.message); return; }
+    setSigningResource(null);
+    if (fetchDocuments) await fetchDocuments();
+    toast.success('✅ Document signé avec succès !');
+  };
+
+  const renderDocCard = (resource) => {
+    const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{') ? JSON.parse(resource.metadata) : (resource.metadata || {});
+    const classification = meta.classification || 'telechargeable';
+    const signed = isSignedByClient(resource);
+    return (
+      <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-rose-50 text-rose-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
+          <div>
+            <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">
+              {classification === 'a_signer' ? 'À signer' : 'Téléchargeable'}
+              {resource.extension ? ` · .${resource.extension}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {signed && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
+          {!signed && classification === 'a_signer' && (
+            <button onClick={() => setSigningResource(resource)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer le document</button>
+          )}
+          {resource.file_url && (
+            <button onClick={() => setViewingResource(resource)} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+    </div>
+  );
+
+  if (!moduleId) return (
+    <div className="max-w-3xl mx-auto py-20 text-center">
+      <FileText size={48} className="mx-auto mb-4 text-gray-200" />
+      <p className="font-bold text-lg text-gray-700">Aucun parcours assigné</p>
+      <p className="text-sm text-gray-400 mt-1">Votre accompagnateur vous assignera bientôt un module de formation.</p>
+    </div>
+  );
+
+  const debutDocs = moduleResources.filter(r => r.moment === 'debut');
+  const finDocs = moduleResources.filter(r => r.moment === 'fin');
+
+  return (
+    <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
+      <div>
+        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Documents</h1>
+        <p className="text-gray-500 text-lg mt-1">Documents administratifs de votre parcours d'accompagnement.</p>
+      </div>
+
+      {debutDocs.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-2 h-6 bg-emerald-500 rounded-full"></div>
+            <h2 className="font-bold text-gray-900 text-lg">Documents de début de parcours</h2>
+            <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-1 rounded-full">Accessibles immédiatement</span>
+          </div>
+          <div className="space-y-3">{debutDocs.map(renderDocCard)}</div>
+        </div>
+      )}
+
+      {finDocs.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-2 h-6 bg-rose-500 rounded-full"></div>
+            <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
+          </div>
+          <div className="space-y-3">{finDocs.map(renderDocCard)}</div>
+        </div>
+      )}
+
+      {debutDocs.length === 0 && finDocs.length === 0 && (
+        <div className="text-center py-20 text-gray-400">
+          <FileText size={48} className="mx-auto mb-4 text-gray-200" />
+          <p className="font-bold text-gray-600">Aucun document pour le moment</p>
+          <p className="text-sm mt-1">Votre accompagnateur n'a pas encore ajouté de documents administratifs.</p>
+        </div>
+      )}
+
+      {signingResource && (
+        <DocumentViewerModal
+          isOpen={true}
+          url={signingResource.file_url}
+          title={signingResource.titre}
+          onClose={() => setSigningResource(null)}
+          supabase={supabase}
+          mode="sign"
+          isInteractiveConsent={false}
+          onSave={handleSignSave}
+        />
+      )}
+      {viewingResource && (
+        <DocumentViewerModal
+          isOpen={true}
+          url={viewingResource.file_url}
+          title={viewingResource.titre}
+          onClose={() => setViewingResource(null)}
+          supabase={supabase}
+          mode="view"
+          isInteractiveConsent={false}
+          onSave={() => {}}
+        />
+      )}
+    </div>
+  );
+};
+
 const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExerciseResponse }) => {
   const exerciseSessions = (sessions || [])
     .filter(s => String(s.client_id) === String(currentUserId) && s.type_activite === 'exercice')
@@ -10147,6 +10313,7 @@ export default function App() {
             <>
               <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
               <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
               <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
@@ -10432,6 +10599,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
