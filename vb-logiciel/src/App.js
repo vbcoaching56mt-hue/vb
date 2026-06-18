@@ -5814,6 +5814,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [signingResource, setSigningResource] = React.useState(null);
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
+  const [expandedGroupId, setExpandedGroupId] = React.useState(null);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -5906,8 +5907,99 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     toast.success('✅ Document signé avec succès !');
   };
 
+  // ─── Rendu d'un groupe de documents (type === 'document_group') ───
+  const renderGroupCard = (resource) => {
+    // Les docs du groupe sont dans la table documents avec group_id = document_group_id
+    const groupDocs = (documents || []).filter(d => d.group_id === resource.document_group_id);
+    const isExpanded = expandedGroupId === resource.id;
+    const groupName = resource.titre && resource.titre !== 'Document' && resource.titre !== 'Groupe'
+      ? resource.titre
+      : 'Groupe de documents';
+
+    return (
+      <div key={resource.id} className="border border-indigo-100 rounded-2xl overflow-hidden bg-white hover:border-indigo-200 transition-colors">
+        {/* En-tête cliquable */}
+        <button
+          onClick={() => setExpandedGroupId(isExpanded ? null : resource.id)}
+          className="w-full p-4 flex items-center justify-between hover:bg-indigo-50 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-xl shrink-0"><Layout size={20} /></div>
+            <div className="text-left">
+              <p className="font-bold text-gray-900 text-sm">{groupName}</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">
+                {groupDocs.length} document{groupDocs.length !== 1 ? 's' : ''} · Groupe
+              </p>
+            </div>
+          </div>
+          {isExpanded
+            ? <ChevronUp size={16} className="text-indigo-400 shrink-0" />
+            : <ChevronDown size={16} className="text-gray-300 shrink-0" />}
+        </button>
+
+        {/* Contenu dépliable */}
+        {isExpanded && (
+          <div className="border-t border-indigo-50">
+            {groupDocs.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-5 italic">Aucun document dans ce groupe.</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {groupDocs.map(doc => {
+                  const fileUrl = doc.url || doc.file_url;
+                  const isDocSigned = (documents || []).some(
+                    d => String(d.user_id) === String(currentUserId) && d.nom === doc.nom && d.signe_par_client
+                  );
+                  const docMeta = typeof doc.metadata === 'string' && doc.metadata.startsWith('{')
+                    ? (() => { try { return JSON.parse(doc.metadata); } catch { return {}; } })()
+                    : (doc.metadata || {});
+                  const docNeedsSignature = doc.type_document === 'À signer' ||
+                    docMeta.requiresClientSignature === true ||
+                    docMeta.classification === 'a_signer';
+
+                  return (
+                    <div key={doc.id} className="px-4 py-3 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText size={14} className="text-gray-400 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{doc.nom}</p>
+                          <p className="text-[10px] text-gray-400 uppercase tracking-wider">
+                            {docNeedsSignature ? 'À signer' : (doc.type_document || 'Document')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isDocSigned && (
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>
+                        )}
+                        {!isDocSigned && docNeedsSignature && fileUrl && (
+                          <button
+                            onClick={() => setSigningResource({ id: doc.id, titre: doc.nom, file_url: fileUrl, moment: resource.moment, metadata: { ...docMeta, classification: 'a_signer' } })}
+                            className="px-3 py-1.5 bg-rose-500 text-white font-bold rounded-lg text-xs hover:bg-rose-600 transition-colors shadow-sm"
+                          >Signer</button>
+                        )}
+                        {fileUrl && (
+                          <button
+                            onClick={() => setViewingResource({ id: doc.id, titre: doc.nom, file_url: fileUrl })}
+                            className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs hover:bg-gray-50 transition-colors"
+                          >Consulter</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ─── Rendu d'une carte de ressource (source module_step_resources) ───
   const renderResourceCard = (resource) => {
+    // Déléguer les groupes à renderGroupCard
+    if (resource.type === 'document_group') return renderGroupCard(resource);
+
     const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{')
       ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
       : (resource.metadata || {});
