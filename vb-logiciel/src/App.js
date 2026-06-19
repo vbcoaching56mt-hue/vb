@@ -2222,9 +2222,10 @@ const ClientDetailView = ({
   };
 
   const handleDeleteSession = async (id) => {
-    if (!window.confirm("Supprimer cette séance ?")) return;
-    const { error } = await supabase.from('sessions').delete().eq('id', id);
-    if (!error && fetchSessions) fetchSessions();
+    if (!window.confirm("Supprimer cet élément ?")) return;
+    const { error } = await supabaseAdmin.from('sessions').delete().eq('id', id);
+    if (error) { toast.error('Erreur suppression : ' + error.message); return; }
+    if (fetchSessions) fetchSessions();
   };
 
   return (
@@ -2564,12 +2565,6 @@ const ClientDetailView = ({
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mt-1">Vue par Blocs de Séances</p>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => handleAddAdminBloc && handleAddAdminBloc(client.id)}
-                className="bg-amber-100 hover:bg-amber-500 text-amber-700 hover:text-white text-xs font-black px-5 py-3.5 rounded-2xl flex items-center gap-2 shadow-sm transition-all border border-amber-200"
-              >
-                <Archive size={16} /> Bloc Administratif
-              </button>
               <button
                 onClick={() => {
                   setTargetSessionForAddition({ clientId: client.id, nextNum: clientSessions.length + 1 });
