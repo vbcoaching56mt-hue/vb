@@ -5974,18 +5974,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                   const docMeta = typeof doc.metadata === 'string' && doc.metadata.startsWith('{')
                     ? (() => { try { return JSON.parse(doc.metadata); } catch { return {}; } })()
                     : (doc.metadata || {});
-                  const docNeedsSignature = doc.type_document === 'À signer' ||
-                    docMeta.requiresClientSignature === true ||
-                    docMeta.classification === 'a_signer';
+                  // Dans un groupe, tous les docs avec un fichier sont signables par défaut
+                  // sauf si explicitement marqué "Téléchargeable uniquement"
+                  const explicitlyNotToSign = doc.type_document === 'Téléchargeable' && docMeta.requiresClientSignature === false;
+                  const canSign = fileUrl && !explicitlyNotToSign;
 
                   return (
                     <div key={doc.id} className="px-4 py-3 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3 min-w-0">
-                        <FileText size={14} className="text-gray-400 shrink-0" />
+                        <FileText size={14} className={`shrink-0 ${canSign ? 'text-rose-400' : 'text-gray-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{doc.nom}</p>
-                          <p className="text-[10px] text-gray-400 uppercase tracking-wider">
-                            {docNeedsSignature ? 'À signer' : (doc.type_document || 'Document')}
+                          <p className="text-[10px] uppercase tracking-wider" style={{ color: canSign ? '#f87171' : '#9ca3af' }}>
+                            {canSign ? 'À signer' : (doc.type_document || 'Document')}
                           </p>
                         </div>
                       </div>
@@ -5993,7 +5994,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         {isDocSigned && (
                           <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>
                         )}
-                        {!isDocSigned && docNeedsSignature && fileUrl && (
+                        {!isDocSigned && canSign && (
                           <button
                             onClick={() => setSigningResource({ id: doc.id, titre: doc.nom, file_url: fileUrl, moment: resource.moment, metadata: { ...docMeta, classification: 'a_signer' } })}
                             className="px-3 py-1.5 bg-rose-500 text-white font-bold rounded-lg text-xs hover:bg-rose-600 transition-colors shadow-sm"
