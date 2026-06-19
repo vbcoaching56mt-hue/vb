@@ -5881,11 +5881,22 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     return myDocs;
   }, [documents, currentUserId]);
 
-  // Évite les doublons : un doc déjà dans moduleResources (par titre) n'est pas ré-affiché
-  const moduleResourceTitles = React.useMemo(() => new Set(moduleResources.map(r => r.titre)), [moduleResources]);
+  // Évite les doublons : titres des ressources du module + titres des docs à l'intérieur des groupes
+  const allKnownTitles = React.useMemo(() => {
+    const titles = new Set(moduleResources.map(r => r.titre));
+    // Ajouter les titres des documents dans chaque groupe
+    moduleResources
+      .filter(r => r.type === 'document_group' && r.document_group_id)
+      .forEach(r => {
+        (documents || [])
+          .filter(d => d.group_id === r.document_group_id)
+          .forEach(d => { if (d.nom) titles.add(d.nom); });
+      });
+    return titles;
+  }, [moduleResources, documents]);
 
   const extraDebutDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
-    if (moduleResourceTitles.has(d.nom)) return false;
+    if (allKnownTitles.has(d.nom)) return false;
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
@@ -5893,7 +5904,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   }), [clientVisibleDocs, moduleResourceTitles]);
 
   const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
-    if (moduleResourceTitles.has(d.nom)) return false;
+    if (allKnownTitles.has(d.nom)) return false;
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     return meta.moment === 'fin';
