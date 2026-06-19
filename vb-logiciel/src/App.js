@@ -3172,9 +3172,8 @@ const FormateurDetailView = ({
 
             {/* ── Bibliothèque de modèles disponibles ── */}
             {(() => {
-              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
-              // Docs déjà envoyés à ce formateur (par nom de template)
-              const sentDocNames = new Set(trainerDocs.map(d => d.nom));
+              // Tous les templates de la bibliothèque sont disponibles pour envoi (pas de filtre destination)
+              const availableTpls = Object.entries(documentTemplates || {});
               return (
                 <div>
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Envoyer un document pour signature</h4>
@@ -3183,7 +3182,8 @@ const FormateurDetailView = ({
                   ) : (
                     <div className="flex flex-col gap-2">
                       {availableTpls.map(([key]) => {
-                        const alreadySent = sentDocNames.has(key);
+                        // Le doc envoyé est nommé "{key} - {nom_formateur}" — on cherche par préfixe
+                        const alreadySent = trainerDocs.some(d => d.nom && (d.nom === key || d.nom.startsWith(key + ' - ')));
                         return (
                           <div key={key} className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100">
                             <div className="flex items-center gap-3">
@@ -3448,8 +3448,8 @@ const AdminFormateursView = ({
 
       {/* ── Section : Modèles de documents formateurs ─────────────────────── */}
       {(() => {
-        const formateurTemplates = Object.entries(documentTemplates || {})
-          .filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
+        // On affiche TOUS les templates de la bibliothèque (pas de filtre destination)
+        const formateurTemplates = Object.entries(documentTemplates || {});
 
         const handleAddTemplate = async () => {
           if (!tplLocalFile || !tplLocalName.trim()) return;
@@ -3526,27 +3526,35 @@ const AdminFormateursView = ({
             {formateurTemplates.length === 0 ? (
               <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                 <FileText className="mx-auto mb-3 text-gray-300" size={28} />
-                <p className="text-gray-400 text-sm italic">Aucun modèle formateur configuré.</p>
-                <p className="text-gray-300 text-xs mt-1">Ex : Contrat de sous-traitance, Lettre de mission, NDA…</p>
+                <p className="text-gray-400 text-sm italic">Aucun modèle configuré.</p>
+                <p className="text-gray-300 text-xs mt-1">Cliquez sur "Ajouter un modèle" pour importer votre premier document.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {formateurTemplates.map(([key, tpl]) => (
-                  <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
-                        <FileText size={18} />
+                {formateurTemplates.map(([key, tpl]) => {
+                  const dest = tpl.destination || 'client';
+                  return (
+                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 transition-all">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
+                          <FileText size={18} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">{key}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                              {dest === 'formateur' ? 'Formateur' : 'Client'}
+                            </span>
+                            <span className="text-[10px] text-gray-400">Modèle Word</span>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-gray-900 text-sm">{key}</p>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Modèle Word · Formateur</p>
-                      </div>
+                      <a href={tpl.url} target="_blank" rel="noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Télécharger le modèle">
+                        <Download size={15} />
+                      </a>
                     </div>
-                    <a href={tpl.url} target="_blank" rel="noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Télécharger le modèle">
-                      <Download size={15} />
-                    </a>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -8469,14 +8477,24 @@ export default function App() {
           };
         }
       });
+      // Compléter avec les anciens "Modèle Référence" de la table documents
+      // qui ne seraient pas encore dans module_step_resources
+      const existingKeys = new Set(Object.keys(templates));
+      const oldRefs = (docsData || []).filter(d =>
+        (d.type_action === 'Modèle Référence' || d.type_document === 'Modèle Référence') &&
+        d.nom && d.url && !existingKeys.has(d.nom)
+      );
+      oldRefs.forEach(r => {
+        templates[r.nom] = { url: r.url, name: r.nom, destination: 'formateur', classification: 'a_signer' };
+      });
       setDocumentTemplates(templates);
     } else if (modErr) {
       console.error("[fetchDocuments] Erreur lors de la récupération des ressources modèles :", modErr);
-      // Fallback
-      const refs = docsData?.filter(d => d.type_document === 'Modèle Référence') || [];
+      // Fallback : utiliser les Modèles Référence de la table documents
+      const refs = docsData?.filter(d => d.type_action === 'Modèle Référence' || d.type_document === 'Modèle Référence') || [];
       const templates = {};
       refs.forEach(r => {
-        templates[r.nom] = { url: r.url, name: r.nom };
+        templates[r.nom] = { url: r.url, name: r.nom, destination: r.destination || 'formateur' };
       });
       setDocumentTemplates(templates);
     }
