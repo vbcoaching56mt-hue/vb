@@ -469,7 +469,13 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           // Fallback final : utiliser directement la pdfUrl publique si disponible
           if (pdfUrl && pdfUrl.startsWith('http')) {
             console.warn('[DocumentViewerModal] Signed URL introuvable — fallback sur URL publique directe.');
-            setBlobUrl(pdfUrl);
+            const fallbackPath = pdfUrl.split('?')[0].toLowerCase();
+            const isFallbackWord = fallbackPath.endsWith('.docx') || fallbackPath.endsWith('.doc');
+            if (isFallbackWord) {
+              setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`);
+            } else {
+              setBlobUrl(pdfUrl);
+            }
             setLoadingPdf(false);
             return;
           }
@@ -479,15 +485,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
         const isWord = finalPath.toLowerCase().endsWith('.docx') || finalPath.toLowerCase().endsWith('.doc');
         if (isWord) {
-          // Conversion DOCX → PDF via ConvertAPI : rendu pixel-perfect, pas de HTML
-          const docxBytes = await fetch(finalSignedUrl).then(r => {
-            if (!r.ok) throw new Error(`HTTP ${r.status} lors du téléchargement du DOCX`);
-            return r.arrayBuffer();
-          });
-          const pdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-          const objectUrl = URL.createObjectURL(pdfBlob);
-          if (!cancelled) setBlobUrl(objectUrl);
-          else URL.revokeObjectURL(objectUrl);
+          // Microsoft Office Online Viewer — gratuit, sans clé API, rendu fidèle DOCX
+          // On utilise la pdfUrl (URL publique) plutôt que la signed URL pour la stabilité
+          const docViewerSrc = pdfUrl && pdfUrl.startsWith('http')
+            ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`
+            : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`;
+          if (!cancelled) setBlobUrl(docViewerSrc);
         } else {
           setBlobUrl(finalSignedUrl);
         }
@@ -543,9 +546,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       </div>
     );
     if (blobUrl) {
+      // Les URLs du viewer Office Online ne doivent pas recevoir le suffixe PDF
+      const isOfficeViewer = blobUrl.startsWith('https://view.officeapps.live.com');
       return (
         <iframe
-          src={blobUrl + '#toolbar=0&navpanes=0'}
+          src={isOfficeViewer ? blobUrl : blobUrl + '#toolbar=0&navpanes=0'}
           title={pdfTitle}
           className="w-full h-full border-0"
           allowFullScreen
@@ -590,7 +595,9 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         {/* Header */}
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0 rounded-t-2xl">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 font-bold text-sm">PDF</div>
+            <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 font-bold text-sm">
+              {pdfUrl && (pdfUrl.toLowerCase().includes('.docx') || pdfUrl.toLowerCase().includes('.doc')) ? 'DOC' : 'PDF'}
+            </div>
             <div>
               <h3 className="font-extrabold text-base text-gray-900">{pdfTitle}</h3>
               {mode === 'sign' && (
