@@ -3283,14 +3283,20 @@ const FormateurDetailView = ({
   );
 };
 
-const AdminFormateursView = ({ 
-  clients, formateurs, documents, expandedClientId, setExpandedClientId, 
-  supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab, 
+const AdminFormateursView = ({
+  clients, formateurs, documents, expandedClientId, setExpandedClientId,
+  supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab,
   modules, sessions, handleDownloadResource, handleDeleteFormateur,
-  documentTemplates, handleGenerateDocx, setViewingDocId
+  documentTemplates, handleGenerateDocx, setViewingDocId,
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
+  // État pour la section "Modèles de documents formateurs"
+  const [showTemplateUpload, setShowTemplateUpload] = React.useState(false);
+  const [tplLocalName, setTplLocalName] = React.useState('');
+  const [tplLocalFile, setTplLocalFile] = React.useState(null);
+  const [isTplUploading, setIsTplUploading] = React.useState(false);
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -3403,6 +3409,104 @@ const AdminFormateursView = ({
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+
+      {/* ── Section : Modèles de documents formateurs ─────────────────────── */}
+      {(() => {
+        const formateurTemplates = Object.entries(documentTemplates || {})
+          .filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
+
+        const handleAddTemplate = async () => {
+          if (!tplLocalFile || !tplLocalName.trim()) return;
+          setIsTplUploading(true);
+          await handleUploadDocxTemplate(tplLocalFile, tplLocalName.trim(), 'formateur', 'a_signer');
+          setTplLocalName('');
+          setTplLocalFile(null);
+          setShowTemplateUpload(false);
+          setIsTplUploading(false);
+        };
+
+        return (
+          <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
+                <span className="w-2 h-6 bg-rose-400 rounded-full"></span>
+                Modèles de Documents Formateurs
+              </h2>
+              <button
+                onClick={() => setShowTemplateUpload(v => !v)}
+                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+              >
+                <Plus size={14} /> Ajouter un modèle
+              </button>
+            </div>
+
+            {/* Formulaire d'ajout */}
+            {showTemplateUpload && (
+              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-3">
+                <p className="text-xs text-rose-700 font-bold uppercase tracking-wider">
+                  Fichier .docx avec balises : <code className="bg-rose-100 px-1 rounded">{`{{nom_formateur}}`}</code>, <code className="bg-rose-100 px-1 rounded">{`{{formateur_siret}}`}</code>, <code className="bg-rose-100 px-1 rounded">{`{{date_signature}}`}</code>…
+                </p>
+                <div className="flex flex-col md:flex-row gap-3 items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du bouton généré</label>
+                    <input
+                      type="text"
+                      placeholder="Ex : Contrat de sous-traitance"
+                      value={tplLocalName}
+                      onChange={e => setTplLocalName(e.target.value)}
+                      className="w-full text-sm p-3 bg-white border border-rose-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Fichier Word (.docx)</label>
+                    <label className="flex items-center gap-2 bg-white border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-rose-50 transition-all">
+                      <FileText size={15} />
+                      <span className="truncate">{tplLocalFile ? tplLocalFile.name : 'Choisir un fichier .docx'}</span>
+                      <input type="file" accept=".docx" className="hidden" onChange={e => { if (e.target.files[0]) { setTplLocalFile(e.target.files[0]); if (!tplLocalName) setTplLocalName(e.target.files[0].name.replace(/\.[^/.]+$/, '')); } }} />
+                    </label>
+                  </div>
+                  <button
+                    onClick={handleAddTemplate}
+                    disabled={!tplLocalFile || !tplLocalName.trim() || isTplUploading}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
+                  >
+                    {isTplUploading ? 'Upload…' : 'Enregistrer'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Liste des modèles existants */}
+            {formateurTemplates.length === 0 ? (
+              <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                <FileText className="mx-auto mb-3 text-gray-300" size={28} />
+                <p className="text-gray-400 text-sm italic">Aucun modèle formateur configuré.</p>
+                <p className="text-gray-300 text-xs mt-1">Ex : Contrat de sous-traitance, Lettre de mission, NDA…</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {formateurTemplates.map(([key, tpl]) => (
+                  <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 transition-all">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 text-sm">{key}</p>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wider">Modèle Word · Formateur</p>
+                      </div>
+                    </div>
+                    <a href={tpl.url} target="_blank" rel="noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Télécharger le modèle">
+                      <Download size={15} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Liste des Formateurs
@@ -3885,52 +3989,9 @@ const IngenierieView = ({
         </div>
       </div>
 
-      {/* Gestion des Ressources */}
-      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-emerald-500 rounded-full mr-3"></span> Ressources Pédagogiques
-        </h2>
-        <div className="bg-emerald-50/50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row gap-4 items-end">
-          <div className="flex-1 w-full">
-            <label className="block text-xs font-bold text-emerald-800 uppercase mb-2">Nom Ressource</label>
-            <input type="text" placeholder="Ex: Guide Qualiopi" value={newResourceName} onChange={e => setNewResourceName(e.target.value)} className="w-full text-sm p-3 bg-white border border-emerald-200 rounded-xl outline-none" />
-          </div>
-          <label className={`flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md ${(!newResourceName || isUploadingResource) ? 'opacity-50 cursor-not-allowed' : ''}`}>
-            {isUploadingResource ? 'Upload...' : 'Uploader Ressource'}
-            <input type="file" className="hidden" disabled={!newResourceName || isUploadingResource} onChange={e => e.target.files[0] && handleUploadResource(e.target.files[0])} />
-          </label>
-        </div>
-      </div>
-
-      {/* Gestion des Modèles DOCX */}
-      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-blue-500 rounded-full mr-3"></span> Bibliothèque de Modèles Word
-        </h2>
-        <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
-          <h3 className="font-bold text-gray-900 mb-4 flex items-center"><FileText className="mr-2" size={18} /> Nouveau Modèle</h3>
-          <div className="space-y-4">
-            <input type="text" value={newTemplateName} onChange={e => setNewTemplateName(e.target.value)} placeholder="Nom du type" className="w-full p-2.5 rounded-lg border outline-none text-sm bg-white" />
-            <label className={`flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-md`}>
-              Uploader le Modèle (.docx)
-              <input 
-                type="file" 
-                className="hidden" 
-                accept=".docx" 
-                onChange={(e) => { 
-                  if (e.target.files[0]) { 
-                    const file = e.target.files[0];
-                    const autoName = file.name.replace(/\.[^/.]+$/, "");
-                    setNewTemplateName(autoName);
-                    handleUploadDocxTemplate(file, autoName); 
-                    setNewTemplateName(''); 
-                  } 
-                }} 
-              />
-            </label>
-          </div>
-        </div>
-      </div>
+      {/* Sections Ressources Pédagogiques et Bibliothèque de Modèles Word supprimées :
+          - Les ressources s'ajoutent directement dans les dossiers des modules via "+ Ajouter"
+          - Les modèles formateurs sont gérés dans la section Formateurs */}
 
       <StepResourceModal
         isOpen={isResourceModalOpen}
@@ -9905,23 +9966,38 @@ export default function App() {
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       });
 
-      // Étape 1 : Conversion DOCX → PDF (fidélité totale via ConvertAPI, avant toute signature)
-      toast.loading('Conversion en PDF…', { id: 'gen-doc' });
-      const pdfBlob = await convertDocxBlobToPdf(docxBlob);
-
+      // Étape 1 : Conversion DOCX → PDF (via ConvertAPI si disponible, sinon DOCX direct)
+      toast.loading('Génération du document…', { id: 'gen-doc' });
       const safeName = targetName.replace(/\s+/g, '_');
-      const finalFileName = `${type}_${safeName}_${Date.now()}.pdf`;
+
+      let finalBlob = docxBlob;
+      let finalExt = 'docx';
+      let finalMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      try {
+        toast.loading('Conversion en PDF…', { id: 'gen-doc' });
+        const pdfBlob = await convertDocxBlobToPdf(docxBlob);
+        finalBlob = pdfBlob;
+        finalExt = 'pdf';
+        finalMime = 'application/pdf';
+      } catch (convErr) {
+        console.warn('[handleGenerateDocx] ConvertAPI indisponible, fallback DOCX :', convErr.message);
+        toast.loading('PDF indisponible — génération DOCX…', { id: 'gen-doc' });
+        // Continuer avec le DOCX brut
+      }
+
+      const finalFileName = `${type}_${safeName}_${Date.now()}.${finalExt}`;
 
       // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
       const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
       if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
-        saveAs(pdfBlob, finalFileName);
+        saveAs(finalBlob, finalFileName);
       }
 
-      // Upload du PDF (pas du DOCX)
-      toast.loading('Upload du PDF…', { id: 'gen-doc' });
-      const pdfFile = new File([pdfBlob], finalFileName, { type: 'application/pdf' });
-      const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, pdfFile);
+      // Upload du fichier généré
+      toast.loading('Upload du document…', { id: 'gen-doc' });
+      const uploadFile = new File([finalBlob], finalFileName, { type: finalMime });
+      const { error: uploadError } = await supabase.storage.from(uploadBucket).upload(finalFileName, uploadFile);
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
@@ -10848,6 +10924,9 @@ export default function App() {
             documentTemplates={documentTemplates}
             handleGenerateDocx={handleGenerateDocx}
             setViewingDocId={setViewingDocId}
+            handleUploadDocxTemplate={handleUploadDocxTemplate}
+            newTemplateName={newTemplateName}
+            setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
             supabase={supabaseAdmin}
