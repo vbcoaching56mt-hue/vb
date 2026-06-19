@@ -4328,63 +4328,140 @@ const FormateurView = ({
                   )}
 
                   {formateurClientTab === 'docs_signes' && (
-                    <div className="mb-4">
+                    <div className="mb-4 space-y-6">
+
+                      {/* --- Section 1 : Suivi des documents du client --- */}
+                      {(() => {
+                        const clientDocs = (documents || []).filter(d =>
+                          String(d.user_id) === String(client.id) &&
+                          d.visible_formateur !== false
+                        );
+                        if (clientDocs.length === 0) return null;
+                        return (
+                          <div>
+                            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Suivi des documents</h4>
+                            <div className="overflow-hidden rounded-2xl border border-gray-100">
+                              <table className="w-full text-left text-sm">
+                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                                  <tr>
+                                    <th className="px-4 py-3">Document</th>
+                                    <th className="px-4 py-3">Statut</th>
+                                    <th className="px-4 py-3 text-right">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 bg-white">
+                                  {clientDocs.map(doc => {
+                                    const isSigned = !!doc.signe_par_client;
+                                    const fileUrl = doc.url || doc.file_url;
+                                    return (
+                                      <tr key={doc.id} className={`hover:bg-gray-50 transition-colors ${!isSigned ? 'bg-amber-50/30' : ''}`}>
+                                        <td className="px-4 py-3">
+                                          <div className="flex items-center gap-3">
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isSigned ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
+                                              {isSigned ? <FileCheck size={16} /> : <FileText size={16} />}
+                                            </div>
+                                            <span className="font-semibold text-gray-800 text-xs">{doc.nom || 'Document'}</span>
+                                          </div>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${isSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                            {isSigned ? '✓ Signé' : '⚠ En attente'}
+                                          </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                          {fileUrl && (
+                                            <a
+                                              href={fileUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="inline-flex items-center gap-1.5 bg-white text-indigo-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                                            >
+                                              <Eye size={13} /> Consulter
+                                            </a>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* --- Section 2 : Émargements de séances signés --- */}
                       {(() => {
                         const signedSessions = clientSessions.filter(s =>
                           (s.statut === 'Signé' || s.statut_client === 'Signé') &&
                           (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
                         );
-                        if (signedSessions.length === 0) return (
-                          <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                            <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
-                            <p className="text-gray-400 text-sm italic">Aucun document signé validé pour ce client.</p>
-                          </div>
-                        );
+                        if (signedSessions.length === 0) return null;
                         return (
-                          <div className="overflow-hidden rounded-2xl border border-gray-100">
-                            <table className="w-full text-left text-sm">
-                              <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
-                                <tr>
-                                  <th className="px-4 py-3">Nom du document</th>
-                                  <th className="px-4 py-3">Date de signature</th>
-                                  <th className="px-4 py-3 text-right">Action</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-50 bg-white">
-                                {signedSessions.map(session => {
-                                  const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
-                                  const dateSign = session.date_signature_client || session.date_signature_formateur || session.date_signature || session.updated_at;
-                                  return (
-                                    <tr key={session.id} className="hover:bg-gray-50 transition-colors">
-                                      <td className="px-4 py-3">
-                                        <div className="flex items-center gap-3">
-                                          <div className="w-8 h-8 bg-green-100 text-green-600 rounded-lg flex items-center justify-center shrink-0">
-                                            <FileCheck size={16} />
+                          <div>
+                            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Émargements de séances</h4>
+                            <div className="overflow-hidden rounded-2xl border border-gray-100">
+                              <table className="w-full text-left text-sm">
+                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                                  <tr>
+                                    <th className="px-4 py-3">Séance</th>
+                                    <th className="px-4 py-3">Date de signature</th>
+                                    <th className="px-4 py-3 text-right">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 bg-white">
+                                  {signedSessions.map(session => {
+                                    const signedUrl = session.signed_pdf_url || session.file_url_signed || session.metadata?.file_url_signed;
+                                    const dateSign = session.date_signature_client || session.date_signature_formateur || session.date_signature || session.updated_at;
+                                    return (
+                                      <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                                        <td className="px-4 py-3">
+                                          <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 bg-green-100 text-green-600 rounded-lg flex items-center justify-center shrink-0">
+                                              <FileCheck size={16} />
+                                            </div>
+                                            <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom || session.titre || 'Émargement Signé'}</span>
                                           </div>
-                                          <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</span>
-                                        </div>
-                                      </td>
-                                      <td className="px-4 py-3 text-xs text-gray-500">
-                                        {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
-                                      </td>
-                                      <td className="px-4 py-3 text-right">
-                                        <a
-                                          href={signedUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
-                                        >
-                                          <Download size={13} /> Télécharger
-                                        </a>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                                        </td>
+                                        <td className="px-4 py-3 text-xs text-gray-500">
+                                          {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                          <a
+                                            href={signedUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                                          >
+                                            <Download size={13} /> Télécharger
+                                          </a>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         );
                       })()}
+
+                      {/* --- État vide global --- */}
+                      {(() => {
+                        const hasClientDocs = (documents || []).some(d => String(d.user_id) === String(client.id) && d.visible_formateur !== false);
+                        const hasSignedSessions = clientSessions.some(s =>
+                          (s.statut === 'Signé' || s.statut_client === 'Signé') &&
+                          (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)
+                        );
+                        if (!hasClientDocs && !hasSignedSessions) return (
+                          <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                            <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+                            <p className="text-gray-400 text-sm italic">Aucun document disponible pour ce client.</p>
+                          </div>
+                        );
+                        return null;
+                      })()}
+
                     </div>
                   )}
 
