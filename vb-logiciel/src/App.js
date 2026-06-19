@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -3168,24 +3168,51 @@ const FormateurDetailView = ({
             <Archive className="text-rose-500" /> Documents Administratifs (Contrats / NDA...)
           </h3>
           
-          <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100">
-            <div className="flex flex-wrap gap-3 mb-8">
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur').map(([key]) => (
-                <button 
-                  key={key} 
-                  onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
-                  className="bg-rose-600 hover:bg-rose-700 text-white px-5 py-3 rounded-2xl text-sm font-bold shadow-lg transition-all flex items-center gap-2 transform active:scale-95"
-                >
-                  <PenTool size={16} /> Générer {key}
-                </button>
-              ))}
-              {Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur').length === 0 && (
-                <p className="text-gray-400 italic text-sm">Aucun modèle 'Administratif Formateur' configuré dans la Modélothèque.</p>
-              )}
-            </div>
+          <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100 space-y-8">
 
+            {/* ── Bibliothèque de modèles disponibles ── */}
+            {(() => {
+              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
+              // Docs déjà envoyés à ce formateur (par nom de template)
+              const sentDocNames = new Set(trainerDocs.map(d => d.nom));
+              return (
+                <div>
+                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Envoyer un document pour signature</h4>
+                  {availableTpls.length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">Aucun modèle disponible — ajoutez-en un depuis l'onglet Formateurs.</p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {availableTpls.map(([key]) => {
+                        const alreadySent = sentDocNames.has(key);
+                        return (
+                          <div key={key} className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 bg-rose-50 text-rose-500 rounded-xl flex items-center justify-center shrink-0">
+                                <FileText size={16} />
+                              </div>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{key}</p>
+                                {alreadySent && <p className="text-[10px] text-amber-600 font-bold">⚡ Déjà envoyé — renvoyer créera un nouvel exemplaire</p>}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
+                              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all transform active:scale-95"
+                            >
+                              <Send size={13} /> Envoyer pour signature
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── Suivi des documents envoyés ── */}
             <div className="space-y-3">
-              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Suivi des signatures</h4>
+              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Suivi des documents envoyés</h4>
               {trainerDocs.length > 0 ? trainerDocs.map(doc => {
                 const isSigned = doc.signe_par_formateur || doc.statut === 'Signé';
                 return (
@@ -3304,6 +3331,8 @@ const AdminFormateursView = ({
   const [tplLocalName, setTplLocalName] = React.useState('');
   const [tplLocalFile, setTplLocalFile] = React.useState(null);
   const [isTplUploading, setIsTplUploading] = React.useState(false);
+  // Sélection des formateurs destinataires
+  const [tplSelectedFormateurs, setTplSelectedFormateurs] = React.useState([]); // [] = tous par défaut
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -3449,13 +3478,23 @@ const AdminFormateursView = ({
 
             {/* Formulaire d'ajout */}
             {showTemplateUpload && (
-              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-3">
-                <p className="text-xs text-rose-700 font-bold uppercase tracking-wider">
-                  Fichier .docx avec balises : <code className="bg-rose-100 px-1 rounded">{`{{nom_formateur}}`}</code>, <code className="bg-rose-100 px-1 rounded">{`{{formateur_siret}}`}</code>, <code className="bg-rose-100 px-1 rounded">{`{{date_signature}}`}</code>…
-                </p>
+              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-4">
+                <div>
+                  <p className="text-xs text-rose-700 font-bold uppercase tracking-wider mb-1">
+                    Modèle Word avec balises à remplir automatiquement
+                  </p>
+                  <p className="text-[11px] text-rose-500">
+                    Le document sera enregistré dans la bibliothèque. Vous pourrez ensuite l'envoyer individuellement depuis la fiche de chaque formateur.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {['{nom}', '{adresse_formateur}', '{formateur_siret}', '{formateur_nda}', '{email_formateur}', '{tel_formateur}', '{date_signature}'].map(tag => (
+                      <code key={tag} className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex flex-col md:flex-row gap-3 items-end">
                   <div className="flex-1">
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du bouton généré</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du document</label>
                     <input
                       type="text"
                       placeholder="Ex : Contrat de sous-traitance"
@@ -3477,7 +3516,7 @@ const AdminFormateursView = ({
                     disabled={!tplLocalFile || !tplLocalName.trim() || isTplUploading}
                     className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
                   >
-                    {isTplUploading ? 'Upload…' : 'Enregistrer'}
+                    {isTplUploading ? 'Enregistrement…' : 'Ajouter à la bibliothèque'}
                   </button>
                 </div>
               </div>
@@ -9637,7 +9676,7 @@ export default function App() {
     }
   };
 
-  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg, classificationArg) => {
+  const handleUploadDocxTemplate = async (fileArg, typeArg, destinationArg, classificationArg, formateurIdsArg = null) => {
     try {
       const file = fileArg || null;
       const type = typeArg || newTemplateName || (file ? file.name.replace(/\.[^/.]+$/, '') : null);
@@ -9696,101 +9735,9 @@ export default function App() {
 
       await fetchDocuments();
 
-      // Auto-distribution aux formateurs si destination = 'formateur'
-      if (destination === 'formateur') {
-        const { data: allFormateurs } = await supabase.from('utilisateurs').select('*').eq('role', 'formateur');
-        if (allFormateurs && allFormateurs.length > 0) {
-          toast.loading(`Génération des documents pour ${allFormateurs.length} formateur(s)…`, { id: 'tpl-dist' });
-
-          const isDocxTemplate = fileExt === 'docx';
-          let templateBuffer = null;
-
-          // Pré-chargement du template une seule fois
-          if (isDocxTemplate) {
-            try {
-              const tplResponse = await fetch(publicUrl);
-              if (tplResponse.ok) templateBuffer = await tplResponse.arrayBuffer();
-            } catch (fetchErr) {
-              console.warn('[handleUploadDocxTemplate] Impossible de charger le template pour remplissage:', fetchErr.message);
-            }
-          }
-
-          const docsToInsert = [];
-
-          for (const f of allFormateurs) {
-            let finalUrl = publicUrl; // fallback : template brut
-            let finalExt = fileExt;
-
-            if (isDocxTemplate && templateBuffer) {
-              try {
-                // Remplissage du template avec les données du formateur
-                const zip = new PizZip(templateBuffer);
-                const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => '' });
-
-                doc.render({
-                  nom: f.nom || '',
-                  nom_formateur: f.nom || '',
-                  formateur_nom_complet: f.nom || '',
-                  raison_sociale: f.nom || '',
-                  adresse_formateur: f.adresse_formateur || f.adresse_pro || f.adresse || '',
-                  adresse_session: f.adresse_session || f.adresse_formateur || f.adresse_pro || f.adresse || '',
-                  formateur_nda: f.formateur_nda || f.nda || '',
-                  formateur_siret: f.formateur_siret || f.siret || '',
-                  email_formateur: f.email || '',
-                  tel_formateur: f.telephone || '',
-                  compagnie_assurance: f.compagnie_assurance || '',
-                  numero_assurance_rcp: f.numero_assurance_rcp || '',
-                  date_signature: new Date().toLocaleDateString('fr-FR'),
-                });
-
-                const filledBlob = doc.getZip().generate({
-                  type: 'blob',
-                  mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                });
-
-                const safeFormateurName = (f.nom || 'formateur')
-                  .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-                const filledPath = `generated/${safeType}_${safeFormateurName}_${Date.now()}.docx`;
-
-                const { error: upErr } = await supabaseAdmin.storage
-                  .from('documents')
-                  .upload(filledPath, filledBlob, {
-                    contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    upsert: true
-                  });
-
-                if (!upErr) {
-                  const { data: { publicUrl: filledUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(filledPath);
-                  finalUrl = filledUrl;
-                  finalExt = 'docx';
-                }
-              } catch (fillErr) {
-                console.warn(`[handleUploadDocxTemplate] Erreur remplissage pour ${f.nom}:`, fillErr.message);
-                // Fallback sur le template brut
-              }
-            }
-
-            docsToInsert.push({
-              nom: type,
-              type_document: 'Administratif',
-              url: finalUrl,
-              assigned_formateur_id: f.id,
-              signe_par_formateur: false,
-              signe_par_client: false,
-              visible_formateur: true,
-              extension: finalExt
-            });
-          }
-
-          await supabaseAdmin.from('documents').insert(docsToInsert);
-          await fetchDocuments();
-          toast.success(`"${type}" généré et distribué à ${allFormateurs.length} formateur(s) pour signature.`, { id: 'tpl-dist' });
-        } else {
-          toast.success(`Modèle pour "${type}" enregistré.`);
-        }
-      } else {
-        toast.success(`Modèle pour "${type}" enregistré avec succès.`);
-      }
+      // Le template est enregistré dans la bibliothèque — pas de distribution automatique.
+      // L'admin l'envoie manuellement depuis la fiche de chaque formateur.
+      toast.success(`Modèle "${type}" ajouté à la bibliothèque. Ouvrez la fiche d'un formateur pour lui envoyer.`);
     } catch (err) {
       console.error("Upload Template Error:", err);
       toast.error("Erreur lors de l'upload: " + (err.message || 'Erreur inconnue'));
@@ -10267,11 +10214,76 @@ export default function App() {
         fetchUrl = signData.signedUrl;
       }
 
+      let signatureAlreadyEmbedded = false;
+
       if (isDocx) {
         toast.loading('Conversion du document DOCX en PDF…', { id: TOAST_ID });
-        const docxBytes = await fetch(fetchUrl).then(r => r.arrayBuffer());
-        const tempPdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-        targetPdfBytes = await tempPdfBlob.arrayBuffer();
+        try {
+          const docxBytes = await fetch(fetchUrl).then(r => r.arrayBuffer());
+          const tempPdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+          targetPdfBytes = await tempPdfBlob.arrayBuffer();
+        } catch (convErr) {
+          // ConvertAPI indisponible → on génère un certificat de signature PDF pur (pdf-lib)
+          console.warn('[handleDocumentSignatureSave] ConvertAPI indisponible, création certificat:', convErr.message);
+          toast.loading('Génération du certificat de signature…', { id: TOAST_ID });
+
+          const certDoc = await PDFDocument.create();
+          const certPage = certDoc.addPage([595, 842]); // A4 portrait
+          const certFont = await certDoc.embedFont(StandardFonts.Helvetica);
+          const certFontBold = await certDoc.embedFont(StandardFonts.HelveticaBold);
+
+          // Bandeau en-tête rouge VB
+          certPage.drawRectangle({ x: 0, y: 792, width: 595, height: 50, color: rgb(0.85, 0.09, 0.20) });
+          certPage.drawText('CERTIFICAT DE SIGNATURE ÉLECTRONIQUE', {
+            x: 30, y: 810, size: 12, font: certFontBold, color: rgb(1, 1, 1),
+          });
+
+          // Infos document
+          certPage.drawText('Document signé :', { x: 40, y: 748, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
+          // Découper le nom si trop long (max 70 chars)
+          const docLabel = (doc.nom || 'Document').substring(0, 70);
+          certPage.drawText(docLabel, { x: 40, y: 730, size: 14, font: certFontBold, color: rgb(0.1, 0.1, 0.1) });
+
+          // Séparateur
+          certPage.drawLine({ start: { x: 40, y: 718 }, end: { x: 555, y: 718 }, thickness: 1, color: rgb(0.85, 0.85, 0.85) });
+
+          certPage.drawText('Signataire :', { x: 40, y: 698, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
+          certPage.drawText(signerName, { x: 40, y: 680, size: 12, font: certFontBold, color: rgb(0.1, 0.1, 0.1) });
+
+          certPage.drawText('Date et heure de signature :', { x: 40, y: 658, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
+          certPage.drawText(nowStr, { x: 40, y: 640, size: 12, font: certFont, color: rgb(0.1, 0.1, 0.1) });
+
+          // Signature manuscrite
+          certPage.drawText('Signature manuscrite :', { x: 40, y: 610, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
+          if (signatureDataUrl) {
+            try {
+              const sigRaw = signatureDataUrl.startsWith('data:')
+                ? await fetch(signatureDataUrl).then(r => r.arrayBuffer())
+                : Uint8Array.from(atob(signatureDataUrl.split(',')[1]), c => c.charCodeAt(0)).buffer;
+              const certSigImg = await certDoc.embedPng(sigRaw);
+              const aspect = certSigImg.width / certSigImg.height;
+              const certSigW = Math.min(220, certSigImg.width);
+              const certSigH = certSigW / aspect;
+              certPage.drawRectangle({ x: 38, y: 460, width: certSigW + 10, height: certSigH + 10, borderColor: rgb(0.85, 0.85, 0.85), borderWidth: 1 });
+              certPage.drawImage(certSigImg, { x: 43, y: 465, width: certSigW, height: certSigH });
+            } catch (_sigErr) {
+              certPage.drawText('[Signature non disponible]', { x: 40, y: 570, size: 10, font: certFont, color: rgb(0.6, 0.6, 0.6) });
+            }
+          }
+
+          // Lien vers le document original
+          certPage.drawLine({ start: { x: 40, y: 110 }, end: { x: 555, y: 110 }, thickness: 0.5, color: rgb(0.85, 0.85, 0.85) });
+          certPage.drawText('Document original (DOCX) :', { x: 40, y: 96, size: 8, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
+          const truncUrl = docUrl.length > 90 ? docUrl.substring(0, 87) + '…' : docUrl;
+          certPage.drawText(truncUrl, { x: 40, y: 80, size: 7, font: certFont, color: rgb(0.4, 0.4, 0.7) });
+          certPage.drawText('Ce certificat constitue une preuve de signature électronique conforme aux obligations règlementaires.', {
+            x: 40, y: 55, size: 7.5, font: certFont, color: rgb(0.5, 0.5, 0.5),
+          });
+
+          const certBytes = await certDoc.save();
+          pdfBlob = new Blob([certBytes], { type: 'application/pdf' });
+          signatureAlreadyEmbedded = true;
+        }
       } else {
         targetPdfBytes = await fetch(fetchUrl).then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -10279,58 +10291,59 @@ export default function App() {
         });
       }
 
-      // Étape 2 : On superpose la signature par coordonnées (pdf-lib)
-      const pdfDoc = await PDFDocument.load(targetPdfBytes);
-      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      if (!signatureAlreadyEmbedded) {
+        // Étape 2 : On superpose la signature par coordonnées (pdf-lib)
+        const pdfDoc = await PDFDocument.load(targetPdfBytes);
+        const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-      const pages = pdfDoc.getPages();
-      const lastPage = pages[pages.length - 1];
-      const { width } = lastPage.getSize();
+        const pages = pdfDoc.getPages();
+        const lastPage = pages[pages.length - 1];
+        const { width } = lastPage.getSize();
 
-      // Overlay consentement interactif — même config que overlaySignatureOnPdf
-      const CONSENT_OVERLAYS = {
-        default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
-      };
-      if (documentChoice) {
-        const overlay = CONSENT_OVERLAYS[doc.consent_template] || CONSENT_OVERLAYS.default;
-        const consentPage = pages[overlay.pageIndex];
-        const checkY = documentChoice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
-        consentPage.drawText('X', { x: overlay.checkboxX, y: checkY, size: 12, font: helveticaBold, color: rgb(0, 0, 0) });
-      }
-
-      // Coordonnées pour la zone "Le sous-traitant" (droite de la page)
-      const xPos = width / 2 + 10;
-      let yOffset = 112;
-
-      // Superposer l'image de signature manuscrite (PNG transparent) si fournie
-      if (signatureDataUrl) {
-        try {
-          const sigBytes = await fetch(signatureDataUrl).then(r => r.arrayBuffer());
-          const sigImg = await pdfDoc.embedPng(sigBytes);
-          // Mise à l'échelle : largeur max 150pt, hauteur proportionnelle
-          const aspect = sigImg.width / sigImg.height;
-          const sigW = Math.min(150, sigImg.width);
-          const sigH = sigW / aspect;
-          lastPage.drawImage(sigImg, { x: xPos, y: yOffset, width: sigW, height: sigH });
-        } catch (imgErr) {
-          console.warn("Erreur lors de l'intégration de l'image de signature:", imgErr);
+        // Overlay consentement interactif — même config que overlaySignatureOnPdf
+        const CONSENT_OVERLAYS = {
+          default: { pageIndex: 0, checkboxX: 67, autoriseY: 318, refuseY: 291 },
+        };
+        if (documentChoice) {
+          const overlay = CONSENT_OVERLAYS[doc.consent_template] || CONSENT_OVERLAYS.default;
+          const consentPage = pages[overlay.pageIndex];
+          const checkY = documentChoice === 'autorise' ? overlay.autoriseY : overlay.refuseY;
+          consentPage.drawText('X', { x: overlay.checkboxX, y: checkY, size: 12, font: helveticaBold, color: rgb(0, 0, 0) });
         }
+
+        // Coordonnées pour la zone "Le sous-traitant" (droite de la page)
+        const xPos = width / 2 + 10;
+        let yOffset = 112;
+
+        // Superposer l'image de signature manuscrite (PNG transparent) si fournie
+        if (signatureDataUrl) {
+          try {
+            const sigBytes = await fetch(signatureDataUrl).then(r => r.arrayBuffer());
+            const sigImg = await pdfDoc.embedPng(sigBytes);
+            const aspect = sigImg.width / sigImg.height;
+            const sigW = Math.min(150, sigImg.width);
+            const sigH = sigW / aspect;
+            lastPage.drawImage(sigImg, { x: xPos, y: yOffset, width: sigW, height: sigH });
+          } catch (imgErr) {
+            console.warn("Erreur lors de l'intégration de l'image de signature:", imgErr);
+          }
+        }
+
+        // Texte d'horodatage en dessous de l'image
+        lastPage.drawText('Le sous-traitant', {
+          x: xPos, y: 100, size: 10, font: helveticaBold, color: rgb(0, 0, 0),
+        });
+        lastPage.drawText(signerName, {
+          x: xPos, y: 84, size: 10, font: helvetica, color: rgb(0, 0, 0),
+        });
+        lastPage.drawText(`Signé numériquement le ${nowStr}`, {
+          x: xPos, y: 68, size: 8, font: helvetica, color: rgb(0.33, 0.33, 0.33),
+        });
+
+        const pdfBytesOut = await pdfDoc.save();
+        pdfBlob = new Blob([pdfBytesOut], { type: 'application/pdf' });
       }
-
-      // Texte d'horodatage en dessous de l'image
-      lastPage.drawText('Le sous-traitant', {
-        x: xPos, y: 100, size: 10, font: helveticaBold, color: rgb(0, 0, 0),
-      });
-      lastPage.drawText(signerName, {
-        x: xPos, y: 84, size: 10, font: helvetica, color: rgb(0, 0, 0),
-      });
-      lastPage.drawText(`Signé numériquement le ${nowStr}`, {
-        x: xPos, y: 68, size: 8, font: helvetica, color: rgb(0.33, 0.33, 0.33),
-      });
-
-      const pdfBytesOut = await pdfDoc.save();
-      pdfBlob = new Blob([pdfBytesOut], { type: 'application/pdf' });
 
       // Upload du PDF signé
       toast.loading('Upload du document signé…', { id: TOAST_ID });
