@@ -5996,17 +5996,89 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
+
+    let signedPdfUrl = signingResource.file_url; // fallback : URL originale
+
+    // ── Étape 1 : Intégrer la signature dans le PDF via pdf-lib ──────────────
+    if (signatureDataUrl && signingResource.file_url) {
+      const toastId = 'pdf-sign';
+      try {
+        toast.loading('Intégration de la signature dans le document…', { id: toastId });
+
+        // Télécharger le PDF original
+        const pdfResponse = await fetch(signingResource.file_url);
+        if (!pdfResponse.ok) throw new Error('Impossible de télécharger le PDF original.');
+        const pdfBytes = await pdfResponse.arrayBuffer();
+
+        // Charger le PDF avec pdf-lib
+        const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+        const pages = pdfDoc.getPages();
+        const lastPage = pages[pages.length - 1];
+        const { width, height } = lastPage.getSize();
+
+        // Décoder la signature PNG (base64 → Uint8Array)
+        const base64Data = signatureDataUrl.split(',')[1];
+        const sigBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        const sigImage = await pdfDoc.embedPng(sigBytes);
+
+        // Dimensionner la signature (max 160×60 pts)
+        const maxW = 160, maxH = 60;
+        const scale = Math.min(maxW / sigImage.width, maxH / sigImage.height, 1);
+        const sigW = sigImage.width * scale;
+        const sigH = sigImage.height * scale;
+
+        // Position : bas-gauche de la dernière page, zone signature bénéficiaire
+        const sigX = 60;
+        const sigY = 110; // 110 pts depuis le bas
+
+        lastPage.drawImage(sigImage, { x: sigX, y: sigY, width: sigW, height: sigH, opacity: 1 });
+
+        // Ajouter nom + date sous la signature
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const signedDate = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const clientName = currentClient.nomcomplet_client || currentClient.nom || '';
+        if (clientName) {
+          lastPage.drawText(clientName, { x: sigX, y: sigY - 14, size: 8, font, color: rgb(0.2, 0.2, 0.2) });
+        }
+        lastPage.drawText(`Signé le ${signedDate}`, { x: sigX, y: sigY - 26, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+
+        // Exporter le PDF modifié
+        const signedPdfBytes = await pdfDoc.save();
+        const signedBlob = new Blob([signedPdfBytes], { type: 'application/pdf' });
+
+        // Uploader dans Supabase Storage (bucket 'documents')
+        const safeDocName = (signingResource.titre || 'document').replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
+        const storagePath = `signed-documents/${currentUserId}/${Date.now()}_${safeDocName}.pdf`;
+        const { error: uploadError } = await supabaseAdmin.storage
+          .from('documents')
+          .upload(storagePath, signedBlob, { contentType: 'application/pdf', upsert: true });
+
+        if (uploadError) {
+          console.error('[handleSignSave] Erreur upload PDF signé:', uploadError);
+          toast.error('Signature intégrée mais upload échoué — PDF original conservé.', { id: toastId });
+        } else {
+          const { data: { publicUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(storagePath);
+          signedPdfUrl = publicUrl;
+          toast.dismiss(toastId);
+        }
+      } catch (embedErr) {
+        console.error('[handleSignSave] Erreur embedding signature pdf-lib:', embedErr);
+        toast.error('Impossible d\'intégrer la signature dans le PDF — document original conservé.', { id: toastId });
+        // On continue quand même avec l'URL originale
+      }
+    }
+
+    // ── Étape 2 : Enregistrer en base avec l'URL du PDF signé ────────────────
     const { error } = await supabase.from('documents').insert([{
       user_id: currentUserId,
       organisation_id: currentClient.organisation_id,
       nom: signingResource.titre,
-      url: signingResource.file_url,
+      url: signedPdfUrl,        // ← PDF avec signature intégrée
       type_document: 'À signer',
       visible_client: true,
       visible_formateur: true,
       signe_par_client: true,
-      signature_client: signatureDataUrl,
-      // metadata retiré : colonne inexistante dans la table documents
+      signature_client: signatureDataUrl, // ← PNG brut conservé en backup
     }]);
     if (error) { toast.error('Erreur lors de la signature : ' + error.message); return; }
     setSigningResource(null);
