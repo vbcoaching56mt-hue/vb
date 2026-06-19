@@ -5905,8 +5905,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
-    const meta = typeof signingResource.metadata === 'string' && signingResource.metadata.startsWith('{')
-      ? JSON.parse(signingResource.metadata) : (signingResource.metadata || {});
     const { error } = await supabase.from('documents').insert([{
       user_id: currentUserId,
       organisation_id: currentClient.organisation_id,
@@ -5917,7 +5915,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       visible_formateur: true,
       signe_par_client: true,
       signature_client: signatureDataUrl,
-      metadata: { moment: signingResource.moment, template_id: signingResource.id, classification: meta.classification || 'a_signer' }
+      // metadata retiré : colonne inexistante dans la table documents
     }]);
     if (error) { toast.error('Erreur lors de la signature : ' + error.message); return; }
     setSigningResource(null);
@@ -8495,7 +8493,7 @@ export default function App() {
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
         visible_client: moment === 'debut',
         visible_formateur: true,
-        metadata: { moment, template_id: templateResource.id, classification }
+        // metadata retiré : colonne inexistante dans la table documents
       }]).select().single();
 
       if (insertErr) {
