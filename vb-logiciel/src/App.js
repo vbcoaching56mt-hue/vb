@@ -360,63 +360,87 @@ const convertDocxBlobToPdf = async (docxBlob) => {
 const convertDocxBlobToPdfLocal = async (docxBlob) => {
   const { renderAsync } = await import('docx-preview');
 
-  // Conteneur caché pour le rendu
+  // Conteneur caché — largeur auto pour que docx-preview respecte les marges Word
   const container = document.createElement('div');
   container.style.cssText = [
     'position:fixed', 'top:-99999px', 'left:-99999px',
-    'width:794px', 'min-height:1px', 'background:#fff', 'overflow:visible',
+    'background:#fff', 'overflow:visible', 'width:auto',
   ].join(';');
+
+  // CSS correctifs pour améliorer le rendu docx-preview
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    .docx-wrapper { background: #fff !important; padding: 0 !important; }
+    .docx-wrapper > article {
+      background: #fff !important;
+      box-shadow: none !important;
+      margin: 0 !important;
+    }
+    table { border-collapse: collapse !important; table-layout: fixed !important; }
+    td, th { word-wrap: break-word !important; overflow-wrap: break-word !important; }
+    img { max-width: 100% !important; }
+  `;
+  container.appendChild(styleEl);
   document.body.appendChild(container);
 
   try {
     await renderAsync(docxBlob, container, null, {
       className: 'docx-preview',
       inWrapper: true,
-      ignoreWidth: false,
+      ignoreWidth: false,   // respecte la largeur de page définie dans le Word
       ignoreHeight: false,
       ignoreFonts: false,
       breakPages: true,
-      useBase64URL: true,
+      useBase64URL: true,   // images embarquées
       renderChanges: false,
       renderHeaders: true,
       renderFooters: true,
     });
 
-    // Attendre fin du rendu CSS/polices
-    await new Promise(r => setTimeout(r, 500));
+    // Attendre polices, images et mise en page
+    await new Promise(r => setTimeout(r, 1200));
 
     const A4_W_MM = 210;
     const A4_H_MM = 297;
-
-    // jsPDF et html2canvas sont déjà importés en haut du bundle
     const pdf = new jsPDF('p', 'mm', 'a4');
 
-    // docx-preview génère des <article> ou <section> pour chaque page
-    const pageEls = Array.from(
-      container.querySelectorAll('article.docx-page, .docx-wrapper > section, .docx-page, article')
-    );
+    // docx-preview v0.3.x : .docx-wrapper > article (une par page)
+    const wrapper = container.querySelector('.docx-wrapper');
+    const pageEls = wrapper
+      ? Array.from(wrapper.querySelectorAll(':scope > article'))
+      : Array.from(container.querySelectorAll('article'));
     const targets = pageEls.length > 0 ? pageEls : [container];
 
     for (let i = 0; i < targets.length; i++) {
       const el = targets[i];
+      // Lire les dimensions réelles rendues par docx-preview
+      const elW = Math.max(el.scrollWidth, el.offsetWidth, 794);
+      const elH = Math.max(el.scrollHeight, el.offsetHeight, 100);
+
       const canvas = await html2canvas(el, {
-        scale: 2,
+        scale: 3,              // qualité supérieure (plus nette pour le texte)
         backgroundColor: '#ffffff',
         useCORS: true,
         logging: false,
         allowTaint: true,
+        width: elW,
+        height: elH,
+        windowWidth: elW,     // évite les débordements de tableaux
+        scrollX: 0,
+        scrollY: 0,
       });
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      // PNG pour préserver la netteté du texte
+      const imgData = canvas.toDataURL('image/png');
       const ratio = canvas.height / canvas.width;
       const imgH = A4_W_MM * ratio;
 
       if (i > 0) pdf.addPage();
 
       if (imgH <= A4_H_MM) {
-        pdf.addImage(imgData, 'JPEG', 0, 0, A4_W_MM, imgH);
+        pdf.addImage(imgData, 'PNG', 0, 0, A4_W_MM, imgH);
       } else {
-        // Découper en tranches A4
+        // Page plus haute qu'une feuille A4 → découper en tranches
         const pixPerMm = canvas.width / A4_W_MM;
         const pagePixH = Math.round(A4_H_MM * pixPerMm);
         let yOff = 0;
@@ -426,10 +450,10 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
           const sc = document.createElement('canvas');
           sc.width = canvas.width; sc.height = sliceH;
           sc.getContext('2d').drawImage(canvas, 0, yOff, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
-          const sliceImg = sc.toDataURL('image/jpeg', 0.92);
+          const sliceImg = sc.toDataURL('image/png');
           const sliceHMm = sliceH / pixPerMm;
           if (i > 0 || !firstSlice) pdf.addPage();
-          pdf.addImage(sliceImg, 'JPEG', 0, 0, A4_W_MM, sliceHMm);
+          pdf.addImage(sliceImg, 'PNG', 0, 0, A4_W_MM, sliceHMm);
           yOff += sliceH;
           firstSlice = false;
         }
