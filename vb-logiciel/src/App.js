@@ -352,6 +352,96 @@ const convertDocxBlobToPdf = async (docxBlob) => {
   return new Blob([byteArray], { type: 'application/pdf' });
 };
 
+/**
+ * Conversion DOCX → PDF entièrement côté client (sans API externe).
+ * docx-preview rend le DOCX en HTML, html2canvas capture en images,
+ * jsPDF assemble le PDF page par page.
+ */
+const convertDocxBlobToPdfLocal = async (docxBlob) => {
+  const { renderAsync } = await import('docx-preview');
+
+  // Conteneur caché pour le rendu
+  const container = document.createElement('div');
+  container.style.cssText = [
+    'position:fixed', 'top:-99999px', 'left:-99999px',
+    'width:794px', 'min-height:1px', 'background:#fff', 'overflow:visible',
+  ].join(';');
+  document.body.appendChild(container);
+
+  try {
+    await renderAsync(docxBlob, container, null, {
+      className: 'docx-preview',
+      inWrapper: true,
+      ignoreWidth: false,
+      ignoreHeight: false,
+      ignoreFonts: false,
+      breakPages: true,
+      useBase64URL: true,
+      renderChanges: false,
+      renderHeaders: true,
+      renderFooters: true,
+    });
+
+    // Attendre fin du rendu CSS/polices
+    await new Promise(r => setTimeout(r, 500));
+
+    const A4_W_MM = 210;
+    const A4_H_MM = 297;
+
+    // jsPDF et html2canvas sont déjà importés en haut du bundle
+    const pdf = new jsPDF('p', 'mm', 'a4');
+
+    // docx-preview génère des <article> ou <section> pour chaque page
+    const pageEls = Array.from(
+      container.querySelectorAll('article.docx-page, .docx-wrapper > section, .docx-page, article')
+    );
+    const targets = pageEls.length > 0 ? pageEls : [container];
+
+    for (let i = 0; i < targets.length; i++) {
+      const el = targets[i];
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+        allowTaint: true,
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      const ratio = canvas.height / canvas.width;
+      const imgH = A4_W_MM * ratio;
+
+      if (i > 0) pdf.addPage();
+
+      if (imgH <= A4_H_MM) {
+        pdf.addImage(imgData, 'JPEG', 0, 0, A4_W_MM, imgH);
+      } else {
+        // Découper en tranches A4
+        const pixPerMm = canvas.width / A4_W_MM;
+        const pagePixH = Math.round(A4_H_MM * pixPerMm);
+        let yOff = 0;
+        let firstSlice = true;
+        while (yOff < canvas.height) {
+          const sliceH = Math.min(pagePixH, canvas.height - yOff);
+          const sc = document.createElement('canvas');
+          sc.width = canvas.width; sc.height = sliceH;
+          sc.getContext('2d').drawImage(canvas, 0, yOff, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+          const sliceImg = sc.toDataURL('image/jpeg', 0.92);
+          const sliceHMm = sliceH / pixPerMm;
+          if (i > 0 || !firstSlice) pdf.addPage();
+          pdf.addImage(sliceImg, 'JPEG', 0, 0, A4_W_MM, sliceHMm);
+          yOff += sliceH;
+          firstSlice = false;
+        }
+      }
+    }
+
+    return new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' });
+  } finally {
+    document.body.removeChild(container);
+  }
+};
+
 const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
@@ -3326,13 +3416,6 @@ const AdminFormateursView = ({
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
-  // État pour la section "Modèles de documents formateurs"
-  const [showTemplateUpload, setShowTemplateUpload] = React.useState(false);
-  const [tplLocalName, setTplLocalName] = React.useState('');
-  const [tplLocalFile, setTplLocalFile] = React.useState(null);
-  const [isTplUploading, setIsTplUploading] = React.useState(false);
-  // Sélection des formateurs destinataires
-  const [tplSelectedFormateurs, setTplSelectedFormateurs] = React.useState([]); // [] = tous par défaut
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -3445,121 +3528,6 @@ const AdminFormateursView = ({
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
-
-      {/* ── Section : Modèles de documents formateurs ─────────────────────── */}
-      {(() => {
-        // On affiche TOUS les templates de la bibliothèque (pas de filtre destination)
-        const formateurTemplates = Object.entries(documentTemplates || {});
-
-        const handleAddTemplate = async () => {
-          if (!tplLocalFile || !tplLocalName.trim()) return;
-          setIsTplUploading(true);
-          await handleUploadDocxTemplate(tplLocalFile, tplLocalName.trim(), 'formateur', 'a_signer');
-          setTplLocalName('');
-          setTplLocalFile(null);
-          setShowTemplateUpload(false);
-          setIsTplUploading(false);
-        };
-
-        return (
-          <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-                <span className="w-2 h-6 bg-rose-400 rounded-full"></span>
-                Modèles de Documents Formateurs
-              </h2>
-              <button
-                onClick={() => setShowTemplateUpload(v => !v)}
-                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
-              >
-                <Plus size={14} /> Ajouter un modèle
-              </button>
-            </div>
-
-            {/* Formulaire d'ajout */}
-            {showTemplateUpload && (
-              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-4">
-                <div>
-                  <p className="text-xs text-rose-700 font-bold uppercase tracking-wider mb-1">
-                    Modèle Word avec balises à remplir automatiquement
-                  </p>
-                  <p className="text-[11px] text-rose-500">
-                    Le document sera enregistré dans la bibliothèque. Vous pourrez ensuite l'envoyer individuellement depuis la fiche de chaque formateur.
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {['{nom}', '{adresse_formateur}', '{formateur_siret}', '{formateur_nda}', '{email_formateur}', '{tel_formateur}', '{date_signature}'].map(tag => (
-                      <code key={tag} className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col md:flex-row gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du document</label>
-                    <input
-                      type="text"
-                      placeholder="Ex : Contrat de sous-traitance"
-                      value={tplLocalName}
-                      onChange={e => setTplLocalName(e.target.value)}
-                      className="w-full text-sm p-3 bg-white border border-rose-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-400"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Fichier Word (.docx)</label>
-                    <label className="flex items-center gap-2 bg-white border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-rose-50 transition-all">
-                      <FileText size={15} />
-                      <span className="truncate">{tplLocalFile ? tplLocalFile.name : 'Choisir un fichier .docx'}</span>
-                      <input type="file" accept=".docx" className="hidden" onChange={e => { if (e.target.files[0]) { setTplLocalFile(e.target.files[0]); if (!tplLocalName) setTplLocalName(e.target.files[0].name.replace(/\.[^/.]+$/, '')); } }} />
-                    </label>
-                  </div>
-                  <button
-                    onClick={handleAddTemplate}
-                    disabled={!tplLocalFile || !tplLocalName.trim() || isTplUploading}
-                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
-                  >
-                    {isTplUploading ? 'Enregistrement…' : 'Ajouter à la bibliothèque'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Liste des modèles existants */}
-            {formateurTemplates.length === 0 ? (
-              <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                <FileText className="mx-auto mb-3 text-gray-300" size={28} />
-                <p className="text-gray-400 text-sm italic">Aucun modèle configuré.</p>
-                <p className="text-gray-300 text-xs mt-1">Cliquez sur "Ajouter un modèle" pour importer votre premier document.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {formateurTemplates.map(([key, tpl]) => {
-                  const dest = tpl.destination || 'client';
-                  return (
-                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 transition-all">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
-                          <FileText size={18} />
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900 text-sm">{key}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'}`}>
-                              {dest === 'formateur' ? 'Formateur' : 'Client'}
-                            </span>
-                            <span className="text-[10px] text-gray-400">Modèle Word</span>
-                          </div>
-                        </div>
-                      </div>
-                      <a href={tpl.url} target="_blank" rel="noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Télécharger le modèle">
-                        <Download size={15} />
-                      </a>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -4967,6 +4935,12 @@ const DocumentsView = ({
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
 
+  // États pour la bibliothèque de modèles (onglet Formateurs)
+  const [fplShowUpload, setFplShowUpload] = React.useState(false);
+  const [fplName, setFplName] = React.useState('');
+  const [fplFile, setFplFile] = React.useState(null);
+  const [fplUploading, setFplUploading] = React.useState(false);
+
   // Groupes de documents
   const [documentGroups, setDocumentGroups] = React.useState([]);
   const [newGroupName, setNewGroupName] = React.useState('');
@@ -5050,21 +5024,152 @@ const DocumentsView = ({
       <p className="text-gray-500 text-lg">Consultez et {isClient ? 'signez vos' : 'vérifiez les'} fichiers légaux ou de synthèse.</p>
 
       {isAdmin && (
-        <div className="flex gap-4 mb-6">
+        <div className="flex flex-wrap gap-3 mb-6">
           <button
             onClick={() => setModelesTab('modeles')}
             className={`px-5 py-3 rounded-2xl font-bold transition-all shadow-sm ${modelesTab === 'modeles' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-            Modèles Automatiques (.docx)
+            Modèles Clients
+          </button>
+          <button
+            onClick={() => setModelesTab('bibliotheque')}
+            className={`px-5 py-3 rounded-2xl font-bold transition-all shadow-sm ${modelesTab === 'bibliotheque' ? 'bg-rose-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+            Bibliothèque de modèles
           </button>
           <button
             onClick={() => setModelesTab('manuel')}
             className={`px-5 py-3 rounded-2xl font-bold transition-all shadow-sm ${modelesTab === 'manuel' ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-            Assigner un document libre
+            Documents libres
           </button>
         </div>
       )}
+
+      {/* ── Onglet : Bibliothèque de modèles (clients + formateurs) ─────── */}
+      {isAdmin && modelesTab === 'bibliotheque' && (() => {
+        const allTpls = Object.entries(documentTemplates || {});
+
+        const handleFplAdd = async () => {
+          if (!fplFile || !fplName.trim()) return;
+          setFplUploading(true);
+          await handleUploadDocxTemplate(fplFile, fplName.trim(), 'formateur', 'a_signer');
+          setFplName('');
+          setFplFile(null);
+          setFplShowUpload(false);
+          setFplUploading(false);
+        };
+
+        return (
+          <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8">
+            {/* En-tête */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
+                  <span className="w-2 h-6 bg-rose-400 rounded-full"></span>
+                  Bibliothèque de modèles
+                </h2>
+                <p className="text-[12px] text-gray-400 mt-1">Tous les modèles Word de la plateforme — envoyables depuis chaque fiche formateur ou client.</p>
+              </div>
+              <button
+                onClick={() => setFplShowUpload(v => !v)}
+                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+              >
+                <Plus size={14} /> Ajouter un modèle
+              </button>
+            </div>
+
+            {/* Formulaire d'ajout */}
+            {fplShowUpload && (
+              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-4">
+                <div>
+                  <p className="text-xs text-rose-700 font-bold uppercase tracking-wider mb-1">
+                    Modèle Word avec balises automatiques
+                  </p>
+                  <p className="text-[11px] text-rose-500 mb-2">
+                    Le modèle sera enregistré dans la bibliothèque. Envoyez-le individuellement depuis la fiche de chaque formateur.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['{nom}', '{adresse_formateur}', '{formateur_siret}', '{formateur_nda}', '{email_formateur}', '{tel_formateur}', '{date_signature}'].map(tag => (
+                      <code key={tag} className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col md:flex-row gap-3 items-end">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du modèle</label>
+                    <input
+                      type="text"
+                      placeholder="Ex : Convention de sous-traitance"
+                      value={fplName}
+                      onChange={e => setFplName(e.target.value)}
+                      className="w-full text-sm p-3 bg-white border border-rose-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Fichier Word (.docx)</label>
+                    <label className="flex items-center gap-2 bg-white border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-rose-50 transition-all">
+                      <FileText size={15} />
+                      <span className="truncate">{fplFile ? fplFile.name : 'Choisir un fichier .docx'}</span>
+                      <input
+                        type="file" accept=".docx" className="hidden"
+                        onChange={e => { if (e.target.files[0]) { setFplFile(e.target.files[0]); if (!fplName) setFplName(e.target.files[0].name.replace(/\.[^/.]+$/, '')); } }}
+                      />
+                    </label>
+                  </div>
+                  <button
+                    onClick={handleFplAdd}
+                    disabled={!fplFile || !fplName.trim() || fplUploading}
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
+                  >
+                    {fplUploading ? 'Enregistrement…' : 'Ajouter à la bibliothèque'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Grille des modèles */}
+            {allTpls.length === 0 ? (
+              <div className="py-12 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                <FileText className="mx-auto mb-3 text-gray-300" size={32} />
+                <p className="text-gray-400 text-sm italic">Aucun modèle dans la bibliothèque.</p>
+                <p className="text-gray-300 text-xs mt-1">Cliquez sur "Ajouter un modèle" pour importer votre premier document.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {allTpls.map(([key, tpl]) => {
+                  const dest = tpl.destination || 'client';
+                  return (
+                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 hover:shadow-sm transition-all">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
+                          <FileText size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-gray-900 text-sm truncate">{key}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md shrink-0 ${dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                              {dest === 'formateur' ? 'Formateur' : 'Client'}
+                            </span>
+                            <span className="text-[10px] text-gray-400">Modèle Word</span>
+                          </div>
+                        </div>
+                      </div>
+                      <a
+                        href={tpl.url} target="_blank" rel="noreferrer"
+                        className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all shrink-0 ml-2"
+                        title="Télécharger le modèle"
+                      >
+                        <Download size={15} />
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {isAdmin && modelesTab === 'modeles' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
@@ -10235,73 +10340,35 @@ export default function App() {
       let signatureAlreadyEmbedded = false;
 
       if (isDocx) {
+        // Conversion DOCX → PDF : ConvertAPI en priorité, sinon conversion locale (docx-preview + html2canvas + jsPDF)
         toast.loading('Conversion du document DOCX en PDF…', { id: TOAST_ID });
+        const docxBytes = await fetch(fetchUrl).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); });
+        const docxBlob = new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+
+        let pdfBlobFromDocx = null;
+
+        // Tentative 1 : ConvertAPI (si crédits disponibles)
         try {
-          const docxBytes = await fetch(fetchUrl).then(r => r.arrayBuffer());
-          const tempPdfBlob = await convertDocxBlobToPdf(new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
-          targetPdfBytes = await tempPdfBlob.arrayBuffer();
-        } catch (convErr) {
-          // ConvertAPI indisponible → on génère un certificat de signature PDF pur (pdf-lib)
-          console.warn('[handleDocumentSignatureSave] ConvertAPI indisponible, création certificat:', convErr.message);
-          toast.loading('Génération du certificat de signature…', { id: TOAST_ID });
-
-          const certDoc = await PDFDocument.create();
-          const certPage = certDoc.addPage([595, 842]); // A4 portrait
-          const certFont = await certDoc.embedFont(StandardFonts.Helvetica);
-          const certFontBold = await certDoc.embedFont(StandardFonts.HelveticaBold);
-
-          // Bandeau en-tête rouge VB
-          certPage.drawRectangle({ x: 0, y: 792, width: 595, height: 50, color: rgb(0.85, 0.09, 0.20) });
-          certPage.drawText('CERTIFICAT DE SIGNATURE ÉLECTRONIQUE', {
-            x: 30, y: 810, size: 12, font: certFontBold, color: rgb(1, 1, 1),
-          });
-
-          // Infos document
-          certPage.drawText('Document signé :', { x: 40, y: 748, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
-          // Découper le nom si trop long (max 70 chars)
-          const docLabel = (doc.nom || 'Document').substring(0, 70);
-          certPage.drawText(docLabel, { x: 40, y: 730, size: 14, font: certFontBold, color: rgb(0.1, 0.1, 0.1) });
-
-          // Séparateur
-          certPage.drawLine({ start: { x: 40, y: 718 }, end: { x: 555, y: 718 }, thickness: 1, color: rgb(0.85, 0.85, 0.85) });
-
-          certPage.drawText('Signataire :', { x: 40, y: 698, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
-          certPage.drawText(signerName, { x: 40, y: 680, size: 12, font: certFontBold, color: rgb(0.1, 0.1, 0.1) });
-
-          certPage.drawText('Date et heure de signature :', { x: 40, y: 658, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
-          certPage.drawText(nowStr, { x: 40, y: 640, size: 12, font: certFont, color: rgb(0.1, 0.1, 0.1) });
-
-          // Signature manuscrite
-          certPage.drawText('Signature manuscrite :', { x: 40, y: 610, size: 9, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
-          if (signatureDataUrl) {
-            try {
-              const sigRaw = signatureDataUrl.startsWith('data:')
-                ? await fetch(signatureDataUrl).then(r => r.arrayBuffer())
-                : Uint8Array.from(atob(signatureDataUrl.split(',')[1]), c => c.charCodeAt(0)).buffer;
-              const certSigImg = await certDoc.embedPng(sigRaw);
-              const aspect = certSigImg.width / certSigImg.height;
-              const certSigW = Math.min(220, certSigImg.width);
-              const certSigH = certSigW / aspect;
-              certPage.drawRectangle({ x: 38, y: 460, width: certSigW + 10, height: certSigH + 10, borderColor: rgb(0.85, 0.85, 0.85), borderWidth: 1 });
-              certPage.drawImage(certSigImg, { x: 43, y: 465, width: certSigW, height: certSigH });
-            } catch (_sigErr) {
-              certPage.drawText('[Signature non disponible]', { x: 40, y: 570, size: 10, font: certFont, color: rgb(0.6, 0.6, 0.6) });
-            }
-          }
-
-          // Lien vers le document original
-          certPage.drawLine({ start: { x: 40, y: 110 }, end: { x: 555, y: 110 }, thickness: 0.5, color: rgb(0.85, 0.85, 0.85) });
-          certPage.drawText('Document original (DOCX) :', { x: 40, y: 96, size: 8, font: certFontBold, color: rgb(0.5, 0.5, 0.5) });
-          const truncUrl = docUrl.length > 90 ? docUrl.substring(0, 87) + '…' : docUrl;
-          certPage.drawText(truncUrl, { x: 40, y: 80, size: 7, font: certFont, color: rgb(0.4, 0.4, 0.7) });
-          certPage.drawText('Ce certificat constitue une preuve de signature électronique conforme aux obligations règlementaires.', {
-            x: 40, y: 55, size: 7.5, font: certFont, color: rgb(0.5, 0.5, 0.5),
-          });
-
-          const certBytes = await certDoc.save();
-          pdfBlob = new Blob([certBytes], { type: 'application/pdf' });
-          signatureAlreadyEmbedded = true;
+          pdfBlobFromDocx = await convertDocxBlobToPdf(docxBlob);
+        } catch (_apiErr) {
+          console.log('[signing] ConvertAPI indisponible, conversion locale en cours…', _apiErr.message);
         }
+
+        // Tentative 2 : conversion locale (docx-preview + html2canvas + jsPDF)
+        if (!pdfBlobFromDocx) {
+          try {
+            toast.loading('Rendu du document en cours (conversion locale)…', { id: TOAST_ID });
+            pdfBlobFromDocx = await convertDocxBlobToPdfLocal(docxBlob);
+          } catch (_localErr) {
+            console.error('[signing] Conversion locale échouée:', _localErr);
+          }
+        }
+
+        if (!pdfBlobFromDocx) {
+          throw new Error('Impossible de convertir le document DOCX en PDF. Veuillez réessayer ou contacter l\'administrateur.');
+        }
+
+        targetPdfBytes = await pdfBlobFromDocx.arrayBuffer();
       } else {
         targetPdfBytes = await fetch(fetchUrl).then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
