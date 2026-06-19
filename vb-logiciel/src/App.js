@@ -5901,14 +5901,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
     return meta.moment === 'debut' || (!meta.moment && (d.type_document === 'À signer' || d.type_document === 'Contrat' || d.type_document === 'Convention'));
-  }), [clientVisibleDocs, moduleResourceTitles]);
+  }), [clientVisibleDocs, allKnownTitles]);
 
   const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     return meta.moment === 'fin';
-  }), [clientVisibleDocs, moduleResourceTitles]);
+  }), [clientVisibleDocs, allKnownTitles]);
 
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
