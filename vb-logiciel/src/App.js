@@ -9698,21 +9698,93 @@ export default function App() {
 
       // Auto-distribution aux formateurs si destination = 'formateur'
       if (destination === 'formateur') {
-        const { data: allFormateurs } = await supabase.from('utilisateurs').select('id, nom').eq('role', 'formateur');
+        const { data: allFormateurs } = await supabase.from('utilisateurs').select('*').eq('role', 'formateur');
         if (allFormateurs && allFormateurs.length > 0) {
-          const docsToInsert = allFormateurs.map(f => ({
-            nom: type,
-            type_document: 'Administratif',
-            url: publicUrl,
-            assigned_formateur_id: f.id,
-            signe_par_formateur: false,
-            signe_par_client: false,
-            visible_formateur: true,
-            extension: fileExt
-          }));
-          await supabase.from('documents').insert(docsToInsert);
+          toast.loading(`Génération des documents pour ${allFormateurs.length} formateur(s)…`, { id: 'tpl-dist' });
+
+          const isDocxTemplate = fileExt === 'docx';
+          let templateBuffer = null;
+
+          // Pré-chargement du template une seule fois
+          if (isDocxTemplate) {
+            try {
+              const tplResponse = await fetch(publicUrl);
+              if (tplResponse.ok) templateBuffer = await tplResponse.arrayBuffer();
+            } catch (fetchErr) {
+              console.warn('[handleUploadDocxTemplate] Impossible de charger le template pour remplissage:', fetchErr.message);
+            }
+          }
+
+          const docsToInsert = [];
+
+          for (const f of allFormateurs) {
+            let finalUrl = publicUrl; // fallback : template brut
+            let finalExt = fileExt;
+
+            if (isDocxTemplate && templateBuffer) {
+              try {
+                // Remplissage du template avec les données du formateur
+                const zip = new PizZip(templateBuffer);
+                const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => '' });
+
+                doc.render({
+                  nom: f.nom || '',
+                  nom_formateur: f.nom || '',
+                  formateur_nom_complet: f.nom || '',
+                  raison_sociale: f.nom || '',
+                  adresse_formateur: f.adresse_formateur || f.adresse_pro || f.adresse || '',
+                  adresse_session: f.adresse_session || f.adresse_formateur || f.adresse_pro || f.adresse || '',
+                  formateur_nda: f.formateur_nda || f.nda || '',
+                  formateur_siret: f.formateur_siret || f.siret || '',
+                  email_formateur: f.email || '',
+                  tel_formateur: f.telephone || '',
+                  compagnie_assurance: f.compagnie_assurance || '',
+                  numero_assurance_rcp: f.numero_assurance_rcp || '',
+                  date_signature: new Date().toLocaleDateString('fr-FR'),
+                });
+
+                const filledBlob = doc.getZip().generate({
+                  type: 'blob',
+                  mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                });
+
+                const safeFormateurName = (f.nom || 'formateur')
+                  .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                const filledPath = `generated/${safeType}_${safeFormateurName}_${Date.now()}.docx`;
+
+                const { error: upErr } = await supabaseAdmin.storage
+                  .from('documents')
+                  .upload(filledPath, filledBlob, {
+                    contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    upsert: true
+                  });
+
+                if (!upErr) {
+                  const { data: { publicUrl: filledUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(filledPath);
+                  finalUrl = filledUrl;
+                  finalExt = 'docx';
+                }
+              } catch (fillErr) {
+                console.warn(`[handleUploadDocxTemplate] Erreur remplissage pour ${f.nom}:`, fillErr.message);
+                // Fallback sur le template brut
+              }
+            }
+
+            docsToInsert.push({
+              nom: type,
+              type_document: 'Administratif',
+              url: finalUrl,
+              assigned_formateur_id: f.id,
+              signe_par_formateur: false,
+              signe_par_client: false,
+              visible_formateur: true,
+              extension: finalExt
+            });
+          }
+
+          await supabaseAdmin.from('documents').insert(docsToInsert);
           await fetchDocuments();
-          toast.success(`Modèle "${type}" enregistré et distribué à ${allFormateurs.length} formateur(s) pour signature.`);
+          toast.success(`"${type}" généré et distribué à ${allFormateurs.length} formateur(s) pour signature.`, { id: 'tpl-dist' });
         } else {
           toast.success(`Modèle pour "${type}" enregistré.`);
         }
