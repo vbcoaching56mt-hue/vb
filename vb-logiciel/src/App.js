@@ -4535,6 +4535,7 @@ const FormateurView = ({
                                             <div className="flex gap-2 items-center">
                                               {(session.type_activite === 'document' || session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
                                                 <button
+                                                  onPointerDown={e => e.stopPropagation()}
                                                   onClick={() => {
                                                     const docUrl = signedUrl || session.file_url || session.ressource_url;
                                                     setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
@@ -4548,6 +4549,7 @@ const FormateurView = ({
                                               {isToSign && (
                                                 <button
                                                   disabled={isSigned || isDateLocked}
+                                                  onPointerDown={e => e.stopPropagation()}
                                                   onClick={() => signSession(session)}
                                                   className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
                                                 >
@@ -4557,6 +4559,7 @@ const FormateurView = ({
 
                                               {signedUrl && (
                                                 <button
+                                                  onPointerDown={e => e.stopPropagation()}
                                                   onClick={() => handleDownloadResource(signedUrl)}
                                                   className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                                                   title="Télécharger"
