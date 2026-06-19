@@ -323,33 +323,105 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
 /**
- * Convertit un Blob DOCX en Blob PDF via ConvertAPI (rendu pixel-perfect).
- * Lance une erreur si la clé est manquante ou si l'API échoue — pas de fallback HTML.
+ * Convertit un Blob DOCX en Blob PDF via CloudConvert (LibreOffice, pixel-perfect).
+ * Priorité : CloudConvert (REACT_APP_CLOUDCONVERT_API_KEY) → ConvertAPI legacy (REACT_APP_CONVERT_API_SECRET).
+ * Lance une erreur si aucune clé n'est disponible ou si l'API échoue.
  */
 const convertDocxBlobToPdf = async (docxBlob) => {
-  const secret = process.env.REACT_APP_CONVERT_API_SECRET || process.env.REACT_APP_CONVERTAPI_SECRET;
-  if (!secret) throw new Error('Clé ConvertAPI manquante (REACT_APP_CONVERT_API_SECRET). Conversion impossible.');
+  const ccKey = process.env.REACT_APP_CLOUDCONVERT_API_KEY;
+  const convertApiSecret = process.env.REACT_APP_CONVERT_API_SECRET || process.env.REACT_APP_CONVERTAPI_SECRET;
 
-  const formData = new FormData();
-  formData.append('File', new File([docxBlob], 'document.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+  // ── CloudConvert (principal) ──────────────────────────────────────────────
+  if (ccKey) {
+    // Encoder le DOCX en base64 pour l'envoi inline (évite les problèmes CORS S3)
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(docxBlob);
+    });
 
-  const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${secret}`, {
-    method: 'POST',
-    body: formData,
-  });
+    // Créer le job : import base64 → convert docx→pdf (libreoffice) → export url
+    const jobRes = await fetch('https://api.cloudconvert.com/v2/jobs', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${ccKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tasks: {
+          'import-file': {
+            operation: 'import/base64',
+            file: base64Data,
+            filename: 'document.docx',
+          },
+          'convert-file': {
+            operation: 'convert',
+            input: 'import-file',
+            input_format: 'docx',
+            output_format: 'pdf',
+            engine: 'libreoffice',
+          },
+          'export-file': {
+            operation: 'export/url',
+            input: 'convert-file',
+          },
+        },
+      }),
+    });
 
-  if (!response.ok) {
-    if (response.status === 401) throw new Error('ConvertAPI : clé API invalide ou crédits épuisés. Vérifiez votre compte sur convertapi.com et la variable REACT_APP_CONVERT_API_SECRET dans Vercel.');
-    throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
+    if (!jobRes.ok) {
+      const errText = await jobRes.text().catch(() => '');
+      throw new Error(`CloudConvert job création: ${jobRes.status} — ${errText}`);
+    }
+
+    const job = await jobRes.json();
+    const jobId = job.data.id;
+
+    // Polling toutes les 2s, max 90s
+    for (let i = 0; i < 45; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
+        headers: { 'Authorization': `Bearer ${ccKey}` },
+      });
+      if (!statusRes.ok) throw new Error(`CloudConvert status: ${statusRes.status}`);
+      const status = await statusRes.json();
+
+      if (status.data.status === 'error') {
+        const failedTask = status.data.tasks?.find(t => t.status === 'error');
+        throw new Error(`CloudConvert échec: ${failedTask?.message || 'erreur inconnue'}`);
+      }
+
+      const exportTask = status.data.tasks?.find(t => t.name === 'export-file');
+      if (exportTask?.status === 'finished' && exportTask.result?.files?.[0]?.url) {
+        const pdfRes = await fetch(exportTask.result.files[0].url);
+        if (!pdfRes.ok) throw new Error(`CloudConvert téléchargement PDF: ${pdfRes.status}`);
+        return new Blob([await pdfRes.arrayBuffer()], { type: 'application/pdf' });
+      }
+    }
+    throw new Error('CloudConvert: timeout après 90 secondes');
   }
 
-  const result = await response.json();
-  if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
+  // ── ConvertAPI legacy ─────────────────────────────────────────────────────
+  if (convertApiSecret) {
+    const formData = new FormData();
+    formData.append('File', new File([docxBlob], 'document.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }));
+    const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${convertApiSecret}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
+    const result = await response.json();
+    if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
+    const byteCharacters = atob(result.Files[0].FileData);
+    const byteArray = new Uint8Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) byteArray[i] = byteCharacters.charCodeAt(i);
+    return new Blob([byteArray], { type: 'application/pdf' });
+  }
 
-  const byteCharacters = atob(result.Files[0].FileData);
-  const byteArray = new Uint8Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) byteArray[i] = byteCharacters.charCodeAt(i);
-  return new Blob([byteArray], { type: 'application/pdf' });
+  throw new Error('Aucune clé API de conversion configurée. Ajoutez REACT_APP_CLOUDCONVERT_API_KEY dans Vercel.');
 };
 
 /**
