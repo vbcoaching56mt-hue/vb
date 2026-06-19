@@ -10147,16 +10147,26 @@ export default function App() {
       let finalExt = 'docx';
       let finalMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
+      // Tentative 1 : ConvertAPI (pixel-perfect si crédits disponibles)
       try {
         toast.loading('Conversion en PDF…', { id: 'gen-doc' });
         const pdfBlob = await convertDocxBlobToPdf(docxBlob);
         finalBlob = pdfBlob;
         finalExt = 'pdf';
         finalMime = 'application/pdf';
-      } catch (convErr) {
-        console.warn('[handleGenerateDocx] ConvertAPI indisponible, fallback DOCX :', convErr.message);
-        toast.loading('PDF indisponible — génération DOCX…', { id: 'gen-doc' });
-        // Continuer avec le DOCX brut
+      } catch (_apiErr) {
+        // Tentative 2 : conversion locale (docx-preview + html2canvas + jsPDF)
+        // → le document est stocké en PDF dès la génération, la signature sera propre
+        try {
+          toast.loading('Conversion locale en cours (peut prendre 10-15s)…', { id: 'gen-doc' });
+          const pdfBlob = await convertDocxBlobToPdfLocal(docxBlob);
+          finalBlob = pdfBlob;
+          finalExt = 'pdf';
+          finalMime = 'application/pdf';
+        } catch (_localErr) {
+          console.warn('[handleGenerateDocx] Toutes les conversions ont échoué, stockage DOCX :', _localErr.message);
+          // Dernier recours : stocker en DOCX (signature moins propre mais document disponible)
+        }
       }
 
       const finalFileName = `${type}_${safeName}_${Date.now()}.${finalExt}`;
