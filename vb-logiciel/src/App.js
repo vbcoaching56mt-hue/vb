@@ -418,7 +418,7 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
       const elH = Math.max(el.scrollHeight, el.offsetHeight, 100);
 
       const canvas = await html2canvas(el, {
-        scale: 3,              // qualité supérieure (plus nette pour le texte)
+        scale: 2,              // bon équilibre qualité/taille
         backgroundColor: '#ffffff',
         useCORS: true,
         logging: false,
@@ -430,15 +430,15 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
         scrollY: 0,
       });
 
-      // PNG pour préserver la netteté du texte
-      const imgData = canvas.toDataURL('image/png');
+      // JPEG qualité 0.88 — 5× plus léger que PNG, texte lisible
+      const imgData = canvas.toDataURL('image/jpeg', 0.88);
       const ratio = canvas.height / canvas.width;
       const imgH = A4_W_MM * ratio;
 
       if (i > 0) pdf.addPage();
 
       if (imgH <= A4_H_MM) {
-        pdf.addImage(imgData, 'PNG', 0, 0, A4_W_MM, imgH);
+        pdf.addImage(imgData, 'JPEG', 0, 0, A4_W_MM, imgH);
       } else {
         // Page plus haute qu'une feuille A4 → découper en tranches
         const pixPerMm = canvas.width / A4_W_MM;
@@ -450,10 +450,10 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
           const sc = document.createElement('canvas');
           sc.width = canvas.width; sc.height = sliceH;
           sc.getContext('2d').drawImage(canvas, 0, yOff, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
-          const sliceImg = sc.toDataURL('image/png');
+          const sliceImg = sc.toDataURL('image/jpeg', 0.88);
           const sliceHMm = sliceH / pixPerMm;
           if (i > 0 || !firstSlice) pdf.addPage();
-          pdf.addImage(sliceImg, 'PNG', 0, 0, A4_W_MM, sliceHMm);
+          pdf.addImage(sliceImg, 'JPEG', 0, 0, A4_W_MM, sliceHMm);
           yOff += sliceH;
           firstSlice = false;
         }
