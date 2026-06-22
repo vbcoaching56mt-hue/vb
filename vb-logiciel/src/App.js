@@ -6709,11 +6709,158 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   );
 };
 
+// ─── Modal de signature spécifique : Autorisation de conservation ──────────────
+const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, formateurNom, dateDebut }) => {
+  const [choice, setChoice] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  const canvasRef = React.useRef(null);
+  const isDrawingRef = React.useRef(false);
+
+  const clientFullName = [clientPrenom, clientNom].filter(Boolean).join(' ') || clientNom || '—';
+
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
+    if (e.touches) return { x: (e.touches[0].clientX - rect.left) * sx, y: (e.touches[0].clientY - rect.top) * sy };
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+  };
+  const startDraw = (e) => {
+    e.preventDefault();
+    const c = canvasRef.current; if (!c) return;
+    isDrawingRef.current = true;
+    const ctx = c.getContext('2d');
+    const p = getPos(e, c);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y);
+  };
+  const draw = (e) => {
+    e.preventDefault();
+    if (!isDrawingRef.current) return;
+    const c = canvasRef.current; if (!c) return;
+    const ctx = c.getContext('2d');
+    ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111827';
+    const p = getPos(e, c);
+    ctx.lineTo(p.x, p.y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(p.x, p.y);
+  };
+  const stopDraw = () => { isDrawingRef.current = false; };
+  const clearCanvas = () => { const c = canvasRef.current; if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height); };
+  const isCanvasEmpty = () => {
+    const c = canvasRef.current; if (!c) return true;
+    return !c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some(v => v !== 0);
+  };
+
+  const handleSubmit = async () => {
+    if (!choice) { toast.error('Veuillez choisir une option.'); return; }
+    if (isCanvasEmpty()) { toast.error('Veuillez apposer votre signature.'); return; }
+    const signatureDataUrl = canvasRef.current.toDataURL('image/png');
+    setSaving(true);
+    try {
+      await onSave({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut });
+    } catch (err) {
+      console.error('[ConservationModal] Erreur:', err);
+      toast.error('Erreur lors de la génération du document.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="px-8 py-5 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">Autorisation de conservation des documents</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Lisez, choisissez une option puis signez</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="px-8 py-6 space-y-5">
+          {/* Texte légal */}
+          <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 text-xs text-gray-700 leading-relaxed">
+            Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, <strong>sauf accord écrit du bénéficiaire</strong>.
+          </div>
+
+          {/* Tableau d'informations */}
+          <div className="bg-gray-50 rounded-2xl p-5 space-y-3 text-sm">
+            {[
+              { label: 'Bénéficiaire', value: `Mme / M. ${clientFullName}` },
+              { label: 'Consultant', value: formateurNom || '—' },
+              { label: 'Date de début du bilan', value: dateDebut || '—' },
+            ].map(({ label, value }, i, arr) => (
+              <React.Fragment key={label}>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-black text-gray-400 uppercase tracking-widest">{label}</span>
+                  <span className="font-semibold text-gray-900">{value}</span>
+                </div>
+                {i < arr.length - 1 && <div className="h-px bg-gray-200" />}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Choix */}
+          <div className="space-y-3">
+            <h3 className="font-bold text-gray-900 text-sm">Choix du bénéficiaire</h3>
+            <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'conserve' ? 'border-emerald-400 bg-emerald-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
+              <input type="radio" name="conservation" value="conserve" checked={choice === 'conserve'} onChange={() => setChoice('conserve')} className="mt-0.5 shrink-0 accent-emerald-500" />
+              <span className="text-sm text-gray-700 leading-relaxed">
+                J'autorise VB Coaching à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
+              </span>
+            </label>
+            <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'detruire' ? 'border-rose-400 bg-rose-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
+              <input type="radio" name="conservation" value="detruire" checked={choice === 'detruire'} onChange={() => setChoice('detruire')} className="mt-0.5 shrink-0 accent-rose-500" />
+              <span className="text-sm text-gray-700 leading-relaxed">
+                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. VB Coaching procédera à leur destruction dès la clôture du bilan.
+              </span>
+            </label>
+          </div>
+
+          {/* Signature */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-gray-900 text-sm">Signature du bénéficiaire</h3>
+              <button onClick={clearCanvas} className="text-xs text-gray-400 hover:text-gray-600 underline">Effacer</button>
+            </div>
+            <div className="border-2 border-dashed border-gray-200 rounded-2xl overflow-hidden bg-gray-50">
+              <canvas
+                ref={canvasRef}
+                width={600} height={140}
+                onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+                onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw}
+                className="w-full cursor-crosshair touch-none"
+              />
+            </div>
+            <p className="text-[10px] text-gray-400 mt-1">Dessinez votre signature dans le cadre ci-dessus</p>
+          </div>
+        </div>
+
+        <div className="px-8 py-5 border-t border-gray-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors">Annuler</button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving || !choice}
+            className="px-6 py-2.5 rounded-xl bg-rose-500 text-white font-bold text-sm hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+          >
+            {saving ? (
+              <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Génération…</>
+            ) : (
+              'Signer et valider'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Vue "Mes Documents" client ────────────────────────────────────────────────
 // Lit directement module_step_resources (lecture seule) filtré par le module_id
 // du client connecté. Aucune écriture sur les templates. Les signatures sont
 // stockées dans la table `documents` avec user_id = currentUserId uniquement.
-const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments }) => {
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
@@ -6721,6 +6868,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
   const [groupNames, setGroupNames] = React.useState({}); // { groupId: nom }
+  const [isConservationModalOpen, setIsConservationModalOpen] = React.useState(false);
+  const [conservationTargetDoc, setConservationTargetDoc] = React.useState(null);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -6911,6 +7060,101 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     toast.success('✅ Document signé avec succès !');
   };
 
+  // ─── Signature spécifique : Autorisation de conservation ────────────────────
+  const handleConservationSign = async ({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut }) => {
+    const toastId = 'conservation-sign';
+    toast.loading('Génération du document signé…', { id: toastId });
+    try {
+      const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+      const conserveSel = choice === 'conserve';
+      const checkConserve = conserveSel ? '&#9745;' : '&#9744;';
+      const checkDetruire = !conserveSel ? '&#9745;' : '&#9744;';
+      const checkColorConserve = conserveSel ? '#16a34a' : '#9ca3af';
+      const checkColorDetruire = !conserveSel ? '#dc2626' : '#9ca3af';
+
+      // ── Générer le HTML du document ────────────────────────────────────────
+      const el = document.createElement('div');
+      el.style.cssText = 'width:794px;min-height:1100px;padding:56px 60px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;position:fixed;left:-9999px;top:-9999px;color:#111827;box-sizing:border-box;';
+      el.innerHTML = `
+        <div style="text-align:center;margin-bottom:28px;">
+          <div style="font-size:26px;font-weight:900;color:#e11d48;letter-spacing:3px;font-family:Georgia,serif;">VB</div>
+          <div style="font-size:8px;color:#9ca3af;letter-spacing:2px;margin-top:2px;text-transform:uppercase;">VB Coaching</div>
+          <div style="margin-top:14px;height:1px;background:linear-gradient(to right,transparent,#e11d48,transparent);"></div>
+        </div>
+        <h1 style="text-align:center;font-size:15px;font-weight:900;color:#e11d48;text-transform:uppercase;letter-spacing:1px;margin:0 0 22px;">Autorisation de conservation des documents</h1>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:22px;font-size:9.5px;color:#374151;line-height:1.6;">
+          Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, sauf accord écrit du bénéficiaire.
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:10px;">
+          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;width:38%;">Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${clientFullName}</td></tr>
+          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${formateurNom || '—'}</td></tr>
+          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${dateDebut || '—'}</td></tr>
+        </table>
+        <h2 style="font-size:12px;font-weight:800;color:#e11d48;margin:0 0 12px;">Choix du bénéficiaire</h2>
+        <p style="font-size:9.5px;color:#374151;margin:0 0 16px;line-height:1.6;">
+          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par VB Coaching, autorise VB Coaching à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
+        </p>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
+          <span style="font-size:18px;line-height:1;color:${checkColorConserve};flex-shrink:0;">${checkConserve}</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise VB Coaching à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
+        </div>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:30px;">
+          <span style="font-size:18px;line-height:1;color:${checkColorDetruire};flex-shrink:0;">${checkDetruire}</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. VB Coaching procédera à leur destruction dès la clôture du bilan.</span>
+        </div>
+        <div style="border-top:1px solid #e5e7eb;padding-top:20px;display:flex;justify-content:space-between;align-items:flex-end;">
+          <div>
+            <p style="font-size:9px;color:#6b7280;margin:0 0 4px;">Fait le ${today}</p>
+            <p style="font-size:9px;color:#6b7280;margin:0;">Signature du bénéficiaire :</p>
+          </div>
+          <img src="${signatureDataUrl}" style="max-width:210px;max-height:80px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;padding:4px;" />
+        </div>
+      `;
+      document.body.appendChild(el);
+      await new Promise(r => setTimeout(r, 350));
+
+      const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      document.body.removeChild(el);
+
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      pdf.addImage(imgData, 'JPEG', 0, 0, 595.28, 841.89);
+      const pdfBlob = new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' });
+
+      // ── Upload dans Supabase Storage ───────────────────────────────────────
+      const storagePath = `signed-documents/${currentUserId}/conservation_${Date.now()}.pdf`;
+      const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, pdfBlob, { contentType: 'application/pdf', upsert: true });
+      if (upErr) throw new Error('Upload échoué : ' + upErr.message);
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
+
+      // ── Mise à jour ou insertion en base ──────────────────────────────────
+      if (conservationTargetDoc?.id) {
+        await supabase.from('documents').update({ signe_par_client: true, url: publicUrl, signature_client: signatureDataUrl }).eq('id', conservationTargetDoc.id);
+      } else {
+        await supabase.from('documents').insert([{
+          user_id: currentUserId,
+          organisation_id: currentClient?.organisation_id,
+          nom: conservationTargetDoc?.titre || 'Autorisation de conservation des documents',
+          url: publicUrl,
+          type_document: 'À signer',
+          visible_client: true,
+          visible_formateur: true,
+          signe_par_client: true,
+          signature_client: signatureDataUrl,
+        }]);
+      }
+
+      toast.success('✅ Autorisation signée et enregistrée !', { id: toastId });
+      setIsConservationModalOpen(false);
+      setConservationTargetDoc(null);
+      if (fetchDocuments) await fetchDocuments();
+    } catch (err) {
+      console.error('[handleConservationSign]', err);
+      toast.error('Erreur : ' + err.message, { id: toastId });
+      throw err;
+    }
+  };
+
   // ─── Rendu d'un groupe de documents (type === 'document_group') ───
   const renderGroupCard = (resource) => {
     // Les docs du groupe sont dans la table documents avec group_id = document_group_id
@@ -7047,23 +7291,36 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   };
 
   // ─── Rendu d'une carte de document per-client (source documents table) ───
-  const renderDocumentCard = (doc) => (
-    <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-rose-50 text-rose-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
-        <div>
-          <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-          <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || 'Document'}</p>
+  const renderDocumentCard = (doc) => {
+    const isConsDoc = doc.nom?.toLowerCase().includes('conservation');
+    const needsSign = isConsDoc && !doc.signe_par_client;
+    const openConservation = () => {
+      setConservationTargetDoc({ id: doc.id, titre: doc.nom });
+      setIsConservationModalOpen(true);
+    };
+    return (
+      <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isConsDoc ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
+          <div>
+            <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || 'Document'}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
+          {needsSign && (
+            <button onClick={openConservation} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">
+              Signer le document
+            </button>
+          )}
+          {(doc.url || doc.file_url) && (
+            <button onClick={() => setViewingResource({ ...doc, titre: doc.nom, file_url: doc.url || doc.file_url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
+          )}
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-wrap justify-end">
-        {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
-        {(doc.url || doc.file_url) && (
-          <button onClick={() => setViewingResource({ ...doc, titre: doc.nom, file_url: doc.url || doc.file_url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   if (loading) return (
     <div className="flex items-center justify-center py-20">
@@ -7153,6 +7410,17 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           mode="view"
           isInteractiveConsent={false}
           onSave={() => {}}
+        />
+      )}
+      {isConservationModalOpen && (
+        <ConservationModal
+          isOpen={true}
+          onClose={() => { setIsConservationModalOpen(false); setConservationTargetDoc(null); }}
+          onSave={handleConservationSign}
+          clientPrenom={currentClient?.prenom || ''}
+          clientNom={currentClient?.nom || ''}
+          formateurNom={(formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id))?.nom || ''}
+          dateDebut={currentClient?.date_debut ? new Date(currentClient.date_debut).toLocaleDateString('fr-FR') : ''}
         />
       )}
     </div>
@@ -11890,7 +12158,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabaseAdmin} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabaseAdmin} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={formateurs} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
