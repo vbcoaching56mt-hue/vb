@@ -8963,38 +8963,139 @@ function AutomationSettingsView({ supabase }) {
 
   const triggerManual = async () => {
     setIsTesting(true);
+    const toastId = 'automation-trigger';
+    toast.loading('Analyse des relances en cours…', { id: toastId });
     try {
-      const resp = await fetch('/api/automation/process', { method: 'GET' });
-      if (resp.status === 404) {
-        toast.error('Fonction non disponible — la fonction API n\'est pas encore déployée sur Vercel.');
+      // ── 1. Lire les relances actives ────────────────────────────────────────
+      const { data: activeSettings, error: settErr } = await supabase
+        .from('automation_settings').select('*').eq('is_active', true);
+      if (settErr) throw new Error('Lecture relances : ' + settErr.message);
+      if (!activeSettings?.length) {
+        toast.success('Aucune relance active configurée.', { id: toastId });
         setIsTesting(false);
         return;
       }
-      // Tenter de parser le JSON même si la réponse est une erreur
-      let json;
-      try { json = await resp.json(); } catch { json = {}; }
 
-      if (resp.ok) {
-        if (json.sent > 0) {
-          toast.success(`✅ ${json.sent} email(s) envoyé(s) avec succès.`);
-        } else if (json.processed === 0) {
-          toast.success('✅ Exécution OK — aucune séance correspondante aujourd\'hui.');
-        } else {
-          // Mode simulation (pas de clé Resend) ou emails non envoyés
-          const hasSimulation = (json.details || []).some(d => d.sent && d.trigger);
-          if (hasSimulation) {
-            toast('⚠️ Simulation OK — ajoutez RESEND_API_KEY dans Vercel pour activer l\'envoi réel.', { icon: '⚠️', duration: 6000 });
-          } else {
-            toast.success(`✅ Exécution terminée — ${json.sent} email(s) envoyé(s).`);
-          }
+      // ── 2. Lire clients + séances ────────────────────────────────────────────
+      const [{ data: clients }, { data: sessions }] = await Promise.all([
+        supabase.from('clients').select('id, nom, prenom, email_contact, formateur_id'),
+        supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance'),
+      ]);
+
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
+
+      // ── 3. Construire la liste des emails à envoyer ──────────────────────────
+      const emailQueue = [];
+      for (const setting of activeSettings) {
+        let targetSessions = [];
+
+        if (setting.trigger_type === 'reminder_before_session') {
+          const offset = Math.abs(setting.delay_days ?? 1);
+          const d = new Date(today); d.setDate(d.getDate() + offset);
+          const ds = d.toISOString().split('T')[0];
+          targetSessions = (sessions || []).filter(s => s.date === ds);
+        } else if (setting.trigger_type === 'no_signature') {
+          const offset = Math.abs(setting.delay_days ?? 2);
+          const d = new Date(today); d.setDate(d.getDate() - offset);
+          const ds = d.toISOString().split('T')[0];
+          targetSessions = (sessions || []).filter(s =>
+            s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
+          );
         }
-        if (json.message) toast(json.message, { icon: 'ℹ️' });
+
+        for (const session of targetSessions) {
+          const client = (clients || []).find(c => String(c.id) === String(session.client_id));
+          if (!client?.email_contact) continue;
+
+          // Anti-doublon : déjà envoyé aujourd'hui ?
+          const { data: existing } = await supabase.from('automation_logs')
+            .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)
+            .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();
+          if (existing) continue;
+
+          const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
+          const sessionDate = session.date
+            ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+            : '';
+          const sessionTitle = session.type_activite || `Séance n°${session.numero_seance ?? ''}`;
+          const rv = (s) => (s || '')
+            .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
+            .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
+            .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle);
+
+          emailQueue.push({ setting, client, clientName, subject: rv(setting.email_subject), body: rv(setting.email_body) });
+        }
+      }
+
+      if (emailQueue.length === 0) {
+        toast.success('✅ Aucun email à envoyer aujourd\'hui (aucune séance correspondante).', { id: toastId });
+        setIsTesting(false);
+        if (showLogs) fetchLogs();
+        return;
+      }
+
+      // ── 4. Envoyer les emails via Resend ────────────────────────────────────
+      const resendKey = process.env.REACT_APP_RESEND_API_KEY;
+      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'VB Coaching <onboarding@resend.dev>';
+      let sent = 0, simulated = 0;
+
+      for (const item of emailQueue) {
+        let ok = false; let errMsg = null;
+
+        if (resendKey) {
+          try {
+            const r = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: fromEmail,
+                to: [item.client.email_contact],
+                subject: item.subject,
+                html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+                  <div style="background:#e11d48;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">VB Coaching</div>
+                  <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                    <p style="color:#111827;font-size:14px;line-height:1.7;">${item.body.replace(/\n/g, '<br>')}</p>
+                    <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+                    <p style="color:#9ca3af;font-size:11px;">Email automatique VB Coaching — ne pas répondre à ce message.</p>
+                  </div>
+                </div>`,
+              }),
+            });
+            ok = r.ok;
+            if (!r.ok) { const e = await r.json().catch(() => ({})); errMsg = e.message || `HTTP ${r.status}`; }
+          } catch (e) { errMsg = e.message; }
+        } else {
+          // Mode simulation (pas de clé Resend configurée)
+          ok = true; simulated++;
+          errMsg = 'Simulation — REACT_APP_RESEND_API_KEY non configurée';
+        }
+
+        if (ok && !simulated) sent++;
+
+        // Journaliser le résultat
+        await supabase.from('automation_logs').insert([{
+          automation_setting_id: item.setting.id,
+          client_id: item.client.id,
+          trigger_type: item.setting.trigger_type,
+          sent_at: new Date().toISOString(),
+          email_to: item.client.email_contact,
+          email_subject: item.subject,
+          status: ok ? (resendKey ? 'sent' : 'simulated') : 'error',
+          error_message: errMsg || null,
+        }]);
+      }
+
+      if (simulated > 0) {
+        toast('⚠️ Simulation : ' + simulated + ' email(s) prêt(s) — ajoutez REACT_APP_RESEND_API_KEY dans Vercel pour l\'envoi réel.', { id: toastId, icon: '⚠️', duration: 8000 });
+      } else if (sent > 0) {
+        toast.success(`✅ ${sent} email(s) envoyé(s) avec succès !`, { id: toastId });
       } else {
-        toast.error(`Erreur : ${json.error || resp.statusText}`);
+        toast.error('Aucun email envoyé — consultez le journal pour les erreurs.', { id: toastId });
       }
     } catch (e) {
       console.error('[triggerManual]', e);
-      toast.error('Impossible de contacter la fonction — vérifiez que le déploiement est à jour.');
+      toast.error('Erreur : ' + e.message, { id: toastId });
     }
     setIsTesting(false);
     if (showLogs) fetchLogs();
