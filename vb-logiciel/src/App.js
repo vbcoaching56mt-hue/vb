@@ -3093,10 +3093,6 @@ const AdminClientsView = ({
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration VB Coaching
         </h2>
-        <div className="flex border-b border-gray-200 mb-6 font-sans">
-          <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Supervision Globale</button>
-          <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Managers</button>
-        </div>
 
         <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between mb-8 shadow-sm">
           <div className="flex items-center gap-4">
@@ -5944,16 +5940,414 @@ const DocumentsView = ({
   );
 };
 
-const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions }) => (
-  <div className="flex flex-col items-center justify-center pt-10 md:pt-20 animate-fade-in">
-    <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-6 border border-gray-100">
-      <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+// ─── Cloche de notifications ──────────────────────────────────────────────────
+const NotificationBell = ({ sessions, documents, clients, userRole, currentUserId, setActiveTab }) => {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const today = new Date().toISOString().split('T')[0];
+  const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const notifications = React.useMemo(() => {
+    const notifs = [];
+    if (userRole === 'admin') {
+      const pendingDocs = documents.filter(d => (d.user_id || d.assigned_formateur_id) && (!d.signe_par_client || !d.signe_par_formateur));
+      if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} en attente de signature`, action: 'gestion_documents' });
+      const weekSessions = sessions.filter(s => s.date >= today && s.date <= in7Days);
+      if (weekSessions.length > 0) notifs.push({ type: 'info', message: `${weekSessions.length} séance${weekSessions.length > 1 ? 's' : ''} cette semaine`, action: 'calendrier' });
+    } else if (userRole === 'formateur') {
+      const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
+      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
+      if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'clients' });
+      const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
+      if (todaySessions.length > 0) notifs.push({ type: 'info', message: `${todaySessions.length} séance${todaySessions.length > 1 ? 's' : ''} aujourd'hui`, action: 'calendrier' });
+    } else if (userRole === 'client') {
+      const pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client);
+      if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'mes_documents' });
+      const nextSess = sessions.filter(s => String(s.client_id) === String(currentUserId) && s.date >= today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
+      if (nextSess) notifs.push({ type: 'info', message: `Prochaine séance : ${new Date(nextSess.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`, action: 'mes_seances' });
+    }
+    return notifs;
+  }, [sessions, documents, clients, userRole, currentUserId, today, in7Days]);
+
+  const count = notifications.length;
+  return (
+    <div className="relative">
+      <button onClick={() => setIsOpen(!isOpen)} className="relative p-2 rounded-xl hover:bg-gray-100 transition-colors">
+        <Bell size={20} className="text-gray-500" />
+        {count > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">{count}</span>}
+      </button>
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
+          <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 z-20 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100"><p className="font-bold text-gray-900 text-sm">Notifications</p></div>
+            <div className="max-h-64 overflow-y-auto">
+              {count === 0
+                ? <div className="py-8 text-center"><p className="text-gray-400 text-sm">Aucune notification</p></div>
+                : notifications.map((n, i) => (
+                    <button key={i} onClick={() => { setActiveTab(n.action); setIsOpen(false); }}
+                      className="w-full px-4 py-3.5 text-left hover:bg-gray-50 border-b border-gray-50 transition-colors last:border-0 flex items-start gap-3">
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${n.type === 'warning' ? 'bg-amber-400' : 'bg-blue-400'}`}></div>
+                      <p className="text-sm text-gray-700">{n.message}</p>
+                    </button>
+                  ))
+              }
+            </div>
+          </div>
+        </>
+      )}
     </div>
-    <h1 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">Bonjour.</h1>
-    <p className="text-lg text-gray-500 max-w-lg text-center leading-relaxed">Bienvenue sur votre espace VB Coaching. Suivez votre progression et accédez à vos séances.</p>
+  );
+};
+
+// ─── Tableau de bord Admin ─────────────────────────────────────────────────────
+const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiveTab }) => {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const weekStartStr = weekStart.toISOString().split('T')[0];
+  const weekEndStr = weekEnd.toISOString().split('T')[0];
+
+  const issuedDocs = documents.filter(d => d.user_id || d.assigned_formateur_id);
+  const pendingDocs = issuedDocs.filter(d => !d.signe_par_client || !d.signe_par_formateur);
+  const signedDocs = issuedDocs.filter(d => d.signe_par_client && d.signe_par_formateur);
+  const weekSessions = sessions.filter(s => s.date >= weekStartStr && s.date <= weekEndStr);
+  const todaySessions = sessions.filter(s => s.date === todayStr);
+  const completedSessions = sessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
+  const completionRate = sessions.length > 0 ? Math.round((completedSessions / sessions.length) * 100) : 0;
+  const upcomingSessions = [...sessions].filter(s => s.date >= todayStr).sort((a, b) => (a.date || '').localeCompare(b.date || '')).slice(0, 5);
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <div>
+        <h1 className="text-2xl font-black text-gray-900">Tableau de bord</h1>
+        <p className="text-gray-400 text-sm mt-1">Vue d'ensemble de votre activité.</p>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Clients actifs</p>
+          <p className="text-3xl font-black text-gray-900 mt-2">{clients.length}</p>
+          <p className="text-xs text-gray-400 mt-1">{formateurs.length} formateur{formateurs.length > 1 ? 's' : ''}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-5 border border-amber-100 shadow-sm">
+          <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">En attente</p>
+          <p className="text-3xl font-black text-amber-500 mt-2">{pendingDocs.length}</p>
+          <p className="text-xs text-gray-400 mt-1">{signedDocs.length} signés</p>
+        </div>
+        <div className="bg-white rounded-2xl p-5 border border-blue-100 shadow-sm">
+          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Séances cette semaine</p>
+          <p className="text-3xl font-black text-blue-500 mt-2">{weekSessions.length}</p>
+          <p className="text-xs text-gray-400 mt-1">{todaySessions.length} aujourd'hui</p>
+        </div>
+        <div className="bg-white rounded-2xl p-5 border border-emerald-100 shadow-sm">
+          <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Complétion</p>
+          <p className="text-3xl font-black text-emerald-500 mt-2">{completionRate}%</p>
+          <p className="text-xs text-gray-400 mt-1">{completedSessions}/{sessions.length} émargements</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900 text-sm">Prochaines séances</h2>
+            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-rose-500 font-bold hover:underline">Voir calendrier →</button>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {upcomingSessions.length === 0
+              ? <div className="py-8 text-center text-gray-400 text-sm">Aucune séance à venir.</div>
+              : upcomingSessions.map(s => {
+                  const client = clients.find(c => c.id === s.client_id);
+                  return (
+                    <div key={s.id} className="px-5 py-3.5 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{s.ressource_titre || s.nom || 'Séance'}</p>
+                        <p className="text-xs text-gray-400">{client?.nom} · {s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '—'}</p>
+                      </div>
+                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${s.date === todayStr ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}>
+                        {s.date === todayStr ? "Aujourd'hui" : s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short' }) : '—'}
+                      </span>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900 text-sm">Documents en attente</h2>
+            <button onClick={() => setActiveTab('gestion_documents')} className="text-xs text-rose-500 font-bold hover:underline">Voir tout →</button>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {pendingDocs.length === 0
+              ? <div className="py-8 text-center text-gray-400 text-sm">Tous les documents sont signés ✓</div>
+              : pendingDocs.slice(0, 5).map(doc => {
+                  const beneficiaire = clients.find(c => c.id === doc.user_id)?.nom || formateurs.find(f => f.id === doc.assigned_formateur_id)?.nom || '—';
+                  return (
+                    <div key={doc.id} className="px-5 py-3.5 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{doc.nom}</p>
+                        <p className="text-xs text-gray-400">{beneficiaire}</p>
+                      </div>
+                      <div className="flex gap-1 shrink-0 ml-2">
+                        {!doc.signe_par_client && doc.visible_client && <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded font-bold">Client</span>}
+                        {!doc.signe_par_formateur && doc.visible_formateur && <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded font-bold">Formateur</span>}
+                      </div>
+                    </div>
+                  );
+                })
+            }
+            {pendingDocs.length > 5 && <div className="px-5 py-3 text-center text-xs text-gray-400">+ {pendingDocs.length - 5} autres documents</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Calendrier des séances ────────────────────────────────────────────────────
+const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId }) => {
+  const [currentMonth, setCurrentMonth] = React.useState(new Date());
+  const [selectedDay, setSelectedDay] = React.useState(null);
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7;
+
+  const filteredSessions = userRole === 'formateur'
+    ? sessions.filter(s => clients.find(c => c.id === s.client_id)?.formateur_id === currentUserId)
+    : sessions;
+
+  const sessionsByDate = React.useMemo(() => {
+    const map = {};
+    filteredSessions.forEach(s => { if (s.date) { if (!map[s.date]) map[s.date] = []; map[s.date].push(s); } });
+    return map;
+  }, [filteredSessions]);
+
+  const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const MONTHS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const cells = [];
+  for (let i = 0; i < startDayOfWeek; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <div>
+        <h1 className="text-2xl font-black text-gray-900">Calendrier</h1>
+        <p className="text-gray-400 text-sm mt-1">Planning des séances par jour.</p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <button onClick={() => { setCurrentMonth(new Date(year, month - 1, 1)); setSelectedDay(null); }} className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
+            <ChevronLeft size={18} className="text-gray-600" />
+          </button>
+          <h2 className="text-lg font-black text-gray-900">{MONTHS[month]} {year}</h2>
+          <button onClick={() => { setCurrentMonth(new Date(year, month + 1, 1)); setSelectedDay(null); }} className="p-2 rounded-xl hover:bg-gray-100 transition-colors">
+            <ChevronRight size={18} className="text-gray-600" />
+          </button>
+        </div>
+        <div className="grid grid-cols-7 border-b border-gray-100">
+          {DAYS.map(d => <div key={d} className="py-3 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7">
+          {cells.map((day, idx) => {
+            if (!day) return <div key={idx} className="h-20 border-b border-r border-gray-50 bg-gray-50/50" />;
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const daySessions = sessionsByDate[dateStr] || [];
+            const isToday = dateStr === todayStr;
+            const isSelected = selectedDay === dateStr;
+            return (
+              <div key={idx} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
+                className={`h-20 border-b border-r border-gray-50 p-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-rose-50' : isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mb-1 ${isToday ? 'bg-rose-500 text-white' : 'text-gray-700'}`}>{day}</div>
+                <div className="space-y-0.5">
+                  {daySessions.slice(0, 2).map((s, i) => {
+                    const client = clients.find(c => c.id === s.client_id);
+                    return <div key={i} className="text-[9px] bg-rose-100 text-rose-700 px-1 py-0.5 rounded truncate font-medium">{client?.nom?.split(' ')[0] || 'Séance'}</div>;
+                  })}
+                  {daySessions.length > 2 && <div className="text-[9px] text-gray-400 font-medium">+{daySessions.length - 2}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedDay && sessionsByDate[selectedDay] && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h3 className="font-bold text-gray-900 text-sm">{new Date(selectedDay + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {sessionsByDate[selectedDay].map(s => {
+              const client = clients.find(c => c.id === s.client_id);
+              const formateur = formateurs.find(f => f.id === client?.formateur_id);
+              return (
+                <div key={s.id} className="px-5 py-4 flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">{s.ressource_titre || s.nom}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {client?.nom}
+                      {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
+                      {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                    {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Accueil Formateur ─────────────────────────────────────────────────────────
+const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab }) => {
+  const formateur = formateurs.find(f => f.id === currentUserId);
+  const myClients = clients.filter(c => c.formateur_id === currentUserId);
+  const myClientIds = myClients.map(c => c.id);
+  const today = new Date().toISOString().split('T')[0];
+  const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
+  const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
+  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <div>
+        <h1 className="text-2xl font-black text-gray-900">Bonjour, {formateur?.nom?.split(' ')[0] || 'Formateur'} 👋</h1>
+        <p className="text-gray-400 text-sm mt-1">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm text-center">
+          <p className="text-3xl font-black text-gray-900">{myClients.length}</p>
+          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Mes clients</p>
+        </div>
+        <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${todaySessions.length > 0 ? 'border-rose-100' : 'border-gray-100'}`}>
+          <p className={`text-3xl font-black ${todaySessions.length > 0 ? 'text-rose-500' : 'text-gray-900'}`}>{todaySessions.length}</p>
+          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Séances aujourd'hui</p>
+        </div>
+        <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingDocs.length > 0 ? 'border-amber-100' : 'border-gray-100'}`}>
+          <p className={`text-3xl font-black ${pendingDocs.length > 0 ? 'text-amber-500' : 'text-gray-900'}`}>{pendingDocs.length}</p>
+          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">À signer</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900 text-sm">Planning de la semaine</h2>
+            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-rose-500 font-bold hover:underline">Calendrier →</button>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {todaySessions.length === 0 && weekSessions.length === 0
+              ? <div className="py-8 text-center text-gray-400 text-sm">Aucune séance planifiée cette semaine.</div>
+              : <>
+                  {todaySessions.length > 0 && <>
+                    <div className="px-5 py-2 bg-rose-50"><p className="text-[10px] font-black text-rose-600 uppercase tracking-widest">Aujourd'hui</p></div>
+                    {todaySessions.map(s => {
+                      const client = myClients.find(c => c.id === s.client_id);
+                      return (
+                        <div key={s.id} className="px-5 py-3 flex items-center justify-between border-b border-gray-50">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">{client?.nom}</p>
+                            <p className="text-xs text-gray-400">{s.ressource_titre || s.nom}</p>
+                          </div>
+                          {s.heure_debut && <span className="text-xs font-medium text-gray-500 shrink-0 ml-2">{s.heure_debut}</span>}
+                        </div>
+                      );
+                    })}
+                  </>}
+                  {weekSessions.slice(0, 4).map(s => {
+                    const client = myClients.find(c => c.id === s.client_id);
+                    return (
+                      <div key={s.id} className="px-5 py-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">{client?.nom}</p>
+                          <p className="text-xs text-gray-400">{s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+            }
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h2 className="font-bold text-gray-900 text-sm">Documents à signer</h2>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {pendingDocs.length === 0
+              ? <div className="py-8 text-center text-gray-400 text-sm">Aucun document en attente ✓</div>
+              : pendingDocs.slice(0, 5).map(doc => {
+                  const client = clients.find(c => c.id === doc.user_id);
+                  return (
+                    <div key={doc.id} className="px-5 py-3.5 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{doc.nom}</p>
+                        {client && <p className="text-xs text-gray-400">{client.nom}</p>}
+                      </div>
+                      <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À signer</span>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Accueil Client ────────────────────────────────────────────────────────────
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount }) => (
+  <div className="flex flex-col items-center justify-center pt-8 md:pt-16 animate-fade-in">
+    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-5 border border-gray-100">
+      <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+    </div>
+    <h1 className="text-4xl font-extrabold text-gray-900 mb-2 tracking-tight">Bonjour.</h1>
+    {coachName && <p className="text-sm text-gray-400 mb-4">Votre coach : <span className="font-bold text-gray-600">{coachName}</span></p>}
+
+    {/* Info cards : prochaine séance + docs en attente */}
+    {(nextSession || pendingDocsCount > 0) && (
+      <div className="flex gap-3 mb-6 flex-wrap justify-center">
+        {nextSession && (
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('mes_seances')}>
+            <div className="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center text-white">📅</div>
+            <div>
+              <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Prochaine séance</p>
+              <p className="text-sm font-bold text-blue-700">{new Date(nextSession.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+            </div>
+          </div>
+        )}
+        {pendingDocsCount > 0 && (
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('mes_documents')}>
+            <div className="w-8 h-8 bg-amber-400 rounded-xl flex items-center justify-center text-white font-black text-sm">{pendingDocsCount}</div>
+            <div>
+              <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Document{pendingDocsCount > 1 ? 's' : ''} à signer</p>
+              <p className="text-sm font-bold text-amber-700">En attente de votre signature</p>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
 
     {/* Barre de Progression */}
-    <div className="w-full max-w-3xl mt-8 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+    <div className="w-full max-w-3xl bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
       <div className="flex justify-between items-center mb-2">
         <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">
           {moduleName ? `Progression du ${moduleName}` : 'Progression du parcours'}
@@ -5971,10 +6365,10 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
       </div>
     </div>
 
-    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
+    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('mes_seances')}>
         <h3 className="font-bold text-gray-800 text-lg mb-2">Planning des Séances</h3>
-        <p className="text-sm text-gray-500 mb-4">Consultez vos dates et émarger vos rapports de présence.</p>
+        <p className="text-sm text-gray-500 mb-4">Consultez vos dates et émargez vos rapports de présence.</p>
         <div className="bg-rose-50 text-rose-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes séances</div>
       </div>
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('bilan')}>
@@ -8938,8 +9332,8 @@ export default function App() {
     setUserRole(role);
     setCurrentUserId(id);
     setCurrentOrgId(orgId);
-    if (role === 'admin') setActiveTab('clients');
-    if (role === 'formateur') setActiveTab('clients');
+    if (role === 'admin') setActiveTab('dashboard');
+    if (role === 'formateur') setActiveTab('accueil_formateur');
     if (role === 'client') setActiveTab('accueil');
   };
 
@@ -11095,7 +11489,7 @@ export default function App() {
         <div className="flex items-center justify-between h-20 px-6 border-b border-gray-800 bg-gray-950">
           <div className="flex items-center">
             <div className="w-8 h-8 rounded-lg bg-rose-500 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]">VB</div>
-            <span className="text-xl font-bold text-white tracking-widest">ERP</span>
+            <span className="text-xl font-bold text-white tracking-widest">Suivi</span>
           </div>
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -11105,14 +11499,20 @@ export default function App() {
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
             <>
+              <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <LayoutDashboard className="w-5 h-5 mr-3" /> Tableau de bord
+              </button>
               <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Clients
               </button>
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Layout className="w-5 h-5 mr-3" /> Calendrier
+              </button>
               <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-                <FileText className="w-5 h-5 mr-3" /> Gestion des documents
+                <FileText className="w-5 h-5 mr-3" /> Documents
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
@@ -11131,8 +11531,14 @@ export default function App() {
 
           {userRole === 'formateur' && (
             <>
+              <button onClick={() => { setActiveTab('accueil_formateur'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil_formateur' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <LayoutDashboard className="w-5 h-5 mr-3" /> Accueil
+              </button>
               <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Mes Clients
+              </button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Layout className="w-5 h-5 mr-3" /> Calendrier
               </button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
@@ -11149,13 +11555,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
             </>
-          )}
-
-
-          {userRole === 'formateur' && (
-            <button onClick={() => { setActiveTab('ressources'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'ressources' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
-              <FileText className="w-5 h-5 mr-3" /> Ressources
-            </button>
           )}
         </nav>
 
@@ -11181,7 +11580,15 @@ export default function App() {
             <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3">
+            <NotificationBell
+              sessions={sessions}
+              documents={documents}
+              clients={clients}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              setActiveTab={setActiveTab}
+            />
             {(() => {
               let displayName = "";
               let rawName = "";
@@ -11234,6 +11641,28 @@ export default function App() {
             orgSettings={orgSettings}
             currentOrgId={currentOrgId}
             onOrgSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
+          />}
+          {activeTab === 'dashboard' && userRole === 'admin' && <DashboardAdminView
+            clients={clients}
+            sessions={sessions}
+            documents={documents}
+            formateurs={formateurs}
+            setActiveTab={setActiveTab}
+          />}
+          {activeTab === 'calendrier' && (userRole === 'admin' || userRole === 'formateur') && <CalendrierView
+            sessions={sessions}
+            clients={clients}
+            formateurs={formateurs}
+            userRole={userRole}
+            currentUserId={currentUserId}
+          />}
+          {activeTab === 'accueil_formateur' && userRole === 'formateur' && <FormateurAccueilView
+            formateurs={formateurs}
+            clients={clients}
+            sessions={sessions}
+            documents={documents}
+            currentUserId={currentUserId}
+            setActiveTab={setActiveTab}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
@@ -11424,12 +11853,19 @@ export default function App() {
             const _signed = _clientSessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
             const _total = _clientSessions.length;
             const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
+            const _today = new Date().toISOString().split('T')[0];
+            const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
+            const _coach = formateurs.find(f => f.id === _client?.formateur_id);
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client).length;
             return <AccueilView
               setActiveTab={setActiveTab}
               clientProgress={_progress}
               moduleName={_module?.nom || null}
               totalSessions={_total}
               signedSessions={_signed}
+              nextSession={_nextSession}
+              coachName={_coach?.nom || null}
+              pendingDocsCount={_pendingDocs}
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
