@@ -6433,9 +6433,9 @@ const SessionsView = ({
                 return sortedGroups.map((group, gIdx) => {
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
-                  
-                  const previousGroupNotSigned = gIdx > 0 && sortedGroups[gIdx - 1].items.some(s => s.statut !== 'Signé');
-                  const isLocked = isFuture || previousGroupNotSigned;
+                  // Seules les séances avec une date future sont verrouillées.
+                  // Les séances passées restent toujours accessibles pour que le client puisse signer.
+                  const isLocked = isFuture;
 
                   return (
                     <React.Fragment key={gIdx}>
@@ -11385,6 +11385,10 @@ export default function App() {
       <SetPasswordView
         supabase={supabase}
         onComplete={async () => {
+          // Effacer immédiatement le hash URL pour empêcher onAuthStateChange de re-déclencher le formulaire
+          window.history.replaceState(null, '', window.location.pathname);
+          setIsSettingPassword(false);
+
           // Attendre que Supabase finalise la session
           await new Promise(r => setTimeout(r, 500));
 
@@ -11399,19 +11403,25 @@ export default function App() {
               .eq('email', user.email)
               .single();
 
-            console.log('DB user data:', userData);
-
             if (userData && userData.role) {
-              // ⚡ D'ABORD définir le rôle, PUIS masquer le formulaire de mot de passe
               handleLogin(userData.role, userData.id);
-              setIsSettingPassword(false);
+              return;
+            }
+
+            // Chercher côté clients
+            const { data: clientData } = await supabase
+              .from('clients')
+              .select('id')
+              .ilike('email_contact', user.email)
+              .single();
+            if (clientData?.id) {
+              handleLogin('client', clientData.id);
               return;
             }
           }
 
           // Fallback: pas de rôle trouvé
           console.warn('Impossible de déterminer le rôle automatiquement.');
-          setIsSettingPassword(false);
         }}
       />
     );
