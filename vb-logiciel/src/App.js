@@ -8418,8 +8418,10 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
     setLoading(true);
     if (userRole === 'admin' || userRole === 'formateur') {
       let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
-      if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+      // Inclure les fiches de l'org OU celles sans organisation_id (créées avant la config org)
+      if (currentOrgId) q = q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
       const { data, error } = await q;
+      if (error) console.error('[FichesMetiers] fetchFiches error:', error);
       if (data) setFiches(data);
     } else if (userRole === 'client') {
       const { data, error } = await supabase
@@ -11957,7 +11959,7 @@ export default function App() {
             userRole={userRole}
             currentUserId={currentUserId}
             currentOrgId={currentOrgId}
-            supabase={supabase}
+            supabase={supabaseAdmin}
             clients={clients}
             formateurs={formateurs}
           />}
