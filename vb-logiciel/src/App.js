@@ -5960,10 +5960,18 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
       if (todaySessions.length > 0) notifs.push({ type: 'info', message: `${todaySessions.length} séance${todaySessions.length > 1 ? 's' : ''} aujourd'hui`, action: 'calendrier' });
     } else if (userRole === 'client') {
-      const pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client);
-      if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'mes_documents' });
+      // Même logique que isSignedByClient dans ClientDocumentsView :
+      // un document est considéré signé si UN enregistrement avec le même nom a signe_par_client = true
+      const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && d.visible_client && !d.signe_par_client);
+      const trulyPending = myDocs.filter(d => {
+        const effectivelySigned = documents.some(other =>
+          String(other.user_id) === String(currentUserId) && other.nom === d.nom && other.signe_par_client
+        );
+        return !effectivelySigned;
+      });
+      if (trulyPending.length > 0) notifs.push({ type: 'warning', message: `${trulyPending.length} document${trulyPending.length > 1 ? 's' : ''} à signer`, action: 'mes_documents' });
       const nextSess = sessions.filter(s => String(s.client_id) === String(currentUserId) && s.date >= today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
-      if (nextSess) notifs.push({ type: 'info', message: `Prochaine séance : ${new Date(nextSess.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`, action: 'mes_seances' });
+      if (nextSess) notifs.push({ type: 'info', message: `Prochaine séance : ${new Date(nextSess.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`, action: 'calendrier' });
     }
     return notifs;
   }, [sessions, documents, clients, userRole, currentUserId, today, in7Days]);
@@ -6120,6 +6128,8 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
 
   const filteredSessions = userRole === 'formateur'
     ? sessions.filter(s => clients.find(c => c.id === s.client_id)?.formateur_id === currentUserId)
+    : userRole === 'client'
+    ? sessions.filter(s => String(s.client_id) === String(currentUserId))
     : sessions;
 
   const sessionsByDate = React.useMemo(() => {
@@ -6326,7 +6336,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
     {(nextSession || pendingDocsCount > 0) && (
       <div className="flex gap-3 mb-6 flex-wrap justify-center">
         {nextSession && (
-          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('mes_seances')}>
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('calendrier')}>
             <div className="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center text-white">📅</div>
             <div>
               <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Prochaine séance</p>
@@ -11560,6 +11570,7 @@ export default function App() {
             <>
               <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
               <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Calendrier</button>
               <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
               <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
@@ -11659,7 +11670,7 @@ export default function App() {
             formateurs={formateurs}
             setActiveTab={setActiveTab}
           />}
-          {activeTab === 'calendrier' && (userRole === 'admin' || userRole === 'formateur') && <CalendrierView
+          {activeTab === 'calendrier' && <CalendrierView
             sessions={sessions}
             clients={clients}
             formateurs={formateurs}
