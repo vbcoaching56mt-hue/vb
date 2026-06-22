@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "framework": "create-react-app",
+  "crons": [
+    {
+      "path": "/api/automation/process",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

@@ -8966,14 +8966,35 @@ function AutomationSettingsView({ supabase }) {
     try {
       const resp = await fetch('/api/automation/process', { method: 'GET' });
       if (resp.status === 404) {
-        toast.error('Fonction non disponible — déployez l\'application sur Vercel pour activer les relances automatiques.');
+        toast.error('Fonction non disponible — la fonction API n\'est pas encore déployée sur Vercel.');
+        setIsTesting(false);
         return;
       }
-      const json = await resp.json();
-      if (resp.ok) toast.success(`Exécution terminée — ${json.sent} email(s) envoyé(s).`);
-      else toast.error(`Erreur : ${json.error}`);
+      // Tenter de parser le JSON même si la réponse est une erreur
+      let json;
+      try { json = await resp.json(); } catch { json = {}; }
+
+      if (resp.ok) {
+        if (json.sent > 0) {
+          toast.success(`✅ ${json.sent} email(s) envoyé(s) avec succès.`);
+        } else if (json.processed === 0) {
+          toast.success('✅ Exécution OK — aucune séance correspondante aujourd\'hui.');
+        } else {
+          // Mode simulation (pas de clé Resend) ou emails non envoyés
+          const hasSimulation = (json.details || []).some(d => d.sent && d.trigger);
+          if (hasSimulation) {
+            toast('⚠️ Simulation OK — ajoutez RESEND_API_KEY dans Vercel pour activer l\'envoi réel.', { icon: '⚠️', duration: 6000 });
+          } else {
+            toast.success(`✅ Exécution terminée — ${json.sent} email(s) envoyé(s).`);
+          }
+        }
+        if (json.message) toast(json.message, { icon: 'ℹ️' });
+      } else {
+        toast.error(`Erreur : ${json.error || resp.statusText}`);
+      }
     } catch (e) {
-      toast.error('Impossible de contacter la fonction de workflow.');
+      console.error('[triggerManual]', e);
+      toast.error('Impossible de contacter la fonction — vérifiez que le déploiement est à jour.');
     }
     setIsTesting(false);
     if (showLogs) fetchLogs();
