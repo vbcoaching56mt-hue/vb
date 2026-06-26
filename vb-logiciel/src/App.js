@@ -12492,8 +12492,14 @@ export default function App() {
       <div className={`fixed inset-y-0 left-0 z-50 w-64 text-gray-300 transition-transform transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex-shrink-0 flex flex-col`} style={{background:'#0F0A1E'}}>
         <div className="flex items-center justify-between h-20 px-6 border-b border-violet-900/40">
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(124,58,237,0.5)]">F</div>
-            <span className="text-xl font-bold text-white tracking-widest">formaly</span>
+            <svg width="24" height="19" viewBox="0 0 24 19" fill="none" className="mr-3 flex-shrink-0">
+              <rect width="24" height="4" rx="2" fill="white"/>
+              <rect y="7.5" width="16" height="4" rx="2" fill="rgba(255,255,255,0.78)"/>
+              <rect y="15" width="10" height="4" rx="2" fill="rgba(255,255,255,0.5)"/>
+            </svg>
+            <span className="text-white" style={{fontSize:'17px',lineHeight:1,letterSpacing:'0.2px'}}>
+              <span style={{fontWeight:700}}>Form</span><span style={{fontWeight:300,opacity:0.85}}>aly</span>
+            </span>
           </div>
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
