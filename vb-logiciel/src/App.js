@@ -190,7 +190,7 @@ const AddressInput = ({ value, onChange }) => {
       <div>
         <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">N° et Rue</label>
         <input
-          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+          className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 transition-all text-sm"
           value={parts.rue}
           onChange={e => updatePart('rue', e.target.value)}
           placeholder="Ex: 12 Rue de la Paix"
@@ -200,7 +200,7 @@ const AddressInput = ({ value, onChange }) => {
         <div>
           <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Code Postal</label>
           <input
-            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 transition-all text-sm"
             value={parts.codePostal}
             onChange={e => updatePart('codePostal', e.target.value.replace(/\D/g, '').slice(0, 5))}
             placeholder="75000"
@@ -210,7 +210,7 @@ const AddressInput = ({ value, onChange }) => {
         <div>
           <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Ville</label>
           <input
-            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 transition-all text-sm"
+            className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 transition-all text-sm"
             value={parts.ville}
             onChange={e => updatePart('ville', e.target.value)}
             placeholder="Paris"
@@ -286,7 +286,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
           {!isClient && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Signature du formateur <span className="text-rose-500">*</span></span>
+                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Signature du formateur <span className="text-violet-600">*</span></span>
                 <button onClick={() => clearCanvas(fCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
               </div>
               <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
@@ -301,7 +301,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
           {isClient && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Votre signature <span className="text-rose-500">*</span></span>
+                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Votre signature <span className="text-violet-600">*</span></span>
                 <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
               </div>
               <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
@@ -315,7 +315,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
         </div>
         <div className="flex justify-between gap-3">
           <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-          <button onClick={handleSave} className="px-6 py-3 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 transition-colors shadow-lg">Valider l'émargement</button>
+          <button onClick={handleSave} className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg">Valider l'émargement</button>
         </div>
       </div>
     </div>
@@ -730,7 +730,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const renderPdfZone = () => {
     if (loadingPdf) return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
-        <div className="w-10 h-10 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+        <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
         <p className="text-sm font-medium">Chargement du document en cours…</p>
       </div>
     );
@@ -759,9 +759,9 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           {debugInfo && (
             <div className="mt-4 p-3 bg-gray-100 rounded-lg text-[10px] font-mono text-left overflow-auto max-w-xs mx-auto border border-gray-200">
               <p className="text-gray-500 uppercase font-bold mb-1 border-b border-gray-200 pb-1">Diagnostic Technique</p>
-              <p><span className="text-rose-600">Bucket:</span> {debugInfo.bucket}</p>
-              <p className="break-all"><span className="text-rose-600">Path:</span> {debugInfo.path}</p>
-              <p className="text-rose-500 mt-1 italic">{debugInfo.error}</p>
+              <p><span className="text-violet-700">Bucket:</span> {debugInfo.bucket}</p>
+              <p className="break-all"><span className="text-violet-700">Path:</span> {debugInfo.path}</p>
+              <p className="text-violet-600 mt-1 italic">{debugInfo.error}</p>
             </div>
           )}
         </div>
@@ -769,7 +769,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         {isValidUrl && (
           <button
             onClick={() => window.open(blobUrl || pdfUrl, '_blank')}
-            className="flex items-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-colors shadow-lg"
+            className="flex items-center gap-2 bg-violet-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-violet-700 transition-colors shadow-lg"
           >
             <Download size={16} /> Télécharger pour lire le document
           </button>
@@ -784,7 +784,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         {/* Header */}
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0 rounded-t-2xl">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 font-bold text-sm">
+            <div className="w-9 h-9 rounded-lg bg-violet-50 flex items-center justify-center text-violet-700 font-bold text-sm">
               {pdfUrl && (pdfUrl.toLowerCase().includes('.docx') || pdfUrl.toLowerCase().includes('.doc')) ? 'DOC' : 'PDF'}
             </div>
             <div>
@@ -861,7 +861,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                   </div>
                 )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
-                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-rose-500 shrink-0" />
+                  <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-violet-600 shrink-0" />
                   <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
                 </label>
                 {/* Canvas de signature manuscrite */}
@@ -874,7 +874,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         const canvas = sigCanvasRef.current;
                         if (canvas) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); setHasSig(false); }
                       }}
-                      className="text-xs text-gray-400 hover:text-rose-500 transition-colors"
+                      className="text-xs text-gray-400 hover:text-violet-600 transition-colors"
                     >Effacer</button>
                   </div>
                   <canvas
@@ -952,7 +952,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                       onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null);
                     }}
                     disabled={!agreed || (isInteractiveConsent && !documentChoice)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice)) ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -1060,12 +1060,12 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
                   <p className="text-[10px] text-gray-400">Le client devra signer ce document</p>
                 </div>
               </label>
-              <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-rose-200 transition-all">
+              <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-violet-200 transition-all">
                 <input
                   type="checkbox"
                   checked={reqFormateur}
                   onChange={e => setReqFormateur(e.target.checked)}
-                  className="w-4 h-4 accent-rose-600 rounded"
+                  className="w-4 h-4 accent-violet-600 rounded"
                 />
                 <div>
                   <p className="font-bold text-gray-800 text-sm">Signature du Coach (Formateur)</p>
@@ -1910,10 +1910,10 @@ const SignupView = ({ supabase, onComplete }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6">VB</div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6">F</div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
           <p className="text-gray-500 mb-6">Un lien de confirmation a été envoyé à <strong>{email}</strong>. Cliquez dessus pour activer votre compte.</p>
-          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="text-sm font-bold text-rose-500 hover:text-rose-600">Retour à la connexion</button>
+          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="text-sm font-bold text-violet-600 hover:text-violet-700">Retour à la connexion</button>
         </div>
       </div>
     );
@@ -1922,30 +1922,30 @@ const SignupView = ({ supabase, onComplete }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
         <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
-            <input type="text" required value={orgName} onChange={e => setOrgName(e.target.value)} placeholder="ex : Mon Organisme Formation" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            <input type="text" required value={orgName} onChange={e => setOrgName(e.target.value)} placeholder="ex : Mon Organisme Formation" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Votre nom complet</label>
-            <input type="text" required value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="ex : Marie Dupont" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            <input type="text" required value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="ex : Marie Dupont" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse email</label>
-            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="votre@email.com" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="votre@email.com" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Mot de passe</label>
-            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="8 caractères minimum" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="8 caractères minimum" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Confirmer le mot de passe</label>
-            <input type="password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Répéter le mot de passe" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            <input type="password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Répéter le mot de passe" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
 
           {error && <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{error}</p>}
@@ -1957,7 +1957,7 @@ const SignupView = ({ supabase, onComplete }) => {
 
         <p className="text-center text-sm text-gray-500 mt-6">
           Déjà inscrit ?{' '}
-          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="font-bold text-rose-500 hover:text-rose-600">Se connecter</button>
+          <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="font-bold text-violet-600 hover:text-violet-700">Se connecter</button>
         </p>
       </div>
     </div>
@@ -2072,7 +2072,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-          <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
           <p className="text-gray-500 mb-8">Saisissez votre email pour réinitialiser l'accès.</p>
 
@@ -2090,7 +2090,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="votre@email.com"
-                  className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                 />
               </div>
 
@@ -2123,8 +2123,8 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 bg-rose-500 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-rose-500/30">VB</div>
-        <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à VB ERP</h1>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à Formaly</h1>
         <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
 
         {successMessage && (
@@ -2142,7 +2142,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="votre@email.com"
-              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 focus:border-transparent transition-all"
             />
           </div>
           <div>
@@ -2151,7 +2151,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
               <button
                 type="button"
                 onClick={() => { setShowForgotPassword(true); setErrorMsg(''); }}
-                className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors"
+                className="text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
               >
                 Oublié ?
               </button>
@@ -2163,7 +2163,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Votre mot de passe"
-                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition-all pr-12"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 focus:border-transparent transition-all pr-12"
               />
               <button
                 type="button"
@@ -2191,7 +2191,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
 
         <p className="text-center text-sm text-gray-500 mt-6">
           Pas encore de compte ?{' '}
-          <a href="/signup" className="font-bold text-rose-500 hover:text-rose-600">Créer votre espace</a>
+          <a href="/signup" className="font-bold text-violet-600 hover:text-violet-700">Créer votre espace</a>
         </p>
       </div>
     </div>
@@ -2444,7 +2444,7 @@ const ClientDetailView = ({
           </button>
           <button
             onClick={() => handleDownloadPDF(client)}
-            className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+            className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
           >
             <Download size={16} /> Récapitulatif Général
           </button>
@@ -3105,7 +3105,7 @@ const AdminClientsView = ({
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration VB Coaching
+          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration Formaly
         </h2>
 
         <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between mb-8 shadow-sm">
@@ -3258,7 +3258,7 @@ const FormateurDetailView = ({
 
       <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
         <div className="flex items-center gap-6 mb-8 pb-8 border-b border-gray-100">
-          <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center font-bold text-3xl shadow-inner">
+          <div className="w-20 h-20 bg-violet-100 text-violet-700 rounded-3xl flex items-center justify-center font-bold text-3xl shadow-inner">
             {formateur.nom ? formateur.nom.charAt(0) : '?'}
           </div>
           <div>
@@ -3270,34 +3270,34 @@ const FormateurDetailView = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="space-y-6">
             <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <FileText className="text-rose-500" /> Identité Professionnelle
+              <FileText className="text-violet-600" /> Identité Professionnelle
             </h3>
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Raison Sociale / Nom complet</label>
-                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all font-medium"
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all font-medium"
                   value={legalInfo.nom} onChange={e => setLegalInfo({ ...legalInfo, nom: e.target.value })} placeholder="Ex: Matthys Coaching EURL" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">SIRET</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                     value={legalInfo.formateur_siret} onChange={e => setLegalInfo({ ...legalInfo, formateur_siret: e.target.value })} placeholder="14 chiffres" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">NDA (Qualiopi)</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                     value={legalInfo.formateur_nda} onChange={e => setLegalInfo({ ...legalInfo, formateur_nda: e.target.value })} placeholder="N° Déclaration" />
                 </div>
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Assurance RCP — Compagnie</label>
-                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                   value={legalInfo.compagnie_assurance} onChange={e => setLegalInfo({ ...legalInfo, compagnie_assurance: e.target.value })} placeholder="Ex: AXA, MAIF, Hiscox..." />
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Assurance RCP — N° de contrat</label>
-                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                   value={legalInfo.numero_assurance_rcp} onChange={e => setLegalInfo({ ...legalInfo, numero_assurance_rcp: e.target.value })} placeholder="N° de contrat RCP" />
               </div>
             </div>
@@ -3321,7 +3321,7 @@ const FormateurDetailView = ({
                   id="sameAddress"
                   checked={sameAddress}
                   onChange={e => setSameAddress(e.target.checked)}
-                  className="w-4 h-4 accent-rose-500 cursor-pointer rounded"
+                  className="w-4 h-4 accent-violet-600 cursor-pointer rounded"
                 />
                 <label htmlFor="sameAddress" className="text-sm text-gray-600 cursor-pointer select-none">
                   Même adresse pour les sessions de formation
@@ -3339,12 +3339,12 @@ const FormateurDetailView = ({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                     value={legalInfo.email} onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })} placeholder="Email pro" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                     value={legalInfo.telephone} onChange={e => setLegalInfo({ ...legalInfo, telephone: e.target.value })} placeholder="06..." />
                 </div>
               </div>
@@ -3360,7 +3360,7 @@ const FormateurDetailView = ({
             <Trash2 size={20} />
             Supprimer le formateur
           </button>
-          <button onClick={handleSave} disabled={isSaving} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
+          <button onClick={handleSave} disabled={isSaving} className="bg-violet-700 hover:bg-violet-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
             <Save size={20} />
             {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
           </button>
@@ -3379,7 +3379,7 @@ const FormateurDetailView = ({
         />
         <div className="mt-12 pt-12 border-t border-gray-100">
           <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <Archive className="text-rose-500" /> Documents Administratifs (Contrats / NDA...)
+            <Archive className="text-violet-600" /> Documents Administratifs (Contrats / NDA...)
           </h3>
           
           <div className="bg-gray-50 rounded-[32px] p-6 border border-gray-100 space-y-8">
@@ -3401,7 +3401,7 @@ const FormateurDetailView = ({
                         return (
                           <div key={key} className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100">
                             <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 bg-rose-50 text-rose-500 rounded-xl flex items-center justify-center shrink-0">
+                              <div className="w-9 h-9 bg-violet-50 text-violet-600 rounded-xl flex items-center justify-center shrink-0">
                                 <FileText size={16} />
                               </div>
                               <div>
@@ -3411,7 +3411,7 @@ const FormateurDetailView = ({
                             </div>
                             <button
                               onClick={() => handleGenerateDocx(null, key, true, formateur.id)}
-                              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all transform active:scale-95"
+                              className="flex items-center gap-2 bg-violet-700 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm transition-all transform active:scale-95"
                             >
                               <Send size={13} /> Envoyer pour signature
                             </button>
@@ -3430,9 +3430,9 @@ const FormateurDetailView = ({
               {trainerDocs.length > 0 ? trainerDocs.map(doc => {
                 const isSigned = doc.signe_par_formateur || doc.statut === 'Signé';
                 return (
-                <div key={doc.id} className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm ${isSigned ? 'border-green-100 hover:border-green-300' : 'border-gray-100 hover:border-rose-200'}`}>
+                <div key={doc.id} className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm ${isSigned ? 'border-green-100 hover:border-green-300' : 'border-gray-100 hover:border-violet-200'}`}>
                   <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSigned ? 'bg-green-50 text-green-600' : 'bg-rose-50 text-rose-600'}`}>
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSigned ? 'bg-green-50 text-green-600' : 'bg-violet-50 text-violet-700'}`}>
                       {isSigned ? <FileCheck size={20} /> : <FileText size={20} />}
                     </div>
                     <div>
@@ -3453,7 +3453,7 @@ const FormateurDetailView = ({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setViewingDocId(doc.id)}
-                      className="p-2.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      className="p-2.5 text-gray-400 hover:text-violet-700 hover:bg-violet-50 rounded-xl transition-all"
                       title="Consulter le document original"
                     >
                       <Eye size={20} />
@@ -3498,15 +3498,15 @@ const FormateurDetailView = ({
       {/* Liste des clients assignés */}
       <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm mt-8">
         <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-          <Users className="text-rose-500" /> Clients Assignés
+          <Users className="text-violet-600" /> Clients Assignés
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {clients.filter(c => c.formateur_id === formateur.id).map(client => {
             const assignedModule = modules.find(m => String(m.id) === String(client.module_id));
             return (
-              <div key={client.id} className="p-4 border border-gray-50 rounded-2xl bg-gray-50/50 hover:bg-white hover:border-rose-200 transition-all group">
+              <div key={client.id} className="p-4 border border-gray-50 rounded-2xl bg-gray-50/50 hover:bg-white hover:border-violet-200 transition-all group">
                 <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-700 shadow-sm group-hover:bg-rose-50 transition-colors">
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-bold text-gray-700 shadow-sm group-hover:bg-violet-50 transition-colors">
                     {client.nom ? client.nom.charAt(0) : '?'}
                   </div>
                   <div>
@@ -3515,7 +3515,7 @@ const FormateurDetailView = ({
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-gray-100">
-                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-rose-50 text-rose-600' : 'bg-gray-100 text-gray-400'}`}>
+                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-violet-50 text-violet-700' : 'bg-gray-100 text-gray-400'}`}>
                     {assignedModule ? assignedModule.nom : 'Pas de module assigné'}
                   </span>
                 </div>
@@ -3655,11 +3655,11 @@ const AdminFormateursView = ({
 
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Liste des Formateurs
+          <span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span> Liste des Formateurs
         </h2>
         <div className="flex border-b border-gray-200 mb-6 font-sans">
           <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
-          <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
+          <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
         </div>
 
         <ul className="space-y-6">
@@ -3667,17 +3667,17 @@ const AdminFormateursView = ({
             const sesClients = clients.filter(c => c.formateur_id === f.id);
             const isExpanded = expandedClientId === f.id;
             return (
-              <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-rose-200 bg-rose-50/10' : 'border-gray-100 bg-gray-50'}`}>
+              <li key={f.id} className={`p-6 border rounded-2xl transition-all ${isExpanded ? 'border-violet-200 bg-violet-50/10' : 'border-gray-100 bg-gray-50'}`}>
                 <div className="flex flex-col md:flex-row md:items-center justify-between mb-4">
                   <div className="flex items-center cursor-pointer hover:bg-white p-2 rounded-xl transition-all flex-1" onClick={() => setSelectedFormateurId(f.id)}>
-                    <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mr-4 font-bold text-xl shadow-sm">{f.nom ? f.nom.charAt(0) : '?'}</div>
+                    <div className="w-12 h-12 bg-violet-100 text-violet-700 rounded-full flex items-center justify-center mr-4 font-bold text-xl shadow-sm">{f.nom ? f.nom.charAt(0) : '?'}</div>
                     <div className="flex flex-col flex-1">
                       <div className="flex items-center justify-between pr-4">
                         <div>
-                          <span className="font-bold text-gray-900 text-lg hover:text-rose-600 transition-colors">{f.nom}</span>
+                          <span className="font-bold text-gray-900 text-lg hover:text-violet-700 transition-colors">{f.nom}</span>
                           <span className="text-sm text-gray-500 block">{f.email}</span>
                         </div>
-                        <span className="text-rose-400 bg-rose-50 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-violet-400 bg-violet-50 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           Voir profil <ChevronRight size={14} />
                         </span>
                       </div>
@@ -4063,12 +4063,12 @@ const IngenierieView = ({
                     {(() => {
                       const finResources = moduleStepResources.filter(r => r.module_id === mod.id && r.moment === 'fin');
                       return (
-                        <DroppableMomentZone id={`drop-${mod.id}-fin`} className="bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
-                          <div className="bg-rose-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-rose-200 gap-2">
+                        <DroppableMomentZone id={`drop-${mod.id}-fin`} className="bg-violet-50 border border-violet-200 rounded-2xl overflow-hidden">
+                          <div className="bg-violet-100 px-4 py-3 flex flex-wrap items-center justify-between border-b border-violet-200 gap-2">
                             <div className="flex items-center gap-2">
-                              <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
-                              <span className="text-xs font-black text-rose-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
-                              <span className="text-[9px] font-bold text-rose-600 bg-rose-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
+                              <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
+                              <span className="text-xs font-black text-violet-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
+                              <span className="text-[9px] font-bold text-violet-700 bg-violet-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <select 
@@ -4079,33 +4079,33 @@ const IngenierieView = ({
                                   await handleAddModuleMomentResource(mod.id, 'fin', { type: 'document_group', title: grpName, document_group_id: grpId });
                                   e.target.value = '';
                                 }}
-                                className="text-[10px] font-bold text-rose-800 bg-white border border-rose-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                                className="text-[10px] font-bold text-violet-800 bg-white border border-violet-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
                               >
                                 <option value="">+ Groupe...</option>
                                 {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
                               </select>
                               <button
                                 onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                                className="text-[10px] font-black bg-rose-600 text-white px-3 py-1.5 rounded-xl hover:bg-rose-700 transition-all flex items-center gap-1.5"
+                                className="text-[10px] font-black bg-violet-700 text-white px-3 py-1.5 rounded-xl hover:bg-violet-700 transition-all flex items-center gap-1.5"
                               >
                                 <Plus size={12} /> Fichier
                               </button>
                             </div>
                           </div>
                           <div className="p-3 space-y-2">
-                            {finResources.length === 0 && <p className="text-[11px] text-rose-600/60 italic px-1">Aucun document de fin.</p>}
+                            {finResources.length === 0 && <p className="text-[11px] text-violet-700/60 italic px-1">Aucun document de fin.</p>}
                             {finResources.map(res => {
                               if (res.type === 'document_group') {
                                 return <DraggableGroupBlock key={res.id} resourceId={res.id} group={documentGroups.find(g => g.id === res.document_group_id)} onDelete={handleDeleteStepResource} />;
                               }
                               return (
-                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-rose-100 text-[11px]">
+                                <div key={res.id} className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-violet-100 text-[11px]">
                                   <div className="flex items-center gap-2">
                                     <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
                                     <span className="font-bold text-gray-800">{res.titre}</span>
                                     <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
                                   </div>
-                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-rose-400"><Trash2 size={12} /></button>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-violet-400"><Trash2 size={12} /></button>
                                 </div>
                               );
                             })}
@@ -4292,7 +4292,7 @@ const FormateurView = ({
           <button
             onClick={() => setFormateurMainSection('mes_docs')}
             className={`relative px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-              formateurMainSection === 'mes_docs' ? 'bg-rose-600 text-white shadow-lg' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              formateurMainSection === 'mes_docs' ? 'bg-violet-700 text-white shadow-lg' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
             📄 Docs Administratifs
@@ -4309,7 +4309,7 @@ const FormateurView = ({
       {formateurMainSection === 'mes_docs' && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
           <h3 className="font-bold text-gray-800 text-lg mb-6 flex items-center gap-2">
-            <span className="w-2 h-6 bg-rose-500 rounded-full"></span>
+            <span className="w-2 h-6 bg-violet-600 rounded-full"></span>
             Documents Administratifs &amp; Contrats
           </h3>
           {myAdminDocs.length === 0 ? (
@@ -4320,9 +4320,9 @@ const FormateurView = ({
           ) : (
             <div className="space-y-3">
               {myAdminDocs.map(doc => (
-                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-rose-200 transition-all shadow-sm">
+                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                    <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
                       <FileText size={20} />
                     </div>
                     <div>
@@ -4352,7 +4352,7 @@ const FormateurView = ({
                     {!doc.signe_par_formateur ? (
                       <button
                         onClick={() => setViewingSession && setViewingSession({ session: { ...doc, file_url: doc.url || doc.file_url }, mode: 'sign' })}
-                        className="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-rose-100 flex items-center gap-2 transition-all"
+                        className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all"
                       >
                         <PenTool size={14} /> Signer
                       </button>
@@ -4413,15 +4413,15 @@ const FormateurView = ({
                 <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
                   <div className="flex gap-4 border-b border-gray-200 mb-6 font-sans">
                     <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
-                    <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-rose-600 text-rose-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
+                    <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
                     <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
-                    <button onClick={() => setFormateurClientTab('bilan')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'bilan' ? 'border-rose-500 text-rose-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Bilan</button>
+                    <button onClick={() => setFormateurClientTab('bilan')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'bilan' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Bilan</button>
                   </div>
 
                   {formateurClientTab === 'administratif' && (
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 mb-4">
-                        <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
+                        <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
                         <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Documents Administratifs & Contrats</h4>
                       </div>
                       
@@ -4441,9 +4441,9 @@ const FormateurView = ({
                         return (
                           <div className="grid grid-cols-1 gap-3">
                             {adminDocs.map(doc => (
-                              <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-rose-200 transition-all shadow-sm">
+                              <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
                                 <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                                  <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
                                     <FileText size={20} />
                                   </div>
                                   <div>
@@ -4464,7 +4464,7 @@ const FormateurView = ({
                                   {!doc.signe_par_formateur ? (
                                     <button 
                                       onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
-                                      className="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-rose-100 flex items-center gap-2 transition-all transform active:scale-95"
+                                      className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all transform active:scale-95"
                                     >
                                       <PenTool size={14} /> Signer le document
                                     </button>
@@ -4830,7 +4830,7 @@ const FormateurView = ({
                                                   disabled={isSigned || isDateLocked}
                                                   onPointerDown={e => e.stopPropagation()}
                                                   onClick={() => signSession(session)}
-                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'}`}
+                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'}`}
                                                 >
                                                   {isSigned ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer'}
                                                 </button>
@@ -4959,7 +4959,7 @@ const FormateurView = ({
                     return (
                       <div className="space-y-6">
                         <div className="flex items-center gap-2">
-                          <span className="w-2 h-5 bg-rose-500 rounded-full"></span>
+                          <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
                           <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Ancres de Carrière</h4>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4967,13 +4967,13 @@ const FormateurView = ({
                             <div key={key} className="bg-gray-50 rounded-2xl p-4">
                               <div className="flex justify-between items-center mb-2">
                                 <label className="font-bold text-gray-700 text-sm">{label}</label>
-                                <span className="text-rose-500 font-black text-lg w-8 text-right">{getValue(key)}</span>
+                                <span className="text-violet-600 font-black text-lg w-8 text-right">{getValue(key)}</span>
                               </div>
                               <input
                                 type="range" min="0" max="10" step="0.5"
                                 value={getValue(key)}
                                 onChange={e => setBilanDraft(prev => ({ ...prev, [key]: parseFloat(e.target.value) }))}
-                                className="w-full accent-rose-500"
+                                className="w-full accent-violet-600"
                               />
                             </div>
                           ))}
@@ -5009,7 +5009,7 @@ const FormateurView = ({
                         <button
                           onClick={handleSaveBilan}
                           disabled={savingBilan}
-                          className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-rose-100 disabled:opacity-50"
+                          className="flex items-center gap-2 bg-violet-700 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-violet-100 disabled:opacity-50"
                         >
                           {savingBilan ? <><Clock size={16} className="animate-spin" /> Sauvegarde...</> : <><Save size={16} /> Sauvegarder le bilan</>}
                         </button>
@@ -5234,14 +5234,14 @@ const DocumentsView = ({
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-                  <span className="w-2 h-6 bg-rose-400 rounded-full"></span>
+                  <span className="w-2 h-6 bg-violet-500 rounded-full"></span>
                   Bibliothèque de modèles
                 </h2>
                 <p className="text-[12px] text-gray-400 mt-1">Tous les modèles Word de la plateforme — envoyables depuis chaque fiche formateur ou client.</p>
               </div>
               <button
                 onClick={() => setFplShowUpload(v => !v)}
-                className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+                className="flex items-center gap-2 bg-violet-700 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
               >
                 <Plus size={14} /> Ajouter un modèle
               </button>
@@ -5249,17 +5249,17 @@ const DocumentsView = ({
 
             {/* Formulaire d'ajout */}
             {fplShowUpload && (
-              <div className="mb-6 p-5 bg-rose-50 rounded-2xl border border-rose-100 space-y-4">
+              <div className="mb-6 p-5 bg-violet-50 rounded-2xl border border-violet-100 space-y-4">
                 <div>
-                  <p className="text-xs text-rose-700 font-bold uppercase tracking-wider mb-1">
+                  <p className="text-xs text-violet-700 font-bold uppercase tracking-wider mb-1">
                     Modèle Word avec balises automatiques
                   </p>
-                  <p className="text-[11px] text-rose-500 mb-2">
+                  <p className="text-[11px] text-violet-600 mb-2">
                     Le modèle sera enregistré dans la bibliothèque. Envoyez-le individuellement depuis la fiche de chaque formateur.
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {['{nom}', '{adresse_formateur}', '{formateur_siret}', '{formateur_nda}', '{email_formateur}', '{tel_formateur}', '{date_signature}'].map(tag => (
-                      <code key={tag} className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
+                      <code key={tag} className="bg-violet-100 text-violet-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
                     ))}
                   </div>
                 </div>
@@ -5271,12 +5271,12 @@ const DocumentsView = ({
                       placeholder="Ex : Convention de sous-traitance"
                       value={fplName}
                       onChange={e => setFplName(e.target.value)}
-                      className="w-full text-sm p-3 bg-white border border-rose-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-400"
+                      className="w-full text-sm p-3 bg-white border border-violet-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
                     />
                   </div>
                   <div className="flex-1">
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Fichier Word (.docx)</label>
-                    <label className="flex items-center gap-2 bg-white border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-rose-50 transition-all">
+                    <label className="flex items-center gap-2 bg-white border border-violet-200 text-violet-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-violet-50 transition-all">
                       <FileText size={15} />
                       <span className="truncate">{fplFile ? fplFile.name : 'Choisir un fichier .docx'}</span>
                       <input
@@ -5288,7 +5288,7 @@ const DocumentsView = ({
                   <button
                     onClick={handleFplAdd}
                     disabled={!fplFile || !fplName.trim() || fplUploading}
-                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
+                    className="bg-violet-700 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
                   >
                     {fplUploading ? 'Enregistrement…' : 'Ajouter à la bibliothèque'}
                   </button>
@@ -5308,15 +5308,15 @@ const DocumentsView = ({
                 {allTpls.map(([key, tpl]) => {
                   const dest = tpl.destination || 'client';
                   return (
-                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-rose-200 hover:shadow-sm transition-all">
+                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-violet-200 hover:shadow-sm transition-all">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0">
+                        <div className="w-10 h-10 bg-violet-100 text-violet-700 rounded-xl flex items-center justify-center shrink-0">
                           <FileText size={18} />
                         </div>
                         <div className="min-w-0">
                           <p className="font-bold text-gray-900 text-sm truncate">{key}</p>
                           <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md shrink-0 ${dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md shrink-0 ${dest === 'formateur' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-600'}`}>
                               {dest === 'formateur' ? 'Formateur' : 'Client'}
                             </span>
                             <span className="text-[10px] text-gray-400">Modèle Word</span>
@@ -5478,7 +5478,7 @@ const DocumentsView = ({
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
-                      dest === 'formateur' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'
+                      dest === 'formateur' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-600'
                     }`}>
                       {dest === 'formateur' ? '📋 Formateur' : '📁 Client'}
                     </span>
@@ -5502,7 +5502,7 @@ const DocumentsView = ({
                           setTargetToDelete({ id: doc.nom, type: 'template' });
                           setIsDeleteModalOpen(true);
                         }}
-                        className="p-1.5 text-gray-300 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -5550,7 +5550,7 @@ const DocumentsView = ({
                           {docGroupIds.length > 0 && (
                             <button
                               onClick={() => handleToggleDocumentGroups(doc.id, [])}
-                              className="mt-1.5 text-[9px] text-rose-500 hover:text-rose-700 font-bold"
+                              className="mt-1.5 text-[9px] text-violet-600 hover:text-violet-700 font-bold"
                             >
                               ✕ Détacher tous
                             </button>
@@ -5724,12 +5724,12 @@ const DocumentsView = ({
         ) : isClient ? (
           <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8 max-w-5xl mx-auto">
             <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span> Mes Documents et Supports
+              <span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span> Mes Documents et Supports
             </h2>
             <div className="flex flex-wrap gap-4 border-b border-gray-200 mb-6">
-              <button onClick={() => setClientDocTab('avant')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'avant' ? 'border-b-2 border-rose-500 text-rose-500' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>À signer avant début</button>
-              <button onClick={() => setClientDocTab('supports')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'supports' ? 'border-b-2 border-rose-500 text-rose-500' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>Supports de formation</button>
-              <button onClick={() => setClientDocTab('fin')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'fin' ? 'border-b-2 border-rose-500 text-rose-500' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>Documents de fin</button>
+              <button onClick={() => setClientDocTab('avant')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'avant' ? 'border-b-2 border-violet-600 text-violet-600' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>À signer avant début</button>
+              <button onClick={() => setClientDocTab('supports')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'supports' ? 'border-b-2 border-violet-600 text-violet-600' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>Supports de formation</button>
+              <button onClick={() => setClientDocTab('fin')} className={`px-4 py-3 font-bold text-sm transition-colors ${clientDocTab === 'fin' ? 'border-b-2 border-violet-600 text-violet-600' : 'text-gray-500 hover:text-gray-800 border-b-2 border-transparent'}`}>Documents de fin</button>
             </div>
 
             <div className="space-y-4">
@@ -5740,9 +5740,9 @@ const DocumentsView = ({
                 currentDate.setHours(0, 0, 0, 0);
 
                 const renderDocRow = (doc) => (
-                  <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 group hover:border-rose-200 bg-gray-50/30">
+                  <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 group hover:border-violet-200 bg-gray-50/30">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-rose-50 text-rose-600 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
+                      <div className="w-10 h-10 bg-violet-50 text-violet-700 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
                       <div>
                         <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
                         <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || doc.type || 'Document'}</p>
@@ -5750,7 +5750,7 @@ const DocumentsView = ({
                     </div>
                     <div className="flex items-center gap-3">
                       {(!doc.signe_par_client && (doc.type_document === 'À signer' || (!doc.metadata && (doc.type_document === 'Contrat' || String(doc.nom).toLowerCase().includes('contrat') || String(doc.nom).toLowerCase().includes('convention'))))) && (
-                        <button onClick={() => setSigningDocId(doc.id)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer Document</button>
+                        <button onClick={() => setSigningDocId(doc.id)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Signer Document</button>
                       )}
                       {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Votré signature Validée</span>}
                       <button onClick={() => handleDownloadPDF(doc)} className="p-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm" title="Télécharger">
@@ -5790,15 +5790,15 @@ const DocumentsView = ({
                           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Supports Débloqués (Séances Passées)</h3>
                           <div className="space-y-3">
                             {unlockedSessions.map(s => (
-                              <div key={s.id} className="p-4 border border-rose-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-rose-50/50">
+                              <div key={s.id} className="p-4 border border-violet-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-violet-50/50">
                                 <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-rose-100 text-rose-600 flex items-center justify-center rounded-xl shrink-0">📚</div>
+                                  <div className="w-10 h-10 bg-violet-100 text-violet-700 flex items-center justify-center rounded-xl shrink-0">📚</div>
                                   <div>
                                     <p className="font-bold text-gray-900 text-sm">{s.ressource_titre || `Support de la session ${s.titre}`}</p>
-                                    <p className="text-[10px] text-rose-600 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
+                                    <p className="text-[10px] text-violet-700 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
                                   </div>
                                 </div>
-                                <a href={s.ressource_url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-rose-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-700 transition-colors flex items-center gap-2">
+                                <a href={s.ressource_url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
                                   Accéder au contenu ↗
                                 </a>
                               </div>
@@ -5849,7 +5849,7 @@ const DocumentsView = ({
             <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
               {[
                 { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
-                { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-rose-600 bg-rose-100' },
+                { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-violet-700 bg-violet-100' },
                 { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
               ].map(tab => (
                 <button
@@ -6056,7 +6056,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     <div className="relative">
       <button onClick={() => setIsOpen(!isOpen)} className="relative p-2 rounded-xl hover:bg-gray-100 transition-colors">
         <Bell size={20} className="text-gray-500" />
-        {count > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">{count}</span>}
+        {count > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-violet-600 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">{count}</span>}
       </button>
       {isOpen && (
         <>
@@ -6136,7 +6136,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
             <h2 className="font-bold text-gray-900 text-sm">Prochaines séances</h2>
-            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-rose-500 font-bold hover:underline">Voir calendrier →</button>
+            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-violet-600 font-bold hover:underline">Voir calendrier →</button>
           </div>
           <div className="divide-y divide-gray-50">
             {upcomingSessions.length === 0
@@ -6149,7 +6149,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
                         <p className="text-sm font-semibold text-gray-900">{s.ressource_titre || s.nom || 'Séance'}</p>
                         <p className="text-xs text-gray-400">{client?.nom} · {s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '—'}</p>
                       </div>
-                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${s.date === todayStr ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}>
+                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${s.date === todayStr ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}>
                         {s.date === todayStr ? "Aujourd'hui" : s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short' }) : '—'}
                       </span>
                     </div>
@@ -6162,7 +6162,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
             <h2 className="font-bold text-gray-900 text-sm">Documents en attente</h2>
-            <button onClick={() => setActiveTab('gestion_documents')} className="text-xs text-rose-500 font-bold hover:underline">Voir tout →</button>
+            <button onClick={() => setActiveTab('gestion_documents')} className="text-xs text-violet-600 font-bold hover:underline">Voir tout →</button>
           </div>
           <div className="divide-y divide-gray-50">
             {pendingDocs.length === 0
@@ -6250,12 +6250,12 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
             const isSelected = selectedDay === dateStr;
             return (
               <div key={idx} onClick={() => setSelectedDay(isSelected ? null : dateStr)}
-                className={`h-20 border-b border-r border-gray-50 p-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-rose-50' : isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mb-1 ${isToday ? 'bg-rose-500 text-white' : 'text-gray-700'}`}>{day}</div>
+                className={`h-20 border-b border-r border-gray-50 p-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-violet-50' : isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mb-1 ${isToday ? 'bg-violet-600 text-white' : 'text-gray-700'}`}>{day}</div>
                 <div className="space-y-0.5">
                   {daySessions.slice(0, 2).map((s, i) => {
                     const client = clients.find(c => c.id === s.client_id);
-                    return <div key={i} className="text-[9px] bg-rose-100 text-rose-700 px-1 py-0.5 rounded truncate font-medium">{client?.nom?.split(' ')[0] || 'Séance'}</div>;
+                    return <div key={i} className="text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{client?.nom?.split(' ')[0] || 'Séance'}</div>;
                   })}
                   {daySessions.length > 2 && <div className="text-[9px] text-gray-400 font-medium">+{daySessions.length - 2}</div>}
                 </div>
@@ -6320,8 +6320,8 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
           <p className="text-3xl font-black text-gray-900">{myClients.length}</p>
           <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Mes clients</p>
         </div>
-        <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${todaySessions.length > 0 ? 'border-rose-100' : 'border-gray-100'}`}>
-          <p className={`text-3xl font-black ${todaySessions.length > 0 ? 'text-rose-500' : 'text-gray-900'}`}>{todaySessions.length}</p>
+        <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${todaySessions.length > 0 ? 'border-violet-100' : 'border-gray-100'}`}>
+          <p className={`text-3xl font-black ${todaySessions.length > 0 ? 'text-violet-600' : 'text-gray-900'}`}>{todaySessions.length}</p>
           <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Séances aujourd'hui</p>
         </div>
         <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingDocs.length > 0 ? 'border-amber-100' : 'border-gray-100'}`}>
@@ -6334,14 +6334,14 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
             <h2 className="font-bold text-gray-900 text-sm">Planning de la semaine</h2>
-            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-rose-500 font-bold hover:underline">Calendrier →</button>
+            <button onClick={() => setActiveTab('calendrier')} className="text-xs text-violet-600 font-bold hover:underline">Calendrier →</button>
           </div>
           <div className="divide-y divide-gray-50">
             {todaySessions.length === 0 && weekSessions.length === 0
               ? <div className="py-8 text-center text-gray-400 text-sm">Aucune séance planifiée cette semaine.</div>
               : <>
                   {todaySessions.length > 0 && <>
-                    <div className="px-5 py-2 bg-rose-50"><p className="text-[10px] font-black text-rose-600 uppercase tracking-widest">Aujourd'hui</p></div>
+                    <div className="px-5 py-2 bg-violet-50"><p className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Aujourd'hui</p></div>
                     {todaySessions.map(s => {
                       const client = myClients.find(c => c.id === s.client_id);
                       return (
@@ -6401,7 +6401,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
 // ─── Accueil Client ────────────────────────────────────────────────────────────
 const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount }) => (
   <div className="flex flex-col items-center justify-center pt-8 md:pt-16 animate-fade-in">
-    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg text-rose-500 mb-5 border border-gray-100">
+    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg text-violet-600 mb-5 border border-gray-100">
       <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
     </div>
     <h1 className="text-4xl font-extrabold text-gray-900 mb-2 tracking-tight">Bonjour.</h1>
@@ -6437,10 +6437,10 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         <span className="text-sm font-bold text-gray-700 uppercase tracking-widest">
           {moduleName ? `Progression du ${moduleName}` : 'Progression du parcours'}
         </span>
-        <span className="text-sm font-black text-rose-500">{clientProgress}%</span>
+        <span className="text-sm font-black text-violet-600">{clientProgress}%</span>
       </div>
       <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
-        <div className="h-full bg-rose-500 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
+        <div className="h-full bg-violet-600 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
       </div>
       <div className="flex items-center justify-between mt-2">
         <p className="text-[10px] text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
@@ -6454,7 +6454,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('mes_seances')}>
         <h3 className="font-bold text-gray-800 text-lg mb-2">Planning des Séances</h3>
         <p className="text-sm text-gray-500 mb-4">Consultez vos dates et émargez vos rapports de présence.</p>
-        <div className="bg-rose-50 text-rose-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes séances</div>
+        <div className="bg-violet-50 text-violet-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes séances</div>
       </div>
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('bilan')}>
         <h3 className="font-bold text-gray-800 text-lg mb-2">Synthèse de Bilan</h3>
@@ -6611,7 +6611,7 @@ const SessionsView = ({
                                           ? 'bg-green-50 text-green-600 border-green-200'
                                           : isDateLocked
                                           ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                                          : 'bg-rose-500 text-white border-rose-600 hover:bg-rose-700'
+                                          : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
                                       }`}
                                     >
                                       {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
@@ -6731,7 +6731,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-          <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Points Forts</h2>
+          <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span>Mes Points Forts</h2>
           <div className="space-y-3">
             {topSkills.length > 0 ? topSkills.map((sk, i) => (
               <div key={i} className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-3">
@@ -6753,14 +6753,14 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
           </div>
         </div>
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md flex flex-col items-center">
-          <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-rose-500 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
+          <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
           <div className="w-full h-[250px] relative -ml-4">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart cx="50%" cy="50%" outerRadius="65%" data={dynamicRadarData}>
                 <PolarGrid stroke="#f3f4f6" />
                 <PolarAngleAxis dataKey="subject" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 500 }} />
                 <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                <Radar name="Score" dataKey="A" stroke="#f43f5e" strokeWidth={3} fill="#fb7185" fillOpacity={0.4} />
+                <Radar name="Score" dataKey="A" stroke="#7C3AED" strokeWidth={3} fill="#a78bfa" fillOpacity={0.4} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -6768,10 +6768,10 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
             <div className="w-full mt-2 space-y-2">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Vos dominantes</p>
               {topAncres.map((a, i) => (
-                <div key={a.subject} className={`rounded-2xl p-4 border ${i === 0 ? 'bg-rose-50 border-rose-100' : 'bg-indigo-50 border-indigo-100'}`}>
+                <div key={a.subject} className={`rounded-2xl p-4 border ${i === 0 ? 'bg-violet-50 border-violet-100' : 'bg-indigo-50 border-indigo-100'}`}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className={`text-sm font-bold ${i === 0 ? 'text-rose-700' : 'text-indigo-700'}`}>{a.subject}</span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${i === 0 ? 'bg-rose-200 text-rose-800' : 'bg-indigo-200 text-indigo-800'}`}>{a.A} / 10</span>
+                    <span className={`text-sm font-bold ${i === 0 ? 'text-violet-700' : 'text-indigo-700'}`}>{a.subject}</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${i === 0 ? 'bg-violet-200 text-violet-800' : 'bg-indigo-200 text-indigo-800'}`}>{a.A} / 10</span>
                   </div>
                   <p className="text-xs text-gray-600 italic">{a.description}</p>
                 </div>
@@ -6855,7 +6855,7 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
 
         <div className="px-8 py-6 space-y-5">
           {/* Texte légal */}
-          <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 text-xs text-gray-700 leading-relaxed">
+          <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4 text-xs text-gray-700 leading-relaxed">
             Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, <strong>sauf accord écrit du bénéficiaire</strong>.
           </div>
 
@@ -6882,13 +6882,13 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
             <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'conserve' ? 'border-emerald-400 bg-emerald-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
               <input type="radio" name="conservation" value="conserve" checked={choice === 'conserve'} onChange={() => setChoice('conserve')} className="mt-0.5 shrink-0 accent-emerald-500" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                J'autorise VB Coaching à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
+                J'autorise Formaly à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
               </span>
             </label>
-            <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'detruire' ? 'border-rose-400 bg-rose-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
-              <input type="radio" name="conservation" value="detruire" checked={choice === 'detruire'} onChange={() => setChoice('detruire')} className="mt-0.5 shrink-0 accent-rose-500" />
+            <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'detruire' ? 'border-violet-400 bg-violet-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
+              <input type="radio" name="conservation" value="detruire" checked={choice === 'detruire'} onChange={() => setChoice('detruire')} className="mt-0.5 shrink-0 accent-violet-600" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. VB Coaching procédera à leur destruction dès la clôture du bilan.
+                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. Formaly procédera à leur destruction dès la clôture du bilan.
               </span>
             </label>
           </div>
@@ -6917,7 +6917,7 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
           <button
             onClick={handleSubmit}
             disabled={saving || !choice}
-            className="px-6 py-2.5 rounded-xl bg-rose-500 text-white font-bold text-sm hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+            className="px-6 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
             {saving ? (
               <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Génération…</>
@@ -7152,30 +7152,30 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       el.style.cssText = 'width:794px;min-height:1100px;padding:56px 60px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;position:fixed;left:-9999px;top:-9999px;color:#111827;box-sizing:border-box;';
       el.innerHTML = `
         <div style="text-align:center;margin-bottom:28px;">
-          <div style="font-size:26px;font-weight:900;color:#e11d48;letter-spacing:3px;font-family:Georgia,serif;">VB</div>
-          <div style="font-size:8px;color:#9ca3af;letter-spacing:2px;margin-top:2px;text-transform:uppercase;">VB Coaching</div>
-          <div style="margin-top:14px;height:1px;background:linear-gradient(to right,transparent,#e11d48,transparent);"></div>
+          <div style="font-size:26px;font-weight:900;color:#7C3AED;letter-spacing:3px;font-family:Georgia,serif;">formaly</div>
+          <div style="font-size:8px;color:#9ca3af;letter-spacing:2px;margin-top:2px;text-transform:uppercase;">Gestion de formation</div>
+          <div style="margin-top:14px;height:1px;background:linear-gradient(to right,transparent,#7C3AED,transparent);"></div>
         </div>
-        <h1 style="text-align:center;font-size:15px;font-weight:900;color:#e11d48;text-transform:uppercase;letter-spacing:1px;margin:0 0 22px;">Autorisation de conservation des documents</h1>
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:22px;font-size:9.5px;color:#374151;line-height:1.6;">
+        <h1 style="text-align:center;font-size:15px;font-weight:900;color:#7C3AED;text-transform:uppercase;letter-spacing:1px;margin:0 0 22px;">Autorisation de conservation des documents</h1>
+        <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:12px 16px;margin-bottom:22px;font-size:9.5px;color:#374151;line-height:1.6;">
           Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, sauf accord écrit du bénéficiaire.
         </div>
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:10px;">
-          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;width:38%;">Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${clientFullName}</td></tr>
-          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${formateurNom || '—'}</td></tr>
-          <tr><td style="background:#e11d48;color:white;font-weight:700;padding:8px 12px;border:1px solid #e11d48;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${dateDebut || '—'}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;width:38%;" >Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${clientFullName}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${formateurNom || '—'}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${dateDebut || '—'}</td></tr>
         </table>
-        <h2 style="font-size:12px;font-weight:800;color:#e11d48;margin:0 0 12px;">Choix du bénéficiaire</h2>
+        <h2 style="font-size:12px;font-weight:800;color:#7C3AED;margin:0 0 12px;">Choix du bénéficiaire</h2>
         <p style="font-size:9.5px;color:#374151;margin:0 0 16px;line-height:1.6;">
-          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par VB Coaching, autorise VB Coaching à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
+          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par Formaly, autorise Formaly à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
         </p>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
           <span style="font-size:18px;line-height:1;color:${checkColorConserve};flex-shrink:0;">${checkConserve}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise VB Coaching à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise Formaly à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:30px;">
           <span style="font-size:18px;line-height:1;color:${checkColorDetruire};flex-shrink:0;">${checkDetruire}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. VB Coaching procédera à leur destruction dès la clôture du bilan.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. Formaly procédera à leur destruction dès la clôture du bilan.</span>
         </div>
         <div style="border-top:1px solid #e5e7eb;padding-top:20px;display:flex;justify-content:space-between;align-items:flex-end;">
           <div>
@@ -7290,7 +7290,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                   return (
                     <div key={doc.id} className="px-4 py-3 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3 min-w-0">
-                        <FileText size={14} className={`shrink-0 ${canSign ? 'text-rose-400' : 'text-gray-400'}`} />
+                        <FileText size={14} className={`shrink-0 ${canSign ? 'text-violet-400' : 'text-gray-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{doc.nom}</p>
                           <p className="text-[10px] uppercase tracking-wider" style={{ color: canSign ? '#f87171' : '#9ca3af' }}>
@@ -7305,7 +7305,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         {!isDocSigned && canSign && (
                           <button
                             onClick={() => setSigningResource({ id: doc.id, titre: doc.nom, file_url: fileUrl, moment: resource.moment, metadata: { ...docMeta, classification: 'a_signer' } })}
-                            className="px-3 py-1.5 bg-rose-500 text-white font-bold rounded-lg text-xs hover:bg-rose-600 transition-colors shadow-sm"
+                            className="px-3 py-1.5 bg-violet-600 text-white font-bold rounded-lg text-xs hover:bg-violet-700 transition-colors shadow-sm"
                           >Signer</button>
                         )}
                         {fileUrl && (
@@ -7347,9 +7347,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     const signed = isSignedByClient(resource);
 
     return (
-      <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
+      <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-violet-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${needsSignature ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${needsSignature ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</p>
@@ -7358,7 +7358,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {signed && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
           {!signed && needsSignature && resource.file_url && (
-            <button onClick={() => setSigningResource(resource)} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">Signer le document</button>
+            <button onClick={() => setSigningResource(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Signer le document</button>
           )}
           {resource.file_url && (
             <button onClick={() => setViewingResource(resource)} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
@@ -7377,9 +7377,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setIsConservationModalOpen(true);
     };
     return (
-      <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-rose-200 transition-colors">
+      <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-violet-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isConsDoc ? 'bg-rose-50 text-rose-600' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isConsDoc ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || 'Document'}</p>
@@ -7388,7 +7388,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {doc.signe_par_client && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
           {needsSign && (
-            <button onClick={openConservation} className="px-4 py-2 bg-rose-500 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-rose-600 transition-colors">
+            <button onClick={openConservation} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">
               Signer le document
             </button>
           )}
@@ -7402,7 +7402,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   if (loading) return (
     <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div>
+      <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
     </div>
   );
 
@@ -7442,7 +7442,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       {(finResources.length > 0 || extraFinDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-5">
-            <div className="w-2 h-6 bg-rose-500 rounded-full"></div>
+            <div className="w-2 h-6 bg-violet-600 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
           </div>
           <div className="space-y-3">
@@ -7532,7 +7532,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
             const isUpcoming = s.date && new Date(s.date) > new Date();
             return (
               <div key={s.id} className="bg-white border-2 border-gray-100 rounded-3xl p-6 relative overflow-hidden group hover:shadow-md transition-shadow">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-rose-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
+                <div className="absolute top-0 right-0 w-24 h-24 bg-violet-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
                 <h3 className="text-xl font-bold text-gray-800 mb-2">{s.ressource_titre || s.nom || `Exercice séance ${s.numero_seance}`}</h3>
                 {s.date && (
                   <p className="text-gray-400 text-sm mb-4">
@@ -7805,7 +7805,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
             {/* Contact */}
             <div>
               <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
-                <Plus size={16} className="text-rose-500" /> Coordonnées & Contact
+                <Plus size={16} className="text-violet-600" /> Coordonnées & Contact
               </h3>
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
@@ -8095,7 +8095,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">VB</div>
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">F</div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -8118,7 +8118,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">VB</div>
+        <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">F</div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à VBERP.</p>
         <form onSubmit={handleSetPassword} className="space-y-4">
@@ -8215,7 +8215,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 bg-rose-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">VB</div>
+          <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">F</div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -8238,7 +8238,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 bg-rose-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">VB</div>
+        <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">F</div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Nouveau mot de passe</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre nouveau mot de passe sécurisé.</p>
         <form onSubmit={handleUpdatePassword} className="space-y-4">
@@ -8251,7 +8251,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
                 minLength={8}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all pr-12"
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all pr-12"
               />
               <button
                 type="button"
@@ -8270,7 +8270,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
                 required
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
-                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all pr-12"
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all pr-12"
               />
               <button
                 type="button"
@@ -8287,7 +8287,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
           <button
             type="submit"
             disabled={isUpdating}
-            className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-lg transition-all disabled:opacity-50"
+            className="w-full bg-violet-700 hover:bg-violet-700 text-white font-bold py-3 rounded-xl shadow-lg transition-all disabled:opacity-50"
           >
             {isUpdating ? 'Enregistrement...' : 'Enregistrer le nouveau mot de passe'}
           </button>
@@ -8574,7 +8574,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
                     </a>
                   )}
                   {isAdmin && (
-                    <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all" title="Supprimer">
+                    <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-300 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all" title="Supprimer">
                       <Trash2 size={16} />
                     </button>
                   )}
@@ -8620,7 +8620,7 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
       const myClients = (clients || []).filter(c => String(c.formateur_id) === String(currentUserId));
       const c = myClients.map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'client' }));
       // Admin
-      const adminEntry = [{ id: 'admin', label: 'Admin VB Coaching', role: 'admin' }];
+      const adminEntry = [{ id: 'admin', label: 'Admin Formaly', role: 'admin' }];
       return [...adminEntry, ...c];
     }
     if (isClient) {
@@ -8734,7 +8734,7 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
     setNewConvReceiver('');
   };
 
-  const roleColor = (role) => ({ admin: 'bg-rose-500', formateur: 'bg-indigo-500', client: 'bg-emerald-500' }[role] || 'bg-gray-500');
+  const roleColor = (role) => ({ admin: 'bg-violet-600', formateur: 'bg-indigo-500', client: 'bg-emerald-500' }[role] || 'bg-gray-500');
   const roleLabel = (role) => ({ admin: 'Admin', formateur: 'Formateur', client: 'Client' }[role] || role);
   const formatTime = (iso) => iso ? new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
   const formatDay = (iso) => iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '';
@@ -8961,20 +8961,20 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
         <div>
           <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
           <input type="text" value={nom} onChange={e => setNom(e.target.value)}
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
         </div>
 
         <div>
           <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Numéro SIRET</label>
           <input type="text" value={siret} onChange={e => setSiret(e.target.value)} placeholder="ex : 123 456 789 00010"
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all" />
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
         </div>
 
         <div>
           <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse</label>
           <textarea value={adresse} onChange={e => setAdresse(e.target.value)} rows={3}
             placeholder="ex : 1 rue de la Formation, 75000 Paris"
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-rose-500 transition-all resize-none" />
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all resize-none" />
         </div>
 
         <button onClick={handleSave} disabled={isSaving}
@@ -9090,14 +9090,14 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
               placeholder="Rechercher un métier..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-rose-500 transition-all"
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all"
             />
           </div>
           {sectors.length > 0 && (
             <select
               value={filterSector}
               onChange={(e) => setFilterSector(e.target.value)}
-              className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-rose-500 transition-all w-full md:w-auto"
+              className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all w-full md:w-auto"
             >
               <option value="">Tous les secteurs</option>
               {sectors.map(s => <option key={s} value={s}>{s}</option>)}
@@ -9106,7 +9106,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
           {(userRole === 'admin' || userRole === 'formateur') && (
             <button
               onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center justify-center gap-2 bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-rose-700 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 whitespace-nowrap w-full md:w-auto"
+              className="flex items-center justify-center gap-2 bg-violet-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-violet-700 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 whitespace-nowrap w-full md:w-auto"
             >
               <Plus size={18} /> Nouvelle Fiche
             </button>
@@ -9115,7 +9115,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       </div>
 
       {loading ? (
-        <div className="flex justify-center items-center h-64"><div className="w-10 h-10 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div></div>
+        <div className="flex justify-center items-center h-64"><div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div></div>
       ) : displayFiches.length === 0 ? (
         <div className="bg-white p-10 rounded-2xl text-center border border-gray-100 shadow-sm flex flex-col items-center">
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4 text-gray-300">
@@ -9145,14 +9145,14 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                 {(userRole === 'admin' || userRole === 'formateur') && (
                   <button 
                     onClick={(e) => { e.stopPropagation(); setFicheToAssign(fiche); setIsAssignModalOpen(true); }} 
-                    className="text-gray-400 hover:text-rose-500 transition-colors p-1 z-10" 
+                    className="text-gray-400 hover:text-violet-600 transition-colors p-1 z-10" 
                     title="Envoyer à un bénéficiaire"
                   >
                     <Users size={18} />
                   </button>
                 )}
               </div>
-              <h3 className="text-lg font-extrabold text-gray-900 mb-2 leading-tight group-hover:text-rose-600 transition-colors">{fiche.title}</h3>
+              <h3 className="text-lg font-extrabold text-gray-900 mb-2 leading-tight group-hover:text-violet-700 transition-colors">{fiche.title}</h3>
               <p className="text-sm text-gray-600 mb-4 flex-1 line-clamp-3" title={fiche.description}>{fiche.description}</p>
               
               <div className="space-y-2 mt-auto pt-4 border-t border-gray-50">
@@ -9182,21 +9182,21 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
             <h3 className="text-xl font-black text-gray-900 mb-6">Ajouter une fiche métier</h3>
             <form onSubmit={handleAddFiche} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Titre du métier *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.title} onChange={e => setNewFiche({...newFiche, title: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Secteur *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.sector} onChange={e => setNewFiche({...newFiche, sector: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Études conseillées</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.studies} onChange={e => setNewFiche({...newFiche, studies: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Salaire moyen (€)</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.average_salary} onChange={e => setNewFiche({...newFiche, average_salary: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Titre du métier *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.title} onChange={e => setNewFiche({...newFiche, title: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Secteur *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.sector} onChange={e => setNewFiche({...newFiche, sector: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Études conseillées</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.studies} onChange={e => setNewFiche({...newFiche, studies: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Salaire moyen (€)</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.average_salary} onChange={e => setNewFiche({...newFiche, average_salary: e.target.value})} /></div>
               </div>
-              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Missions principales *</label><textarea required rows={3} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.description} onChange={e => setNewFiche({...newFiche, description: e.target.value})} /></div>
+              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Missions principales *</label><textarea required rows={3} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.description} onChange={e => setNewFiche({...newFiche, description: e.target.value})} /></div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Compétences techniques</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.skills} onChange={e => setNewFiche({...newFiche, skills: e.target.value})} placeholder="Ex: React, Node.js" /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Qualités requises</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.qualities} onChange={e => setNewFiche({...newFiche, qualities: e.target.value})} placeholder="Ex: Rigueur, Empathie" /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Compétences techniques</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.skills} onChange={e => setNewFiche({...newFiche, skills: e.target.value})} placeholder="Ex: React, Node.js" /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Qualités requises</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.qualities} onChange={e => setNewFiche({...newFiche, qualities: e.target.value})} placeholder="Ex: Rigueur, Empathie" /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Évolution de carrière</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.career_evolution} onChange={e => setNewFiche({...newFiche, career_evolution: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Conditions de travail</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.working_conditions} onChange={e => setNewFiche({...newFiche, working_conditions: e.target.value})} placeholder="Ex: Bureau, Télétravail, Déplacements" /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Évolution de carrière</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.career_evolution} onChange={e => setNewFiche({...newFiche, career_evolution: e.target.value})} /></div>
+                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Conditions de travail</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.working_conditions} onChange={e => setNewFiche({...newFiche, working_conditions: e.target.value})} placeholder="Ex: Bureau, Télétravail, Déplacements" /></div>
               </div>
-              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Informations supplémentaires</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400" value={newFiche.extra_info} onChange={e => setNewFiche({...newFiche, extra_info: e.target.value})} /></div>
+              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Informations supplémentaires</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.extra_info} onChange={e => setNewFiche({...newFiche, extra_info: e.target.value})} /></div>
               
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-50">
                 <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
@@ -9216,7 +9216,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
             
             <div className="mb-6">
               <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Sélectionner un bénéficiaire</label>
-              <select className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-400 text-sm font-semibold text-gray-700" value={selectedClientToAssign} onChange={e => setSelectedClientToAssign(e.target.value)}>
+              <select className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 text-sm font-semibold text-gray-700" value={selectedClientToAssign} onChange={e => setSelectedClientToAssign(e.target.value)}>
                 <option value="">-- Choisir un client --</option>
                 {availableClients.map(c => <option key={c.id} value={c.id}>{c.nom} ({c.email_contact})</option>)}
               </select>
@@ -9224,7 +9224,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
             
             <div className="flex justify-end gap-3">
               <button onClick={() => { setIsAssignModalOpen(false); setFicheToAssign(null); setSelectedClientToAssign(''); }} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-              <button onClick={handleAssignFiche} disabled={!selectedClientToAssign} className="px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">Envoyer au client</button>
+              <button onClick={handleAssignFiche} disabled={!selectedClientToAssign} className="px-6 py-3 bg-violet-700 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">Envoyer au client</button>
             </div>
           </div>
         </div>
@@ -9246,7 +9246,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
               if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-gradient-to-r from-amber-400 to-orange-500';
               if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-gradient-to-r from-purple-500 to-pink-500';
               if (s.includes('administration') || s.includes('gestion')) return 'bg-gradient-to-r from-slate-500 to-gray-600';
-              return 'bg-gradient-to-r from-rose-500 to-red-500';
+              return 'bg-gradient-to-r from-violet-600 to-red-500';
             })()} relative`} id="modal-banner">
                <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white to-transparent"></div>
             </div>
@@ -9261,7 +9261,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                     if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-amber-50 text-amber-600';
                     if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-purple-50 text-purple-600';
                     if (s.includes('administration') || s.includes('gestion')) return 'bg-slate-50 text-slate-600';
-                    return 'bg-rose-50 text-rose-600';
+                    return 'bg-violet-50 text-violet-700';
                   })()}`}>{selectedFiche.sector}</span>
                   
                   <button 
@@ -9321,7 +9321,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                 <div className="flex-1 space-y-10">
                   <section>
                     <h3 className="text-xl font-black text-gray-900 mb-4 flex items-center gap-2">
-                      <FileCheck className="text-rose-500" size={24} /> Missions principales
+                      <FileCheck className="text-violet-600" size={24} /> Missions principales
                     </h3>
                     <p className="text-gray-700 text-lg leading-relaxed">{selectedFiche.description}</p>
                   </section>
@@ -9629,7 +9629,7 @@ function AutomationSettingsView({ supabase }) {
 
       // ── 4. Envoyer les emails via Resend ────────────────────────────────────
       const resendKey = process.env.REACT_APP_RESEND_API_KEY;
-      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'VB Coaching <onboarding@resend.dev>';
+      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'Formaly <onboarding@resend.dev>';
       let sent = 0, simulated = 0;
 
       for (const item of emailQueue) {
@@ -9645,11 +9645,11 @@ function AutomationSettingsView({ supabase }) {
                 to: [item.client.email_contact],
                 subject: item.subject,
                 html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-                  <div style="background:#e11d48;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">VB Coaching</div>
+                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">Formaly</div>
                   <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
                     <p style="color:#111827;font-size:14px;line-height:1.7;">${item.body.replace(/\n/g, '<br>')}</p>
                     <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                    <p style="color:#9ca3af;font-size:11px;">Email automatique VB Coaching — ne pas répondre à ce message.</p>
+                    <p style="color:#9ca3af;font-size:11px;">Email automatique Formaly — ne pas répondre à ce message.</p>
                   </div>
                 </div>`,
               }),
@@ -9702,7 +9702,7 @@ function AutomationSettingsView({ supabase }) {
       {/* En-tête */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-violet-600 flex items-center justify-center">
             <Bell className="w-5 h-5 text-white" />
           </div>
           <div>
@@ -9721,7 +9721,7 @@ function AutomationSettingsView({ supabase }) {
           </button>
           <button
             onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 transition-all shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-all shadow-sm"
           >
             <Plus className="w-4 h-4" /> Nouvelle relance
           </button>
@@ -9730,7 +9730,7 @@ function AutomationSettingsView({ supabase }) {
 
       {/* Formulaire Ajout / Édition */}
       {isAdding && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-rose-100">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-violet-100">
           <h2 className="text-base font-bold text-gray-800 mb-4">
             {editingId ? 'Modifier la relance' : 'Créer une relance'}
           </h2>
@@ -9740,7 +9740,7 @@ function AutomationSettingsView({ supabase }) {
               <select
                 value={form.trigger_type}
                 onChange={e => setForm(f => ({ ...f, trigger_type: e.target.value }))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
               >
                 <option value="no_signature">Relance émargement non signé</option>
                 <option value="reminder_before_session">Rappel avant séance</option>
@@ -9753,7 +9753,7 @@ function AutomationSettingsView({ supabase }) {
                   placeholder="Nom du type (ex : newsletter_mensuelle)"
                   value={customTriggerName}
                   onChange={e => setCustomTriggerName(e.target.value)}
-                  className="mt-2 w-full border border-rose-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+                  className="mt-2 w-full border border-violet-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
                 />
               )}
             </div>
@@ -9772,7 +9772,7 @@ function AutomationSettingsView({ supabase }) {
                 min={1}
                 value={form.delay_days}
                 onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
               />
             </div>
           </div>
@@ -9783,7 +9783,7 @@ function AutomationSettingsView({ supabase }) {
               placeholder="Ex : Rappel — votre émargement est en attente"
               value={form.email_subject}
               onChange={e => setForm(f => ({ ...f, email_subject: e.target.value }))}
-              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
             />
           </div>
           <div className="mb-2">
@@ -9804,7 +9804,7 @@ function AutomationSettingsView({ supabase }) {
               placeholder="Bonjour {{client_name}},&#10;&#10;Nous n'avons pas encore reçu votre émargement pour {{session_title}} du {{session_date}}."
               value={form.email_body}
               onChange={e => setForm(f => ({ ...f, email_body: e.target.value }))}
-              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-300 font-mono resize-y"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300 font-mono resize-y"
             />
           </div>
           <div className="flex items-center justify-between mt-4">
@@ -9812,7 +9812,7 @@ function AutomationSettingsView({ supabase }) {
               <span className="text-sm font-medium text-gray-700">Activer immédiatement</span>
               <button onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))} className="focus:outline-none">
                 {form.is_active
-                  ? <ToggleRight className="w-6 h-6 text-rose-500" />
+                  ? <ToggleRight className="w-6 h-6 text-violet-600" />
                   : <ToggleLeft className="w-6 h-6 text-gray-400" />}
               </button>
             </label>
@@ -9823,7 +9823,7 @@ function AutomationSettingsView({ supabase }) {
               <button
                 onClick={saveForm}
                 disabled={isSaving}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500 text-white text-sm font-medium hover:bg-rose-600 disabled:opacity-50 transition-all"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 transition-all"
               >
                 <Save className="w-4 h-4" />
                 {isSaving ? 'Enregistrement…' : 'Enregistrer'}
@@ -9845,8 +9845,8 @@ function AutomationSettingsView({ supabase }) {
           <div key={s.id} className={`bg-white rounded-2xl p-5 shadow-sm border transition-all ${s.is_active ? 'border-gray-100' : 'border-dashed border-gray-200 opacity-60'}`}>
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${s.is_active ? 'bg-rose-50' : 'bg-gray-100'}`}>
-                  <Mail className={`w-4 h-4 ${s.is_active ? 'text-rose-500' : 'text-gray-400'}`} />
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${s.is_active ? 'bg-violet-50' : 'bg-gray-100'}`}>
+                  <Mail className={`w-4 h-4 ${s.is_active ? 'text-violet-600' : 'text-gray-400'}`} />
                 </div>
                 <div>
                   <p className="font-semibold text-gray-800 text-sm">{getTriggerLabel(s.trigger_type)}</p>
@@ -9868,7 +9868,7 @@ function AutomationSettingsView({ supabase }) {
                   className="focus:outline-none"
                 >
                   {s.is_active
-                    ? <ToggleRight className="w-6 h-6 text-rose-500 hover:text-rose-700" />
+                    ? <ToggleRight className="w-6 h-6 text-violet-600 hover:text-violet-700" />
                     : <ToggleLeft className="w-6 h-6 text-gray-300 hover:text-gray-500" />}
                 </button>
                 <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-all">
@@ -12185,7 +12185,7 @@ export default function App() {
               <div style="margin-top: 50px; padding: 25px; background: #fdf2f2; border-radius: 16px; border: 1px solid #fee2e2;">
                 <p style="font-size: 10px; color: #b91c1c; font-weight: bold; text-align: center; margin: 0; line-height: 1.5;">
                   Ce document certifie l'ensemble des activités réalisées et signées par les deux parties.<br/>
-                  Généré automatiquement par VB Logiciel le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
+                  Généré automatiquement par Formaly le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
                 </p>
               </div>
             </div>
@@ -12473,7 +12473,7 @@ export default function App() {
   if (isLoadingSession) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
-        <div className="w-12 h-12 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div>
+        <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
         <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
       </div>
     );
@@ -12489,11 +12489,11 @@ export default function App() {
       <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
 
       {/* Navigation Sidebar (Dynamic par Rôle) */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-gray-300 transition-transform transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex-shrink-0 flex flex-col`}>
-        <div className="flex items-center justify-between h-20 px-6 border-b border-gray-800 bg-gray-950">
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 text-gray-300 transition-transform transform ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:flex-shrink-0 flex flex-col`} style={{background:'#0F0A1E'}}>
+        <div className="flex items-center justify-between h-20 px-6 border-b border-violet-900/40">
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-lg bg-rose-500 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]">VB</div>
-            <span className="text-xl font-bold text-white tracking-widest">Suivi</span>
+            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center mr-3 font-bold text-white shadow-[0_0_15px_rgba(124,58,237,0.5)]">F</div>
+            <span className="text-xl font-bold text-white tracking-widest">formaly</span>
           </div>
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -12503,38 +12503,38 @@ export default function App() {
         <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
           {userRole === 'admin' && (
             <>
-              <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <LayoutDashboard className="w-5 h-5 mr-3" /> Tableau de bord
               </button>
-              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Clients
               </button>
-              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Calendrier
               </button>
-              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Documents
               </button>
-              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
               </button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
-              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
               </button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
               </button>
-              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
             </>
@@ -12542,22 +12542,22 @@ export default function App() {
 
           {userRole === 'formateur' && (
             <>
-              <button onClick={() => { setActiveTab('accueil_formateur'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil_formateur' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('accueil_formateur'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil_formateur' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <LayoutDashboard className="w-5 h-5 mr-3" /> Accueil
               </button>
-              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Mes Clients
               </button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Calendrier
               </button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
               </button>
@@ -12566,15 +12566,15 @@ export default function App() {
 
           {userRole === 'client' && (
             <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Calendrier</button>
-              <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Ressources</button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Calendrier</button>
+              <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Ressources</button>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-violet-600 text-white shadow-lg' : 'hover:bg-violet-900/40 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
               </button>
@@ -12582,7 +12582,7 @@ export default function App() {
           )}
         </nav>
 
-        <div className="p-4 bg-gray-950 border-t border-gray-800">
+        <div className="p-4 border-t border-violet-900/40" style={{background:'#090615'}}>
           <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
             <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
