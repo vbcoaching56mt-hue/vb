@@ -269,8 +269,8 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
     } else {
       if (isEmpty(fCanvasRef.current)) { toast.error('La signature du formateur est requise.'); return; }
       const fSig = fCanvasRef.current.toDataURL('image/png');
-      const cSig = !isEmpty(cCanvasRef.current) ? cCanvasRef.current.toDataURL('image/png') : null;
-      onSave(fSig, cSig);
+      // Le formateur ne peut pas signer à la place du client (légal)
+      onSave(fSig, null);
     }
   };
 
@@ -282,11 +282,11 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
         <h3 className="text-xl font-extrabold text-gray-900 mb-1">Émargement de présence</h3>
         {sessionTitle && <p className="text-sm text-indigo-600 font-bold mb-3">{sessionTitle}</p>}
         <p className="text-sm text-gray-500 mb-6">{isClient ? 'Signez ci-dessous pour valider votre présence.' : 'Signez dans les cadres ci-dessous pour valider la présence.'}</p>
-        <div className={`grid gap-6 mb-6 ${isClient ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2'}`}>
+        <div className="grid gap-6 mb-6 grid-cols-1">
           {!isClient && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Formateur <span className="text-rose-500">*</span></span>
+                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Signature du formateur <span className="text-rose-500">*</span></span>
                 <button onClick={() => clearCanvas(fCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
               </div>
               <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
@@ -295,20 +295,23 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
                   onTouchStart={fStart} onTouchMove={fMove} onTouchEnd={fStop} />
                 <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
               </div>
+              <p className="text-[10px] text-amber-600 mt-2 font-medium">⚠️ Le bénéficiaire doit signer lui-même depuis son espace.</p>
             </div>
           )}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-black uppercase tracking-wider text-gray-600">Bénéficiaire {isClient && <span className="text-rose-500">*</span>}</span>
-              <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
+          {isClient && (
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-black uppercase tracking-wider text-gray-600">Votre signature <span className="text-rose-500">*</span></span>
+                <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
+              </div>
+              <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
+                <canvas ref={cCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
+                  onMouseDown={cStart} onMouseMove={cMove} onMouseUp={cStop} onMouseOut={cStop}
+                  onTouchStart={cStart} onTouchMove={cMove} onTouchEnd={cStop} />
+                <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
+              </div>
             </div>
-            <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
-              <canvas ref={cCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
-                onMouseDown={cStart} onMouseMove={cMove} onMouseUp={cStop} onMouseOut={cStop}
-                onTouchStart={cStart} onTouchMove={cMove} onTouchEnd={cStop} />
-              <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
-            </div>
-          </div>
+          )}
         </div>
         <div className="flex justify-between gap-3">
           <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
@@ -3044,7 +3047,18 @@ const AdminClientsView = ({
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc
 }) => {
-  const clientsGroupedByFormateur = clients.reduce((acc, client) => {
+  const [clientSearchTerm, setClientSearchTerm] = React.useState('');
+
+  const filteredClients = clientSearchTerm.trim()
+    ? clients.filter(c => {
+        const term = clientSearchTerm.toLowerCase();
+        const fullName = `${c.prenom || ''} ${c.nom || ''}`.toLowerCase();
+        const reverseName = `${c.nom || ''} ${c.prenom || ''}`.toLowerCase();
+        return fullName.includes(term) || reverseName.includes(term) || (c.email || '').toLowerCase().includes(term);
+      })
+    : clients;
+
+  const clientsGroupedByFormateur = filteredClients.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
     if (!acc[fId]) acc[fId] = [];
     acc[fId].push(client);
@@ -3114,9 +3128,27 @@ const AdminClientsView = ({
       </div>
 
       <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
-        <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Vue d'ensemble (Tri par Formateur)
-        </h2>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center">
+            <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Vue d'ensemble (Tri par Formateur)
+          </h2>
+          <div className="relative w-full md:w-72">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input
+              type="text"
+              placeholder="Rechercher un client (nom, prénom)..."
+              value={clientSearchTerm}
+              onChange={e => setClientSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+            />
+            {clientSearchTerm && (
+              <button onClick={() => setClientSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+            )}
+          </div>
+        </div>
+        {clientSearchTerm && filteredClients.length === 0 && (
+          <p className="text-sm text-gray-500 italic py-4">Aucun client trouvé pour "{clientSearchTerm}".</p>
+        )}
         <div className="space-y-8">
           {Object.keys(clientsGroupedByFormateur).map(fId => {
             const formateur = formateurs.find(f => String(f.id) === String(fId));
@@ -5083,7 +5115,22 @@ const DocumentsView = ({
     const { error } = await supabase.from('documents').update({ group_id: nextGroupId }).eq('id', docId);
     if (!error) {
       if (fetchDocuments) fetchDocuments();
-      toast.success(nextGroupId ? "Document associé au groupe." : "Document détaché du groupe.");
+      toast.success(nextGroupId ? "Groupe principal mis à jour." : "Document détaché du groupe.");
+    } else {
+      toast.error("Erreur d'association : " + error.message);
+    }
+  };
+
+  const handleToggleDocumentGroups = async (docId, selectedGroupIds) => {
+    if (!docId) return;
+    const primary = selectedGroupIds[0] || null;
+    const { error } = await supabase.from('documents').update({
+      group_id: primary,
+      group_ids: selectedGroupIds
+    }).eq('id', docId);
+    if (!error) {
+      if (fetchDocuments) fetchDocuments();
+      toast.success(selectedGroupIds.length > 0 ? `Document associé à ${selectedGroupIds.length} groupe(s).` : "Document détaché des groupes.");
     } else {
       toast.error("Erreur d'association : " + error.message);
     }
@@ -5324,7 +5371,7 @@ const DocumentsView = ({
             {documentGroups.length > 0 && (
               <div className="flex flex-col gap-3">
                 {documentGroups.map(g => {
-                  const groupDocs = documents.filter(d => d.group_id === g.id);
+                  const groupDocs = documents.filter(d => d.group_id === g.id || (d.group_ids && d.group_ids.includes(g.id)));
                   return (
                     <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
                       <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-indigo-50 transition-colors" onClick={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}>
@@ -5472,17 +5519,45 @@ const DocumentsView = ({
                       <option value="client">📁 Client</option>
                       <option value="formateur">📋 Formateur</option>
                     </select>
-                    {/* Associer à un groupe */}
-                    <select
-                      className="w-full text-xs p-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-700 font-medium cursor-pointer hover:border-indigo-300 transition-colors"
-                      value={doc.group_id || ''}
-                      onChange={(e) => handleToggleDocumentGroup(doc.id, e.target.value || null)}
-                    >
-                      <option value="">-- Sans groupe --</option>
-                      {documentGroups.map(g => (
-                        <option key={g.id} value={g.id}>{g.nom}</option>
-                      ))}
-                    </select>
+                    {/* Associer à un ou plusieurs groupes */}
+                    {(() => {
+                      const docGroupIds = (doc.group_ids && doc.group_ids.length > 0) ? doc.group_ids : (doc.group_id ? [doc.group_id] : []);
+                      return (
+                        <div className="border border-indigo-100 rounded-lg bg-indigo-50 p-2">
+                          <p className="text-[9px] font-black uppercase text-indigo-600 mb-1.5 tracking-wider">Groupes</p>
+                          <div className="space-y-1 max-h-24 overflow-y-auto">
+                            {documentGroups.map(g => {
+                              const isChecked = docGroupIds.includes(g.id);
+                              return (
+                                <label key={g.id} className="flex items-center gap-1.5 cursor-pointer group">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      const next = isChecked
+                                        ? docGroupIds.filter(id => id !== g.id)
+                                        : [...docGroupIds, g.id];
+                                      handleToggleDocumentGroups(doc.id, next);
+                                    }}
+                                    className="w-3 h-3 accent-indigo-600 rounded"
+                                  />
+                                  <span className="text-[10px] text-indigo-800 font-medium group-hover:text-indigo-600 truncate">{g.nom}</span>
+                                </label>
+                              );
+                            })}
+                            {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé.</p>}
+                          </div>
+                          {docGroupIds.length > 0 && (
+                            <button
+                              onClick={() => handleToggleDocumentGroups(doc.id, [])}
+                              className="mt-1.5 text-[9px] text-rose-500 hover:text-rose-700 font-bold"
+                            >
+                              ✕ Détacher tous
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               );
@@ -7158,9 +7233,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // ─── Rendu d'un groupe de documents (type === 'document_group') ───
   const renderGroupCard = (resource) => {
     // Les docs du groupe sont dans la table documents avec group_id = document_group_id
-    // Guard : si document_group_id est null (row corrompue), pas de docs
+    // Ou avec group_ids[] contenant document_group_id (multi-groupe)
     const groupDocs = resource.document_group_id
-      ? (documents || []).filter(d => d.group_id === resource.document_group_id)
+      ? (documents || []).filter(d =>
+          d.group_id === resource.document_group_id ||
+          (d.group_ids && d.group_ids.includes(resource.document_group_id))
+        )
       : [];
     const isExpanded = expandedGroupId === resource.id;
     // Priorité : nom depuis document_groups > titre si non générique > fallback
@@ -8290,6 +8368,520 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) =>
             {isAddingUser ? 'Envoi...' : 'Envoyer l\'invitation'}
           </button>
         </form>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// ESPACE PROCESSUS PARTAGÉS
+// ==========================================
+
+const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId, currentOrgId }) => {
+  const isAdmin = userRole === 'admin';
+  const isFormateur = userRole === 'formateur';
+  const isClient = userRole === 'client';
+
+  const [processes, setProcesses] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [isAdding, setIsAdding] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [form, setForm] = React.useState({ titre: '', description: '', type: 'link', url: '', visible_client: true, visible_formateur: true });
+  const [uploadFile, setUploadFile] = React.useState(null);
+  const [filterType, setFilterType] = React.useState('all');
+
+  const fetchProcesses = React.useCallback(async () => {
+    setLoading(true);
+    const db = supabaseAdmin || supabase;
+    let query = db.from('shared_processes').select('*').order('created_at', { ascending: false });
+    if (currentOrgId) query = query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+    const { data, error } = await query;
+    if (!error && data) setProcesses(data);
+    setLoading(false);
+  }, [supabase, supabaseAdmin, currentOrgId]);
+
+  React.useEffect(() => { fetchProcesses(); }, [fetchProcesses]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.titre.trim()) { toast.error('Titre requis.'); return; }
+    setIsSaving(true);
+    const db = supabaseAdmin || supabase;
+
+    let fileUrl = form.url || null;
+
+    if (uploadFile && (form.type === 'pdf' || form.type === 'document')) {
+      const ext = uploadFile.name.split('.').pop();
+      const path = `processes/${currentOrgId || 'global'}/${Date.now()}.${ext}`;
+      const { error: upErr } = await db.storage.from('documents').upload(path, uploadFile, { upsert: true });
+      if (upErr) { toast.error('Erreur upload : ' + upErr.message); setIsSaving(false); return; }
+      const { data: pub } = db.storage.from('documents').getPublicUrl(path);
+      fileUrl = pub?.publicUrl || null;
+    }
+
+    const { error } = await db.from('shared_processes').insert([{
+      organisation_id: currentOrgId || null,
+      titre: form.titre.trim(),
+      description: form.description.trim() || null,
+      type: form.type,
+      url: fileUrl,
+      visible_client: form.visible_client,
+      visible_formateur: form.visible_formateur,
+    }]);
+
+    setIsSaving(false);
+    if (error) { toast.error('Erreur : ' + error.message); return; }
+    toast.success('Processus ajouté !');
+    setForm({ titre: '', description: '', type: 'link', url: '', visible_client: true, visible_formateur: true });
+    setUploadFile(null);
+    setIsAdding(false);
+    fetchProcesses();
+  };
+
+  const handleDelete = async (id) => {
+    const db = supabaseAdmin || supabase;
+    await db.from('shared_processes').delete().eq('id', id);
+    toast.success('Supprimé.');
+    fetchProcesses();
+  };
+
+  const visibleProcesses = processes.filter(p => {
+    if (isAdmin) return true;
+    if (isFormateur) return p.visible_formateur;
+    if (isClient) return p.visible_client;
+    return false;
+  }).filter(p => filterType === 'all' ? true : p.type === filterType);
+
+  const typeIcon = (type) => ({ pdf: '📄', video: '🎬', link: '🔗', document: '📎' }[type] || '📎');
+  const typeLabel = (type) => ({ pdf: 'PDF', video: 'Vidéo', link: 'Lien', document: 'Fichier' }[type] || type);
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
+            <span className="w-2 h-6 bg-purple-500 rounded-full"></span> Espace Processus & Ressources
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">Partagez des guides, tutoriels et ressources avec vos équipes et clients.</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setIsAdding(!isAdding)} className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-sm transition-all shadow-md flex items-center gap-2">
+            <Plus size={16} /> {isAdding ? 'Annuler' : 'Ajouter une ressource'}
+          </button>
+        )}
+      </div>
+
+      {/* Formulaire ajout (admin) */}
+      {isAdmin && isAdding && (
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-purple-100 animate-fade-in">
+          <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><Plus size={16} className="text-purple-600" /> Nouvelle ressource</h3>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">Titre *</label>
+                <input type="text" required value={form.titre} onChange={e => setForm(f => ({ ...f, titre: e.target.value }))} placeholder="Ex: Guide d'utilisation de la plateforme" className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">Type</label>
+                <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500">
+                  <option value="link">🔗 Lien web</option>
+                  <option value="video">🎬 Vidéo (YouTube, Vimeo...)</option>
+                  <option value="pdf">📄 PDF (upload)</option>
+                  <option value="document">📎 Fichier (upload)</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">Description</label>
+              <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Décrivez brièvement le contenu..." rows={2} className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500 resize-none" />
+            </div>
+            {(form.type === 'link' || form.type === 'video') && (
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">URL *</label>
+                <input type="url" value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="https://..." className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+            )}
+            {(form.type === 'pdf' || form.type === 'document') && (
+              <div>
+                <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">Fichier *</label>
+                <input type="file" accept={form.type === 'pdf' ? '.pdf' : '*'} onChange={e => setUploadFile(e.target.files[0])} className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 cursor-pointer" />
+              </div>
+            )}
+            <div className="flex items-center gap-6">
+              <span className="text-xs font-bold text-gray-600 uppercase">Visible par :</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.visible_client} onChange={e => setForm(f => ({ ...f, visible_client: e.target.checked }))} className="w-4 h-4 accent-purple-600 rounded" />
+                <span className="text-sm font-medium text-gray-700">Clients</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.visible_formateur} onChange={e => setForm(f => ({ ...f, visible_formateur: e.target.checked }))} className="w-4 h-4 accent-purple-600 rounded" />
+                <span className="text-sm font-medium text-gray-700">Formateurs</span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setIsAdding(false)} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
+              <button type="submit" disabled={isSaving} className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl transition-colors shadow-md text-sm disabled:opacity-50">
+                {isSaving ? '...' : '✓ Publier'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Filtres */}
+      <div className="flex flex-wrap gap-2">
+        {['all', 'link', 'video', 'pdf', 'document'].map(t => (
+          <button key={t} onClick={() => setFilterType(t)} className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${filterType === t ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-600 border border-gray-200 hover:border-purple-300'}`}>
+            {t === 'all' ? 'Tous' : typeLabel(t)} {t === 'all' ? `(${visibleProcesses.length})` : ''}
+          </button>
+        ))}
+      </div>
+
+      {/* Liste */}
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">Chargement...</div>
+      ) : visibleProcesses.length === 0 ? (
+        <div className="bg-white rounded-3xl p-12 shadow-sm border border-gray-100 text-center">
+          <div className="text-5xl mb-4">📚</div>
+          <p className="text-gray-500 font-medium">Aucune ressource partagée pour le moment.</p>
+          {isAdmin && <p className="text-sm text-gray-400 mt-1">Cliquez sur "Ajouter une ressource" pour commencer.</p>}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {visibleProcesses.map(p => (
+            <div key={p.id} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:border-purple-200 transition-all group">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <span className="text-2xl shrink-0">{typeIcon(p.type)}</span>
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-900 text-sm leading-tight truncate">{p.titre}</p>
+                    {p.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{p.description}</p>}
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{typeLabel(p.type)}</span>
+                      {isAdmin && (
+                        <>
+                          {p.visible_client && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Clients</span>}
+                          {p.visible_formateur && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Formateurs</span>}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {p.url && (
+                    <a href={p.url} target="_blank" rel="noreferrer" className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded-xl transition-all" title="Ouvrir">
+                      <Eye size={16} />
+                    </a>
+                  )}
+                  {isAdmin && (
+                    <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all" title="Supprimer">
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// MESSAGERIE INTERNE
+// ==========================================
+
+const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, clients, formateurs, currentOrgId }) => {
+  const isAdmin = userRole === 'admin';
+  const isFormateur = userRole === 'formateur';
+  const isClient = userRole === 'client';
+
+  const [conversations, setConversations] = React.useState([]);
+  const [activeConvId, setActiveConvId] = React.useState(null);
+  const [messages, setMessages] = React.useState([]);
+  const [loadingMessages, setLoadingMessages] = React.useState(false);
+  const [newContent, setNewContent] = React.useState('');
+  const [attachFile, setAttachFile] = React.useState(null);
+  const [isSending, setIsSending] = React.useState(false);
+  const [newConvReceiver, setNewConvReceiver] = React.useState('');
+  const messagesEndRef = React.useRef(null);
+
+  const db = supabaseAdmin || supabase;
+
+  // Déterminer les interlocuteurs possibles selon le rôle
+  const possibleReceivers = React.useMemo(() => {
+    if (isAdmin) {
+      const f = (formateurs || []).map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'formateur' }));
+      const c = (clients || []).map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'client' }));
+      return [...f, ...c];
+    }
+    if (isFormateur) {
+      const myClients = (clients || []).filter(c => String(c.formateur_id) === String(currentUserId));
+      const c = myClients.map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'client' }));
+      // Admin
+      const adminEntry = [{ id: 'admin', label: 'Admin VB Coaching', role: 'admin' }];
+      return [...adminEntry, ...c];
+    }
+    if (isClient) {
+      // Find own formateur
+      const me = (clients || []).find(c => String(c.id) === String(currentUserId));
+      if (me?.formateur_id) {
+        const f = (formateurs || []).find(f => String(f.id) === String(me.formateur_id));
+        if (f) return [{ id: String(f.id), label: `${f.nom || ''} ${f.prenom || ''}`.trim(), role: 'formateur' }];
+      }
+      return [];
+    }
+    return [];
+  }, [isAdmin, isFormateur, isClient, clients, formateurs, currentUserId]);
+
+  // Charger les conversations (dernier message par paire)
+  const fetchConversations = React.useCallback(async () => {
+    const { data, error } = await db.from('messages')
+      .select('*')
+      .or(`sender_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`)
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return;
+
+    // Regrouper par paire sender/receiver
+    const convMap = {};
+    data.forEach(m => {
+      const otherId = m.sender_id === String(currentUserId) ? m.receiver_id : m.sender_id;
+      const key = [String(currentUserId), String(otherId)].sort().join('_');
+      if (!convMap[key]) {
+        const other = possibleReceivers.find(r => r.id === otherId);
+        convMap[key] = { key, otherId, otherLabel: other?.label || otherId, otherRole: other?.role || (m.sender_id === String(currentUserId) ? m.receiver_role : m.sender_role), lastMessage: m, unread: 0 };
+      }
+      if (m.receiver_id === String(currentUserId) && !m.read_at) convMap[key].unread++;
+    });
+
+    setConversations(Object.values(convMap).sort((a, b) => new Date(b.lastMessage.created_at) - new Date(a.lastMessage.created_at)));
+  }, [db, currentUserId, possibleReceivers]);
+
+  // Charger messages d'une conversation
+  const fetchMessages = React.useCallback(async (otherId) => {
+    setLoadingMessages(true);
+    const { data, error } = await db.from('messages')
+      .select('*')
+      .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${otherId}),and(sender_id.eq.${otherId},receiver_id.eq.${currentUserId})`)
+      .order('created_at', { ascending: true });
+    if (!error && data) {
+      setMessages(data);
+      // Marquer comme lus
+      await db.from('messages')
+        .update({ read_at: new Date().toISOString() })
+        .eq('receiver_id', String(currentUserId))
+        .eq('sender_id', String(otherId))
+        .is('read_at', null);
+    }
+    setLoadingMessages(false);
+  }, [db, currentUserId]);
+
+  React.useEffect(() => { fetchConversations(); }, [fetchConversations]);
+
+  React.useEffect(() => {
+    if (activeConvId) {
+      fetchMessages(activeConvId);
+    }
+  }, [activeConvId, fetchMessages]);
+
+  React.useEffect(() => {
+    if (messagesEndRef.current) messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!newContent.trim() && !attachFile) return;
+    if (!activeConvId) return;
+    setIsSending(true);
+
+    let attachUrl = null;
+    let attachName = null;
+    if (attachFile) {
+      const path = `messages/${currentUserId}/${Date.now()}_${attachFile.name}`;
+      const { error: upErr } = await db.storage.from('documents').upload(path, attachFile, { upsert: true });
+      if (upErr) { toast.error('Erreur upload : ' + upErr.message); setIsSending(false); return; }
+      const { data: pub } = db.storage.from('documents').getPublicUrl(path);
+      attachUrl = pub?.publicUrl || null;
+      attachName = attachFile.name;
+    }
+
+    const receiver = possibleReceivers.find(r => r.id === activeConvId);
+    const senderRole = userRole;
+    const receiverRole = receiver?.role || 'client';
+
+    const { error } = await db.from('messages').insert([{
+      organisation_id: currentOrgId || null,
+      sender_id: String(currentUserId),
+      sender_role: senderRole,
+      receiver_id: String(activeConvId),
+      receiver_role: receiverRole,
+      content: newContent.trim() || null,
+      attachment_url: attachUrl,
+      attachment_name: attachName,
+    }]);
+
+    setIsSending(false);
+    if (error) { toast.error('Erreur envoi : ' + error.message); return; }
+    setNewContent('');
+    setAttachFile(null);
+    await fetchMessages(activeConvId);
+    await fetchConversations();
+  };
+
+  const startConversation = (receiverId) => {
+    setActiveConvId(receiverId);
+    setNewConvReceiver('');
+  };
+
+  const roleColor = (role) => ({ admin: 'bg-rose-500', formateur: 'bg-indigo-500', client: 'bg-emerald-500' }[role] || 'bg-gray-500');
+  const roleLabel = (role) => ({ admin: 'Admin', formateur: 'Formateur', client: 'Client' }[role] || role);
+  const formatTime = (iso) => iso ? new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const formatDay = (iso) => iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '';
+
+  const activeOther = possibleReceivers.find(r => r.id === activeConvId);
+
+  return (
+    <div className="animate-fade-in max-w-5xl mx-auto">
+      <div className="mb-6">
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
+          <span className="w-2 h-6 bg-teal-500 rounded-full"></span> Messagerie
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">Échangez avec vos interlocuteurs en toute simplicité.</p>
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden" style={{ minHeight: '520px' }}>
+        <div className="flex h-[600px]">
+          {/* Colonne gauche : conversations */}
+          <div className="w-72 shrink-0 border-r border-gray-100 flex flex-col">
+            <div className="p-4 border-b border-gray-100">
+              <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Conversations</p>
+              {/* Démarrer nouvelle conversation */}
+              {possibleReceivers.length > 0 && (
+                <select
+                  value={newConvReceiver}
+                  onChange={e => { if (e.target.value) startConversation(e.target.value); }}
+                  className="w-full text-xs border border-gray-200 rounded-xl p-2 outline-none focus:ring-2 focus:ring-teal-500 bg-gray-50"
+                >
+                  <option value="">+ Nouvelle conversation</option>
+                  {possibleReceivers.map(r => (
+                    <option key={r.id} value={r.id}>{r.label} ({roleLabel(r.role)})</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {conversations.length === 0 ? (
+                <p className="text-xs text-gray-400 italic p-4 text-center">Aucune conversation.</p>
+              ) : (
+                conversations.map(conv => (
+                  <button
+                    key={conv.key}
+                    onClick={() => setActiveConvId(conv.otherId)}
+                    className={`w-full text-left p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === conv.otherId ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-full ${roleColor(conv.otherRole)} text-white flex items-center justify-center font-bold text-xs shrink-0`}>
+                        {conv.otherLabel.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-gray-900 truncate">{conv.otherLabel}</span>
+                          {conv.unread > 0 && <span className="bg-teal-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 shrink-0">{conv.unread}</span>}
+                        </div>
+                        <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                          {conv.lastMessage.content || (conv.lastMessage.attachment_name ? `📎 ${conv.lastMessage.attachment_name}` : '')}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Colonne droite : messages */}
+          <div className="flex-1 flex flex-col min-w-0">
+            {!activeConvId ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                <div className="text-5xl mb-4">💬</div>
+                <p className="text-gray-500 font-medium">Sélectionnez une conversation</p>
+                <p className="text-sm text-gray-400 mt-1">ou démarrez-en une nouvelle depuis la liste.</p>
+              </div>
+            ) : (
+              <>
+                {/* En-tête conversation */}
+                <div className="p-4 border-b border-gray-100 flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-full ${roleColor(activeOther?.role || 'client')} text-white flex items-center justify-center font-bold text-sm shrink-0`}>
+                    {(activeOther?.label || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">{activeOther?.label || activeConvId}</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-bold">{roleLabel(activeOther?.role || '')}</p>
+                  </div>
+                </div>
+
+                {/* Liste messages */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {loadingMessages && <p className="text-center text-gray-400 text-sm">Chargement...</p>}
+                  {!loadingMessages && messages.length === 0 && (
+                    <p className="text-center text-gray-400 text-sm italic py-8">Aucun message. Démarrez la conversation !</p>
+                  )}
+                  {messages.map((m, idx) => {
+                    const isMine = m.sender_id === String(currentUserId);
+                    const showDate = idx === 0 || formatDay(m.created_at) !== formatDay(messages[idx-1]?.created_at);
+                    return (
+                      <React.Fragment key={m.id}>
+                        {showDate && (
+                          <div className="text-center"><span className="text-[10px] text-gray-400 bg-gray-100 px-3 py-1 rounded-full font-bold">{formatDay(m.created_at)}</span></div>
+                        )}
+                        <div className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-xs rounded-2xl px-4 py-2.5 shadow-sm ${isMine ? 'bg-teal-500 text-white rounded-br-sm' : 'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
+                            {m.content && <p className="text-sm leading-relaxed">{m.content}</p>}
+                            {m.attachment_url && (
+                              <a href={m.attachment_url} target="_blank" rel="noreferrer" className={`flex items-center gap-1.5 text-xs font-bold mt-1 underline ${isMine ? 'text-teal-100' : 'text-indigo-600'}`}>
+                                📎 {m.attachment_name || 'Pièce jointe'}
+                              </a>
+                            )}
+                            <p className={`text-[9px] mt-1 ${isMine ? 'text-teal-100' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Zone de saisie */}
+                <div className="p-4 border-t border-gray-100">
+                  {attachFile && (
+                    <div className="flex items-center gap-2 mb-2 bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-600">
+                      📎 <span className="font-medium truncate">{attachFile.name}</span>
+                      <button onClick={() => setAttachFile(null)} className="ml-auto text-gray-400 hover:text-red-500">✕</button>
+                    </div>
+                  )}
+                  <div className="flex items-end gap-2">
+                    <label className="p-2 text-gray-400 hover:text-teal-600 cursor-pointer transition-colors shrink-0" title="Joindre un fichier">
+                      📎
+                      <input type="file" className="hidden" onChange={e => setAttachFile(e.target.files[0])} />
+                    </label>
+                    <textarea
+                      value={newContent}
+                      onChange={e => setNewContent(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                      placeholder="Votre message... (Entrée pour envoyer)"
+                      rows={1}
+                      className="flex-1 border border-gray-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-teal-500 resize-none bg-gray-50"
+                    />
+                    <button onClick={handleSend} disabled={isSending || (!newContent.trim() && !attachFile)} className="p-3 bg-teal-500 hover:bg-teal-600 text-white rounded-2xl transition-all shadow-md disabled:opacity-40 shrink-0">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -11935,6 +12527,13 @@ export default function App() {
               <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
               </button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Layout className="w-5 h-5 mr-3" /> Processus
+              </button>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                Messagerie
+              </button>
               <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
@@ -11955,6 +12554,13 @@ export default function App() {
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <Layout className="w-5 h-5 mr-3" /> Processus
+              </button>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                Messagerie
+              </button>
             </>
           )}
 
@@ -11967,6 +12573,11 @@ export default function App() {
               <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Ressources</button>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'bg-rose-500 text-white shadow-lg' : 'hover:bg-gray-800 hover:text-white font-medium'}`}>
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                Messagerie
+              </button>
             </>
           )}
         </nav>
@@ -12166,6 +12777,26 @@ export default function App() {
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
             supabase={supabaseAdmin}
           />}
+          {activeTab === 'processus' && (
+            <SharedProcessesView
+              supabase={supabase}
+              supabaseAdmin={supabaseAdmin}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              currentOrgId={currentOrgId}
+            />
+          )}
+          {activeTab === 'messagerie' && (
+            <MessagesView
+              supabase={supabase}
+              supabaseAdmin={supabaseAdmin}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              clients={clients}
+              formateurs={formateurs}
+              currentOrgId={currentOrgId}
+            />
+          )}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
             moduleDocuments={moduleDocuments}
