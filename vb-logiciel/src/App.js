@@ -1910,7 +1910,7 @@ const SignupView = ({ supabase, onComplete }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6">F</div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
           <p className="text-gray-500 mb-6">Un lien de confirmation a été envoyé à <strong>{email}</strong>. Cliquez dessus pour activer votre compte.</p>
           <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="text-sm font-bold text-violet-600 hover:text-violet-700">Retour à la connexion</button>
@@ -1922,7 +1922,7 @@ const SignupView = ({ supabase, onComplete }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
         <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
 
@@ -2072,7 +2072,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
           <p className="text-gray-500 mb-8">Saisissez votre email pour réinitialiser l'accès.</p>
 
@@ -2123,7 +2123,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mx-auto mb-6 shadow-lg shadow-violet-600/30">F</div>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à Formaly</h1>
         <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
 
@@ -8095,7 +8095,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">F</div>
+          <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -8118,7 +8118,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">F</div>
+        <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à VBERP.</p>
         <form onSubmit={handleSetPassword} className="space-y-4">
@@ -8215,7 +8215,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg animate-pulse">F</div>
+          <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -8238,7 +8238,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">F</div>
+        <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Nouveau mot de passe</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre nouveau mot de passe sécurisé.</p>
         <form onSubmit={handleUpdatePassword} className="space-y-4">
