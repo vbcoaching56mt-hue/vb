@@ -5072,6 +5072,24 @@ const DocumentsView = ({
   const [isCreatingGroup, setIsCreatingGroup] = React.useState(false);
   const [selectedTemplateFile, setSelectedTemplateFile] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
+  const [issuedDocToDelete, setIssuedDocToDelete] = React.useState(null);
+
+  const handleDeleteIssuedDoc = async () => {
+    if (!issuedDocToDelete) return;
+    // Supprimer du Storage si URL présente
+    if (issuedDocToDelete.url) {
+      try {
+        const urlParts = issuedDocToDelete.url.split('/storage/v1/object/public/documents/');
+        if (urlParts.length > 1) {
+          await supabase.storage.from('documents').remove([decodeURIComponent(urlParts[1])]);
+        }
+      } catch (e) { console.warn('Storage remove error:', e); }
+    }
+    const { error } = await supabase.from('documents').delete().eq('id', issuedDocToDelete.id);
+    if (error) { toast.error('Erreur suppression : ' + error.message); }
+    else { toast.success('Document supprimé.'); if (fetchDocuments) fetchDocuments(); }
+    setIssuedDocToDelete(null);
+  };
 
   const fetchDocumentGroups = React.useCallback(async () => {
     const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
@@ -5097,7 +5115,7 @@ const DocumentsView = ({
   };
 
   const handleDeleteGroup = async (groupId) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce groupe ? Les documents qui y sont associés seront détachés.")) {
+    if (window.confirm("Supprimer ce groupe ? Les documents associés seront simplement détachés, pas supprimés.")) {
       await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
       const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
       if (!error) {
@@ -5983,6 +6001,13 @@ const DocumentsView = ({
                         >
                           Télécharger
                         </button>
+                        <button
+                          onClick={() => setIssuedDocToDelete(doc)}
+                          className="p-2 rounded-xl text-gray-300 hover:text-red-500 hover:bg-red-50 border border-gray-100 hover:border-red-200 transition-all"
+                          title="Supprimer ce document"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -6007,6 +6032,14 @@ const DocumentsView = ({
                 </div>
               )}
             </div>
+
+            <DeleteConfirmationModal
+              isOpen={!!issuedDocToDelete}
+              onClose={() => setIssuedDocToDelete(null)}
+              onConfirm={handleDeleteIssuedDoc}
+              itemName={issuedDocToDelete?.nom || 'ce document'}
+              title="Supprimer ce document ?"
+            />
           </div>
         )}
       </div>
