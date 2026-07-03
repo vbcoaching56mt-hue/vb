@@ -9108,7 +9108,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       setGrandDomaines(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('[ROME] Grands domaines:', e);
-      toast.error('Impossible de charger les domaines ROME. Vérifiez les variables FT_CLIENT_ID et FT_CLIENT_SECRET dans Vercel.');
+      toast.error('ROME erreur : ' + (e.message || 'inconnue'));
     }
     setLoadingGD(false);
   };
