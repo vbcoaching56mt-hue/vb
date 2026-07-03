@@ -9081,7 +9081,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
 
   // Appel proxy ROME
   const callProxy = React.useCallback(async (params) => {
-    const url = new URL('/api/rome/proxy', window.location.origin);
+    const url = new URL('/api/rome-proxy', window.location.origin);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     const res = await fetch(url.toString());
     if (!res.ok) {
