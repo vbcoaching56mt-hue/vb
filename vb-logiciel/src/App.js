@@ -8154,7 +8154,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
         <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
-        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à VBERP.</p>
+        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à Trainly.</p>
         <form onSubmit={handleSetPassword} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nouveau mot de passe</label>
