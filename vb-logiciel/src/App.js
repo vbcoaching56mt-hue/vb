@@ -8422,6 +8422,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
   const [form, setForm] = React.useState({ titre: '', description: '', type: 'link', url: '', visible_client: true, visible_formateur: true });
   const [uploadFile, setUploadFile] = React.useState(null);
   const [filterType, setFilterType] = React.useState('all');
+  const [processToDelete, setProcessToDelete] = React.useState(null);
 
   const fetchProcesses = React.useCallback(async () => {
     setLoading(true);
@@ -8471,10 +8472,12 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
     fetchProcesses();
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async () => {
+    if (!processToDelete) return;
     const db = supabaseAdmin || supabase;
-    await db.from('shared_processes').delete().eq('id', id);
-    toast.success('Supprimé.');
+    await db.from('shared_processes').delete().eq('id', processToDelete.id);
+    toast.success('Ressource supprimée.');
+    setProcessToDelete(null);
     fetchProcesses();
   };
 
@@ -8537,7 +8540,16 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
             {(form.type === 'pdf' || form.type === 'document') && (
               <div>
                 <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">Fichier *</label>
-                <input type="file" accept={form.type === 'pdf' ? '.pdf' : '*'} onChange={e => setUploadFile(e.target.files[0])} className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 cursor-pointer" />
+                <input type="file" accept={form.type === 'pdf' ? '.pdf' : '*'} onChange={e => {
+                  const f = e.target.files[0];
+                  if (f) {
+                    setUploadFile(f);
+                    if (!form.titre.trim()) {
+                      const nameWithoutExt = f.name.replace(/\.[^/.]+$/, '');
+                      setForm(prev => ({ ...prev, titre: nameWithoutExt }));
+                    }
+                  }
+                }} className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 cursor-pointer" />
               </div>
             )}
             <div className="flex items-center gap-6">
@@ -8607,7 +8619,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
                     </a>
                   )}
                   {isAdmin && (
-                    <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-300 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all" title="Supprimer">
+                    <button onClick={() => setProcessToDelete(p)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Supprimer">
                       <Trash2 size={16} />
                     </button>
                   )}
@@ -8617,6 +8629,13 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
           ))}
         </div>
       )}
+      <DeleteConfirmationModal
+        isOpen={!!processToDelete}
+        onClose={() => setProcessToDelete(null)}
+        onConfirm={handleDelete}
+        itemName={processToDelete?.titre || 'cette ressource'}
+        title="Supprimer cette ressource ?"
+      />
     </div>
   );
 };
