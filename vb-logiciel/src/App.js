@@ -3387,8 +3387,8 @@ const FormateurDetailView = ({
 
             {/* ── Bibliothèque de modèles disponibles ── */}
             {(() => {
-              // Tous les templates de la bibliothèque sont disponibles pour envoi (pas de filtre destination)
-              const availableTpls = Object.entries(documentTemplates || {});
+              // Filtre : seuls les modèles avec destination='formateur' apparaissent dans la fiche formateur
+              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
               return (
                 <div>
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Envoyer un document pour signature</h4>
