@@ -9611,15 +9611,14 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                   <div className="flex-1">
                     <p className="font-bold text-blue-900 text-sm">Consulter la fiche complète sur MétierScope</p>
                     <p className="text-blue-700 text-xs mt-1 leading-relaxed">
-                      Copiez le code ROME ci-dessous, puis collez-le dans la recherche MétierScope pour accéder à la fiche complète (compétences, formations, conditions d'accès).
+                      Copiez le nom du métier ci-dessous, puis collez-le dans la recherche MétierScope pour accéder à la fiche complète (compétences, formations, conditions d'accès).
                     </p>
                     <div className="flex flex-wrap items-center gap-2 mt-3">
                       <button
-                        onClick={() => { navigator.clipboard.writeText(selectedMetier.code); toast.success('Code ROME copié !'); }}
+                        onClick={() => { navigator.clipboard.writeText(selectedMetier.libelle); toast.success('Nom du métier copié !'); }}
                         className="flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-800 transition-colors"
                       >
-                        <span className="font-mono">{selectedMetier.code}</span>
-                        <span>— Copier</span>
+                        <span>📋 Copier « {selectedMetier.libelle} »</span>
                       </button>
                       <a
                         href="https://candidat.francetravail.fr/metierscope/"
