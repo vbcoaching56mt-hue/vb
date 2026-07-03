@@ -20,6 +20,7 @@ import {
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
+import romeData from './data/romeData.json';
 
 
 
@@ -9044,21 +9045,13 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 // ==========================================
 
 const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
-  // ── États explorateur ROME 4.0 (admin/formateur) ──────────────────
+  // ── États navigation statique ROME 4.0 ────────────────────────────
   const [activeMainTab, setActiveMainTab] = React.useState('explorer');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchResults, setSearchResults] = React.useState([]);
-  const [grandDomaines, setGrandDomaines] = React.useState([]);
-  const [selectedDomaine, setSelectedDomaine] = React.useState(null);
-  const [metiersInDomaine, setMetiersInDomaine] = React.useState([]);
-  const [loadingGD, setLoadingGD] = React.useState(false);
-  const [loadingSearch, setLoadingSearch] = React.useState(false);
-  const [loadingDomaine, setLoadingDomaine] = React.useState(false);
-
-  // ── États fiche ROME détaillée ─────────────────────────────────────
+  const [selectedGrandDomaine, setSelectedGrandDomaine] = React.useState(null);
+  const [selectedDomainePro, setSelectedDomainePro] = React.useState(null);
   const [selectedMetier, setSelectedMetier] = React.useState(null);
-  const [ficheDetail, setFicheDetail] = React.useState(null);
-  const [loadingFiche, setLoadingFiche] = React.useState(false);
 
   // ── États fiches assignées (snapshot DB locale) ────────────────────
   const [assignedJobSheets, setAssignedJobSheets] = React.useState([]);
@@ -9079,46 +9072,13 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
 
   const searchTimeoutRef = React.useRef(null);
 
-  // Appel proxy ROME
-  const callProxy = React.useCallback(async (params) => {
-    const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || '';
-    const url = new URL(`${supabaseUrl}/functions/v1/rome-proxy`);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    const anonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || '';
-    const res = await fetch(url.toString(), {
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-      }
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Erreur ${res.status}`);
-    }
-    return res.json();
-  }, []);
-
-  // ── Chargement initial ─────────────────────────────────────────────
   React.useEffect(() => {
     if (userRole === 'admin' || userRole === 'formateur') {
-      loadGrandDomaines();
       fetchAssignedJobSheets();
     } else if (userRole === 'client') {
       fetchClientFiches();
     }
   }, [userRole, currentUserId]);
-
-  const loadGrandDomaines = async () => {
-    setLoadingGD(true);
-    try {
-      const data = await callProxy({ action: 'grands-domaines' });
-      setGrandDomaines(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('[ROME] Grands domaines:', e);
-      toast.error('ROME erreur : ' + (e.message || 'inconnue'));
-    }
-    setLoadingGD(false);
-  };
 
   const fetchAssignedJobSheets = async () => {
     setLoadingAssigned(true);
@@ -9139,66 +9099,51 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
     setLoadingClient(false);
   };
 
-  // ── Recherche ROME (debounce 500ms) ───────────────────────────────
+  // ── Recherche locale instantanée dans les données ROME 4.0 ────────
   const handleSearchChange = (val) => {
     setSearchQuery(val);
-    setSelectedDomaine(null);
-    setMetiersInDomaine([]);
+    setSelectedGrandDomaine(null);
+    setSelectedDomainePro(null);
     clearTimeout(searchTimeoutRef.current);
-    if (!val.trim()) { setSearchResults([]); return; }
-    if (val.trim().length < 2) return;
-    searchTimeoutRef.current = setTimeout(async () => {
-      setLoadingSearch(true);
-      try {
-        const data = await callProxy({ action: 'search', q: val.trim() });
-        setSearchResults(Array.isArray(data) ? data : []);
-      } catch (e) {
-        toast.error('Erreur de recherche ROME');
+    if (!val.trim() || val.trim().length < 2) { setSearchResults([]); return; }
+    searchTimeoutRef.current = setTimeout(() => {
+      const q = val.toLowerCase().trim();
+      const results = [];
+      for (const gd of romeData.grandsDomaines) {
+        for (const dp of gd.domainesProfessionnels) {
+          for (const m of dp.metiers) {
+            if (m.libelle.toLowerCase().includes(q) || m.code.toLowerCase().includes(q) || dp.libelle.toLowerCase().includes(q)) {
+              results.push({ ...m, grandDomaine: gd, domainePro: dp });
+            }
+          }
+        }
       }
-      setLoadingSearch(false);
-    }, 500);
+      setSearchResults(results.slice(0, 40));
+    }, 200);
   };
 
-  // ── Sélection d'un grand domaine ───────────────────────────────────
-  const handleDomaineSelect = async (domaine) => {
-    setSelectedDomaine(domaine);
-    setSearchQuery('');
-    setSearchResults([]);
-    setLoadingDomaine(true);
-    try {
-      const data = await callProxy({ action: 'metiers-par-domaine', domaine: domaine.code });
-      setMetiersInDomaine(Array.isArray(data) ? data : []);
-    } catch (e) {
-      toast.error('Impossible de charger les métiers de ce domaine');
-    }
-    setLoadingDomaine(false);
-  };
-
-  // ── Ouvrir la fiche ROME complète ─────────────────────────────────
-  const handleMetierClick = async (metier) => {
-    setSelectedMetier(metier);
-    setFicheDetail(null);
-    setLoadingFiche(true);
-    try {
-      const data = await callProxy({ action: 'fiche', code: metier.code });
-      setFicheDetail(data);
-    } catch (e) {
-      console.error('[ROME] Fiche:', e);
-      toast.error('Impossible de charger la fiche métier');
-    }
-    setLoadingFiche(false);
-  };
-
-  // ── Assigner une fiche ROME à un bénéficiaire ─────────────────────
+  // ── Assigner une fiche métier à un bénéficiaire ───────────────────
   const handleAssignRomeFiche = async () => {
     if (!selectedClientId || !ficheToAssign) return toast.error('Sélectionnez un bénéficiaire');
     setIsAssigning(true);
     try {
-      const fiche = ficheDetail || {};
       const romeCode = ficheToAssign.code || '';
-      const romeTitle = fiche.libelle || ficheToAssign.libelle || '';
+      const romeTitle = ficheToAssign.libelle || '';
 
-      // 1. Chercher si la fiche existe déjà (même ROME code + org)
+      // Retrouver les métadonnées dans les données statiques
+      let secteur = '';
+      let domainePro = '';
+      for (const gd of romeData.grandsDomaines) {
+        for (const dp of gd.domainesProfessionnels) {
+          if (dp.metiers.find(m => m.code === romeCode)) {
+            secteur = gd.libelle;
+            domainePro = dp.libelle;
+            break;
+          }
+        }
+      }
+
+      // Vérifier si la fiche existe déjà (même code ROME + org)
       let jobSheetId;
       if (romeCode) {
         const { data: existing } = await supabase
@@ -9210,26 +9155,14 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
         if (existing) jobSheetId = existing.id;
       }
 
-      // 2. Créer le snapshot local si pas encore en DB
+      // Créer le snapshot local si pas encore en DB
       if (!jobSheetId) {
-        const competences = (fiche.competences || [])
-          .filter(c => c.type === 'SAVOIR_FAIRE')
-          .map(c => c.libelle).join(', ');
-        const qualites = (fiche.qualitesProfessionnelles || [])
-          .map(q => q.libelle).join(', ');
-        const secteur = fiche.grandDomaineProfessionnel?.libelle
-          || fiche.domaineProfessionnel?.libelle
-          || '';
-
         const { data: newSheet, error: insertErr } = await supabase
           .from('job_sheets')
           .insert([{
             title: romeTitle,
-            sector: secteur,
-            description: fiche.definition || '',
-            skills: competences,
-            qualities: qualites,
-            career_evolution: fiche.accesEmploi || '',
+            sector: domainePro || secteur,
+            description: `Fiche ROME 4.0 — ${romeTitle}. Domaine : ${domainePro}.`,
             extra_info: `rome:${romeCode}`,
             organisation_id: currentOrgId,
           }])
@@ -9239,7 +9172,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
         jobSheetId = newSheet.id;
       }
 
-      // 3. Associer au client
+      // Associer au client
       const { error: assignErr } = await supabase
         .from('client_job_sheets')
         .insert([{
@@ -9268,7 +9201,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
     ? clients.filter(c => c.formateur_id === currentUserId)
     : clients;
 
-  // Couleurs par lettre de grand domaine
+  // Palette de couleurs par lettre de grand domaine
   const domaineGradients = {
     A: 'from-green-500 to-emerald-600',
     B: 'from-purple-500 to-fuchsia-600',
@@ -9286,6 +9219,9 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
     N: 'from-amber-600 to-orange-600',
   };
 
+  // Retrouver le grand domaine d'une lettre
+  const getGrandDomaineByCode = (code) => romeData.grandsDomaines.find(gd => gd.code === code);
+
   // ════════════════════════════════════════════════════════════════════
   // VUE CLIENT — fiches assignées uniquement
   // ════════════════════════════════════════════════════════════════════
@@ -9294,7 +9230,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       <div className="space-y-6 animate-fade-in">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h2 className="text-2xl font-black text-gray-900 tracking-tight">Mes Fiches Métiers</h2>
-          <p className="text-gray-500 text-sm mt-1">Découvrez les métiers sélectionnés pour vous.</p>
+          <p className="text-gray-500 text-sm mt-1">Découvrez les métiers sélectionnés pour vous par votre conseiller.</p>
         </div>
 
         {loadingClient ? (
@@ -9335,6 +9271,9 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
   // ════════════════════════════════════════════════════════════════════
   // VUE ADMIN / FORMATEUR
   // ════════════════════════════════════════════════════════════════════
+  const totalMetiers = romeData.grandsDomaines.reduce((acc, gd) =>
+    acc + gd.domainesProfessionnels.reduce((a, dp) => a + dp.metiers.length, 0), 0);
+
   const displayAssigned = assignedJobSheets
     .filter(f => !filterSector || f.sector === filterSector)
     .filter(f => !assignedSearch || f.title?.toLowerCase().includes(assignedSearch.toLowerCase()) || f.sector?.toLowerCase().includes(assignedSearch.toLowerCase()));
@@ -9342,16 +9281,15 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* ── Header ── */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h2 className="text-2xl font-black text-gray-900 tracking-tight">Fiches Métiers</h2>
             <p className="text-gray-500 text-sm mt-1">
-              Référentiel ROME 4.0 — {grandDomaines.length > 0 ? `${grandDomaines.length} grands domaines` : 'Chargement…'}
+              Référentiel ROME 4.0 — {romeData.grandsDomaines.length} grands domaines · {totalMetiers} métiers
             </p>
           </div>
-          {/* Tabs */}
           <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
             <button
               onClick={() => setActiveMainTab('explorer')}
@@ -9373,27 +9311,22 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       </div>
 
       {/* ══════════════════════════════════════════════════════════════
-          TAB 1 — EXPLORATEUR ROME
+          TAB 1 — EXPLORATEUR ROME (données statiques ROME 4.0)
       ══════════════════════════════════════════════════════════════ */}
       {activeMainTab === 'explorer' && (
-        <div className="space-y-6">
-          {/* Barre de recherche */}
+        <div className="space-y-4">
+          {/* Barre de recherche instantanée */}
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
               <input
                 type="text"
-                placeholder="Rechercher un métier dans le référentiel ROME 4.0…"
+                placeholder="Rechercher un métier, un domaine… (ex : développeur, infirmier, cuisine)"
                 value={searchQuery}
                 onChange={e => handleSearchChange(e.target.value)}
                 className="w-full pl-12 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all"
               />
-              {loadingSearch && (
-                <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                  <div className="w-5 h-5 border-2 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
-                </div>
-              )}
-              {searchQuery && !loadingSearch && (
+              {searchQuery && (
                 <button
                   onClick={() => { setSearchQuery(''); setSearchResults([]); }}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
@@ -9405,34 +9338,36 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
           </div>
 
           {/* Résultats de recherche */}
-          {searchQuery && (
+          {searchQuery.trim().length >= 2 && (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              {loadingSearch ? (
-                <div className="p-8 text-center text-gray-400 text-sm font-semibold">Recherche en cours…</div>
-              ) : searchResults.length === 0 ? (
+              {searchResults.length === 0 ? (
                 <div className="p-8 text-center">
                   <p className="text-gray-600 font-bold">Aucun résultat pour « {searchQuery} »</p>
                   <p className="text-gray-400 text-sm mt-1">Essayez d'autres mots-clés ou explorez par domaine</p>
                 </div>
               ) : (
                 <>
-                  <div className="px-6 py-3 border-b border-gray-50 bg-gray-50/50">
+                  <div className="px-6 py-3 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                      {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''} — cliquez pour voir la fiche complète
+                      {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''}
                     </p>
+                    <span className="text-xs text-gray-300 font-medium">ROME 4.0</span>
                   </div>
-                  <div className="divide-y divide-gray-50">
+                  <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
                     {searchResults.map(metier => (
                       <button
                         key={metier.code}
-                        onClick={() => handleMetierClick(metier)}
-                        className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
+                        onClick={() => { setSelectedMetier({ ...metier }); setSearchQuery(''); setSearchResults([]); }}
+                        className="w-full flex items-center justify-between px-6 py-3.5 hover:bg-violet-50 transition-colors text-left group"
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{metier.code}</span>
-                          <span className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{metier.libelle}</span>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg flex-shrink-0">{metier.code}</span>
+                          <div className="min-w-0">
+                            <p className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors truncate">{metier.libelle}</p>
+                            <p className="text-xs text-gray-400 truncate">{metier.domainePro?.libelle}</p>
+                          </div>
                         </div>
-                        <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
+                        <ChevronRight size={16} className="text-gray-300 group-hover:text-violet-500 flex-shrink-0 ml-2" />
                       </button>
                     ))}
                   </div>
@@ -9441,89 +9376,124 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
             </div>
           )}
 
-          {/* Explorer par grand domaine */}
-          {!searchQuery && (
+          {/* Navigation hiérarchique */}
+          {!searchQuery.trim() && (
             <>
-              {selectedDomaine ? (
-                /* Liste des métiers dans le domaine */
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => { setSelectedDomaine(null); setMetiersInDomaine([]); }}
-                      className="flex items-center gap-1 text-violet-600 hover:text-violet-800 font-bold text-sm transition-colors"
-                    >
-                      <ChevronLeft size={16} /> Retour aux domaines
-                    </button>
-                    <span className="text-gray-300">|</span>
-                    <span className="font-bold text-gray-700 text-sm">{selectedDomaine.libelle}</span>
-                  </div>
-
-                  {loadingDomaine ? (
-                    <div className="flex justify-center items-center h-32">
-                      <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
-                    </div>
-                  ) : metiersInDomaine.length === 0 ? (
-                    <div className="bg-white p-8 rounded-2xl text-center border border-gray-100 text-gray-500">
-                      Aucun métier trouvé dans ce domaine
-                    </div>
-                  ) : (
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                      <div className="px-6 py-3 border-b border-gray-50 bg-gray-50/50">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {metiersInDomaine.length} métier{metiersInDomaine.length > 1 ? 's' : ''}
-                        </p>
-                      </div>
-                      <div className="divide-y divide-gray-50">
-                        {metiersInDomaine.map(metier => (
-                          <button
-                            key={metier.code}
-                            onClick={() => handleMetierClick(metier)}
-                            className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{metier.code}</span>
-                              <span className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{metier.libelle}</span>
-                            </div>
-                            <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+              {/* Fil d'Ariane */}
+              {(selectedGrandDomaine || selectedDomainePro) && (
+                <div className="flex items-center gap-2 text-sm font-bold flex-wrap">
+                  <button
+                    onClick={() => { setSelectedGrandDomaine(null); setSelectedDomainePro(null); }}
+                    className="text-violet-600 hover:text-violet-800 transition-colors"
+                  >
+                    Domaines
+                  </button>
+                  {selectedGrandDomaine && (
+                    <>
+                      <ChevronRight size={14} className="text-gray-300" />
+                      <button
+                        onClick={() => setSelectedDomainePro(null)}
+                        className={`transition-colors ${selectedDomainePro ? 'text-violet-600 hover:text-violet-800' : 'text-gray-600'}`}
+                      >
+                        {selectedGrandDomaine.code} — {selectedGrandDomaine.libelle.substring(0, 35)}{selectedGrandDomaine.libelle.length > 35 ? '…' : ''}
+                      </button>
+                    </>
+                  )}
+                  {selectedDomainePro && (
+                    <>
+                      <ChevronRight size={14} className="text-gray-300" />
+                      <span className="text-gray-600">{selectedDomainePro.libelle}</span>
+                    </>
                   )}
                 </div>
-              ) : (
-                /* Grille des grands domaines */
-                <div className="space-y-4">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">Explorer par grand domaine professionnel</p>
-                  {loadingGD ? (
-                    <div className="flex justify-center items-center h-32">
-                      <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
-                    </div>
-                  ) : grandDomaines.length === 0 ? (
-                    <div className="bg-white p-8 rounded-2xl text-center border border-gray-100">
-                      <p className="text-gray-500 font-semibold mb-2">Connexion à France Travail impossible</p>
-                      <p className="text-gray-400 text-sm">Vérifiez que les variables <code className="bg-gray-100 px-1 rounded">FT_CLIENT_ID</code> et <code className="bg-gray-100 px-1 rounded">FT_CLIENT_SECRET</code> sont configurées dans Vercel.</p>
-                      <button onClick={loadGrandDomaines} className="mt-4 px-4 py-2 bg-violet-700 text-white text-sm font-bold rounded-xl hover:bg-violet-800 transition-colors">
-                        Réessayer
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                      {grandDomaines.map(domaine => (
+              )}
+
+              {/* Niveau 0 : Grille des 14 grands domaines */}
+              {!selectedGrandDomaine && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">14 Grands domaines professionnels</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {romeData.grandsDomaines.map(gd => {
+                      const nbMetiers = gd.domainesProfessionnels.reduce((a, dp) => a + dp.metiers.length, 0);
+                      return (
                         <button
-                          key={domaine.code}
-                          onClick={() => handleDomaineSelect(domaine)}
-                          className={`bg-gradient-to-br ${domaineGradients[domaine.code] || 'from-violet-500 to-purple-600'} p-5 rounded-2xl text-left text-white hover:scale-[1.02] active:scale-[0.99] transition-transform shadow-sm hover:shadow-lg group`}
+                          key={gd.code}
+                          onClick={() => setSelectedGrandDomaine(gd)}
+                          className={`bg-gradient-to-br ${domaineGradients[gd.code] || 'from-violet-500 to-purple-600'} p-5 rounded-2xl text-left text-white hover:scale-[1.02] active:scale-[0.99] transition-all shadow-sm hover:shadow-lg group`}
                         >
-                          <div className="text-3xl font-black opacity-30 mb-1">{domaine.code}</div>
-                          <h3 className="font-bold text-sm leading-snug line-clamp-2 mb-3">{domaine.libelle}</h3>
-                          <div className="flex items-center gap-1 text-white/60 text-xs font-bold group-hover:text-white/90 transition-colors">
-                            Voir les métiers <ChevronRight size={14} />
+                          <div className="text-3xl font-black opacity-20 mb-1 leading-none">{gd.code}</div>
+                          <h3 className="font-bold text-sm leading-snug line-clamp-2 mb-3">{gd.libelle}</h3>
+                          <div className="flex items-center justify-between">
+                            <span className="text-white/60 text-xs font-bold">{gd.domainesProfessionnels.length} domaines · {nbMetiers} métiers</span>
+                            <ChevronRight size={14} className="text-white/50 group-hover:text-white/90 transition-colors" />
                           </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Niveau 1 : Domaines professionnels du grand domaine */}
+              {selectedGrandDomaine && !selectedDomainePro && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
+                    {selectedGrandDomaine.domainesProfessionnels.length} domaines professionnels
+                  </p>
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className={`bg-gradient-to-r ${domaineGradients[selectedGrandDomaine.code] || 'from-violet-500 to-purple-600'} px-6 py-4`}>
+                      <p className="text-white/70 text-xs font-bold uppercase tracking-wider mb-1">Grand domaine {selectedGrandDomaine.code}</p>
+                      <h3 className="text-white font-black text-lg leading-tight">{selectedGrandDomaine.libelle}</h3>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {selectedGrandDomaine.domainesProfessionnels.map(dp => (
+                        <button
+                          key={dp.code}
+                          onClick={() => setSelectedDomainePro(dp)}
+                          className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{dp.code}</span>
+                            <div>
+                              <p className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{dp.libelle}</p>
+                              <p className="text-xs text-gray-400">{dp.metiers.length} métier{dp.metiers.length > 1 ? 's' : ''}</p>
+                            </div>
+                          </div>
+                          <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
                         </button>
                       ))}
                     </div>
-                  )}
+                  </div>
+                </div>
+              )}
+
+              {/* Niveau 2 : Métiers du domaine professionnel */}
+              {selectedGrandDomaine && selectedDomainePro && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">
+                    {selectedDomainePro.metiers.length} métier{selectedDomainePro.metiers.length > 1 ? 's' : ''}
+                  </p>
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-3 bg-gray-50/80 border-b border-gray-100 flex items-center justify-between">
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">{selectedDomainePro.libelle}</span>
+                      <span className="text-xs text-gray-300 font-mono">{selectedDomainePro.code}</span>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {selectedDomainePro.metiers.map(metier => (
+                        <button
+                          key={metier.code}
+                          onClick={() => setSelectedMetier({ ...metier, grandDomaine: selectedGrandDomaine, domainePro: selectedDomainePro })}
+                          className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{metier.code}</span>
+                            <span className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{metier.libelle}</span>
+                          </div>
+                          <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </>
@@ -9574,7 +9544,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
           ) : (
             <>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                {displayAssigned.length} fiche{displayAssigned.length > 1 ? 's' : ''} — cliquez pour voir le détail
+                {displayAssigned.length} fiche{displayAssigned.length > 1 ? 's' : ''} assignée{displayAssigned.length > 1 ? 's' : ''}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {displayAssigned.map(fiche => {
@@ -9600,111 +9570,88 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
         </div>
       )}
 
-      {/* ── Modal fiche ROME détaillée ────────────────────────────────── */}
+      {/* ── Modal fiche métier ─────────────────────────────────────────── */}
       {selectedMetier && (
         <div
           className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in"
-          onClick={() => { setSelectedMetier(null); setFicheDetail(null); }}
+          onClick={() => setSelectedMetier(null)}
         >
           <div
-            className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col"
             onClick={e => e.stopPropagation()}
           >
-            {/* En-tête */}
-            <div className="p-8 border-b border-gray-100 relative">
+            {/* En-tête avec couleur du grand domaine */}
+            <div className={`bg-gradient-to-r ${domaineGradients[selectedMetier.grandDomaine?.code] || 'from-violet-500 to-purple-600'} p-8 rounded-t-3xl relative`}>
               <button
-                onClick={() => { setSelectedMetier(null); setFicheDetail(null); }}
-                className="absolute top-6 right-6 w-10 h-10 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-full flex items-center justify-center transition-colors"
+                onClick={() => setSelectedMetier(null)}
+                className="absolute top-5 right-5 w-9 h-9 bg-white/20 hover:bg-white/30 text-white rounded-full flex items-center justify-center transition-colors"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
-
               <div className="flex flex-wrap items-center gap-2 mb-4">
-                <span className="bg-violet-100 text-violet-700 text-xs font-black px-3 py-1.5 rounded-xl font-mono">{selectedMetier.code}</span>
-                {ficheDetail?.grandDomaineProfessionnel && (
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-3 py-1.5 rounded-xl">{ficheDetail.grandDomaineProfessionnel.libelle}</span>
-                )}
-                {ficheDetail?.domaineProfessionnel && (
-                  <span className="bg-gray-50 text-gray-500 text-xs font-semibold px-3 py-1.5 rounded-xl">{ficheDetail.domaineProfessionnel.libelle}</span>
+                <span className="bg-white/20 text-white text-xs font-black px-3 py-1.5 rounded-xl font-mono">{selectedMetier.code}</span>
+                {selectedMetier.grandDomaine && (
+                  <span className="bg-white/20 text-white text-xs font-bold px-3 py-1.5 rounded-xl">{selectedMetier.grandDomaine.libelle}</span>
                 )}
               </div>
-
-              <h2 className="text-3xl font-black text-gray-900 leading-tight">
-                {ficheDetail?.libelle || selectedMetier.libelle}
-              </h2>
-
-              {loadingFiche && (
-                <div className="mt-4 flex items-center gap-2 text-gray-400 text-sm font-medium">
-                  <div className="w-4 h-4 border-2 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
-                  Chargement de la fiche complète…
-                </div>
+              <h2 className="text-2xl font-black text-white leading-tight">{selectedMetier.libelle}</h2>
+              {selectedMetier.domainePro && (
+                <p className="text-white/70 text-sm font-semibold mt-1">{selectedMetier.domainePro.libelle}</p>
               )}
             </div>
 
             {/* Corps */}
-            {ficheDetail && !loadingFiche && (
-              <div className="p-8 space-y-8">
-                {ficheDetail.definition && (
-                  <section>
-                    <h3 className="text-lg font-black text-gray-900 mb-3 flex items-center gap-2">
-                      <FileCheck size={20} className="text-violet-500" /> Définition du métier
-                    </h3>
-                    <p className="text-gray-700 leading-relaxed">{ficheDetail.definition}</p>
-                  </section>
-                )}
-
-                {ficheDetail.competences && ficheDetail.competences.length > 0 && (
-                  <section>
-                    <h3 className="text-lg font-black text-gray-900 mb-3">Compétences requises</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {ficheDetail.competences.slice(0, 14).map((c, i) => (
-                        <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-xl p-3">
-                          <div className="w-2 h-2 bg-violet-400 rounded-full mt-1.5 flex-shrink-0" />
-                          <span className="text-sm text-gray-700 font-medium">{c.libelle}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {ficheDetail.qualitesProfessionnelles && ficheDetail.qualitesProfessionnelles.length > 0 && (
-                  <section>
-                    <h3 className="text-lg font-black text-gray-900 mb-3">Qualités professionnelles</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {ficheDetail.qualitesProfessionnelles.map((q, i) => (
-                        <span key={i} className="bg-amber-50 text-amber-700 border border-amber-100 px-3 py-1.5 rounded-xl text-sm font-bold">{q.libelle}</span>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {ficheDetail.accesEmploi && (
-                  <section>
-                    <h3 className="text-lg font-black text-gray-900 mb-3">Accès à l'emploi</h3>
-                    <p className="text-gray-700 text-sm leading-relaxed bg-blue-50 p-4 rounded-2xl border border-blue-100">{ficheDetail.accesEmploi}</p>
-                  </section>
-                )}
-
-                <div className="flex items-center gap-3 pt-4 border-t border-gray-100 text-xs text-gray-400">
-                  <span>Source : France Travail — ROME 4.0</span>
-                  <a
-                    href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${selectedMetier.code}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-violet-500 hover:text-violet-700 font-bold transition-colors"
-                  >
-                    Voir sur MétierScope ↗
-                  </a>
+            <div className="p-8 space-y-6 flex-1">
+              {/* Source et lien MétierScope */}
+              <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <FileCheck size={16} className="text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-blue-900 text-sm">Données ROME 4.0 — France Travail</p>
+                    <p className="text-blue-700 text-xs mt-1 leading-relaxed">
+                      Consultez la fiche complète avec définition, compétences, conditions d'accès et certifications sur MétierScope, le service officiel de France Travail.
+                    </p>
+                    <a
+                      href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${selectedMetier.code}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-3 text-blue-700 font-black text-sm hover:text-blue-900 transition-colors"
+                    >
+                      Voir la fiche complète sur MétierScope ↗
+                    </a>
+                  </div>
                 </div>
               </div>
-            )}
 
-            {/* Footer avec bouton assigner */}
-            {!loadingFiche && ficheDetail && (userRole === 'admin' || userRole === 'formateur') && (
+              {/* Informations hiérarchiques */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <p className="text-xs font-bold text-gray-400 uppercase mb-1">Code ROME</p>
+                  <p className="font-black text-gray-900 font-mono">{selectedMetier.code}</p>
+                </div>
+                {selectedMetier.grandDomaine && (
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Grand domaine</p>
+                    <p className="font-bold text-gray-900 text-sm leading-snug line-clamp-2">{selectedMetier.grandDomaine.libelle}</p>
+                  </div>
+                )}
+                {selectedMetier.domainePro && (
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Domaine professionnel</p>
+                    <p className="font-bold text-gray-900 text-sm leading-snug line-clamp-2">{selectedMetier.domainePro.libelle}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer — assigner */}
+            {(userRole === 'admin' || userRole === 'formateur') && (
               <div className="p-6 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 rounded-b-3xl">
                 <p className="text-sm text-gray-500">Ce métier correspond à l'un de vos bénéficiaires ?</p>
                 <button
-                  onClick={() => { setFicheToAssign(selectedMetier); setIsAssignModalOpen(true); }}
+                  onClick={() => { setFicheToAssign(selectedMetier); setIsAssignModalOpen(true); setSelectedMetier(null); }}
                   className="flex items-center gap-2 bg-violet-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-violet-800 transition-colors shadow-lg"
                 >
                   <Users size={18} /> Assigner à un bénéficiaire
@@ -9737,7 +9684,6 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
             <p className="text-sm text-gray-500 mb-6">
               Assigner <strong className="text-gray-900">« {ficheToAssign?.libelle} »</strong> à un bénéficiaire.
             </p>
-
             <div className="mb-6">
               <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Bénéficiaire</label>
               <select
@@ -9751,7 +9697,6 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                 ))}
               </select>
             </div>
-
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => { setIsAssignModalOpen(false); setFicheToAssign(null); setSelectedClientId(''); }}

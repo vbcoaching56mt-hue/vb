@@ -1,0 +1,1683 @@
+{
+  "version": "4.0",
+  "source": "France Travail - ROME 4.0 Open Data (Licence Ouverte Etalab)",
+  "lastUpdated": "2026-06",
+  "grandsDomaines": [
+    {
+      "code": "A",
+      "libelle": "Agriculture et Pêche, Espaces naturels et Espaces verts, Soins aux animaux",
+      "domainesProfessionnels": [
+        {
+          "code": "A11",
+          "libelle": "Élevage",
+          "metiers": [
+            {
+              "code": "A1101",
+              "libelle": "Élevage bovin ou équin"
+            },
+            {
+              "code": "A1102",
+              "libelle": "Élevage porcin"
+            },
+            {
+              "code": "A1103",
+              "libelle": "Élevage cunicole et de basse-cour"
+            },
+            {
+              "code": "A1104",
+              "libelle": "Élevage d'animaux sauvages ou de compagnie"
+            },
+            {
+              "code": "A1105",
+              "libelle": "Aquaculture"
+            }
+          ]
+        },
+        {
+          "code": "A12",
+          "libelle": "Soins aux animaux",
+          "metiers": [
+            {
+              "code": "A1201",
+              "libelle": "Aide vétérinaire"
+            },
+            {
+              "code": "A1202",
+              "libelle": "Médecine vétérinaire"
+            },
+            {
+              "code": "A1203",
+              "libelle": "Toilettage des animaux"
+            },
+            {
+              "code": "A1204",
+              "libelle": "Protection du patrimoine naturel"
+            }
+          ]
+        },
+        {
+          "code": "A13",
+          "libelle": "Agriculture",
+          "metiers": [
+            {
+              "code": "A1301",
+              "libelle": "Conseil et assistance technique en agriculture"
+            },
+            {
+              "code": "A1302",
+              "libelle": "Viticulture"
+            },
+            {
+              "code": "A1303",
+              "libelle": "Arboriculture et polyculture"
+            },
+            {
+              "code": "A1304",
+              "libelle": "Horticulture et maraîchage"
+            },
+            {
+              "code": "A1305",
+              "libelle": "Entretien et valorisation de la forêt"
+            }
+          ]
+        },
+        {
+          "code": "A14",
+          "libelle": "Espaces verts et naturels",
+          "metiers": [
+            {
+              "code": "A1401",
+              "libelle": "Entretien des espaces naturels et forestiers"
+            },
+            {
+              "code": "A1402",
+              "libelle": "Entretien des espaces verts"
+            },
+            {
+              "code": "A1403",
+              "libelle": "Paysage et jardinage"
+            }
+          ]
+        },
+        {
+          "code": "A15",
+          "libelle": "Pêche",
+          "metiers": [
+            {
+              "code": "A1501",
+              "libelle": "Pêche en mer"
+            },
+            {
+              "code": "A1502",
+              "libelle": "Mareyage et vente de produits de la mer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "libelle": "Arts et Façonnage d'ouvrages d'art",
+      "domainesProfessionnels": [
+        {
+          "code": "B11",
+          "libelle": "Création artistique et expressive",
+          "metiers": [
+            {
+              "code": "B1101",
+              "libelle": "Création en arts plastiques"
+            },
+            {
+              "code": "B1102",
+              "libelle": "Illustration et dessin graphique"
+            },
+            {
+              "code": "B1103",
+              "libelle": "Communication et conception graphique"
+            },
+            {
+              "code": "B1104",
+              "libelle": "Design"
+            },
+            {
+              "code": "B1105",
+              "libelle": "Stylisme"
+            }
+          ]
+        },
+        {
+          "code": "B12",
+          "libelle": "Fabrication et réparation d'articles artisanaux",
+          "metiers": [
+            {
+              "code": "B1201",
+              "libelle": "Bijouterie, joaillerie et orfèvrerie"
+            },
+            {
+              "code": "B1202",
+              "libelle": "Verrerie"
+            },
+            {
+              "code": "B1203",
+              "libelle": "Céramique et porcelaine"
+            },
+            {
+              "code": "B1204",
+              "libelle": "Marqueterie, ébénisterie et restauration de meubles"
+            },
+            {
+              "code": "B1205",
+              "libelle": "Lutherie"
+            },
+            {
+              "code": "B1206",
+              "libelle": "Couture, flou et tailleur"
+            }
+          ]
+        },
+        {
+          "code": "B13",
+          "libelle": "Décoration et arts décoratifs",
+          "metiers": [
+            {
+              "code": "B1301",
+              "libelle": "Aménagement intérieur et décoration"
+            },
+            {
+              "code": "B1302",
+              "libelle": "Décoration et peinture en lettres"
+            },
+            {
+              "code": "B1303",
+              "libelle": "Carterie, imprimerie et reliure"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "C",
+      "libelle": "Banque, Assurance, Immobilier",
+      "domainesProfessionnels": [
+        {
+          "code": "C11",
+          "libelle": "Gestion, conseil et expertise financière",
+          "metiers": [
+            {
+              "code": "C1101",
+              "libelle": "Gestion de patrimoine mobilier"
+            },
+            {
+              "code": "C1102",
+              "libelle": "Analyse et ingénierie financière"
+            },
+            {
+              "code": "C1103",
+              "libelle": "Direction d'exploitation bancaire"
+            },
+            {
+              "code": "C1104",
+              "libelle": "Management de groupe ou de service bancaire"
+            },
+            {
+              "code": "C1105",
+              "libelle": "Conseil clientèle en assurances"
+            }
+          ]
+        },
+        {
+          "code": "C12",
+          "libelle": "Banque",
+          "metiers": [
+            {
+              "code": "C1201",
+              "libelle": "Relation clients banque/finance"
+            },
+            {
+              "code": "C1202",
+              "libelle": "Accueil bancaire"
+            },
+            {
+              "code": "C1203",
+              "libelle": "Administration de produits bancaires"
+            }
+          ]
+        },
+        {
+          "code": "C13",
+          "libelle": "Assurance",
+          "metiers": [
+            {
+              "code": "C1301",
+              "libelle": "Indemnisations en assurances"
+            },
+            {
+              "code": "C1302",
+              "libelle": "Gestion de sinistres"
+            },
+            {
+              "code": "C1303",
+              "libelle": "Actuariat et mathématiques financières"
+            }
+          ]
+        },
+        {
+          "code": "C14",
+          "libelle": "Immobilier",
+          "metiers": [
+            {
+              "code": "C1401",
+              "libelle": "Gérance immobilière"
+            },
+            {
+              "code": "C1402",
+              "libelle": "Transaction immobilière"
+            },
+            {
+              "code": "C1403",
+              "libelle": "Promotion immobilière"
+            }
+          ]
+        },
+        {
+          "code": "C15",
+          "libelle": "Défense et gestion des droits",
+          "metiers": [
+            {
+              "code": "C1501",
+              "libelle": "Défense et gestion des droits d'auteur"
+            },
+            {
+              "code": "C1502",
+              "libelle": "Collaboration juridique"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "D",
+      "libelle": "Commerce, Vente et Grande distribution",
+      "domainesProfessionnels": [
+        {
+          "code": "D11",
+          "libelle": "Commerce en magasin",
+          "metiers": [
+            {
+              "code": "D1101",
+              "libelle": "Boucherie"
+            },
+            {
+              "code": "D1102",
+              "libelle": "Boulangerie - viennoiserie"
+            },
+            {
+              "code": "D1103",
+              "libelle": "Charcuterie - traiteur"
+            },
+            {
+              "code": "D1104",
+              "libelle": "Poissonnerie"
+            },
+            {
+              "code": "D1105",
+              "libelle": "Fromagerie"
+            }
+          ]
+        },
+        {
+          "code": "D12",
+          "libelle": "Commerce de gros",
+          "metiers": [
+            {
+              "code": "D1201",
+              "libelle": "Achat vente en gros"
+            },
+            {
+              "code": "D1202",
+              "libelle": "Direction de magasin de grande distribution"
+            },
+            {
+              "code": "D1203",
+              "libelle": "Encadrement en magasin"
+            }
+          ]
+        },
+        {
+          "code": "D13",
+          "libelle": "Vente en véhicule-boutique et par correspondance",
+          "metiers": [
+            {
+              "code": "D1301",
+              "libelle": "Management en force de vente"
+            },
+            {
+              "code": "D1302",
+              "libelle": "Vente directe"
+            },
+            {
+              "code": "D1303",
+              "libelle": "Télévente"
+            }
+          ]
+        },
+        {
+          "code": "D14",
+          "libelle": "Relation client",
+          "metiers": [
+            {
+              "code": "D1401",
+              "libelle": "Assistanat commercial"
+            },
+            {
+              "code": "D1402",
+              "libelle": "Relation commerciale grands comptes et entreprises"
+            },
+            {
+              "code": "D1403",
+              "libelle": "Relation commerciale auprès de particuliers"
+            },
+            {
+              "code": "D1404",
+              "libelle": "Téléconseiller"
+            }
+          ]
+        },
+        {
+          "code": "D15",
+          "libelle": "Merchandising et e-commerce",
+          "metiers": [
+            {
+              "code": "D1501",
+              "libelle": "Animation de vente"
+            },
+            {
+              "code": "D1502",
+              "libelle": "Merchandising"
+            },
+            {
+              "code": "D1503",
+              "libelle": "Vente de végétaux"
+            }
+          ]
+        },
+        {
+          "code": "D16",
+          "libelle": "Vente de végétaux et produits de jardinage",
+          "metiers": [
+            {
+              "code": "D1601",
+              "libelle": "Vente en jardinerie et animalerie"
+            }
+          ]
+        },
+        {
+          "code": "D17",
+          "libelle": "Représentation commerciale",
+          "metiers": [
+            {
+              "code": "D1701",
+              "libelle": "Management en force de vente"
+            },
+            {
+              "code": "D1702",
+              "libelle": "Représentation commerciale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "E",
+      "libelle": "Communication, Média et Multimédia",
+      "domainesProfessionnels": [
+        {
+          "code": "E11",
+          "libelle": "Publication et édition",
+          "metiers": [
+            {
+              "code": "E1101",
+              "libelle": "Animation et coordination pédagogique"
+            },
+            {
+              "code": "E1102",
+              "libelle": "Écriture d'ouvrages, de livres"
+            },
+            {
+              "code": "E1103",
+              "libelle": "Édition et gestion de livres"
+            },
+            {
+              "code": "E1104",
+              "libelle": "Rédaction en chef"
+            }
+          ]
+        },
+        {
+          "code": "E12",
+          "libelle": "Production audiovisuelle",
+          "metiers": [
+            {
+              "code": "E1201",
+              "libelle": "Production cinématographique et audiovisuelle"
+            },
+            {
+              "code": "E1202",
+              "libelle": "Production de spectacles"
+            },
+            {
+              "code": "E1203",
+              "libelle": "Réalisation cinématographique et audiovisuelle"
+            }
+          ]
+        },
+        {
+          "code": "E13",
+          "libelle": "Communication",
+          "metiers": [
+            {
+              "code": "E1301",
+              "libelle": "Communication"
+            },
+            {
+              "code": "E1302",
+              "libelle": "Médiation culturelle et facilitation"
+            },
+            {
+              "code": "E1303",
+              "libelle": "Publicité"
+            }
+          ]
+        },
+        {
+          "code": "E14",
+          "libelle": "Journalisme et information média",
+          "metiers": [
+            {
+              "code": "E1401",
+              "libelle": "Journalisme et information média"
+            }
+          ]
+        },
+        {
+          "code": "E15",
+          "libelle": "Traduction, interprétariat",
+          "metiers": [
+            {
+              "code": "E1501",
+              "libelle": "Traduction, interprétariat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "F",
+      "libelle": "Construction, Bâtiment et Travaux Publics",
+      "domainesProfessionnels": [
+        {
+          "code": "F11",
+          "libelle": "Architecture",
+          "metiers": [
+            {
+              "code": "F1101",
+              "libelle": "Architecture du BTP et du paysage"
+            },
+            {
+              "code": "F1102",
+              "libelle": "Conception et dessin de produits électriques et électroniques"
+            },
+            {
+              "code": "F1103",
+              "libelle": "Conception et dessin produits mécaniques"
+            },
+            {
+              "code": "F1104",
+              "libelle": "Dessin BTP et infrastructures"
+            },
+            {
+              "code": "F1105",
+              "libelle": "Études géotechniques"
+            }
+          ]
+        },
+        {
+          "code": "F12",
+          "libelle": "Bureau d'études et métrés",
+          "metiers": [
+            {
+              "code": "F1201",
+              "libelle": "Conduite de travaux du BTP"
+            },
+            {
+              "code": "F1202",
+              "libelle": "Direction de chantier du BTP"
+            },
+            {
+              "code": "F1203",
+              "libelle": "Inspection de conformité"
+            },
+            {
+              "code": "F1204",
+              "libelle": "Qualité et métrologie"
+            },
+            {
+              "code": "F1205",
+              "libelle": "Études et chiffrages BTP"
+            }
+          ]
+        },
+        {
+          "code": "F13",
+          "libelle": "Extraction et traitement des matériaux",
+          "metiers": [
+            {
+              "code": "F1301",
+              "libelle": "Conduite d'engins de chantier"
+            },
+            {
+              "code": "F1302",
+              "libelle": "Extraction liquides et gaz"
+            },
+            {
+              "code": "F1303",
+              "libelle": "Extraction solide"
+            }
+          ]
+        },
+        {
+          "code": "F14",
+          "libelle": "Montage, ossature et enveloppe du bâtiment",
+          "metiers": [
+            {
+              "code": "F1401",
+              "libelle": "Assembly enveloppe du bâtiment"
+            },
+            {
+              "code": "F1402",
+              "libelle": "Charpenterie bois"
+            },
+            {
+              "code": "F1403",
+              "libelle": "Couverture"
+            },
+            {
+              "code": "F1404",
+              "libelle": "Maçonnerie"
+            },
+            {
+              "code": "F1405",
+              "libelle": "Montage agencement"
+            },
+            {
+              "code": "F1406",
+              "libelle": "Pose de fermetures menuisées"
+            },
+            {
+              "code": "F1407",
+              "libelle": "Serrurerie et métallerie"
+            }
+          ]
+        },
+        {
+          "code": "F15",
+          "libelle": "Finitions et revêtements du bâtiment",
+          "metiers": [
+            {
+              "code": "F1501",
+              "libelle": "Carrelage et revêtements"
+            },
+            {
+              "code": "F1502",
+              "libelle": "Mécénat d'art"
+            },
+            {
+              "code": "F1503",
+              "libelle": "Peinture et vitrerie"
+            },
+            {
+              "code": "F1504",
+              "libelle": "Plâtrerie"
+            },
+            {
+              "code": "F1505",
+              "libelle": "Pose de revêtements souples"
+            }
+          ]
+        },
+        {
+          "code": "F16",
+          "libelle": "Travaux Publics",
+          "metiers": [
+            {
+              "code": "F1601",
+              "libelle": "Démolition"
+            },
+            {
+              "code": "F1602",
+              "libelle": "Montage de structures et de charpentes métalliques"
+            },
+            {
+              "code": "F1603",
+              "libelle": "Travaux souterrains et fondations"
+            },
+            {
+              "code": "F1604",
+              "libelle": "VRD"
+            }
+          ]
+        },
+        {
+          "code": "F17",
+          "libelle": "Génie climatique et sanitaire",
+          "metiers": [
+            {
+              "code": "F1701",
+              "libelle": "Installation en équipements sanitaires et thermiques"
+            },
+            {
+              "code": "F1702",
+              "libelle": "Réseaux de fluides"
+            },
+            {
+              "code": "F1703",
+              "libelle": "Ventilation et climatisation"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "G",
+      "libelle": "Hôtellerie-Restauration, Tourisme, Loisirs et Animation",
+      "domainesProfessionnels": [
+        {
+          "code": "G11",
+          "libelle": "Restauration",
+          "metiers": [
+            {
+              "code": "G1101",
+              "libelle": "Aide de cuisine"
+            },
+            {
+              "code": "G1102",
+              "libelle": "Boulangerie - pâtisserie"
+            },
+            {
+              "code": "G1103",
+              "libelle": "Chocolaterie - confiserie"
+            },
+            {
+              "code": "G1104",
+              "libelle": "Cuisine"
+            },
+            {
+              "code": "G1105",
+              "libelle": "Gastronomie"
+            },
+            {
+              "code": "G1106",
+              "libelle": "Vendeur en alimentation"
+            }
+          ]
+        },
+        {
+          "code": "G12",
+          "libelle": "Hôtellerie",
+          "metiers": [
+            {
+              "code": "G1201",
+              "libelle": "Accueil et renseignements"
+            },
+            {
+              "code": "G1202",
+              "libelle": "Animation et encadrement de séjours"
+            },
+            {
+              "code": "G1203",
+              "libelle": "Réception en hôtellerie"
+            },
+            {
+              "code": "G1204",
+              "libelle": "Serveur en restauration"
+            }
+          ]
+        },
+        {
+          "code": "G13",
+          "libelle": "Tourisme et voyages",
+          "metiers": [
+            {
+              "code": "G1301",
+              "libelle": "Conception de produits touristiques"
+            },
+            {
+              "code": "G1302",
+              "libelle": "Promotion du tourisme local"
+            },
+            {
+              "code": "G1303",
+              "libelle": "Vente de voyages"
+            }
+          ]
+        },
+        {
+          "code": "G14",
+          "libelle": "Sports, loisirs et animation",
+          "metiers": [
+            {
+              "code": "G1401",
+              "libelle": "Accompagnement de voyages"
+            },
+            {
+              "code": "G1402",
+              "libelle": "Animation de parc"
+            },
+            {
+              "code": "G1403",
+              "libelle": "Animation de sports"
+            },
+            {
+              "code": "G1404",
+              "libelle": "Nettoyage de locaux"
+            },
+            {
+              "code": "G1405",
+              "libelle": "Soins esthétiques et corporels"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "H",
+      "libelle": "Industrie",
+      "domainesProfessionnels": [
+        {
+          "code": "H11",
+          "libelle": "Agroalimentaire - Alimentation",
+          "metiers": [
+            {
+              "code": "H1101",
+              "libelle": "Aide en industrie alimentaire"
+            },
+            {
+              "code": "H1102",
+              "libelle": "Charcuterie industrielle"
+            },
+            {
+              "code": "H1103",
+              "libelle": "Conduite d'équipement de production alimentaire"
+            },
+            {
+              "code": "H1104",
+              "libelle": "Conduite d'installation de production sucrière"
+            },
+            {
+              "code": "H1105",
+              "libelle": "Conduite de ligne de fabrication alimentaire"
+            }
+          ]
+        },
+        {
+          "code": "H12",
+          "libelle": "Chimie, pharmacie et industrie nucléaire",
+          "metiers": [
+            {
+              "code": "H1201",
+              "libelle": "Chimie"
+            },
+            {
+              "code": "H1202",
+              "libelle": "Pharmacie"
+            },
+            {
+              "code": "H1203",
+              "libelle": "Industrie nucléaire"
+            },
+            {
+              "code": "H1204",
+              "libelle": "Contrôle qualité en chimie/pharmacie"
+            }
+          ]
+        },
+        {
+          "code": "H13",
+          "libelle": "Électronique et électrotechnique",
+          "metiers": [
+            {
+              "code": "H1301",
+              "libelle": "Câblage"
+            },
+            {
+              "code": "H1302",
+              "libelle": "Production électronique"
+            },
+            {
+              "code": "H1303",
+              "libelle": "Soudage et découpe"
+            },
+            {
+              "code": "H1304",
+              "libelle": "Technicien de test"
+            }
+          ]
+        },
+        {
+          "code": "H14",
+          "libelle": "Métallurgie et fonderie",
+          "metiers": [
+            {
+              "code": "H1401",
+              "libelle": "Commande numérique"
+            },
+            {
+              "code": "H1402",
+              "libelle": "Forge, estampage et repoussage"
+            },
+            {
+              "code": "H1403",
+              "libelle": "Fonderie"
+            },
+            {
+              "code": "H1404",
+              "libelle": "Fraisage et tournage"
+            },
+            {
+              "code": "H1405",
+              "libelle": "Traitement thermique et de surface"
+            }
+          ]
+        },
+        {
+          "code": "H15",
+          "libelle": "Textile, habillement et cuir",
+          "metiers": [
+            {
+              "code": "H1501",
+              "libelle": "Conduite de machine de textile"
+            },
+            {
+              "code": "H1502",
+              "libelle": "Couture"
+            },
+            {
+              "code": "H1503",
+              "libelle": "Mégisserie, tannerie et cordonnerie"
+            }
+          ]
+        },
+        {
+          "code": "H16",
+          "libelle": "Verre, béton, céramique",
+          "metiers": [
+            {
+              "code": "H1601",
+              "libelle": "Bois et papier"
+            },
+            {
+              "code": "H1602",
+              "libelle": "Béton et matériaux de construction"
+            },
+            {
+              "code": "H1603",
+              "libelle": "Céramique et porcelaine"
+            },
+            {
+              "code": "H1604",
+              "libelle": "Verre"
+            }
+          ]
+        },
+        {
+          "code": "H17",
+          "libelle": "Imprimerie et édition graphique",
+          "metiers": [
+            {
+              "code": "H1701",
+              "libelle": "Façonnage et prépresse"
+            },
+            {
+              "code": "H1702",
+              "libelle": "Imprimerie"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "I",
+      "libelle": "Installation et Maintenance",
+      "domainesProfessionnels": [
+        {
+          "code": "I11",
+          "libelle": "Maintenance des biens domestiques",
+          "metiers": [
+            {
+              "code": "I1101",
+              "libelle": "Bijouterie, horlogerie et gravure"
+            },
+            {
+              "code": "I1102",
+              "libelle": "Cordonnerie"
+            },
+            {
+              "code": "I1103",
+              "libelle": "Maintenance d'appareils électroménagers"
+            },
+            {
+              "code": "I1104",
+              "libelle": "Réparation cycles et motocycles"
+            }
+          ]
+        },
+        {
+          "code": "I12",
+          "libelle": "Maintenance et entretien industriels",
+          "metiers": [
+            {
+              "code": "I1201",
+              "libelle": "Maintenance d'équipements de production"
+            },
+            {
+              "code": "I1202",
+              "libelle": "Maintenance électrique"
+            },
+            {
+              "code": "I1203",
+              "libelle": "Maintenance en automate industriel"
+            },
+            {
+              "code": "I1204",
+              "libelle": "Maintenance mécatronique"
+            },
+            {
+              "code": "I1205",
+              "libelle": "Technicien de maintenance du réseau ferroviaire"
+            }
+          ]
+        },
+        {
+          "code": "I13",
+          "libelle": "Installation et maintenance électrique",
+          "metiers": [
+            {
+              "code": "I1301",
+              "libelle": "Installation et maintenance de réseaux de télécommunication"
+            },
+            {
+              "code": "I1302",
+              "libelle": "Installation électrique"
+            },
+            {
+              "code": "I1303",
+              "libelle": "Maintenance électronique"
+            }
+          ]
+        },
+        {
+          "code": "I14",
+          "libelle": "Maintenance des véhicules",
+          "metiers": [
+            {
+              "code": "I1401",
+              "libelle": "Carrosserie"
+            },
+            {
+              "code": "I1402",
+              "libelle": "Mécanique automobile et motocycles"
+            },
+            {
+              "code": "I1403",
+              "libelle": "Mécanique en matériel agricole ou levage"
+            }
+          ]
+        },
+        {
+          "code": "I15",
+          "libelle": "Maintenance en chauffage et climatisation",
+          "metiers": [
+            {
+              "code": "I1501",
+              "libelle": "Installation en chauffage et climatisation"
+            },
+            {
+              "code": "I1502",
+              "libelle": "Plomberie et chauffage"
+            },
+            {
+              "code": "I1503",
+              "libelle": "Maintenance de structures aéronefs"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "J",
+      "libelle": "Santé",
+      "domainesProfessionnels": [
+        {
+          "code": "J11",
+          "libelle": "Médecine",
+          "metiers": [
+            {
+              "code": "J1101",
+              "libelle": "Médecine générale et spécialisée"
+            },
+            {
+              "code": "J1102",
+              "libelle": "Médecine du travail"
+            },
+            {
+              "code": "J1103",
+              "libelle": "Médecine légale et expertise médicale"
+            },
+            {
+              "code": "J1104",
+              "libelle": "Pathologie"
+            },
+            {
+              "code": "J1105",
+              "libelle": "Santé publique"
+            }
+          ]
+        },
+        {
+          "code": "J12",
+          "libelle": "Soins infirmiers",
+          "metiers": [
+            {
+              "code": "J1201",
+              "libelle": "Puériculture"
+            },
+            {
+              "code": "J1202",
+              "libelle": "Soins infirmiers polyvalents"
+            }
+          ]
+        },
+        {
+          "code": "J13",
+          "libelle": "Aide et soins à la personne",
+          "metiers": [
+            {
+              "code": "J1301",
+              "libelle": "Aide en puériculture"
+            },
+            {
+              "code": "J1302",
+              "libelle": "Aide-soignant"
+            },
+            {
+              "code": "J1303",
+              "libelle": "Assistance auprès d'adultes"
+            },
+            {
+              "code": "J1304",
+              "libelle": "Assistance auprès d'enfants"
+            }
+          ]
+        },
+        {
+          "code": "J14",
+          "libelle": "Pharmacie et pharmacologie",
+          "metiers": [
+            {
+              "code": "J1401",
+              "libelle": "Pharmacie"
+            },
+            {
+              "code": "J1402",
+              "libelle": "Préparations galéniques"
+            }
+          ]
+        },
+        {
+          "code": "J15",
+          "libelle": "Rééducation et appareillage",
+          "metiers": [
+            {
+              "code": "J1501",
+              "libelle": "Audioprothèse"
+            },
+            {
+              "code": "J1502",
+              "libelle": "Kinésithérapie"
+            },
+            {
+              "code": "J1503",
+              "libelle": "Orthoptie"
+            },
+            {
+              "code": "J1504",
+              "libelle": "Podologie"
+            },
+            {
+              "code": "J1505",
+              "libelle": "Prothèses et orthèses"
+            }
+          ]
+        },
+        {
+          "code": "J16",
+          "libelle": "Analyses médicales",
+          "metiers": [
+            {
+              "code": "J1601",
+              "libelle": "Biologie médicale"
+            },
+            {
+              "code": "J1602",
+              "libelle": "Explorations fonctionnelles"
+            },
+            {
+              "code": "J1603",
+              "libelle": "Imagerie médicale"
+            },
+            {
+              "code": "J1604",
+              "libelle": "Radiologie"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "K",
+      "libelle": "Services à la Personne et à la Collectivité",
+      "domainesProfessionnels": [
+        {
+          "code": "K11",
+          "libelle": "Action sociale",
+          "metiers": [
+            {
+              "code": "K1101",
+              "libelle": "Accompagnement social et médico-social"
+            },
+            {
+              "code": "K1102",
+              "libelle": "Aide aux bénéficiaires d'une mesure de protection"
+            },
+            {
+              "code": "K1103",
+              "libelle": "Développement personnel et bien-être"
+            },
+            {
+              "code": "K1104",
+              "libelle": "Psychologie"
+            },
+            {
+              "code": "K1105",
+              "libelle": "Travail social"
+            }
+          ]
+        },
+        {
+          "code": "K12",
+          "libelle": "Aide à domicile",
+          "metiers": [
+            {
+              "code": "K1201",
+              "libelle": "Action médico-sociale"
+            },
+            {
+              "code": "K1202",
+              "libelle": "Aide à domicile"
+            },
+            {
+              "code": "K1203",
+              "libelle": "Service à la personne"
+            }
+          ]
+        },
+        {
+          "code": "K13",
+          "libelle": "Accompagnement vers l'emploi",
+          "metiers": [
+            {
+              "code": "K1301",
+              "libelle": "Conseil en emploi et insertion socioprofessionnelle"
+            },
+            {
+              "code": "K1302",
+              "libelle": "Développement local"
+            },
+            {
+              "code": "K1303",
+              "libelle": "Ingénierie formation adultes"
+            }
+          ]
+        },
+        {
+          "code": "K14",
+          "libelle": "Personnel de surveillance et sécurité",
+          "metiers": [
+            {
+              "code": "K1401",
+              "libelle": "Sécurité et surveillance privées"
+            },
+            {
+              "code": "K1402",
+              "libelle": "Surveillance et gardiennage"
+            },
+            {
+              "code": "K1403",
+              "libelle": "Transport de fonds et protection de personnes"
+            }
+          ]
+        },
+        {
+          "code": "K15",
+          "libelle": "Administration publique et défense",
+          "metiers": [
+            {
+              "code": "K1501",
+              "libelle": "Administration de la justice"
+            },
+            {
+              "code": "K1502",
+              "libelle": "Développement et promotion du sport"
+            },
+            {
+              "code": "K1503",
+              "libelle": "Management de la défense"
+            }
+          ]
+        },
+        {
+          "code": "K16",
+          "libelle": "Action culturelle et internationale",
+          "metiers": [
+            {
+              "code": "K1601",
+              "libelle": "Gestion d'un patrimoine culturel"
+            },
+            {
+              "code": "K1602",
+              "libelle": "Gestion de bibliothèques et de médiathèques"
+            },
+            {
+              "code": "K1603",
+              "libelle": "Gestion de musées"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "L",
+      "libelle": "Spectacle",
+      "domainesProfessionnels": [
+        {
+          "code": "L11",
+          "libelle": "Arts du spectacle vivant",
+          "metiers": [
+            {
+              "code": "L1101",
+              "libelle": "Animation socioculturelle"
+            },
+            {
+              "code": "L1102",
+              "libelle": "Artistique et acrobatique"
+            },
+            {
+              "code": "L1103",
+              "libelle": "Conduite de véhicule artistique"
+            },
+            {
+              "code": "L1104",
+              "libelle": "Danse"
+            },
+            {
+              "code": "L1105",
+              "libelle": "Musique et chant"
+            },
+            {
+              "code": "L1106",
+              "libelle": "Réalisation technique de spectacles"
+            }
+          ]
+        },
+        {
+          "code": "L12",
+          "libelle": "Cinéma et audiovisuel",
+          "metiers": [
+            {
+              "code": "L1201",
+              "libelle": "Cabine de projection"
+            },
+            {
+              "code": "L1202",
+              "libelle": "Montage audiovisuel"
+            },
+            {
+              "code": "L1203",
+              "libelle": "Postproduction audio et son"
+            }
+          ]
+        },
+        {
+          "code": "L13",
+          "libelle": "Production audiovisuelle et multimedia",
+          "metiers": [
+            {
+              "code": "L1301",
+              "libelle": "Création artistique multimédia"
+            },
+            {
+              "code": "L1302",
+              "libelle": "Développement de jeux vidéo"
+            },
+            {
+              "code": "L1303",
+              "libelle": "Production multimedia"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "M",
+      "libelle": "Support à l'Entreprise",
+      "domainesProfessionnels": [
+        {
+          "code": "M11",
+          "libelle": "Gestion des ressources humaines",
+          "metiers": [
+            {
+              "code": "M1101",
+              "libelle": "Accueil et renseignements"
+            },
+            {
+              "code": "M1102",
+              "libelle": "Développement des ressources humaines"
+            },
+            {
+              "code": "M1103",
+              "libelle": "Management des ressources humaines"
+            },
+            {
+              "code": "M1104",
+              "libelle": "Relations sociales"
+            },
+            {
+              "code": "M1105",
+              "libelle": "Rémunération et paie"
+            }
+          ]
+        },
+        {
+          "code": "M12",
+          "libelle": "Audit et contrôle comptables et financiers",
+          "metiers": [
+            {
+              "code": "M1201",
+              "libelle": "Analyse et contrôle de gestion"
+            },
+            {
+              "code": "M1202",
+              "libelle": "Audit et contrôle comptables"
+            },
+            {
+              "code": "M1203",
+              "libelle": "Fiscalité"
+            },
+            {
+              "code": "M1204",
+              "libelle": "Gestion financière"
+            },
+            {
+              "code": "M1205",
+              "libelle": "Trésorerie et financement"
+            }
+          ]
+        },
+        {
+          "code": "M13",
+          "libelle": "Conseil en organisation et management",
+          "metiers": [
+            {
+              "code": "M1301",
+              "libelle": "Direction de grande entreprise ou d'établissement public"
+            },
+            {
+              "code": "M1302",
+              "libelle": "Direction PME/PMI"
+            },
+            {
+              "code": "M1303",
+              "libelle": "Management de projet"
+            },
+            {
+              "code": "M1304",
+              "libelle": "Management de structure de santé"
+            },
+            {
+              "code": "M1305",
+              "libelle": "Responsable qualité"
+            }
+          ]
+        },
+        {
+          "code": "M14",
+          "libelle": "Assistanat de direction et secrétariat",
+          "metiers": [
+            {
+              "code": "M1401",
+              "libelle": "Assistanat de direction"
+            },
+            {
+              "code": "M1402",
+              "libelle": "Assistanat en ressources humaines"
+            },
+            {
+              "code": "M1403",
+              "libelle": "Secrétariat"
+            },
+            {
+              "code": "M1404",
+              "libelle": "Secrétariat comptable"
+            }
+          ]
+        },
+        {
+          "code": "M15",
+          "libelle": "Achats",
+          "metiers": [
+            {
+              "code": "M1501",
+              "libelle": "Achats"
+            },
+            {
+              "code": "M1502",
+              "libelle": "Management des achats"
+            },
+            {
+              "code": "M1503",
+              "libelle": "Sourcing"
+            }
+          ]
+        },
+        {
+          "code": "M16",
+          "libelle": "Qualité",
+          "metiers": [
+            {
+              "code": "M1601",
+              "libelle": "Gestion de la qualité et des procédés industriels"
+            },
+            {
+              "code": "M1602",
+              "libelle": "Qualité de production"
+            },
+            {
+              "code": "M1603",
+              "libelle": "Sécurité industrielle"
+            }
+          ]
+        },
+        {
+          "code": "M17",
+          "libelle": "Stratégie commerciale",
+          "metiers": [
+            {
+              "code": "M1701",
+              "libelle": "Marketing"
+            },
+            {
+              "code": "M1702",
+              "libelle": "Stratégie et développement commercial"
+            }
+          ]
+        },
+        {
+          "code": "M18",
+          "libelle": "Systèmes d'information et de télécommunication",
+          "metiers": [
+            {
+              "code": "M1801",
+              "libelle": "Administration de systèmes d'information"
+            },
+            {
+              "code": "M1802",
+              "libelle": "Analyse et études informatiques"
+            },
+            {
+              "code": "M1803",
+              "libelle": "Expertise en systèmes d'information"
+            },
+            {
+              "code": "M1804",
+              "libelle": "Études et développements de l'informatique de gestion"
+            },
+            {
+              "code": "M1805",
+              "libelle": "Études et développements informatiques"
+            },
+            {
+              "code": "M1806",
+              "libelle": "Expertise et support informatique"
+            },
+            {
+              "code": "M1807",
+              "libelle": "Architecture des systèmes d'information"
+            },
+            {
+              "code": "M1808",
+              "libelle": "Data science et IA"
+            },
+            {
+              "code": "M1809",
+              "libelle": "Cybersécurité"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "N",
+      "libelle": "Transport et Logistique",
+      "domainesProfessionnels": [
+        {
+          "code": "N11",
+          "libelle": "Conduite de transport de particuliers et marchandises",
+          "metiers": [
+            {
+              "code": "N1101",
+              "libelle": "Conduite de transport de marchandises sur longue distance"
+            },
+            {
+              "code": "N1102",
+              "libelle": "Conduite de transport en commun sur route"
+            },
+            {
+              "code": "N1103",
+              "libelle": "Conduite de transport de particuliers"
+            },
+            {
+              "code": "N1104",
+              "libelle": "Conduite de véhicule de transport de particuliers"
+            }
+          ]
+        },
+        {
+          "code": "N12",
+          "libelle": "Transport aérien, maritime et fluvial",
+          "metiers": [
+            {
+              "code": "N1201",
+              "libelle": "Amenagement du territoire et cartographie"
+            },
+            {
+              "code": "N1202",
+              "libelle": "Exploitation des opérations de transport maritime"
+            },
+            {
+              "code": "N1203",
+              "libelle": "Exploitation des opérations de transport aérien"
+            },
+            {
+              "code": "N1204",
+              "libelle": "Pilotage et navigation aéronautique"
+            }
+          ]
+        },
+        {
+          "code": "N13",
+          "libelle": "Exploitation des opérations de transport",
+          "metiers": [
+            {
+              "code": "N1301",
+              "libelle": "Affrètement transport"
+            },
+            {
+              "code": "N1302",
+              "libelle": "Conception et organisation de la chaîne logistique"
+            },
+            {
+              "code": "N1303",
+              "libelle": "Contrôle des opérations de transit international"
+            }
+          ]
+        },
+        {
+          "code": "N14",
+          "libelle": "Logistique",
+          "metiers": [
+            {
+              "code": "N1401",
+              "libelle": "Conduite d'opérations logistiques et transport"
+            },
+            {
+              "code": "N1402",
+              "libelle": "Gestion des opérations de circulation internationale"
+            },
+            {
+              "code": "N1403",
+              "libelle": "Logistique industrielle"
+            }
+          ]
+        },
+        {
+          "code": "N15",
+          "libelle": "Manutention",
+          "metiers": [
+            {
+              "code": "N1501",
+              "libelle": "Magasinage et préparation de commandes"
+            },
+            {
+              "code": "N1502",
+              "libelle": "Manutention manuelle de charges"
+            },
+            {
+              "code": "N1503",
+              "libelle": "Mise en rayon libre-service"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
