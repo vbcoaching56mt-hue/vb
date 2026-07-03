@@ -9044,416 +9044,801 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 // ==========================================
 
 const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
-  const [fiches, setFiches] = useState([]);
-  const [assignedFiches, setAssignedFiches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filterSector, setFilterSector] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  // States pour Admin/Formateur
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [newFiche, setNewFiche] = useState({ title: '', sector: '', studies: '', skills: '', hourly_rate: '', average_salary: '', description: '', extra_info: '', career_evolution: '', working_conditions: '', qualities: '' });
-  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-  const [ficheToAssign, setFicheToAssign] = useState(null);
-  const [selectedClientToAssign, setSelectedClientToAssign] = useState('');
-  const [selectedFiche, setSelectedFiche] = useState(null);
+  // ── États explorateur ROME 4.0 (admin/formateur) ──────────────────
+  const [activeMainTab, setActiveMainTab] = React.useState('explorer');
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [searchResults, setSearchResults] = React.useState([]);
+  const [grandDomaines, setGrandDomaines] = React.useState([]);
+  const [selectedDomaine, setSelectedDomaine] = React.useState(null);
+  const [metiersInDomaine, setMetiersInDomaine] = React.useState([]);
+  const [loadingGD, setLoadingGD] = React.useState(false);
+  const [loadingSearch, setLoadingSearch] = React.useState(false);
+  const [loadingDomaine, setLoadingDomaine] = React.useState(false);
 
-  const fetchFiches = async () => {
-    setLoading(true);
-    if (userRole === 'admin' || userRole === 'formateur') {
-      let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
-      // Inclure les fiches de l'org OU celles sans organisation_id (créées avant la config org)
-      if (currentOrgId) q = q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
-      const { data, error } = await q;
-      if (error) console.error('[FichesMetiers] fetchFiches error:', error);
-      if (data) setFiches(data);
-    } else if (userRole === 'client') {
-      const { data, error } = await supabase
-        .from('client_job_sheets')
-        .select('*, job_sheets(*)')
-        .eq('client_id', currentUserId);
-      if (data) setAssignedFiches(data.map(d => d.job_sheets).filter(Boolean));
+  // ── États fiche ROME détaillée ─────────────────────────────────────
+  const [selectedMetier, setSelectedMetier] = React.useState(null);
+  const [ficheDetail, setFicheDetail] = React.useState(null);
+  const [loadingFiche, setLoadingFiche] = React.useState(false);
+
+  // ── États fiches assignées (snapshot DB locale) ────────────────────
+  const [assignedJobSheets, setAssignedJobSheets] = React.useState([]);
+  const [loadingAssigned, setLoadingAssigned] = React.useState(false);
+  const [filterSector, setFilterSector] = React.useState('');
+  const [assignedSearch, setAssignedSearch] = React.useState('');
+  const [selectedLocalFiche, setSelectedLocalFiche] = React.useState(null);
+
+  // ── États modal assignation ────────────────────────────────────────
+  const [isAssignModalOpen, setIsAssignModalOpen] = React.useState(false);
+  const [ficheToAssign, setFicheToAssign] = React.useState(null);
+  const [selectedClientId, setSelectedClientId] = React.useState('');
+  const [isAssigning, setIsAssigning] = React.useState(false);
+
+  // ── États vue client ───────────────────────────────────────────────
+  const [clientFiches, setClientFiches] = React.useState([]);
+  const [loadingClient, setLoadingClient] = React.useState(false);
+
+  const searchTimeoutRef = React.useRef(null);
+
+  // Appel proxy ROME
+  const callProxy = React.useCallback(async (params) => {
+    const url = new URL('/api/rome/proxy', window.location.origin);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur ${res.status}`);
     }
-    setLoading(false);
-  };
+    return res.json();
+  }, []);
 
-  useEffect(() => {
-    fetchFiches();
+  // ── Chargement initial ─────────────────────────────────────────────
+  React.useEffect(() => {
+    if (userRole === 'admin' || userRole === 'formateur') {
+      loadGrandDomaines();
+      fetchAssignedJobSheets();
+    } else if (userRole === 'client') {
+      fetchClientFiches();
+    }
   }, [userRole, currentUserId]);
 
-  const handleAddFiche = async (e) => {
-    e.preventDefault();
-    if (!newFiche.title || !newFiche.sector) return toast.error("Titre et secteur requis");
-    const { error } = await supabase.from('job_sheets').insert([{ ...newFiche, organisation_id: currentOrgId }]);
-    if (error) return toast.error("Erreur d'ajout : " + error.message);
-    toast.success("Fiche métier ajoutée !");
-    setIsAddModalOpen(false);
-    setNewFiche({ title: '', sector: '', studies: '', skills: '', hourly_rate: '', average_salary: '', description: '', extra_info: '', career_evolution: '', working_conditions: '', qualities: '' });
-    fetchFiches();
-  };
-
-  const handleAssignFiche = async () => {
-    if (!ficheToAssign || !selectedClientToAssign) return toast.error("Sélectionnez un client");
-    const { error } = await supabase.from('client_job_sheets').insert([{
-      job_sheet_id: ficheToAssign.id,
-      client_id: selectedClientToAssign,
-      assigned_by_formateur_id: userRole === 'formateur' ? currentUserId : null
-    }]);
-    if (error) {
-      if (error.code === '23505') return toast.error("Ce client a déjà reçu cette fiche !");
-      return toast.error("Erreur d'assignation : " + error.message);
+  const loadGrandDomaines = async () => {
+    setLoadingGD(true);
+    try {
+      const data = await callProxy({ action: 'grands-domaines' });
+      setGrandDomaines(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('[ROME] Grands domaines:', e);
+      toast.error('Impossible de charger les domaines ROME. Vérifiez les variables FT_CLIENT_ID et FT_CLIENT_SECRET dans Vercel.');
     }
-    toast.success("Fiche assignée avec succès !");
-    setIsAssignModalOpen(false);
-    setFicheToAssign(null);
+    setLoadingGD(false);
   };
 
-  const sectors = [...new Set((userRole === 'client' ? assignedFiches : fiches).map(f => f?.sector))].filter(Boolean);
-  const displayFiches = (userRole === 'client' ? assignedFiches : fiches)
-    .filter(f => filterSector ? f?.sector === filterSector : true)
-    .filter(f => {
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      const matchTitle = f?.title?.toLowerCase().includes(q);
-      const matchSkills = f?.skills?.toLowerCase().includes(q);
-      const matchSector = f?.sector?.toLowerCase().includes(q);
-      return matchTitle || matchSkills || matchSector;
-    })
-    .filter(Boolean);
+  const fetchAssignedJobSheets = async () => {
+    setLoadingAssigned(true);
+    let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
+    if (currentOrgId) q = q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+    const { data } = await q;
+    if (data) setAssignedJobSheets(data);
+    setLoadingAssigned(false);
+  };
 
-  // Pour le select client
-  const availableClients = userRole === 'formateur' ? clients.filter(c => c.formateur_id === currentUserId) : clients;
+  const fetchClientFiches = async () => {
+    setLoadingClient(true);
+    const { data } = await supabase
+      .from('client_job_sheets')
+      .select('*, job_sheets(*)')
+      .eq('client_id', currentUserId);
+    if (data) setClientFiches(data.map(d => d.job_sheets).filter(Boolean));
+    setLoadingClient(false);
+  };
+
+  // ── Recherche ROME (debounce 500ms) ───────────────────────────────
+  const handleSearchChange = (val) => {
+    setSearchQuery(val);
+    setSelectedDomaine(null);
+    setMetiersInDomaine([]);
+    clearTimeout(searchTimeoutRef.current);
+    if (!val.trim()) { setSearchResults([]); return; }
+    if (val.trim().length < 2) return;
+    searchTimeoutRef.current = setTimeout(async () => {
+      setLoadingSearch(true);
+      try {
+        const data = await callProxy({ action: 'search', q: val.trim() });
+        setSearchResults(Array.isArray(data) ? data : []);
+      } catch (e) {
+        toast.error('Erreur de recherche ROME');
+      }
+      setLoadingSearch(false);
+    }, 500);
+  };
+
+  // ── Sélection d'un grand domaine ───────────────────────────────────
+  const handleDomaineSelect = async (domaine) => {
+    setSelectedDomaine(domaine);
+    setSearchQuery('');
+    setSearchResults([]);
+    setLoadingDomaine(true);
+    try {
+      const data = await callProxy({ action: 'metiers-par-domaine', domaine: domaine.code });
+      setMetiersInDomaine(Array.isArray(data) ? data : []);
+    } catch (e) {
+      toast.error('Impossible de charger les métiers de ce domaine');
+    }
+    setLoadingDomaine(false);
+  };
+
+  // ── Ouvrir la fiche ROME complète ─────────────────────────────────
+  const handleMetierClick = async (metier) => {
+    setSelectedMetier(metier);
+    setFicheDetail(null);
+    setLoadingFiche(true);
+    try {
+      const data = await callProxy({ action: 'fiche', code: metier.code });
+      setFicheDetail(data);
+    } catch (e) {
+      console.error('[ROME] Fiche:', e);
+      toast.error('Impossible de charger la fiche métier');
+    }
+    setLoadingFiche(false);
+  };
+
+  // ── Assigner une fiche ROME à un bénéficiaire ─────────────────────
+  const handleAssignRomeFiche = async () => {
+    if (!selectedClientId || !ficheToAssign) return toast.error('Sélectionnez un bénéficiaire');
+    setIsAssigning(true);
+    try {
+      const fiche = ficheDetail || {};
+      const romeCode = ficheToAssign.code || '';
+      const romeTitle = fiche.libelle || ficheToAssign.libelle || '';
+
+      // 1. Chercher si la fiche existe déjà (même ROME code + org)
+      let jobSheetId;
+      if (romeCode) {
+        const { data: existing } = await supabase
+          .from('job_sheets')
+          .select('id')
+          .eq('extra_info', `rome:${romeCode}`)
+          .eq('organisation_id', currentOrgId)
+          .maybeSingle();
+        if (existing) jobSheetId = existing.id;
+      }
+
+      // 2. Créer le snapshot local si pas encore en DB
+      if (!jobSheetId) {
+        const competences = (fiche.competences || [])
+          .filter(c => c.type === 'SAVOIR_FAIRE')
+          .map(c => c.libelle).join(', ');
+        const qualites = (fiche.qualitesProfessionnelles || [])
+          .map(q => q.libelle).join(', ');
+        const secteur = fiche.grandDomaineProfessionnel?.libelle
+          || fiche.domaineProfessionnel?.libelle
+          || '';
+
+        const { data: newSheet, error: insertErr } = await supabase
+          .from('job_sheets')
+          .insert([{
+            title: romeTitle,
+            sector: secteur,
+            description: fiche.definition || '',
+            skills: competences,
+            qualities: qualites,
+            career_evolution: fiche.accesEmploi || '',
+            extra_info: `rome:${romeCode}`,
+            organisation_id: currentOrgId,
+          }])
+          .select('id')
+          .single();
+        if (insertErr) throw insertErr;
+        jobSheetId = newSheet.id;
+      }
+
+      // 3. Associer au client
+      const { error: assignErr } = await supabase
+        .from('client_job_sheets')
+        .insert([{
+          job_sheet_id: jobSheetId,
+          client_id: selectedClientId,
+          assigned_by_formateur_id: userRole === 'formateur' ? currentUserId : null,
+        }]);
+
+      if (assignErr) {
+        if (assignErr.code === '23505') return toast.error('Ce bénéficiaire a déjà cette fiche !');
+        throw assignErr;
+      }
+
+      toast.success('Fiche métier assignée avec succès !');
+      setIsAssignModalOpen(false);
+      setFicheToAssign(null);
+      setSelectedClientId('');
+      fetchAssignedJobSheets();
+    } catch (e) {
+      toast.error('Erreur : ' + e.message);
+    }
+    setIsAssigning(false);
+  };
+
+  const availableClients = userRole === 'formateur'
+    ? clients.filter(c => c.formateur_id === currentUserId)
+    : clients;
+
+  // Couleurs par lettre de grand domaine
+  const domaineGradients = {
+    A: 'from-green-500 to-emerald-600',
+    B: 'from-purple-500 to-fuchsia-600',
+    C: 'from-blue-500 to-cyan-600',
+    D: 'from-amber-500 to-orange-500',
+    E: 'from-red-500 to-rose-600',
+    F: 'from-orange-400 to-yellow-500',
+    G: 'from-teal-500 to-cyan-600',
+    H: 'from-slate-500 to-gray-600',
+    I: 'from-violet-500 to-purple-600',
+    J: 'from-blue-600 to-indigo-700',
+    K: 'from-emerald-500 to-teal-600',
+    L: 'from-pink-500 to-rose-500',
+    M: 'from-indigo-500 to-blue-600',
+    N: 'from-amber-600 to-orange-600',
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  // VUE CLIENT — fiches assignées uniquement
+  // ════════════════════════════════════════════════════════════════════
+  if (userRole === 'client') {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Mes Fiches Métiers</h2>
+          <p className="text-gray-500 text-sm mt-1">Découvrez les métiers sélectionnés pour vous.</p>
+        </div>
+
+        {loadingClient ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
+          </div>
+        ) : clientFiches.length === 0 ? (
+          <div className="bg-white p-10 rounded-2xl text-center border border-gray-100 shadow-sm">
+            <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-300">
+              <Briefcase size={32} />
+            </div>
+            <h3 className="text-xl font-black text-gray-800 mb-2">Aucune fiche assignée</h3>
+            <p className="text-gray-500">Votre conseiller ne vous a pas encore assigné de fiches métiers.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {clientFiches.map(fiche => (
+              <div
+                key={fiche.id}
+                className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group"
+                onClick={() => setSelectedLocalFiche(fiche)}
+              >
+                <span className="bg-indigo-50 text-indigo-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">{fiche.sector || 'Métier'}</span>
+                <h3 className="text-lg font-extrabold text-gray-900 mt-3 mb-2 group-hover:text-violet-700 transition-colors">{fiche.title}</h3>
+                <p className="text-sm text-gray-600 line-clamp-3">{fiche.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {selectedLocalFiche && (
+          <LocalFicheDetailModal fiche={selectedLocalFiche} onClose={() => setSelectedLocalFiche(null)} />
+        )}
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // VUE ADMIN / FORMATEUR
+  // ════════════════════════════════════════════════════════════════════
+  const displayAssigned = assignedJobSheets
+    .filter(f => !filterSector || f.sector === filterSector)
+    .filter(f => !assignedSearch || f.title?.toLowerCase().includes(assignedSearch.toLowerCase()) || f.sector?.toLowerCase().includes(assignedSearch.toLowerCase()));
+  const assignedSectors = [...new Set(assignedJobSheets.map(f => f.sector))].filter(Boolean);
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        <div>
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Fiches Métiers</h2>
-          <p className="text-gray-500 text-sm mt-1">
-            {userRole === 'client' ? "Découvrez les métiers sélectionnés pour vous." : "Explorez et gérez le référentiel des métiers."}
-          </p>
-        </div>
-        <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
-          {/* Barre de recherche */}
-          <div className="relative w-full md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            <input
-              type="text"
-              placeholder="Rechercher un métier..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all"
-            />
+      {/* ── Header ── */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-gray-900 tracking-tight">Fiches Métiers</h2>
+            <p className="text-gray-500 text-sm mt-1">
+              Référentiel ROME 4.0 — {grandDomaines.length > 0 ? `${grandDomaines.length} grands domaines` : 'Chargement…'}
+            </p>
           </div>
-          {sectors.length > 0 && (
-            <select
-              value={filterSector}
-              onChange={(e) => setFilterSector(e.target.value)}
-              className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all w-full md:w-auto"
-            >
-              <option value="">Tous les secteurs</option>
-              {sectors.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          )}
-          {(userRole === 'admin' || userRole === 'formateur') && (
+          {/* Tabs */}
+          <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
             <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center justify-center gap-2 bg-violet-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-violet-700 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 whitespace-nowrap w-full md:w-auto"
+              onClick={() => setActiveMainTab('explorer')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeMainTab === 'explorer' ? 'bg-white shadow text-violet-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <Plus size={18} /> Nouvelle Fiche
+              Explorateur ROME
             </button>
-          )}
+            <button
+              onClick={() => setActiveMainTab('assigned')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeMainTab === 'assigned' ? 'bg-white shadow text-violet-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Fiches Assignées
+              {assignedJobSheets.length > 0 && (
+                <span className="bg-violet-100 text-violet-700 text-xs font-black px-2 py-0.5 rounded-full">{assignedJobSheets.length}</span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center items-center h-64"><div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div></div>
-      ) : displayFiches.length === 0 ? (
-        <div className="bg-white p-10 rounded-2xl text-center border border-gray-100 shadow-sm flex flex-col items-center">
-          <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4 text-gray-300">
-            {searchQuery || filterSector ? <Search size={32} /> : <Briefcase size={32} />}
-          </div>
-          <h3 className="text-xl font-black text-gray-800 mb-2">
-            {searchQuery || filterSector ? "Aucun métier ne correspond à votre recherche" : "Aucune fiche métier trouvée"}
-          </h3>
-          <p className="text-gray-500">
-            {searchQuery || filterSector 
-              ? "Essayez avec d'autres mots-clés ou modifiez vos filtres." 
-              : (userRole === 'client' ? "Votre conseiller ne vous a pas encore assigné de fiches métiers." : "Le référentiel est actuellement vide.")}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <p className="text-sm font-bold text-gray-500 px-1">{displayFiches.length} métier{displayFiches.length > 1 ? 's' : ''} trouvé{displayFiches.length > 1 ? 's' : ''}</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {displayFiches.map(fiche => (
-            <div 
-              key={fiche.id} 
-              className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-shadow group flex flex-col cursor-pointer relative"
-              onClick={() => setSelectedFiche(fiche)}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <span className="bg-indigo-50 text-indigo-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">{fiche.sector}</span>
-                {(userRole === 'admin' || userRole === 'formateur') && (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setFicheToAssign(fiche); setIsAssignModalOpen(true); }} 
-                    className="text-gray-400 hover:text-violet-600 transition-colors p-1 z-10" 
-                    title="Envoyer à un bénéficiaire"
-                  >
-                    <Users size={18} />
-                  </button>
-                )}
-              </div>
-              <h3 className="text-lg font-extrabold text-gray-900 mb-2 leading-tight group-hover:text-violet-700 transition-colors">{fiche.title}</h3>
-              <p className="text-sm text-gray-600 mb-4 flex-1 line-clamp-3" title={fiche.description}>{fiche.description}</p>
-              
-              <div className="space-y-2 mt-auto pt-4 border-t border-gray-50">
-                {fiche.average_salary && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400 font-medium">Salaire moyen :</span>
-                    <span className="font-bold text-gray-700">{fiche.average_salary} €</span>
-                  </div>
-                )}
-                {fiche.studies && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400 font-medium">Études :</span>
-                    <span className="font-semibold text-gray-700 truncate w-3/5 text-right" title={fiche.studies}>{fiche.studies}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          </div>
-        </div>
-      )}
-
-      {/* Modal Ajout */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-black text-gray-900 mb-6">Ajouter une fiche métier</h3>
-            <form onSubmit={handleAddFiche} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Titre du métier *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.title} onChange={e => setNewFiche({...newFiche, title: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Secteur *</label><input required className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.sector} onChange={e => setNewFiche({...newFiche, sector: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Études conseillées</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.studies} onChange={e => setNewFiche({...newFiche, studies: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Salaire moyen (€)</label><input type="number" className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.average_salary} onChange={e => setNewFiche({...newFiche, average_salary: e.target.value})} /></div>
-              </div>
-              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Missions principales *</label><textarea required rows={3} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.description} onChange={e => setNewFiche({...newFiche, description: e.target.value})} /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Compétences techniques</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.skills} onChange={e => setNewFiche({...newFiche, skills: e.target.value})} placeholder="Ex: React, Node.js" /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Qualités requises</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.qualities} onChange={e => setNewFiche({...newFiche, qualities: e.target.value})} placeholder="Ex: Rigueur, Empathie" /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Évolution de carrière</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.career_evolution} onChange={e => setNewFiche({...newFiche, career_evolution: e.target.value})} /></div>
-                <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Conditions de travail</label><textarea rows={2} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.working_conditions} onChange={e => setNewFiche({...newFiche, working_conditions: e.target.value})} placeholder="Ex: Bureau, Télétravail, Déplacements" /></div>
-              </div>
-              <div><label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Informations supplémentaires</label><input className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400" value={newFiche.extra_info} onChange={e => setNewFiche({...newFiche, extra_info: e.target.value})} /></div>
-              
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-50">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-                <button type="submit" className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg">Enregistrer la fiche</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Assignation */}
-      {isAssignModalOpen && ficheToAssign && (
-        <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-md border border-gray-100">
-            <h3 className="text-xl font-black text-gray-900 mb-2">Envoyer une fiche métier</h3>
-            <p className="text-sm text-gray-500 mb-6">Assignez la fiche <strong className="text-gray-900">"{ficheToAssign.title}"</strong> à un bénéficiaire.</p>
-            
-            <div className="mb-6">
-              <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Sélectionner un bénéficiaire</label>
-              <select className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 text-sm font-semibold text-gray-700" value={selectedClientToAssign} onChange={e => setSelectedClientToAssign(e.target.value)}>
-                <option value="">-- Choisir un client --</option>
-                {availableClients.map(c => <option key={c.id} value={c.id}>{c.nom} ({c.email_contact})</option>)}
-              </select>
-            </div>
-            
-            <div className="flex justify-end gap-3">
-              <button onClick={() => { setIsAssignModalOpen(false); setFicheToAssign(null); setSelectedClientToAssign(''); }} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-              <button onClick={handleAssignFiche} disabled={!selectedClientToAssign} className="px-6 py-3 bg-violet-700 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">Envoyer au client</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Détails Fiche */}
-      {selectedFiche && (
-        <div className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedFiche(null)}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setSelectedFiche(null)} className="absolute top-6 right-6 w-10 h-10 bg-white hover:bg-gray-100 text-gray-500 rounded-full flex items-center justify-center transition-colors shadow-sm z-10">
-              <X size={20} />
-            </button>
-            
-            {/* Bannière visuelle selon secteur */}
-            <div className={`h-24 md:h-32 w-full ${(() => {
-              const s = (selectedFiche.sector || '').toLowerCase();
-              if (s.includes('it') || s.includes('numérique')) return 'bg-gradient-to-r from-blue-500 to-indigo-600';
-              if (s.includes('santé') || s.includes('social')) return 'bg-gradient-to-r from-emerald-400 to-teal-500';
-              if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-gradient-to-r from-amber-400 to-orange-500';
-              if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-gradient-to-r from-purple-500 to-pink-500';
-              if (s.includes('administration') || s.includes('gestion')) return 'bg-gradient-to-r from-slate-500 to-gray-600';
-              return 'bg-gradient-to-r from-violet-600 to-red-500';
-            })()} relative`} id="modal-banner">
-               <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-white to-transparent"></div>
-            </div>
-            
-            <div id="fiche-modal-content" className="bg-white">
-              <div className="p-8 md:p-10 border-b border-gray-100 relative">
-                <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 mb-4">
-                  <span className={`text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider ${(() => {
-                    const s = (selectedFiche.sector || '').toLowerCase();
-                    if (s.includes('it') || s.includes('numérique')) return 'bg-blue-50 text-blue-600';
-                    if (s.includes('santé') || s.includes('social')) return 'bg-emerald-50 text-emerald-600';
-                    if (s.includes('btp') || s.includes('construction') || s.includes('artisanat')) return 'bg-amber-50 text-amber-600';
-                    if (s.includes('art') || s.includes('design') || s.includes('communication')) return 'bg-purple-50 text-purple-600';
-                    if (s.includes('administration') || s.includes('gestion')) return 'bg-slate-50 text-slate-600';
-                    return 'bg-violet-50 text-violet-700';
-                  })()}`}>{selectedFiche.sector}</span>
-                  
-                  <button 
-                    onClick={async () => {
-                      const element = document.getElementById('fiche-modal-content');
-                      if (!element) return;
-                      const tId = toast.loading('Génération du PDF en cours...');
-                      try {
-                        const canvas = await html2canvas(element, { scale: 2, useCORS: true });
-                        const imgData = canvas.toDataURL('image/png');
-                        const pdf = new jsPDF('p', 'mm', 'a4');
-                        const pdfWidth = pdf.internal.pageSize.getWidth();
-                        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-                        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-                        pdf.save(`Fiche_Metier_${selectedFiche.title.replace(/\s+/g, '_')}.pdf`);
-                        toast.success('PDF téléchargé avec succès !', { id: tId });
-                      } catch (error) {
-                        toast.error('Erreur lors de la génération', { id: tId });
-                      }
-                    }}
-                    className="flex items-center justify-center gap-2 bg-gray-50 text-gray-700 hover:bg-gray-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors border border-gray-200"
-                  >
-                    <Download size={16} /> Télécharger en PDF
-                  </button>
+      {/* ══════════════════════════════════════════════════════════════
+          TAB 1 — EXPLORATEUR ROME
+      ══════════════════════════════════════════════════════════════ */}
+      {activeMainTab === 'explorer' && (
+        <div className="space-y-6">
+          {/* Barre de recherche */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <input
+                type="text"
+                placeholder="Rechercher un métier dans le référentiel ROME 4.0…"
+                value={searchQuery}
+                onChange={e => handleSearchChange(e.target.value)}
+                className="w-full pl-12 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-violet-600 transition-all"
+              />
+              {loadingSearch && (
+                <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                  <div className="w-5 h-5 border-2 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
                 </div>
-                
-                <h2 className="text-3xl md:text-4xl font-black text-gray-900 leading-tight mb-6">{selectedFiche.title}</h2>
-                
-                {/* Qualités requises (Tags) */}
-                {selectedFiche.qualities && (
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wider mr-2">Qualités :</span>
-                    {selectedFiche.qualities.split(',').map((quality, index) => (
-                      <span key={index} className="bg-amber-50 border border-amber-100 text-amber-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">
-                        {quality.trim()}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {/* Compétences Techniques (Tags) */}
-                {selectedFiche.skills && (
-                  <div className="flex flex-wrap items-center gap-2 mt-3">
-                    <span className="text-sm font-bold text-gray-400 uppercase tracking-wider mr-2">Technique :</span>
-                    {selectedFiche.skills.split(',').map((skill, index) => (
-                      <span key={index} className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">
-                        {skill.trim()}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Contenu principal en 2 colonnes */}
-              <div className="p-8 md:p-10 flex flex-col lg:flex-row gap-10">
-                
-                {/* Colonne Gauche (Principal) */}
-                <div className="flex-1 space-y-10">
-                  <section>
-                    <h3 className="text-xl font-black text-gray-900 mb-4 flex items-center gap-2">
-                      <FileCheck className="text-violet-600" size={24} /> Missions principales
-                    </h3>
-                    <p className="text-gray-700 text-lg leading-relaxed">{selectedFiche.description}</p>
-                  </section>
-                  
-                  {(selectedFiche.career_evolution || selectedFiche.extra_info) && (
-                    <section>
-                      <h3 className="text-xl font-black text-gray-900 mb-4 flex items-center gap-2">
-                        <TrendingUp className="text-blue-500" size={24} /> Évolution de carrière
-                      </h3>
-                      <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100">
-                        {selectedFiche.career_evolution && <p className="text-gray-800 text-base leading-relaxed mb-3">{selectedFiche.career_evolution}</p>}
-                        {selectedFiche.extra_info && <p className="text-blue-900 text-sm font-medium">{selectedFiche.extra_info}</p>}
-                      </div>
-                    </section>
-                  )}
-                </div>
-                
-                {/* Colonne Droite (Infos Clés) */}
-                <div className="lg:w-80 space-y-6">
-                  {selectedFiche.working_conditions && (
-                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-purple-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
-                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <MapPin size={16} className="text-purple-400" /> Conditions de travail
-                      </h4>
-                      <p className="font-semibold text-gray-800">{selectedFiche.working_conditions}</p>
-                    </div>
-                  )}
-
-                  {selectedFiche.studies && (
-                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
-                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <FileText size={16} className="text-indigo-400" /> Formation requise
-                      </h4>
-                      <p className="font-semibold text-gray-800">{selectedFiche.studies}</p>
-                    </div>
-                  )}
-                  
-                  {(selectedFiche.average_salary || selectedFiche.hourly_rate) && (
-                    <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-50 rounded-bl-full -z-10 group-hover:scale-150 transition-transform"></div>
-                      <h4 className="text-sm font-black text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <Briefcase size={16} className="text-emerald-400" /> Rémunération
-                      </h4>
-                      <div className="space-y-3 mt-4">
-                        {selectedFiche.average_salary && (
-                          <div className="flex flex-col">
-                            <span className="text-gray-500 text-xs uppercase font-bold">Salaire moyen</span>
-                            <span className="font-black text-gray-900 text-xl">{selectedFiche.average_salary} € <span className="text-sm font-medium text-gray-500">/ mois</span></span>
-                          </div>
-                        )}
-                        {selectedFiche.hourly_rate && (
-                          <div className="flex flex-col mt-2">
-                            <span className="text-gray-500 text-xs uppercase font-bold">Taux horaire</span>
-                            <span className="font-black text-gray-900 text-xl">{selectedFiche.hourly_rate} € <span className="text-sm font-medium text-gray-500">/ h</span></span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-              </div>
-            </div>
-
-            {(userRole === 'admin' || userRole === 'formateur') && (
-              <div className="p-6 md:p-8 bg-gray-50 border-t border-gray-100 flex justify-between items-center rounded-b-3xl">
-                <p className="text-sm text-gray-500 font-medium">Vous pensez que ce métier correspond à l'un de vos bénéficiaires ?</p>
-                <button 
-                  onClick={() => { setFicheToAssign(selectedFiche); setSelectedFiche(null); setIsAssignModalOpen(true); }}
-                  className="flex items-center gap-2 bg-gray-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-gray-800 transition-colors shadow-lg"
+              )}
+              {searchQuery && !loadingSearch && (
+                <button
+                  onClick={() => { setSearchQuery(''); setSearchResults([]); }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                 >
-                  <Users size={18} /> Assigner
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Résultats de recherche */}
+          {searchQuery && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              {loadingSearch ? (
+                <div className="p-8 text-center text-gray-400 text-sm font-semibold">Recherche en cours…</div>
+              ) : searchResults.length === 0 ? (
+                <div className="p-8 text-center">
+                  <p className="text-gray-600 font-bold">Aucun résultat pour « {searchQuery} »</p>
+                  <p className="text-gray-400 text-sm mt-1">Essayez d'autres mots-clés ou explorez par domaine</p>
+                </div>
+              ) : (
+                <>
+                  <div className="px-6 py-3 border-b border-gray-50 bg-gray-50/50">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                      {searchResults.length} résultat{searchResults.length > 1 ? 's' : ''} — cliquez pour voir la fiche complète
+                    </p>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {searchResults.map(metier => (
+                      <button
+                        key={metier.code}
+                        onClick={() => handleMetierClick(metier)}
+                        className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{metier.code}</span>
+                          <span className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{metier.libelle}</span>
+                        </div>
+                        <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Explorer par grand domaine */}
+          {!searchQuery && (
+            <>
+              {selectedDomaine ? (
+                /* Liste des métiers dans le domaine */
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { setSelectedDomaine(null); setMetiersInDomaine([]); }}
+                      className="flex items-center gap-1 text-violet-600 hover:text-violet-800 font-bold text-sm transition-colors"
+                    >
+                      <ChevronLeft size={16} /> Retour aux domaines
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <span className="font-bold text-gray-700 text-sm">{selectedDomaine.libelle}</span>
+                  </div>
+
+                  {loadingDomaine ? (
+                    <div className="flex justify-center items-center h-32">
+                      <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
+                    </div>
+                  ) : metiersInDomaine.length === 0 ? (
+                    <div className="bg-white p-8 rounded-2xl text-center border border-gray-100 text-gray-500">
+                      Aucun métier trouvé dans ce domaine
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                      <div className="px-6 py-3 border-b border-gray-50 bg-gray-50/50">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                          {metiersInDomaine.length} métier{metiersInDomaine.length > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <div className="divide-y divide-gray-50">
+                        {metiersInDomaine.map(metier => (
+                          <button
+                            key={metier.code}
+                            onClick={() => handleMetierClick(metier)}
+                            className="w-full flex items-center justify-between px-6 py-4 hover:bg-violet-50 transition-colors text-left group"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-black text-gray-300 font-mono bg-gray-100 px-2 py-1 rounded-lg">{metier.code}</span>
+                              <span className="font-bold text-gray-900 group-hover:text-violet-700 transition-colors">{metier.libelle}</span>
+                            </div>
+                            <ChevronRight size={18} className="text-gray-300 group-hover:text-violet-500 transition-colors flex-shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Grille des grands domaines */
+                <div className="space-y-4">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-1">Explorer par grand domaine professionnel</p>
+                  {loadingGD ? (
+                    <div className="flex justify-center items-center h-32">
+                      <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
+                    </div>
+                  ) : grandDomaines.length === 0 ? (
+                    <div className="bg-white p-8 rounded-2xl text-center border border-gray-100">
+                      <p className="text-gray-500 font-semibold mb-2">Connexion à France Travail impossible</p>
+                      <p className="text-gray-400 text-sm">Vérifiez que les variables <code className="bg-gray-100 px-1 rounded">FT_CLIENT_ID</code> et <code className="bg-gray-100 px-1 rounded">FT_CLIENT_SECRET</code> sont configurées dans Vercel.</p>
+                      <button onClick={loadGrandDomaines} className="mt-4 px-4 py-2 bg-violet-700 text-white text-sm font-bold rounded-xl hover:bg-violet-800 transition-colors">
+                        Réessayer
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {grandDomaines.map(domaine => (
+                        <button
+                          key={domaine.code}
+                          onClick={() => handleDomaineSelect(domaine)}
+                          className={`bg-gradient-to-br ${domaineGradients[domaine.code] || 'from-violet-500 to-purple-600'} p-5 rounded-2xl text-left text-white hover:scale-[1.02] active:scale-[0.99] transition-transform shadow-sm hover:shadow-lg group`}
+                        >
+                          <div className="text-3xl font-black opacity-30 mb-1">{domaine.code}</div>
+                          <h3 className="font-bold text-sm leading-snug line-clamp-2 mb-3">{domaine.libelle}</h3>
+                          <div className="flex items-center gap-1 text-white/60 text-xs font-bold group-hover:text-white/90 transition-colors">
+                            Voir les métiers <ChevronRight size={14} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TAB 2 — FICHES ASSIGNÉES (snapshots DB locale)
+      ══════════════════════════════════════════════════════════════ */}
+      {activeMainTab === 'assigned' && (
+        <div className="space-y-4">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                placeholder="Rechercher dans les fiches assignées…"
+                value={assignedSearch}
+                onChange={e => setAssignedSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-violet-600 transition-all"
+              />
+            </div>
+            {assignedSectors.length > 0 && (
+              <select
+                value={filterSector}
+                onChange={e => setFilterSector(e.target.value)}
+                className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-violet-600"
+              >
+                <option value="">Tous les secteurs</option>
+                {assignedSectors.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+          </div>
+
+          {loadingAssigned ? (
+            <div className="flex justify-center items-center h-32">
+              <div className="w-8 h-8 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
+            </div>
+          ) : displayAssigned.length === 0 ? (
+            <div className="bg-white p-10 rounded-2xl text-center border border-gray-100 shadow-sm">
+              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-300">
+                <Briefcase size={28} />
+              </div>
+              <h3 className="text-xl font-black text-gray-800 mb-2">Aucune fiche assignée</h3>
+              <p className="text-gray-500 text-sm">Explorez l'onglet ROME et cliquez sur « Assigner » pour envoyer une fiche à un bénéficiaire.</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                {displayAssigned.length} fiche{displayAssigned.length > 1 ? 's' : ''} — cliquez pour voir le détail
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {displayAssigned.map(fiche => {
+                  const romeCode = fiche.extra_info?.startsWith('rome:') ? fiche.extra_info.replace('rome:', '') : null;
+                  return (
+                    <div
+                      key={fiche.id}
+                      className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group flex flex-col"
+                      onClick={() => setSelectedLocalFiche(fiche)}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <span className="bg-indigo-50 text-indigo-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">{fiche.sector || 'Métier'}</span>
+                        {romeCode && <span className="text-xs font-mono text-gray-300 bg-gray-50 px-2 py-0.5 rounded-lg">{romeCode}</span>}
+                      </div>
+                      <h3 className="text-base font-extrabold text-gray-900 mb-2 group-hover:text-violet-700 transition-colors leading-snug">{fiche.title}</h3>
+                      <p className="text-sm text-gray-500 line-clamp-2 flex-1">{fiche.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Modal fiche ROME détaillée ────────────────────────────────── */}
+      {selectedMetier && (
+        <div
+          className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in"
+          onClick={() => { setSelectedMetier(null); setFicheDetail(null); }}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* En-tête */}
+            <div className="p-8 border-b border-gray-100 relative">
+              <button
+                onClick={() => { setSelectedMetier(null); setFicheDetail(null); }}
+                className="absolute top-6 right-6 w-10 h-10 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-full flex items-center justify-center transition-colors"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <span className="bg-violet-100 text-violet-700 text-xs font-black px-3 py-1.5 rounded-xl font-mono">{selectedMetier.code}</span>
+                {ficheDetail?.grandDomaineProfessionnel && (
+                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-3 py-1.5 rounded-xl">{ficheDetail.grandDomaineProfessionnel.libelle}</span>
+                )}
+                {ficheDetail?.domaineProfessionnel && (
+                  <span className="bg-gray-50 text-gray-500 text-xs font-semibold px-3 py-1.5 rounded-xl">{ficheDetail.domaineProfessionnel.libelle}</span>
+                )}
+              </div>
+
+              <h2 className="text-3xl font-black text-gray-900 leading-tight">
+                {ficheDetail?.libelle || selectedMetier.libelle}
+              </h2>
+
+              {loadingFiche && (
+                <div className="mt-4 flex items-center gap-2 text-gray-400 text-sm font-medium">
+                  <div className="w-4 h-4 border-2 border-violet-600/20 border-t-violet-600 rounded-full animate-spin" />
+                  Chargement de la fiche complète…
+                </div>
+              )}
+            </div>
+
+            {/* Corps */}
+            {ficheDetail && !loadingFiche && (
+              <div className="p-8 space-y-8">
+                {ficheDetail.definition && (
+                  <section>
+                    <h3 className="text-lg font-black text-gray-900 mb-3 flex items-center gap-2">
+                      <FileCheck size={20} className="text-violet-500" /> Définition du métier
+                    </h3>
+                    <p className="text-gray-700 leading-relaxed">{ficheDetail.definition}</p>
+                  </section>
+                )}
+
+                {ficheDetail.competences && ficheDetail.competences.length > 0 && (
+                  <section>
+                    <h3 className="text-lg font-black text-gray-900 mb-3">Compétences requises</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {ficheDetail.competences.slice(0, 14).map((c, i) => (
+                        <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-xl p-3">
+                          <div className="w-2 h-2 bg-violet-400 rounded-full mt-1.5 flex-shrink-0" />
+                          <span className="text-sm text-gray-700 font-medium">{c.libelle}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {ficheDetail.qualitesProfessionnelles && ficheDetail.qualitesProfessionnelles.length > 0 && (
+                  <section>
+                    <h3 className="text-lg font-black text-gray-900 mb-3">Qualités professionnelles</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {ficheDetail.qualitesProfessionnelles.map((q, i) => (
+                        <span key={i} className="bg-amber-50 text-amber-700 border border-amber-100 px-3 py-1.5 rounded-xl text-sm font-bold">{q.libelle}</span>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {ficheDetail.accesEmploi && (
+                  <section>
+                    <h3 className="text-lg font-black text-gray-900 mb-3">Accès à l'emploi</h3>
+                    <p className="text-gray-700 text-sm leading-relaxed bg-blue-50 p-4 rounded-2xl border border-blue-100">{ficheDetail.accesEmploi}</p>
+                  </section>
+                )}
+
+                <div className="flex items-center gap-3 pt-4 border-t border-gray-100 text-xs text-gray-400">
+                  <span>Source : France Travail — ROME 4.0</span>
+                  <a
+                    href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${selectedMetier.code}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-violet-500 hover:text-violet-700 font-bold transition-colors"
+                  >
+                    Voir sur MétierScope ↗
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* Footer avec bouton assigner */}
+            {!loadingFiche && ficheDetail && (userRole === 'admin' || userRole === 'formateur') && (
+              <div className="p-6 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 rounded-b-3xl">
+                <p className="text-sm text-gray-500">Ce métier correspond à l'un de vos bénéficiaires ?</p>
+                <button
+                  onClick={() => { setFicheToAssign(selectedMetier); setIsAssignModalOpen(true); }}
+                  className="flex items-center gap-2 bg-violet-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-violet-800 transition-colors shadow-lg"
+                >
+                  <Users size={18} /> Assigner à un bénéficiaire
                 </button>
               </div>
             )}
           </div>
         </div>
       )}
+
+      {/* ── Modal fiche locale (onglet Fiches Assignées) ─────────────── */}
+      {selectedLocalFiche && (
+        <LocalFicheDetailModal
+          fiche={selectedLocalFiche}
+          onClose={() => setSelectedLocalFiche(null)}
+          onAssign={userRole !== 'client' ? (f) => {
+            const romeCode = f.extra_info?.startsWith('rome:') ? f.extra_info.replace('rome:', '') : null;
+            setFicheToAssign({ code: romeCode, libelle: f.title });
+            setSelectedLocalFiche(null);
+            setIsAssignModalOpen(true);
+          } : null}
+        />
+      )}
+
+      {/* ── Modal assignation ─────────────────────────────────────────── */}
+      {isAssignModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/70 z-[250] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-md border border-gray-100">
+            <h3 className="text-xl font-black text-gray-900 mb-2">Assigner la fiche métier</h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Assigner <strong className="text-gray-900">« {ficheToAssign?.libelle} »</strong> à un bénéficiaire.
+            </p>
+
+            <div className="mb-6">
+              <label className="block text-xs font-semibold text-gray-400 uppercase mb-1">Bénéficiaire</label>
+              <select
+                className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 text-sm font-semibold text-gray-700"
+                value={selectedClientId}
+                onChange={e => setSelectedClientId(e.target.value)}
+              >
+                <option value="">— Choisir un bénéficiaire —</option>
+                {availableClients.map(c => (
+                  <option key={c.id} value={c.id}>{c.nom} ({c.email_contact})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setIsAssignModalOpen(false); setFicheToAssign(null); setSelectedClientId(''); }}
+                className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleAssignRomeFiche}
+                disabled={!selectedClientId || isAssigning}
+                className="px-6 py-3 bg-violet-700 text-white font-bold rounded-xl hover:bg-violet-800 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isAssigning
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Envoi…</>
+                  : <><Users size={16} /> Assigner</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Sous-composant : modal de détail pour une fiche locale (snapshot DB)
+const LocalFicheDetailModal = ({ fiche, onClose, onAssign }) => {
+  const romeCode = fiche.extra_info?.startsWith('rome:') ? fiche.extra_info.replace('rome:', '') : null;
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-8 border-b border-gray-100 relative">
+          <button onClick={onClose} className="absolute top-6 right-6 w-10 h-10 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-full flex items-center justify-center transition-colors">
+            <X size={20} />
+          </button>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <span className="bg-indigo-50 text-indigo-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">{fiche.sector || 'Métier'}</span>
+            {romeCode && <span className="bg-violet-50 text-violet-600 text-xs font-black px-3 py-1 rounded-xl font-mono">{romeCode}</span>}
+          </div>
+          <h2 className="text-3xl font-black text-gray-900">{fiche.title}</h2>
+        </div>
+
+        <div className="p-8 space-y-6 flex-1">
+          {fiche.description && (
+            <section>
+              <h3 className="text-base font-black text-gray-700 mb-2 flex items-center gap-2"><FileCheck size={18} className="text-violet-500" /> Missions principales</h3>
+              <p className="text-gray-700 leading-relaxed">{fiche.description}</p>
+            </section>
+          )}
+          {fiche.skills && (
+            <section>
+              <h3 className="text-base font-black text-gray-700 mb-2">Compétences</h3>
+              <div className="flex flex-wrap gap-2">
+                {fiche.skills.split(',').map((s, i) => (
+                  <span key={i} className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-3 py-1 rounded-lg text-sm font-bold">{s.trim()}</span>
+                ))}
+              </div>
+            </section>
+          )}
+          {fiche.qualities && (
+            <section>
+              <h3 className="text-base font-black text-gray-700 mb-2">Qualités</h3>
+              <div className="flex flex-wrap gap-2">
+                {fiche.qualities.split(',').map((q, i) => (
+                  <span key={i} className="bg-amber-50 text-amber-700 border border-amber-100 px-3 py-1 rounded-lg text-sm font-bold">{q.trim()}</span>
+                ))}
+              </div>
+            </section>
+          )}
+          {fiche.career_evolution && (
+            <section>
+              <h3 className="text-base font-black text-gray-700 mb-2">Accès à l'emploi / Évolution</h3>
+              <p className="text-gray-700 text-sm bg-blue-50 p-4 rounded-xl">{fiche.career_evolution}</p>
+            </section>
+          )}
+          {romeCode && (
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs text-gray-400">
+              <span>Source : France Travail — ROME 4.0</span>
+              <a href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${romeCode}`} target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-700 font-bold">
+                Voir sur MétierScope ↗
+              </a>
+            </div>
+          )}
+        </div>
+
+        {onAssign && (
+          <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-between items-center rounded-b-3xl">
+            <p className="text-sm text-gray-500">Assigner cette fiche à un autre bénéficiaire ?</p>
+            <button onClick={() => onAssign(fiche)} className="flex items-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-gray-800 transition-colors shadow">
+              <Users size={16} /> Assigner
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
