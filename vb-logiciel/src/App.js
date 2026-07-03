@@ -9775,7 +9775,7 @@ const LocalFicheDetailModal = ({ fiche, onClose, onAssign }) => {
           {romeCode && (
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs text-gray-400">
               <span>Source : France Travail — ROME 4.0</span>
-              <a href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${romeCode}&intitule=${encodeURIComponent(romeTitle)}`} target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-700 font-bold">
+              <a href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${romeCode}&intitule=${encodeURIComponent(fiche.title || '')}`} target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:text-violet-700 font-bold">
                 Voir sur MétierScope ↗
               </a>
             </div>
