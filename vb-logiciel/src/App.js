@@ -9608,19 +9608,28 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
                   <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
                     <FileCheck size={16} className="text-blue-600" />
                   </div>
-                  <div>
-                    <p className="font-bold text-blue-900 text-sm">Données ROME 4.0 — France Travail</p>
+                  <div className="flex-1">
+                    <p className="font-bold text-blue-900 text-sm">Consulter la fiche complète sur MétierScope</p>
                     <p className="text-blue-700 text-xs mt-1 leading-relaxed">
-                      Consultez la fiche complète avec définition, compétences, conditions d'accès et certifications sur MétierScope, le service officiel de France Travail.
+                      Copiez le code ROME ci-dessous, puis collez-le dans la recherche MétierScope pour accéder à la fiche complète (compétences, formations, conditions d'accès).
                     </p>
-                    <a
-                      href={`https://candidat.francetravail.fr/metierscope/fiche-metier?codeRome=${selectedMetier.code}&intitule=${encodeURIComponent(selectedMetier.libelle)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 mt-3 text-blue-700 font-black text-sm hover:text-blue-900 transition-colors"
-                    >
-                      Voir la fiche complète sur MétierScope ↗
-                    </a>
+                    <div className="flex flex-wrap items-center gap-2 mt-3">
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(selectedMetier.code); toast.success('Code ROME copié !'); }}
+                        className="flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-black hover:bg-blue-800 transition-colors"
+                      >
+                        <span className="font-mono">{selectedMetier.code}</span>
+                        <span>— Copier</span>
+                      </button>
+                      <a
+                        href="https://candidat.francetravail.fr/metierscope/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-blue-600 font-bold text-xs hover:text-blue-900 transition-colors underline underline-offset-2"
+                      >
+                        Ouvrir MétierScope ↗
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>
