@@ -9081,9 +9081,16 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
 
   // Appel proxy ROME
   const callProxy = React.useCallback(async (params) => {
-    const url = new URL('/api/rome-proxy', window.location.origin);
+    const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || '';
+    const url = new URL(`${supabaseUrl}/functions/v1/rome-proxy`);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    const res = await fetch(url.toString());
+    const anonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || '';
+    const res = await fetch(url.toString(), {
+      headers: {
+        'apikey': anonKey,
+        'Authorization': `Bearer ${anonKey}`,
+      }
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `Erreur ${res.status}`);
