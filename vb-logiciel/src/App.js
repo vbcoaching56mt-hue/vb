@@ -5339,10 +5339,14 @@ const DocumentsView = ({
   const handleSaveQTemplate = async () => {
     if (!qName.trim() || qQuestions.length === 0) return;
     try {
+      // Préserver les group_ids existants lors d'une mise à jour
+      const existingMeta = editingQId
+        ? (() => { const tpl = questionnaireTemplates.find(t => t.id === editingQId); try { return typeof tpl?.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl?.metadata || {}); } catch { return {}; } })()
+        : {};
       const payload = {
         titre: qName.trim(),
         type: 'questionnaire',
-        metadata: JSON.stringify({ questions: qQuestions }),
+        metadata: JSON.stringify({ ...existingMeta, questions: qQuestions }),
         module_id: null,
       };
       if (editingQId) {
@@ -5374,8 +5378,13 @@ const DocumentsView = ({
     if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
   };
 
-  const handleQSetGroup = async (qId, groupId) => {
-    const { error } = await supabaseAdmin.from('module_step_resources').update({ document_group_id: groupId }).eq('id', qId);
+  const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
+    const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
+    const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
+    const { error } = await supabaseAdmin.from('module_step_resources').update({
+      document_group_id: primaryGroup,
+      metadata: JSON.stringify(newMeta),
+    }).eq('id', qId);
     if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
   };
 
@@ -5615,7 +5624,11 @@ const DocumentsView = ({
               <div className="flex flex-col gap-3">
                 {documentGroups.map(g => {
                   const groupDocs = documents.filter(d => d.group_id === g.id || (d.group_ids && d.group_ids.includes(g.id)));
-                  const groupQuests = questionnaireTemplates.filter(q => q.document_group_id === g.id);
+                  const groupQuests = questionnaireTemplates.filter(q => {
+                    const qm = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                    const gids = qm.group_ids && qm.group_ids.length > 0 ? qm.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                    return gids.includes(g.id);
+                  });
                   const totalItems = groupDocs.length + groupQuests.length;
                   return (
                     <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
@@ -5804,28 +5817,47 @@ const DocumentsView = ({
                   const nbQ = (qMeta.questions || []).length;
                   const currentGroup = documentGroups.find(g => g.id === q.document_group_id);
                   return (
-                    <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xl">📝</span>
-                          <div>
-                            <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
-                            <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''}</p>
+                    {(() => {
+                      const qGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                      return (
+                        <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl">📝</span>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
+                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''}</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1">
+                              <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
+                              <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
+                            </div>
                           </div>
+                          <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                            <p className="text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1">Groupes</p>
+                            {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
+                            {documentGroups.map(g => {
+                              const checked = qGroupIds.includes(g.id);
+                              return (
+                                <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
+                                  <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
+                                    onChange={() => {
+                                      const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
+                                      handleQSetGroups(q.id, next, qMeta);
+                                    }} />
+                                  <span className="text-xs text-gray-700">{g.nom}</span>
+                                  {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
+                                </label>
+                              );
+                            })}
+                          </div>
+                          {qGroupIds.length > 0 && (
+                            <p className="text-[10px] text-violet-600 font-bold mt-2">📁 {qGroupIds.length} groupe{qGroupIds.length > 1 ? 's' : ''}</p>
+                          )}
                         </div>
-                        <div className="flex gap-1">
-                          <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
-                          <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
-                        </div>
-                      </div>
-                      <select className="w-full text-xs p-2 rounded-lg border border-violet-100 bg-violet-50/50 text-gray-600 cursor-pointer hover:border-violet-300 transition-colors outline-none"
-                        value={q.document_group_id || ''}
-                        onChange={e => handleQSetGroup(q.id, e.target.value || null)}>
-                        <option value="">— Aucun groupe —</option>
-                        {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
-                      </select>
-                      {currentGroup && <p className="text-[10px] text-violet-600 font-bold mt-1.5">📁 {currentGroup.nom}</p>}
-                    </div>
+                      );
+                    })()}
                   );
                 })}
               </div>
@@ -7744,9 +7776,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           (d.group_ids && d.group_ids.includes(resource.document_group_id))
         )
       : [];
-    // Questionnaires liés à ce groupe (templates)
+    // Questionnaires liés à ce groupe (templates) — supporte multi-groupes via metadata.group_ids
     const groupQuestItems = resource.document_group_id
-      ? groupQuestionnaires.filter(q => q.document_group_id === resource.document_group_id)
+      ? groupQuestionnaires.filter(q => {
+          const qm = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+          const gids = qm.group_ids && qm.group_ids.length > 0 ? qm.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+          return gids.includes(resource.document_group_id);
+        })
       : [];
     const isExpanded = expandedGroupId === resource.id;
     // Priorité : nom depuis document_groups > titre si non générique > fallback
