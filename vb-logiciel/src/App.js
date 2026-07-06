@@ -5537,21 +5537,26 @@ const DocumentsView = ({
               <div className="flex flex-col gap-3">
                 {documentGroups.map(g => {
                   const groupDocs = documents.filter(d => d.group_id === g.id || (d.group_ids && d.group_ids.includes(g.id)));
+                  const groupQuests = questionnaireTemplates.filter(q => q.document_group_id === g.id);
+                  const totalItems = groupDocs.length + groupQuests.length;
                   return (
                     <div key={g.id} className="bg-white rounded-xl border border-indigo-100 shadow-sm overflow-hidden">
                       <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-indigo-50 transition-colors" onClick={() => setExpandedGroupId(expandedGroupId === g.id ? null : g.id)}>
                         <div className="font-bold text-indigo-800 flex items-center gap-2">
                           {expandedGroupId === g.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                          {g.nom} <span className="text-xs font-normal text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">{groupDocs.length} doc(s)</span>
+                          {g.nom}
+                          <span className="text-xs font-normal text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">{groupDocs.length} doc(s)</span>
+                          {groupQuests.length > 0 && <span className="text-xs font-normal text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">{groupQuests.length} questionnaire(s)</span>}
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); handleDeleteGroup(g.id); }} className="text-gray-400 hover:text-red-500 transition-colors p-1">
                           <Trash2 size={16} />
                         </button>
                       </div>
                       {expandedGroupId === g.id && (
-                        <div className="p-3 bg-indigo-50/50 border-t border-indigo-100">
-                          {groupDocs.length > 0 ? (
-                            <ul className="space-y-2">
+                        <div className="p-3 bg-indigo-50/50 border-t border-indigo-100 space-y-2">
+                          {totalItems === 0 && <p className="text-xs text-gray-500 italic">Aucun élément dans ce groupe.</p>}
+                          {groupDocs.length > 0 && (
+                            <ul className="space-y-1.5">
                               {groupDocs.map(d => (
                                 <li key={d.id} className="text-sm text-gray-700 flex items-center gap-2">
                                   <FileText size={14} className="text-indigo-400" />
@@ -5560,8 +5565,17 @@ const DocumentsView = ({
                                 </li>
                               ))}
                             </ul>
-                          ) : (
-                            <p className="text-xs text-gray-500 italic">Aucun document dans ce groupe.</p>
+                          )}
+                          {groupQuests.length > 0 && (
+                            <ul className="space-y-1.5">
+                              {groupQuests.map(q => (
+                                <li key={q.id} className="text-sm text-gray-700 flex items-center gap-2">
+                                  <span className="text-amber-500">📝</span>
+                                  {q.titre}
+                                  <span className="text-[10px] text-amber-600 font-bold uppercase bg-amber-50 px-1.5 py-0.5 rounded">Questionnaire</span>
+                                </li>
+                              ))}
+                            </ul>
                           )}
                         </div>
                       )}
@@ -5635,7 +5649,118 @@ const DocumentsView = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* ── Section Questionnaires ── */}
+          <div className="mb-8 p-5 bg-violet-50 rounded-2xl border border-violet-100">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires</h3>
+              <button
+                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); } }}
+                className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
+              >
+                <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
+              </button>
+            </div>
+
+            {showQBuilder && (
+              <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
+                  <input type="text" placeholder="Ex : Questionnaire de satisfaction"
+                    value={qName} onChange={e => setQName(e.target.value)}
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
+                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                  </div>
+                  {qQuestions.length === 0 && (
+                    <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
+                    </div>
+                  )}
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {qQuestions.map((q, qi) => (
+                      <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                        </div>
+                        <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
+                          className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
+                        <div className="flex gap-1.5">
+                          {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
+                            <button key={val} type="button" onClick={() => qUpdateQuestion(q.id, 'type', val)}
+                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                          ))}
+                        </div>
+                        {(q.type === 'single' || q.type === 'multiple') && (
+                          <div className="space-y-1">
+                            {q.options.map((opt, oi) => (
+                              <div key={oi} className="flex items-center gap-2">
+                                <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                                <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
+                                  className="flex-1 p-1.5 bg-white border border-violet-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400" />
+                                {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0}
+                  className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
+                  {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
+                </button>
+              </div>
+            )}
+
+            {/* Grille des questionnaires */}
+            {questionnaireTemplates.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {questionnaireTemplates.map(q => {
+                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                  const nbQ = (qMeta.questions || []).length;
+                  const currentGroup = documentGroups.find(g => g.id === q.document_group_id);
+                  return (
+                    <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">📝</span>
+                          <div>
+                            <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
+                            <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
+                          <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
+                        </div>
+                      </div>
+                      <select className="w-full text-xs p-2 rounded-lg border border-violet-100 bg-violet-50/50 text-gray-600 cursor-pointer hover:border-violet-300 transition-colors outline-none"
+                        value={q.document_group_id || ''}
+                        onChange={e => handleQSetGroup(q.id, e.target.value || null)}>
+                        <option value="">— Aucun groupe —</option>
+                        {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
+                      </select>
+                      {currentGroup && <p className="text-[10px] text-violet-600 font-bold mt-1.5">📁 {currentGroup.nom}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : !showQBuilder && (
+              <div className="py-8 text-center bg-white rounded-2xl border border-dashed border-violet-200">
+                <p className="text-2xl mb-1">📝</p>
+                <p className="text-gray-400 text-sm">Aucun questionnaire créé.</p>
+                <p className="text-gray-300 text-xs mt-0.5">Cliquez sur "Nouveau questionnaire" pour commencer.</p>
+              </div>
+            )}
+          </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {documents.filter(d => !d.user_id && !d.assigned_formateur_id).map((doc) => {
               const classif = typeof doc.metadata === 'object' && doc.metadata ? doc.metadata.classification : 'telechargeable';
               const dest = doc.visible_formateur ? 'formateur' : 'client';
@@ -7230,6 +7355,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [conservationTargetDoc, setConservationTargetDoc] = React.useState(null);
   const [questionnaireResponses, setQuestionnaireResponses] = React.useState([]);
   const [activeQuestionnaire, setActiveQuestionnaire] = React.useState(null);
+  const [groupQuestionnaires, setGroupQuestionnaires] = React.useState([]);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -7282,6 +7408,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               setGroupNames(nameMap);
               console.log('[ClientDocumentsView] noms groupes résolus:', nameMap);
             }
+            // Charger les questionnaires liés à ces groupes (templates module_id IS NULL)
+            const { data: questData } = await supabase
+              .from('module_step_resources')
+              .select('id, titre, metadata, document_group_id')
+              .eq('type', 'questionnaire')
+              .is('module_id', null)
+              .in('document_group_id', groupIds);
+            if (questData) setGroupQuestionnaires(questData);
           }
         }
       } catch (e) {
@@ -7532,6 +7666,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           (d.group_ids && d.group_ids.includes(resource.document_group_id))
         )
       : [];
+    // Questionnaires liés à ce groupe (templates)
+    const groupQuestItems = resource.document_group_id
+      ? groupQuestionnaires.filter(q => q.document_group_id === resource.document_group_id)
+      : [];
     const isExpanded = expandedGroupId === resource.id;
     // Priorité : nom depuis document_groups > titre si non générique > fallback
     const groupName = groupNames[resource.document_group_id]
@@ -7550,7 +7688,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             <div className="text-left">
               <p className="font-bold text-gray-900 text-sm">{groupName}</p>
               <p className="text-[10px] text-gray-500 uppercase tracking-wider">
-                {groupDocs.length} document{groupDocs.length !== 1 ? 's' : ''} · Groupe
+                {groupDocs.length} document{groupDocs.length !== 1 ? 's' : ''}{groupQuestItems.length > 0 ? ` · ${groupQuestItems.length} questionnaire${groupQuestItems.length > 1 ? 's' : ''}` : ''} · Groupe
               </p>
             </div>
           </div>
@@ -7562,8 +7700,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         {/* Contenu dépliable */}
         {isExpanded && (
           <div className="border-t border-indigo-50">
-            {groupDocs.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-5 italic">Aucun document dans ce groupe.</p>
+            {groupDocs.length === 0 && groupQuestItems.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-5 italic">Aucun élément dans ce groupe.</p>
             ) : (
               <div className="divide-y divide-gray-50">
                 {groupDocs.map(doc => {
@@ -7605,6 +7743,30 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                             onClick={() => setViewingResource({ id: doc.id, titre: doc.nom, file_url: fileUrl })}
                             className="px-3 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs hover:bg-gray-50 transition-colors"
                           >Consulter</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Questionnaires du groupe */}
+                {groupQuestItems.map(q => {
+                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                  const nbQ = (qMeta.questions || []).length;
+                  const isQCompleted = questionnaireResponses.some(r => r.questionnaire_id === q.id);
+                  return (
+                    <div key={q.id} className="px-4 py-3 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-base shrink-0">📝</span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{q.titre}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · Questionnaire</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isQCompleted ? (
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Complété</span>
+                        ) : (
+                          <button onClick={() => setActiveQuestionnaire(q)} className="px-3 py-1.5 bg-amber-500 text-white font-bold rounded-lg text-xs hover:bg-amber-600 transition-colors shadow-sm">Remplir</button>
                         )}
                       </div>
                     </div>
