@@ -1315,6 +1315,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
   const [isUploading, setIsUploading] = useState(false);
   const [instructions, setInstructions] = useState('');
   const [destination, setDestination] = useState('client');
+  const [questions, setQuestions] = useState([]);
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -1330,6 +1331,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
       setIsUploading(false);
       setInstructions('');
       setDestination('client');
+      setQuestions([]);
     }
   }, [isOpen]);
 
@@ -1366,6 +1368,13 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
     }
   };
 
+  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
+  const removeQuestion = (id) => setQuestions(prev => prev.filter(q => q.id !== id));
+  const updateQuestion = (id, field, value) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
+  const addOption = (qId) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
+  const updateOption = (qId, idx, value) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === idx ? value : o) } : q));
+  const removeOption = (qId, idx) => setQuestions(prev => prev.map(q => q.id === qId && q.options.length > 1 ? { ...q, options: q.options.filter((_, i) => i !== idx) } : q));
+
   if (!isOpen) return null;
 
   return (
@@ -1380,8 +1389,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
         </div>
 
         <div className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
-          <div className="grid grid-cols-3 gap-3">
-            {['signature', 'document', 'exercice'].map(t => (
+          <div className="grid grid-cols-2 gap-3">
+            {['signature', 'document', 'exercice', 'questionnaire'].map(t => (
               <button
                 key={t}
                 onClick={() => {
@@ -1392,7 +1401,11 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                     setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'signature' });
                   } else if (t === 'exercice') {
                     setTitle('');
-                    setMetadata({ documentType: 'info' }); // Exercises are info/work by default
+                    setMetadata({ documentType: 'info' });
+                  } else if (t === 'questionnaire') {
+                    setTitle('');
+                    setMetadata({ documentType: 'questionnaire' });
+                    if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
                   } else {
                     setTitle('');
                     setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'info' });
@@ -1400,7 +1413,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                 }}
                 className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${type === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-100 bg-gray-50 text-gray-400 hover:border-indigo-200'}`}
               >
-                <span className="text-2xl">{t === 'signature' ? '✍️' : t === 'document' ? '📄' : '⚙️'}</span>
+                <span className="text-2xl">{t === 'signature' ? '✍️' : t === 'document' ? '📄' : t === 'questionnaire' ? '📝' : '⚙️'}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest">{t}</span>
               </button>
             ))}
@@ -1410,7 +1423,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2 tracking-widest">Libellé de l'activité</label>
             <input
               type="text"
-              placeholder={type === 'signature' ? 'Émargement de présence' : type === 'exercice' ? 'Nom de l\'exercice' : 'Titre du document'}
+              placeholder={type === 'signature' ? 'Émargement de présence' : type === 'exercice' ? 'Nom de l\'exercice' : type === 'questionnaire' ? 'Titre du questionnaire' : 'Titre du document'}
               value={title}
               onChange={e => setTitle(e.target.value)}
               className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium transition-all"
@@ -1430,7 +1443,59 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
             </div>
           )}
 
-          {type !== 'signature' && (
+          {type === 'questionnaire' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Questions ({questions.length})</label>
+                <button type="button" onClick={addQuestion} className="flex items-center gap-1 text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase tracking-wider">+ Ajouter une question</button>
+              </div>
+              {questions.length === 0 && (
+                <div className="py-6 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                  <p className="text-gray-400 text-xs">Cliquez sur "+ Ajouter une question" pour commencer</p>
+                </div>
+              )}
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                {questions.map((q, qi) => (
+                  <div key={q.id} className="bg-indigo-50 rounded-2xl p-4 space-y-3 border border-indigo-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">Q{qi + 1}</span>
+                      <button type="button" onClick={() => removeQuestion(q.id)} className="w-6 h-6 rounded-lg bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100 transition-colors">✕</button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Texte de la question..."
+                      value={q.text}
+                      onChange={e => updateQuestion(q.id, 'text', e.target.value)}
+                      className="w-full p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm font-medium"
+                    />
+                    <div className="flex gap-1.5">
+                      {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
+                        <button key={val} type="button" onClick={() => updateQuestion(q.id, 'type', val)}
+                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
+                      ))}
+                    </div>
+                    {(q.type === 'single' || q.type === 'multiple') && (
+                      <div className="space-y-1.5">
+                        {q.options.map((opt, oi) => (
+                          <div key={oi} className="flex items-center gap-2">
+                            <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                            <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
+                              className="flex-1 p-2 bg-white border border-indigo-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400" />
+                            {q.options.length > 1 && (
+                              <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
+                            )}
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => addOption(q.id)} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-bold mt-1">+ Option</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {type !== 'signature' && type !== 'questionnaire' && (
             <div className="space-y-4 animate-slide-up">
               <div className="space-y-3">
                 {/* Modélothèque dropdown */}
@@ -1515,10 +1580,11 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                onSave({ type, title, metadata: { ...metadata, destination }, resourceId: selectedResourceId, fileUrl: selectedResourceId.includes('/') ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
+                const questionsMeta = type === 'questionnaire' ? { questions } : {};
+                onSave({ type, title, metadata: { ...metadata, destination, ...questionsMeta }, resourceId: selectedResourceId, fileUrl: (selectedResourceId && selectedResourceId.includes('/')) ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
                 onClose();
               }}
-              disabled={!title.trim() || isUploading || (type !== 'signature' && !selectedResourceId)}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0)}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
               {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
@@ -2278,6 +2344,8 @@ const ClientDetailView = ({
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
+  const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
+  const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -2320,6 +2388,13 @@ const ClientDetailView = ({
       setIsLoadingAssigned(false);
     };
     fetchAssignedDocs();
+    // Charger questionnaires du module + réponses du client
+    if (client.module_id) {
+      supabase.from('module_step_resources').select('*').eq('module_id', client.module_id).eq('type', 'questionnaire')
+        .then(({ data }) => { if (data) setClientQuestionnaireResources(data); });
+    }
+    supabase.from('questionnaire_responses').select('*').eq('client_id', client.id)
+      .then(({ data }) => { if (data) setClientQuestionnaireResponses(data); });
   }, [client.id, client.module_id, supabase]);
 
   const handleRemoveAssignedDoc = async (docId) => {
@@ -2467,6 +2542,7 @@ const ClientDetailView = ({
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
         <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
+        <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{clientQuestionnaireResources.length > 0 ? ` (${clientQuestionnaireResources.length})` : ''}</button>
       </div>
 
       {activeTab === 'infos' && (
@@ -2753,6 +2829,76 @@ const ClientDetailView = ({
           )}
         </div>
       )}
+
+      {activeTab === 'questionnaires' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires du parcours</h3>
+            <span className="text-xs text-gray-400">{clientQuestionnaireResources.length} questionnaire{clientQuestionnaireResources.length > 1 ? 's' : ''} dans le module</span>
+          </div>
+          {clientQuestionnaireResources.length === 0 ? (
+            <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+              <p className="text-2xl mb-2">📝</p>
+              <p className="text-gray-400 text-sm">Aucun questionnaire dans ce module.</p>
+              <p className="text-gray-300 text-xs mt-1">Ajoutez des questionnaires depuis l'éditeur de module.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {clientQuestionnaireResources.map(qResource => {
+                const meta = (() => { try { return typeof qResource.metadata === 'string' ? JSON.parse(qResource.metadata) : (qResource.metadata || {}); } catch { return {}; } })();
+                const questions = meta.questions || [];
+                const response = clientQuestionnaireResponses.find(r => r.questionnaire_id === qResource.id);
+                return (
+                  <div key={qResource.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
+                    <div className="p-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center text-lg shrink-0">📝</div>
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
+                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''}</p>
+                        </div>
+                      </div>
+                      {response ? (
+                        <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                      )}
+                    </div>
+                    {response && response.responses && (
+                      <div className="border-t border-gray-50 p-4 bg-gray-50/50 space-y-3">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Réponses</p>
+                        {questions.map((q, qi) => {
+                          const answer = response.responses[q.id];
+                          const hasAnswer = answer !== undefined && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
+                          return (
+                            <div key={q.id} className="space-y-1">
+                              <p className="text-xs font-bold text-gray-700">{qi + 1}. {q.text}</p>
+                              {hasAnswer ? (
+                                <div className="bg-white rounded-lg px-3 py-2 border border-gray-100">
+                                  {Array.isArray(answer) ? (
+                                    <ul className="space-y-0.5">
+                                      {answer.map((a, i) => <li key={i} className="text-xs text-gray-700 flex items-center gap-1"><span className="text-violet-500">✓</span>{a}</li>)}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-xs text-gray-700">{answer}</p>
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-gray-400 italic px-3">—</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
 
       {activeTab === 'seances' && (
         <div className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm">
@@ -4004,7 +4150,7 @@ const IngenierieView = ({
                                 <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
                                   <div className="flex items-center gap-3">
                                     <span className="text-gray-400">
-                                      {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : '⚙️'}
+                                      {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : res.type === 'questionnaire' ? '📝' : '⚙️'}
                                     </span>
                                     <div className="flex flex-col flex-1">
                                       {editingId === res.id ? (
@@ -6969,6 +7115,109 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
 // Lit directement module_step_resources (lecture seule) filtré par le module_id
 // du client connecté. Aucune écriture sur les templates. Les signatures sont
 // stockées dans la table `documents` avec user_id = currentUserId uniquement.
+
+// ─── Composant Modal : Remplir un questionnaire (vue client) ─────────────────
+const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
+  const meta = React.useMemo(() => {
+    try { return typeof questionnaire.metadata === 'string' ? JSON.parse(questionnaire.metadata) : (questionnaire.metadata || {}); }
+    catch { return {}; }
+  }, [questionnaire]);
+  const questions = meta.questions || [];
+  const [answers, setAnswers] = React.useState({});
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
+  const toggleMultiple = (qId, option) => {
+    setAnswers(prev => {
+      const current = prev[qId] || [];
+      return { ...prev, [qId]: current.includes(option) ? current.filter(o => o !== option) : [...current, option] };
+    });
+  };
+
+  const isComplete = questions.every(q => {
+    if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
+    if (q.type === 'single') return !!answers[q.id];
+    if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
+    return true;
+  });
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    await onSubmit(answers);
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+      <div className="bg-white rounded-[32px] w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="bg-violet-600 p-6 text-white relative shrink-0">
+          <h2 className="text-xl font-black flex items-center gap-2">📝 {questionnaire.titre}</h2>
+          <p className="text-violet-200 text-sm mt-1">{questions.length} question{questions.length > 1 ? 's' : ''} à compléter</p>
+          <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+        </div>
+        {/* Questions */}
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {questions.map((q, qi) => (
+            <div key={q.id} className="space-y-3">
+              <p className="font-bold text-gray-900 text-sm leading-relaxed">
+                <span className="text-violet-500 font-black mr-1">{qi + 1}.</span>
+                {q.text || <span className="text-gray-400 italic">Question</span>}
+              </p>
+              {q.type === 'text' && (
+                <textarea
+                  placeholder="Votre réponse..."
+                  value={answers[q.id] || ''}
+                  onChange={e => setAnswer(q.id, e.target.value)}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm resize-none outline-none focus:ring-2 focus:ring-violet-400 transition-all"
+                  rows={3}
+                />
+              )}
+              {q.type === 'single' && (
+                <div className="space-y-2">
+                  {(q.options || []).map((opt, oi) => (
+                    <label key={oi} onClick={() => setAnswer(q.id, opt)}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${answers[q.id] === opt ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${answers[q.id] === opt ? 'border-violet-600' : 'border-gray-300'}`}>
+                        {answers[q.id] === opt && <div className="w-2 h-2 bg-violet-600 rounded-full"></div>}
+                      </div>
+                      <span className="text-sm text-gray-700 select-none">{opt}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {q.type === 'multiple' && (
+                <div className="space-y-2">
+                  {(q.options || []).map((opt, oi) => {
+                    const checked = (answers[q.id] || []).includes(opt);
+                    return (
+                      <label key={oi} onClick={() => toggleMultiple(q.id, opt)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${checked ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-violet-600 bg-violet-600' : 'border-gray-300'}`}>
+                          {checked && <span className="text-white text-[8px] font-black leading-none">✓</span>}
+                        </div>
+                        <span className="text-sm text-gray-700 select-none">{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {/* Footer */}
+        <div className="p-6 border-t border-gray-100 shrink-0">
+          <button onClick={handleSubmit} disabled={!isComplete || submitting}
+            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+            {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
+          </button>
+          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions pour soumettre</p>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -6979,9 +7228,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [groupNames, setGroupNames] = React.useState({}); // { groupId: nom }
   const [isConservationModalOpen, setIsConservationModalOpen] = React.useState(false);
   const [conservationTargetDoc, setConservationTargetDoc] = React.useState(null);
+  const [questionnaireResponses, setQuestionnaireResponses] = React.useState([]);
+  const [activeQuestionnaire, setActiveQuestionnaire] = React.useState(null);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
+
+  // Charger les réponses questionnaire du client
+  React.useEffect(() => {
+    if (!currentUserId) return;
+    supabase.from('questionnaire_responses').select('*').eq('client_id', currentUserId)
+      .then(({ data }) => { if (data) setQuestionnaireResponses(data); });
+  }, [currentUserId, supabase]);
   const moduleId = currentClient?.module_id;
 
   React.useEffect(() => {
@@ -7360,10 +7618,36 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     );
   };
 
+  // ─── Rendu d'une carte questionnaire (client) ───
+  const renderQuestionnaireCard = (resource) => {
+    const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
+    const nbQuestions = (meta.questions || []).length;
+    const isCompleted = questionnaireResponses.some(r => r.questionnaire_id === resource.id);
+    return (
+      <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-amber-200 transition-colors">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-amber-50 text-amber-600 flex items-center justify-center rounded-xl shrink-0 text-xl">📝</div>
+          <div>
+            <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {isCompleted ? (
+            <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété</span>
+          ) : (
+            <button onClick={() => setActiveQuestionnaire(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Remplir</button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // ─── Rendu d'une carte de ressource (source module_step_resources) ───
   const renderResourceCard = (resource) => {
-    // Déléguer les groupes à renderGroupCard
+    // Déléguer les groupes et questionnaires
     if (resource.type === 'document_group') return renderGroupCard(resource);
+    if (resource.type === 'questionnaire') return renderQuestionnaireCard(resource);
 
     const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{')
       ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
@@ -7454,6 +7738,25 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
+      {activeQuestionnaire && (
+        <QuestionnaireFillerModal
+          questionnaire={activeQuestionnaire}
+          onClose={() => setActiveQuestionnaire(null)}
+          onSubmit={async (answers) => {
+            const { error } = await supabase.from('questionnaire_responses').insert([{
+              questionnaire_id: activeQuestionnaire.id,
+              client_id: currentUserId,
+              responses: answers,
+              completed_at: new Date().toISOString()
+            }]);
+            if (error) { toast.error('Erreur lors de l\'envoi : ' + error.message); return; }
+            const { data } = await supabase.from('questionnaire_responses').select('*').eq('client_id', currentUserId);
+            if (data) setQuestionnaireResponses(data);
+            setActiveQuestionnaire(null);
+            toast.success('✅ Questionnaire envoyé !');
+          }}
+        />
+      )}
       <div>
         <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Documents</h1>
         <p className="text-gray-500 text-lg mt-1">Documents administratifs de votre parcours d'accompagnement.</p>
