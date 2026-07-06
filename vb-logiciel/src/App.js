@@ -5307,6 +5307,7 @@ const DocumentsView = ({
   const [qName, setQName] = React.useState('');
   const [qQuestions, setQQuestions] = React.useState([]);
   const [editingQId, setEditingQId] = React.useState(null);
+  const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
 
   const fetchQTemplates = React.useCallback(async () => {
     try {
@@ -5831,26 +5832,34 @@ const DocumentsView = ({
                               <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
                             </div>
                           </div>
-                          <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                            <p className="text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1">Groupes</p>
-                            {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
-                            {documentGroups.map(g => {
-                              const checked = qGroupIds.includes(g.id);
-                              return (
-                                <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
-                                  <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
-                                    onChange={() => {
-                                      const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
-                                      handleQSetGroups(q.id, next, qMeta);
-                                    }} />
-                                  <span className="text-xs text-gray-700">{g.nom}</span>
-                                  {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
-                                </label>
-                              );
-                            })}
-                          </div>
-                          {qGroupIds.length > 0 && (
-                            <p className="text-[10px] text-violet-600 font-bold mt-2">📁 {qGroupIds.length} groupe{qGroupIds.length > 1 ? 's' : ''}</p>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
+                            className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
+                          >
+                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
+                              📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
+                            </span>
+                            <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
+                          </button>
+                          {expandedQGroupId === q.id && (
+                            <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
+                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
+                              {documentGroups.map(g => {
+                                const checked = qGroupIds.includes(g.id);
+                                return (
+                                  <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
+                                    <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
+                                      onChange={() => {
+                                        const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
+                                        handleQSetGroups(q.id, next, qMeta);
+                                      }} />
+                                    <span className="text-xs text-gray-700">{g.nom}</span>
+                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
+                                  </label>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
                   );
