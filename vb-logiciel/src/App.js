@@ -5309,14 +5309,19 @@ const DocumentsView = ({
   const [editingQId, setEditingQId] = React.useState(null);
 
   const fetchQTemplates = React.useCallback(async () => {
-    const { data, error } = await supabase
-      .from('module_step_resources')
-      .select('id, titre, metadata, document_group_id, module_id')
-      .eq('type', 'questionnaire')
-      .is('module_id', null)
-      .order('titre', { ascending: true });
-    if (!error && data) setQuestionnaireTemplates(data);
-  }, [supabase]);
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('module_step_resources')
+        .select('id, titre, metadata, document_group_id, module_id')
+        .eq('type', 'questionnaire')
+        .order('titre', { ascending: true });
+      if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
+      // Garder uniquement les templates (module_id null = pas assigné à un module spécifique)
+      const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
+      console.log('[fetchQTemplates] total:', data?.length, '| templates:', templates.length);
+      setQuestionnaireTemplates(templates);
+    } catch(e) { console.error('[fetchQTemplates] exception:', e); }
+  }, []);
 
   React.useEffect(() => {
     if (isAdmin) fetchQTemplates();
@@ -5333,22 +5338,25 @@ const DocumentsView = ({
 
   const handleSaveQTemplate = async () => {
     if (!qName.trim() || qQuestions.length === 0) return;
-    const payload = {
-      titre: qName.trim(),
-      type: 'questionnaire',
-      module_id: null,
-      metadata: JSON.stringify({ questions: qQuestions }),
-    };
-    let error;
-    if (editingQId) {
-      ({ error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId));
-    } else {
-      ({ error } = await supabase.from('module_step_resources').insert([payload]));
-    }
-    if (error) { toast.error('Erreur : ' + error.message); return; }
-    toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
-    setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
-    fetchQTemplates();
+    try {
+      const payload = {
+        titre: qName.trim(),
+        type: 'questionnaire',
+        metadata: JSON.stringify({ questions: qQuestions }),
+        module_id: null,
+      };
+      if (editingQId) {
+        const { error } = await supabaseAdmin.from('module_step_resources').update(payload).eq('id', editingQId);
+        if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
+      } else {
+        const { data: inserted, error } = await supabaseAdmin.from('module_step_resources').insert([payload]).select();
+        if (error) { toast.error('Erreur création : ' + error.message); return; }
+        console.log('[handleSaveQTemplate] inserted:', inserted);
+      }
+      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
+      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+      await fetchQTemplates();
+    } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
   };
 
   const handleEditQTemplate = (q) => {
@@ -5362,12 +5370,12 @@ const DocumentsView = ({
 
   const handleDeleteQTemplate = async (id) => {
     if (!window.confirm('Supprimer ce questionnaire ?')) return;
-    const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
+    const { error } = await supabaseAdmin.from('module_step_resources').delete().eq('id', id);
     if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
   };
 
   const handleQSetGroup = async (qId, groupId) => {
-    const { error } = await supabase.from('module_step_resources').update({ document_group_id: groupId }).eq('id', qId);
+    const { error } = await supabaseAdmin.from('module_step_resources').update({ document_group_id: groupId }).eq('id', qId);
     if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
   };
 
