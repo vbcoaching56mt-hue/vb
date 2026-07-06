@@ -5815,11 +5815,8 @@ const DocumentsView = ({
                 {questionnaireTemplates.map(q => {
                   const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
                   const nbQ = (qMeta.questions || []).length;
-                  const currentGroup = documentGroups.find(g => g.id === q.document_group_id);
+                  const qGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
                   return (
-                    {(() => {
-                      const qGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
-                      return (
                         <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
@@ -5856,8 +5853,6 @@ const DocumentsView = ({
                             <p className="text-[10px] text-violet-600 font-bold mt-2">📁 {qGroupIds.length} groupe{qGroupIds.length > 1 ? 's' : ''}</p>
                           )}
                         </div>
-                      );
-                    })()}
                   );
                 })}
               </div>
