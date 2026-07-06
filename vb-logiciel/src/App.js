@@ -5301,6 +5301,76 @@ const DocumentsView = ({
     }
   };
 
+  // ── États Questionnaires (DocumentsView) ────────────────────────────────
+  const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
+  const [showQBuilder, setShowQBuilder] = React.useState(false);
+  const [qName, setQName] = React.useState('');
+  const [qQuestions, setQQuestions] = React.useState([]);
+  const [editingQId, setEditingQId] = React.useState(null);
+
+  const fetchQTemplates = React.useCallback(async () => {
+    const { data, error } = await supabase
+      .from('module_step_resources')
+      .select('id, titre, metadata, document_group_id, module_id')
+      .eq('type', 'questionnaire')
+      .is('module_id', null)
+      .order('titre', { ascending: true });
+    if (!error && data) setQuestionnaireTemplates(data);
+  }, [supabase]);
+
+  React.useEffect(() => {
+    if (isAdmin) fetchQTemplates();
+  }, [isAdmin, fetchQTemplates]);
+
+  const qAddQuestion = () => {
+    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''] }]);
+  };
+  const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
+  const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
+  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
+  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
+
+  const handleSaveQTemplate = async () => {
+    if (!qName.trim() || qQuestions.length === 0) return;
+    const payload = {
+      titre: qName.trim(),
+      type: 'questionnaire',
+      module_id: null,
+      metadata: JSON.stringify({ questions: qQuestions }),
+    };
+    let error;
+    if (editingQId) {
+      ({ error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId));
+    } else {
+      ({ error } = await supabase.from('module_step_resources').insert([payload]));
+    }
+    if (error) { toast.error('Erreur : ' + error.message); return; }
+    toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
+    setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+    fetchQTemplates();
+  };
+
+  const handleEditQTemplate = (q) => {
+    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+    setQName(q.titre || '');
+    setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
+    setEditingQId(q.id);
+    setShowQBuilder(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteQTemplate = async (id) => {
+    if (!window.confirm('Supprimer ce questionnaire ?')) return;
+    const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
+    if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
+  };
+
+  const handleQSetGroup = async (qId, groupId) => {
+    const { error } = await supabase.from('module_step_resources').update({ document_group_id: groupId }).eq('id', qId);
+    if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
+  };
+
   // Group clients by their documents
   const clientsWithDocs = React.useMemo(() => {
     let targetClients = clients;
