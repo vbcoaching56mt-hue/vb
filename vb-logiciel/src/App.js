@@ -9740,17 +9740,39 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
         {/* Couleur principale */}
         <div>
           <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Couleur principale</label>
-          <div className="flex items-center gap-4 flex-wrap">
-            <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)}
-              className="w-14 h-14 rounded-xl border-2 border-gray-200 cursor-pointer p-1" />
-            <div className="flex gap-2 flex-wrap">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {['#7C3AED','#2563EB','#059669','#DC2626','#D97706','#0F172A','#EC4899','#0EA5E9'].map(c => (
                 <button key={c} onClick={() => setBrandColor(c)} title={c}
                   className={`w-9 h-9 rounded-xl border-2 transition-all ${brandColor === c ? 'border-gray-800 scale-110' : 'border-transparent hover:scale-105'}`}
                   style={{background: c}} />
               ))}
             </div>
-            <span className="text-sm font-mono text-gray-500">{brandColor}</span>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <input type="color" value={/^#[0-9A-Fa-f]{6}$/.test(brandColor) ? brandColor : '#7C3AED'}
+                  onChange={e => setBrandColor(e.target.value)}
+                  className="w-12 h-12 rounded-xl border-2 border-gray-200 cursor-pointer p-1 bg-white" title="Ouvrir le sélecteur de couleur" />
+              </div>
+              <div className="flex items-center gap-2 flex-1 max-w-xs bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                <span className="w-5 h-5 rounded-md flex-shrink-0 border border-gray-200" style={{background: /^#[0-9A-Fa-f]{6}$/.test(brandColor) ? brandColor : '#7C3AED'}} />
+                <input
+                  type="text"
+                  value={brandColor}
+                  onChange={e => {
+                    const val = e.target.value.startsWith('#') ? e.target.value : '#' + e.target.value;
+                    setBrandColor(val);
+                  }}
+                  onBlur={e => {
+                    if (!/^#[0-9A-Fa-f]{6}$/.test(brandColor)) setBrandColor('#7C3AED');
+                  }}
+                  maxLength={7}
+                  placeholder="#000000"
+                  className="flex-1 bg-transparent text-sm font-mono text-gray-700 outline-none"
+                />
+              </div>
+              <span className="text-xs text-gray-400">ou saisissez votre code couleur</span>
+            </div>
           </div>
         </div>
 
