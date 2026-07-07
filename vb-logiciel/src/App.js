@@ -9701,7 +9701,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
             <span className="text-white font-bold text-sm">{brandName || 'Nom de votre organisme'}</span>
           </div>
           <div className="bg-gray-50 px-5 py-3 border-t border-gray-100">
-            <p className="text-gray-500 text-xs italic">{brandWelcome || 'Message d'accueil de votre portail client'}</p>
+            <p className="text-gray-500 text-xs italic">{brandWelcome || "Message d’accueil de votre portail client"}</p>
           </div>
         </div>
 
