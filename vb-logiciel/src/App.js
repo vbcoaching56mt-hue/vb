@@ -2031,6 +2031,89 @@ const SignupView = ({ supabase, onComplete }) => {
   );
 };
 
+// ──────────────────────────────────────────────────────────────
+// LegalModal — Mentions légales / CGU / Politique / CGV
+// VB Formation SAS — SkorUp — contact@skorup.fr
+// ──────────────────────────────────────────────────────────────
+const LEGAL_CONTENT = {
+  mentions: {
+    title: 'Mentions légales',
+    sections: [
+      { heading: 'Éditeur de la plateforme', text: 'La plateforme SkorUp est éditée par :\n\nVB Formation — Société par Actions Simplifiée (SAS) au capital de 1 000 €\nSiège social : 2 Rue du Général Baron Fabre, 56000 Vannes\nSIRET : 989 885 199 00012 — RCS Vannes\nN° TVA intracommunautaire : FR27989885199\nEmail : contact@skorup.fr\nSite web : www.skorup.fr' },
+      { heading: 'Directeur de la publication', text: 'Le directeur de la publication est le représentant légal de VB Formation SAS.' },
+      { heading: 'Hébergement', text: 'Frontend et déploiement : Vercel Inc., 340 Pine Street, Suite 701, San Francisco, CA 94104, États-Unis.\n\nBase de données et stockage : Supabase Inc., infrastructure Amazon Web Services (AWS), région Europe Ouest (eu-west-3).' },
+      { heading: 'Propriété intellectuelle', text: "L'ensemble des contenus présents sur la plateforme SkorUp (textes, graphismes, logos, icônes, images, logiciels) sont protégés par le droit d'auteur et demeurent la propriété exclusive de VB Formation SAS, sauf mention contraire.\n\nToute reproduction, distribution ou utilisation sans autorisation préalable écrite est strictement interdite." },
+      { heading: 'Contact', text: 'Pour toute question relative à la plateforme :\nEmail : contact@skorup.fr\nAdresse : 2 Rue du Général Baron Fabre, 56000 Vannes' },
+    ]
+  },
+  cgu: {
+    title: "Conditions Générales d'Utilisation",
+    sections: [
+      { heading: 'Objet', text: "Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation de la plateforme SkorUp, éditée par VB Formation SAS. En accédant à la plateforme, l'utilisateur accepte sans réserve les présentes conditions." },
+      { heading: 'Description du service', text: "SkorUp est une plateforme SaaS destinée aux organismes de formation professionnelle et à leurs clients (stagiaires). Elle permet la gestion des bilans de compétences, le suivi des séances, la centralisation des documents et la communication entre OFs, formateurs et stagiaires." },
+      { heading: 'Accès au service', text: "L'accès à SkorUp est réservé aux utilisateurs ayant reçu une invitation de leur organisme de formation. Chaque utilisateur est responsable de la confidentialité de ses identifiants. Tout accès effectué avec ses identifiants est réputé effectué par l'utilisateur lui-même." },
+      { heading: "Obligations de l'utilisateur", text: "L'utilisateur s'engage à :\n— Utiliser la plateforme conformément à sa destination et aux présentes CGU\n— Ne pas partager ses identifiants de connexion\n— Ne pas tenter d'accéder aux données d'autres organismes\n— Respecter la confidentialité des informations auxquelles il a accès\n— Signaler toute anomalie ou faille de sécurité à contact@skorup.fr" },
+      { heading: 'Disponibilité du service', text: "VB Formation SAS s'engage à maintenir la plateforme accessible 24h/24 et 7j/7, hors périodes de maintenance programmée. Des interruptions ponctuelles peuvent survenir pour des opérations de maintenance ou des raisons techniques indépendantes de notre volonté." },
+      { heading: 'Responsabilité', text: "VB Formation SAS ne saurait être tenu responsable des dommages directs ou indirects résultant de l'utilisation ou de l'impossibilité d'utiliser la plateforme, d'une perte de données, ou d'une interruption de service due à un cas de force majeure.\n\nChaque organisme de formation est responsable des données qu'il saisit sur la plateforme et de leur conformité avec la réglementation applicable." },
+      { heading: 'Modification des CGU', text: "VB Formation SAS se réserve le droit de modifier les présentes CGU à tout moment. Les utilisateurs seront informés de toute modification substantielle. L'utilisation continue de la plateforme après notification vaut acceptation des nouvelles conditions." },
+      { heading: 'Droit applicable', text: "Les présentes CGU sont soumises au droit français. En cas de litige, et à défaut de résolution amiable, les tribunaux compétents du ressort de la Cour d'Appel de Rennes seront saisis." },
+    ]
+  },
+  politique: {
+    title: 'Politique de Confidentialité',
+    sections: [
+      { heading: 'Responsable du traitement', text: "VB Formation SAS\n2 Rue du Général Baron Fabre, 56000 Vannes\nEmail : contact@skorup.fr\n\nConformément au Règlement (UE) 2016/679 (RGPD) et à la loi Informatique et Libertés, VB Formation SAS s'engage à protéger les données personnelles de ses utilisateurs." },
+      { heading: 'Données collectées', text: "Dans le cadre de l'utilisation de SkorUp, nous collectons :\n— Données d'identification : nom, prénom, adresse email\n— Données professionnelles : poste occupé, organisme de rattachement\n— Données de connexion : logs d'accès, adresse IP\n— Documents de formation : bilans, émargements, questionnaires\n— Signatures électroniques des documents\n\nCes données sont collectées directement auprès des utilisateurs ou transmises par leur organisme de formation." },
+      { heading: 'Finalités du traitement', text: "Les données sont traitées pour :\n— La gestion des comptes utilisateurs et l'authentification\n— Le suivi des parcours de formation et des bilans de compétences\n— La génération et conservation des documents officiels\n— La communication entre organismes, formateurs et stagiaires\n— La sécurité et la prévention des fraudes\n— L'amélioration de la plateforme" },
+      { heading: 'Durée de conservation', text: "— Données de compte : 3 ans après la fin du contrat\n— Documents de bilan de compétences : au maximum 3 ans après la fin du bilan (selon les préférences de l'organisme)\n— Logs de connexion : 12 mois\n\nAu-delà de ces délais, les données sont supprimées ou anonymisées." },
+      { heading: 'Sous-traitants', text: "VB Formation SAS fait appel aux sous-traitants suivants, offrant des garanties RGPD :\n— Vercel Inc. (hébergement frontend, USA — DPA en place)\n— Supabase Inc. (base de données, AWS Europe — eu-west)\n— Resend Inc. (envoi d'emails transactionnels)" },
+      { heading: 'Vos droits', text: "Conformément au RGPD, vous disposez des droits suivants :\n— Droit d'accès à vos données\n— Droit de rectification\n— Droit à l'effacement (droit à l'oubli)\n— Droit à la limitation du traitement\n— Droit à la portabilité\n— Droit d'opposition\n\nPour exercer ces droits : contact@skorup.fr\n\nVous pouvez également déposer une réclamation auprès de la CNIL (www.cnil.fr)." },
+      { heading: 'Cookies', text: "SkorUp utilise uniquement des cookies strictement nécessaires au fonctionnement (authentification, session). Aucun cookie publicitaire ou de traçage tiers n'est utilisé." },
+      { heading: 'Sécurité', text: "VB Formation SAS met en œuvre des mesures techniques et organisationnelles pour protéger vos données : chiffrement HTTPS/TLS, gestion des droits d'accès par rôles, isolation des données par organisme, et suppression de toute clé d'administration côté navigateur." },
+    ]
+  },
+  cgv: {
+    title: 'Conditions Générales de Vente',
+    sections: [
+      { heading: "Champ d'application", text: "Les présentes CGV s'appliquent à tout abonnement souscrit auprès de VB Formation SAS pour l'accès à la plateforme SkorUp. Elles prévalent sur tout autre document du client." },
+      { heading: 'Parties', text: "Vendeur : VB Formation SAS, SIRET 989 885 199 00012, 2 Rue du Général Baron Fabre, 56000 Vannes.\n\nAcheteur : tout organisme de formation professionnelle ou professionnel souscrivant un abonnement SkorUp." },
+      { heading: 'Description du service', text: "SkorUp est une plateforme SaaS de gestion des organismes de formation permettant la gestion des clients et formateurs, le suivi des séances et modules, la gestion documentaire, la messagerie interne, les questionnaires et la personnalisation du portail client." },
+      { heading: 'Tarifs et paiement', text: "Les tarifs applicables sont ceux communiqués par VB Formation SAS sur www.skorup.fr ou par devis. Tous les prix sont exprimés en euros HT, auxquels s'ajoute la TVA au taux en vigueur.\n\nLes conditions tarifaires font l'objet d'un contrat spécifique." },
+      { heading: 'Durée et résiliation', text: "L'abonnement est souscrit pour la durée indiquée au contrat et est renouvelable tacitement.\n\nChaque partie peut résilier en respectant un préavis de 30 jours avant la date de renouvellement, par email à contact@skorup.fr.\n\nEn cas de résiliation, les données sont conservées 30 jours puis supprimées définitivement." },
+      { heading: 'Limitation de responsabilité', text: "La responsabilité de VB Formation SAS est limitée au montant des sommes versées par le client au cours des 12 derniers mois. VB Formation SAS ne saurait être tenu responsable des préjudices indirects résultant de l'utilisation ou de l'indisponibilité du service." },
+      { heading: 'Droit applicable', text: "Les présentes CGV sont régies par le droit français. En cas de litige non résolu à l'amiable, le tribunal compétent du ressort de la Cour d'Appel de Rennes sera saisi." },
+    ]
+  }
+};
+
+const LegalModal = ({ page, onClose }) => {
+  const doc = LEGAL_CONTENT[page];
+  if (!doc) return null;
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[999] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+          <h2 className="text-lg font-extrabold text-gray-900">{doc.title}</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </button>
+        </div>
+        <div className="overflow-y-auto px-6 py-5 space-y-5">
+          {doc.sections.map((s, i) => (
+            <div key={i}>
+              <h3 className="text-xs font-extrabold text-gray-900 mb-1.5 uppercase tracking-wider">{s.heading}</h3>
+              {s.text.split('\n').map((line, j) => (
+                <p key={j} className="text-sm text-gray-600 leading-relaxed">{line || ' '}</p>
+              ))}
+            </div>
+          ))}
+          <p className="text-xs text-gray-400 pt-3 border-t border-gray-100 text-center">VB Formation SAS — contact@skorup.fr — www.skorup.fr — Dernière mise à jour : juillet 2026</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   const [email, setEmail] = useState(() => {
     // Tenter de pré-remplir l'email depuis l'URL (#email=... ou ?email=...)
@@ -2043,6 +2126,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   const [errorMsg, setErrorMsg] = useState('');
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [legalPage, setLegalPage] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -2261,6 +2345,13 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
           <a href="/signup" className="font-bold text-violet-600 hover:text-violet-700">Créer votre espace</a>
         </p>
       </div>
+      {/* Pied de page légal */}
+      <div className="mt-5 flex flex-wrap justify-center gap-x-4 gap-y-1.5">
+        {[['mentions','Mentions légales'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
+          <button key={k} onClick={() => setLegalPage(k)} className="text-xs text-gray-400 hover:text-violet-600 transition-colors underline-offset-2 hover:underline">{label}</button>
+        ))}
+      </div>
+      {legalPage && <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />}
     </div>
   );
 };
