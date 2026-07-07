@@ -2087,12 +2087,12 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
       // Si pas trouvé, chercher dans la table 'clients' (insensible à la casse)
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
-        .select('id')
+        .select('id, organisation_id')
         .ilike('email_contact', userEmail)
         .single();
 
       if (clientData) {
-        handleLogin('client', clientData.id);
+        handleLogin('client', clientData.id, clientData.organisation_id);
         setIsLoading(false);
         return;
       } else {
@@ -2495,7 +2495,7 @@ const ClientDetailView = ({
 
   const handleDeleteSession = async (id) => {
     if (!window.confirm("Supprimer cet élément ?")) return;
-    const { error } = await supabaseAdmin.from('sessions').delete().eq('id', id);
+    const { error } = await supabase.from('sessions').delete().eq('id', id);
     if (error) { toast.error('Erreur suppression : ' + error.message); return; }
     if (fetchSessions) fetchSessions();
   };
@@ -5354,12 +5354,11 @@ const DocumentsView = ({
         organisation_id: currentOrgId,
       };
       if (editingQId) {
-        const { error } = await supabaseAdmin.from('module_step_resources').update(payload).eq('id', editingQId);
+        const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
         if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
       } else {
-        const { data: inserted, error } = await supabaseAdmin.from('module_step_resources').insert([payload]).select();
+        const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
         if (error) { toast.error('Erreur création : ' + error.message); return; }
-        console.log('[handleSaveQTemplate] inserted:', inserted);
       }
       toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
       setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
@@ -5378,14 +5377,14 @@ const DocumentsView = ({
 
   const handleDeleteQTemplate = async (id) => {
     if (!window.confirm('Supprimer ce questionnaire ?')) return;
-    const { error } = await supabaseAdmin.from('module_step_resources').delete().eq('id', id);
+    const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
     if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
   };
 
   const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
     const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
     const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
-    const { error } = await supabaseAdmin.from('module_step_resources').update({
+    const { error } = await supabase.from('module_step_resources').update({
       document_group_id: primaryGroup,
       metadata: JSON.stringify(newMeta),
     }).eq('id', qId);
@@ -7496,7 +7495,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const moduleId = currentClient?.module_id;
 
   React.useEffect(() => {
-    console.log('[ClientDocumentsView] currentUserId:', currentUserId, '| clients total:', clients?.length, '| currentClient trouvé:', !!currentClient, '| moduleId:', moduleId);
     if (!moduleId) { setLoading(false); return; }
     (async () => {
       try {
@@ -7559,7 +7557,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     const myDocs = (documents || []).filter(d =>
       String(d.user_id) === String(currentUserId) && d.visible_client
     );
-    console.log('[ClientDocumentsView] documents prop visible pour ce client:', myDocs.length);
     return myDocs;
   }, [documents, currentUserId]);
 
@@ -9611,35 +9608,54 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const handleBrandLogoUpload = async (file) => {
     if (!file) return;
     setIsBrandUploading(true);
-    const ext = file.name.split('.').pop();
-    const path = `brand/logo.${ext}`;
-    const { error } = await supabaseAdmin.storage.from('logos').upload(path, file, { upsert: true });
-    if (error) { toast.error("Erreur upload logo : " + error.message); setIsBrandUploading(false); return; }
-    const { data } = supabaseAdmin.storage.from('logos').getPublicUrl(path);
-    setBrandLogoUrl(data.publicUrl);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('organisation_id', currentOrgId);
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/upload-logo`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+        body: formData
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Erreur upload');
+      setBrandLogoUrl(result.publicUrl);
+      toast.success("Logo uploadé !");
+    } catch (err) {
+      toast.error("Erreur upload logo : " + err.message);
+    }
     setIsBrandUploading(false);
-    toast.success("Logo uploadé !");
   };
 
   const handleBrandSave = async () => {
     setIsBrandSaving(true);
-    const payload = { org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl, updated_at: new Date().toISOString() };
     const orgId = currentOrgId;
     if (!orgId) { toast.error("Organisation introuvable."); setIsBrandSaving(false); return; }
-    const payloadWithOrg = { ...payload, organisation_id: orgId };
-    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').eq('organisation_id', orgId).maybeSingle();
-    let error;
-    if (existing?.id) {
-      ({ error } = await supabaseAdmin.from('organisation_settings').update(payloadWithOrg).eq('id', existing.id));
-    } else {
-      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payloadWithOrg]));
-    }
-    if (error) { toast.error("Erreur : " + error.message); }
-    else {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/save-brand-settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          organisation_id: orgId,
+          org_name: brandName,
+          primary_color: brandColor,
+          welcome_message: brandWelcome,
+          logo_url: brandLogoUrl
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Erreur sauvegarde');
       document.documentElement.style.setProperty('--brand-primary', brandColor);
       document.documentElement.style.setProperty('--brand-primary-dark', brandColor + 'CC');
       toast.success("Personnalisation sauvegardée !");
       if (onBrandSaved) onBrandSaved({ org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl });
+    } catch (err) {
+      toast.error("Erreur : " + err.message);
     }
     setIsBrandSaving(false);
   };
@@ -11175,16 +11191,15 @@ export default function App() {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user?.email) {
-        console.log('[App] Session trouvée pour:', session.user.email);
-
+    
         // Utilise supabaseAdmin pour bypasser RLS et toujours trouver le profil
         const { data: userData } = await supabaseAdmin.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
         if (userData && userData.role) {
           handleLogin(userData.role, userData.id, userData.organisation_id);
         } else {
-          const { data: clientData } = await supabaseAdmin.from('clients').select('id').ilike('email_contact', session.user.email).maybeSingle();
+          const { data: clientData } = await supabaseAdmin.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
           if (clientData) {
-            handleLogin('client', clientData.id);
+            handleLogin('client', clientData.id, clientData.organisation_id);
           } else {
             // Session active mais aucun profil DB trouvé
             const metaRole = session.user?.user_metadata?.role;
@@ -11284,13 +11299,19 @@ export default function App() {
     const { data: mData, error: mErr } = await mQuery;
     if (!mErr && mData) setModules(mData);
 
-    const { data: mdData, error: mdErr } = await supabase.from('module_documents').select('*');
+    let mdQuery = supabase.from('module_documents').select('*');
+    if (currentOrgId) mdQuery = mdQuery.eq('organisation_id', currentOrgId);
+    const { data: mdData, error: mdErr } = await mdQuery;
     if (!mdErr && mdData) setModuleDocuments(mdData);
 
-    const { data: mstData, error: mstErr } = await supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
+    let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
+    if (currentOrgId) mstQuery = mstQuery.eq('organisation_id', currentOrgId);
+    const { data: mstData, error: mstErr } = await mstQuery;
     if (!mstErr && mstData) setModuleSessionTemplates(mstData);
 
-    const { data: msrData, error: msrErr } = await supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
+    let msrQuery = supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
+    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+    const { data: msrData, error: msrErr } = await msrQuery;
     if (!msrErr && msrData) setModuleStepResources(msrData);
   };
 
@@ -11348,12 +11369,15 @@ export default function App() {
 
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
-    const { data: docsData, error } = await supabase.from('documents').select('*');
-    console.log('[fetchDocuments] Récupération de TOUS les documents de la DB:', docsData, error);
+    let docsQuery = supabase.from('documents').select('*');
+    if (currentOrgId) docsQuery = docsQuery.eq('organisation_id', currentOrgId);
+    const { data: docsData, error } = await docsQuery;
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
-    const { data: modsData, error: modErr } = await supabase.from('module_step_resources').select('*').eq('type', 'document');
+    let msrQuery = supabase.from('module_step_resources').select('*').eq('type', 'document');
+    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+    const { data: modsData, error: modErr } = await msrQuery;
     if (!modErr && modsData) {
       console.log(`[fetchDocuments] ${modsData.length} modèles documents récupérés.`);
       const templates = {};
@@ -11396,7 +11420,10 @@ export default function App() {
   };
 
   const fetchClientSkills = async () => {
-    const { data, error } = await supabase.from('client_skills').select('*');
+    // Filtre via la relation client → organisation (RLS + filtre explicite)
+    let csQuery = supabase.from('client_skills').select('*, clients!inner(organisation_id)');
+    if (currentOrgId) csQuery = csQuery.eq('clients.organisation_id', currentOrgId);
+    const { data, error } = await csQuery;
     if (!error && data) setClientSkills(data);
   };
 
@@ -11555,16 +11582,18 @@ export default function App() {
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
     try {
-      // Utiliser supabaseAdmin pour contourner RLS sur toutes les opérations de suppression
-      // 1. Supprimer les séances
-      await supabaseAdmin.from('sessions').delete().eq('client_id', clientId);
-      // 2. Supprimer les documents
-      await supabaseAdmin.from('documents').delete().eq('user_id', clientId);
-      // 3. Supprimer le client (DOIT être en dernier avant Auth)
-      const { error: deleteErr } = await supabaseAdmin.from('clients').delete().eq('id', clientId);
-      if (deleteErr) throw new Error("Erreur suppression client table : " + deleteErr.message);
-      // 4. Supprimer le compte Auth (si possible)
-      await supabaseAdmin.auth.admin.deleteUser(clientId);
+      // Appel sécurisé via Edge Function (service_role côté serveur uniquement)
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ userId: clientId, userType: 'client' })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Erreur suppression');
 
       toast.success("Client et toutes ses données supprimés avec succès.");
       setExpandedClientId(null);
@@ -11585,8 +11614,16 @@ export default function App() {
       await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
       // 2. Supprimer le formateur
       const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId);
-      // 3. Supprimer le compte Auth
-      await supabaseAdmin.auth.admin.deleteUser(formateurId);
+      // 3. Supprimer le compte Auth via Edge Function sécurisée
+      const { data: { session } } = await supabase.auth.getSession();
+      await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ userId: formateurId, userType: 'formateur' })
+      });
 
       if (!error) {
         await fetchUtilisateurs();
@@ -11672,8 +11709,7 @@ export default function App() {
 
     if (classification === 'a_generer') {
       try {
-        console.log(`Génération auto du document ${templateResource.titre} pour le client ${client.id}`);
-        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
+            const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
         if (generatedDoc) docId = generatedDoc.id;
       } catch (e) {
         console.error("Erreur génération automatique :", e);
@@ -11711,8 +11747,7 @@ export default function App() {
 
   const distributeDocumentsForModule = async (client, moduleId) => {
     try {
-      console.log(`[distributeDocuments] Distribution auto pour client ${client.id} / module ${moduleId}`);
-      const { data: resources, error: resErr } = await supabase
+        const { data: resources, error: resErr } = await supabase
         .from('module_step_resources')
         .select('*')
         .eq('module_id', moduleId)
@@ -11743,7 +11778,6 @@ export default function App() {
   };
 
   const handleModuleChange = async (clientId, moduleId) => {
-    console.log('[handleModuleChange] Début. clientId:', clientId, 'moduleId:', moduleId);
     const finalModuleId = moduleId || null;
 
     // 1. Sauvegarde dans Supabase table 'clients'
@@ -11758,14 +11792,12 @@ export default function App() {
       return;
     }
 
-    console.log('[handleModuleChange] Update réussi. Récupération du client pour vérification...');
     const { data: updatedClient, error: fetchErr } = await supabase.from('clients').select('*').eq('id', clientId).single();
     if (fetchErr) {
       console.error("[handleModuleChange] Erreur lors de la récupération du client mis à jour:", fetchErr);
       return;
     }
 
-    console.log('[handleModuleChange] Client mis à jour récupéré:', JSON.stringify(updatedClient, null, 2));
 
     if (updatedClient && finalModuleId) {
       // Mapping pour compatibilité avec generateSessions (nom_complet -> nom)
@@ -11776,8 +11808,7 @@ export default function App() {
         module_id: finalModuleId
       };
 
-      console.log('[handleModuleChange] Déclenchement de generateSessions...');
-      // 3. Déclenchement automatique des sessions (Qualiopi)
+        // 3. Déclenchement automatique des sessions (Qualiopi)
       await generateSessions(compatibleClient);
       
       // 3.5. Distribution automatique des documents
@@ -11826,7 +11857,8 @@ export default function App() {
       module_id: Number(modId),
       nom: newModDocName,
       type_document: newModDocType,
-      url: finalUrl
+      url: finalUrl,
+      organisation_id: currentOrgId
     }]);
 
     if (!error) {
@@ -11842,22 +11874,21 @@ export default function App() {
   };
 
   const createSessionFolder = async (moduleId, title) => {
-    console.log("Tentative d'ajout pour le module (ID converti en Number):", Number(moduleId));
     if (!title.trim()) return;
 
     setIsAddingStep(true);
     const { error } = await supabase.from('module_session_templates').insert([{
       module_id: Number(moduleId),
       titre: title,
-      ordre: moduleSessionTemplates.filter(t => String(t.module_id) === String(moduleId)).length + 1
+      ordre: moduleSessionTemplates.filter(t => String(t.module_id) === String(moduleId)).length + 1,
+      organisation_id: currentOrgId
     }]);
 
     if (error) {
       console.error("Erreur création dossier Supabase:", error);
       toast.error("Erreur lors de la création du dossier : " + error.message);
     } else {
-      console.log("Dossier créé avec succès, lancement du rafraîchissement (fetchModules)");
-      setNewStepTitle('');
+        setNewStepTitle('');
       await fetchModules();
       toast.success("Dossier de séance créé !");
     }
@@ -11982,7 +12013,6 @@ export default function App() {
   const generateSessions = async (client) => {
     // Client ID est systématiquement un UUID (String)
     const finalClientId = client.id;
-    console.log("Tentative de génération pour le client:", finalClientId);
 
     // Module ID est systématiquement un BigInt (Number)
     const finalModuleId = Number(client.module_id);
@@ -12198,17 +12228,14 @@ export default function App() {
    // --- Fonctions utilitaires Archivage ---
   const overlaySignatureOnPdf = async (session, client, role) => {
     try {
-      console.log("[SignatureProof] Début de la génération pour session:", session.id, role);
-      
+        
       const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
       if (!originalRelativePath) {
-        console.log("[SignatureProof] Pas de chemin de document pour apposer la signature.");
-        return null;
+            return null;
       }
 
       // 1. Obtenir une URL de lecture valide (signée si nécessaire) pour le fetch
-      console.log("[SignatureProof] Obtention URL signée pour original:", originalRelativePath);
-      
+        
       // Extraction du bucket/path
       const extractBucketPath = (fullUrl) => {
         if (!fullUrl) return null;
@@ -12313,8 +12340,7 @@ export default function App() {
         .from('signed_documents')
         .getPublicUrl(fileName);
 
-      console.log("[SignatureProof] SUCCÈS - Document généré:", publicUrl);
-      return publicUrl;
+        return publicUrl;
     } catch (err) {
       console.error("[SignatureProof] Erreur globale lors de la superposition:", err);
       return null;
