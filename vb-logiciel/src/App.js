@@ -8269,41 +8269,6 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     }
   }, [userRole, orgSettings]);
 
-  const handleBrandLogoUpload = async (file) => {
-    if (!file) return;
-    setIsBrandUploading(true);
-    const ext = file.name.split('.').pop();
-    const path = `brand/logo.${ext}`;
-    const { error } = await supabaseAdmin.storage.from('logos').upload(path, file, { upsert: true });
-    if (error) { toast.error("Erreur upload logo : " + error.message); setIsBrandUploading(false); return; }
-    const { data } = supabaseAdmin.storage.from('logos').getPublicUrl(path);
-    setBrandLogoUrl(data.publicUrl);
-    setIsBrandUploading(false);
-    toast.success("Logo uploadé !");
-  };
-
-  const handleBrandSave = async () => {
-    setIsBrandSaving(true);
-    const payload = { org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl, updated_at: new Date().toISOString() };
-    // Upsert : update la première ligne ou insert si vide
-    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').limit(1).single();
-    let error;
-    if (existing?.id) {
-      ({ error } = await supabaseAdmin.from('organisation_settings').update(payload).eq('id', existing.id));
-    } else {
-      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payload]));
-    }
-    if (error) { toast.error("Erreur : " + error.message); }
-    else {
-      // Appliquer immédiatement les changements visuels
-      document.documentElement.style.setProperty('--brand-primary', brandColor);
-      document.documentElement.style.setProperty('--brand-primary-dark', brandColor + 'CC');
-      toast.success("Personnalisation sauvegardée !");
-      if (onBrandSaved) onBrandSaved({ org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl });
-    }
-    setIsBrandSaving(false);
-  };
-
   const handleLogoUpload = async (file) => {
     const orgId = orgSettings?.id || currentOrgId;
     if (!file || !orgId) { toast.error("Impossible d'identifier votre organisation. Réessayez."); return; }
@@ -9604,6 +9569,39 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       setLogoUrl(orgSettings.logo_url || '');
     }
   }, [orgSettings]);
+
+  const handleBrandLogoUpload = async (file) => {
+    if (!file) return;
+    setIsBrandUploading(true);
+    const ext = file.name.split('.').pop();
+    const path = `brand/logo.${ext}`;
+    const { error } = await supabaseAdmin.storage.from('logos').upload(path, file, { upsert: true });
+    if (error) { toast.error("Erreur upload logo : " + error.message); setIsBrandUploading(false); return; }
+    const { data } = supabaseAdmin.storage.from('logos').getPublicUrl(path);
+    setBrandLogoUrl(data.publicUrl);
+    setIsBrandUploading(false);
+    toast.success("Logo uploadé !");
+  };
+
+  const handleBrandSave = async () => {
+    setIsBrandSaving(true);
+    const payload = { org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl, updated_at: new Date().toISOString() };
+    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').limit(1).single();
+    let error;
+    if (existing?.id) {
+      ({ error } = await supabaseAdmin.from('organisation_settings').update(payload).eq('id', existing.id));
+    } else {
+      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payload]));
+    }
+    if (error) { toast.error("Erreur : " + error.message); }
+    else {
+      document.documentElement.style.setProperty('--brand-primary', brandColor);
+      document.documentElement.style.setProperty('--brand-primary-dark', brandColor + 'CC');
+      toast.success("Personnalisation sauvegardée !");
+      if (onBrandSaved) onBrandSaved({ org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl });
+    }
+    setIsBrandSaving(false);
+  };
 
   const handleLogoUpload = async (file) => {
     if (!file) return;
