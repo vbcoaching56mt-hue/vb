@@ -3934,7 +3934,7 @@ const IngenierieView = ({
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
   handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
   modelingModuleId, setModelingModuleId, moduleSessionTemplates, moduleStepResources, fetchModules,
-  newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity,
+  newStepTitle, setNewStepTitle, newStepActivity, setNewStepActivity, currentOrgId,
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
@@ -3951,11 +3951,12 @@ const IngenierieView = ({
 
   React.useEffect(() => {
     const fetchGroups = async () => {
-      const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+      if (!currentOrgId) return;
+      const { data, error } = await supabase.from('document_groups').select('*').eq('organisation_id', currentOrgId).order('nom', { ascending: true });
       if (!error && data) setDocumentGroups(data);
     };
     fetchGroups();
-  }, [supabase]);
+  }, [supabase, currentOrgId]);
 
   const handleGroupDragEnd = async (event) => {
     const { active, over } = event;
@@ -5185,7 +5186,7 @@ const FormateurView = ({
 };
 
 const DocumentsView = ({
-  sessions, documents, clients, formateurs, userRole, currentUserId,
+  sessions, documents, clients, formateurs, userRole, currentUserId, currentOrgId,
   handleSignDocument, handleDownloadPDF, handleAddDocument,
   updateDateSeance, newDocName, setNewDocName,
   newDocType, setNewDocType, newDocUrl, setNewDocUrl,
@@ -5239,9 +5240,10 @@ const DocumentsView = ({
   };
 
   const fetchDocumentGroups = React.useCallback(async () => {
-    const { data, error } = await supabase.from('document_groups').select('*').order('nom', { ascending: true });
+    if (!currentOrgId) return;
+    const { data, error } = await supabase.from('document_groups').select('*').eq('organisation_id', currentOrgId).order('nom', { ascending: true });
     if (!error && data) setDocumentGroups(data);
-  }, [supabase]);
+  }, [supabase, currentOrgId]);
 
   React.useEffect(() => {
     if (isAdmin) fetchDocumentGroups();
@@ -5250,7 +5252,7 @@ const DocumentsView = ({
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     setIsCreatingGroup(true);
-    const { error } = await supabase.from('document_groups').insert([{ nom: newGroupName.trim() }]);
+    const { error } = await supabase.from('document_groups').insert([{ nom: newGroupName.trim(), organisation_id: currentOrgId }]);
     setIsCreatingGroup(false);
     if (!error) {
       setNewGroupName('');
@@ -5310,19 +5312,19 @@ const DocumentsView = ({
   const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
 
   const fetchQTemplates = React.useCallback(async () => {
+    if (!currentOrgId) return;
     try {
       const { data, error } = await supabaseAdmin
         .from('module_step_resources')
         .select('id, titre, metadata, document_group_id, module_id')
         .eq('type', 'questionnaire')
+        .eq('organisation_id', currentOrgId)
         .order('titre', { ascending: true });
       if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
-      // Garder uniquement les templates (module_id null = pas assigné à un module spécifique)
       const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
-      console.log('[fetchQTemplates] total:', data?.length, '| templates:', templates.length);
       setQuestionnaireTemplates(templates);
     } catch(e) { console.error('[fetchQTemplates] exception:', e); }
-  }, []);
+  }, [currentOrgId]);
 
   React.useEffect(() => {
     if (isAdmin) fetchQTemplates();
@@ -5349,6 +5351,7 @@ const DocumentsView = ({
         type: 'questionnaire',
         metadata: JSON.stringify({ ...existingMeta, questions: qQuestions }),
         module_id: null,
+        organisation_id: currentOrgId,
       };
       if (editingQId) {
         const { error } = await supabaseAdmin.from('module_step_resources').update(payload).eq('id', editingQId);
@@ -9621,12 +9624,15 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const handleBrandSave = async () => {
     setIsBrandSaving(true);
     const payload = { org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl, updated_at: new Date().toISOString() };
-    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').limit(1).single();
+    const orgId = currentOrgId;
+    if (!orgId) { toast.error("Organisation introuvable."); setIsBrandSaving(false); return; }
+    const payloadWithOrg = { ...payload, organisation_id: orgId };
+    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').eq('organisation_id', orgId).maybeSingle();
     let error;
     if (existing?.id) {
-      ({ error } = await supabaseAdmin.from('organisation_settings').update(payload).eq('id', existing.id));
+      ({ error } = await supabaseAdmin.from('organisation_settings').update(payloadWithOrg).eq('id', existing.id));
     } else {
-      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payload]));
+      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payloadWithOrg]));
     }
     if (error) { toast.error("Erreur : " + error.message); }
     else {
@@ -10628,7 +10634,7 @@ const EMPTY_FORM = {
   is_active: true,
 };
 
-function AutomationSettingsView({ supabase }) {
+function AutomationSettingsView({ supabase, currentOrgId }) {
   const [settings, setSettings] = useState([]);
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
@@ -10640,9 +10646,11 @@ function AutomationSettingsView({ supabase }) {
   const [customTriggerName, setCustomTriggerName] = useState('');
 
   const fetchSettings = async () => {
+    if (!currentOrgId) return;
     const { data } = await supabase
       .from('automation_settings')
       .select('*')
+      .eq('organisation_id', currentOrgId)
       .order('created_at', { ascending: true });
     if (data) setSettings(data);
   };
@@ -10705,7 +10713,7 @@ function AutomationSettingsView({ supabase }) {
     const resolvedTriggerType = form.trigger_type === '__custom__'
       ? customTriggerName.trim().toLowerCase().replace(/\s+/g, '_')
       : form.trigger_type;
-    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString() };
+    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString(), organisation_id: currentOrgId };
     if (editingId) {
       const { error } = await supabase
         .from('automation_settings')
@@ -11399,18 +11407,17 @@ export default function App() {
   };
 
   const fetchBrandSettings = React.useCallback(async () => {
-    const { data } = await supabase.from('organisation_settings').select('*').limit(1).single();
+    if (!currentOrgId) return;
+    const { data } = await supabase.from('organisation_settings').select('*').eq('organisation_id', currentOrgId).maybeSingle();
     if (data) {
       setBrandSettings(prev => ({ ...prev, ...data }));
-      // Appliquer la couleur primaire comme CSS variable globale
       if (data.primary_color) {
         document.documentElement.style.setProperty('--brand-primary', data.primary_color);
-        // Générer des variantes claires/foncées
         document.documentElement.style.setProperty('--brand-primary-light', data.primary_color + '20');
         document.documentElement.style.setProperty('--brand-primary-dark', data.primary_color + 'CC');
       }
     }
-  }, [supabase]);
+  }, [supabase, currentOrgId]);
 
   React.useEffect(() => { fetchBrandSettings(); }, [fetchBrandSettings]);
 
@@ -14004,6 +14011,7 @@ export default function App() {
           />}
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
             supabase={supabaseAdmin}
+            currentOrgId={currentOrgId}
           />}
           {activeTab === 'processus' && (
             <SharedProcessesView
@@ -14079,6 +14087,7 @@ export default function App() {
             handleAddModuleMomentResource={handleAddModuleMomentResource}
             handleRedistributeModuleDocs={handleRedistributeModuleDocs}
             documentTemplates={documentTemplates}
+            currentOrgId={currentOrgId}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
@@ -14181,6 +14190,7 @@ export default function App() {
             setIsDeleteModalOpen={setIsDeleteModalOpen}
             setTargetToDelete={setTargetToDelete}
             supabase={supabase}
+            currentOrgId={currentOrgId}
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             onUpdateTemplateDestination={handleUpdateTemplateDestination}
           />}
