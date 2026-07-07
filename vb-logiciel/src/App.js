@@ -6818,12 +6818,22 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
 };
 
 // ─── Accueil Client ────────────────────────────────────────────────────────────
-const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount }) => (
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount, brandSettings }) => (
   <div className="flex flex-col items-center justify-center pt-8 md:pt-16 animate-fade-in">
-    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg text-violet-600 mb-5 border border-gray-100">
-      <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
-    </div>
-    <h1 className="text-4xl font-extrabold text-gray-900 mb-2 tracking-tight">Bonjour.</h1>
+    {brandSettings?.logo_url ? (
+      <img src={brandSettings.logo_url} alt="Logo" className="w-20 h-20 rounded-full object-contain bg-white shadow-lg border border-gray-100 p-2 mb-5" />
+    ) : (
+      <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg mb-5 border border-gray-100"
+        style={{color: brandSettings?.primary_color || '#7C3AED'}}>
+        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+      </div>
+    )}
+    <h1 className="text-4xl font-extrabold text-gray-900 mb-1 tracking-tight">Bonjour.</h1>
+    {(brandSettings?.welcome_message || brandSettings?.org_name) && (
+      <p className="text-sm mb-2" style={{color: brandSettings?.primary_color || '#7C3AED'}}>
+        {brandSettings?.welcome_message || `Bienvenue sur l'espace ${brandSettings?.org_name}`}
+      </p>
+    )}
     {coachName && <p className="text-sm text-gray-400 mb-4">Votre coach : <span className="font-bold text-gray-600">{coachName}</span></p>}
 
     {/* Info cards : prochaine séance + docs en attente */}
@@ -8259,6 +8269,41 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     }
   }, [userRole, orgSettings]);
 
+  const handleBrandLogoUpload = async (file) => {
+    if (!file) return;
+    setIsBrandUploading(true);
+    const ext = file.name.split('.').pop();
+    const path = `brand/logo.${ext}`;
+    const { error } = await supabaseAdmin.storage.from('logos').upload(path, file, { upsert: true });
+    if (error) { toast.error("Erreur upload logo : " + error.message); setIsBrandUploading(false); return; }
+    const { data } = supabaseAdmin.storage.from('logos').getPublicUrl(path);
+    setBrandLogoUrl(data.publicUrl);
+    setIsBrandUploading(false);
+    toast.success("Logo uploadé !");
+  };
+
+  const handleBrandSave = async () => {
+    setIsBrandSaving(true);
+    const payload = { org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl, updated_at: new Date().toISOString() };
+    // Upsert : update la première ligne ou insert si vide
+    const { data: existing } = await supabaseAdmin.from('organisation_settings').select('id').limit(1).single();
+    let error;
+    if (existing?.id) {
+      ({ error } = await supabaseAdmin.from('organisation_settings').update(payload).eq('id', existing.id));
+    } else {
+      ({ error } = await supabaseAdmin.from('organisation_settings').insert([payload]));
+    }
+    if (error) { toast.error("Erreur : " + error.message); }
+    else {
+      // Appliquer immédiatement les changements visuels
+      document.documentElement.style.setProperty('--brand-primary', brandColor);
+      document.documentElement.style.setProperty('--brand-primary-dark', brandColor + 'CC');
+      toast.success("Personnalisation sauvegardée !");
+      if (onBrandSaved) onBrandSaved({ org_name: brandName, primary_color: brandColor, welcome_message: brandWelcome, logo_url: brandLogoUrl });
+    }
+    setIsBrandSaving(false);
+  };
+
   const handleLogoUpload = async (file) => {
     const orgId = orgSettings?.id || currentOrgId;
     if (!file || !orgId) { toast.error("Impossible d'identifier votre organisation. Réessayez."); return; }
@@ -9527,13 +9572,29 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
 // PARAMÈTRES ORGANISME (ADMIN)
 // ==========================================
 
-const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved }) => {
+const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved, brandSettings, onBrandSaved }) => {
   const [nom, setNom] = useState(orgSettings?.nom || '');
   const [siret, setSiret] = useState(orgSettings?.siret || '');
   const [adresse, setAdresse] = useState(orgSettings?.adresse || '');
   const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  // ── Branding ──
+  const [brandColor, setBrandColor] = useState(brandSettings?.primary_color || '#7C3AED');
+  const [brandName, setBrandName] = useState(brandSettings?.org_name || '');
+  const [brandWelcome, setBrandWelcome] = useState(brandSettings?.welcome_message || '');
+  const [brandLogoUrl, setBrandLogoUrl] = useState(brandSettings?.logo_url || '');
+  const [isBrandUploading, setIsBrandUploading] = useState(false);
+  const [isBrandSaving, setIsBrandSaving] = useState(false);
+
+  useEffect(() => {
+    if (brandSettings) {
+      setBrandColor(brandSettings.primary_color || '#7C3AED');
+      setBrandName(brandSettings.org_name || '');
+      setBrandWelcome(brandSettings.welcome_message || '');
+      setBrandLogoUrl(brandSettings.logo_url || '');
+    }
+  }, [brandSettings]);
 
   useEffect(() => {
     if (orgSettings) {
@@ -9617,6 +9678,97 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
           className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
           <Save className="w-4 h-4" />
           {isSaving ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
+        </button>
+      </div>
+
+      {/* ── Section Personnalisation du portail ── */}
+      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+        <div>
+          <h3 className="text-lg font-black text-gray-900">🎨 Personnalisation du portail</h3>
+          <p className="text-gray-400 text-sm mt-1">Logo, couleurs et message affiché à vos clients et formateurs.</p>
+        </div>
+
+        {/* Aperçu live */}
+        <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+          <div className="flex items-center gap-3 px-5 py-3.5" style={{background: brandColor}}>
+            {brandLogoUrl ? (
+              <img src={brandLogoUrl} alt="Logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-1" />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center font-black text-white text-sm">
+                {(brandName || 'O').slice(0,2).toUpperCase()}
+              </div>
+            )}
+            <span className="text-white font-bold text-sm">{brandName || 'Nom de votre organisme'}</span>
+          </div>
+          <div className="bg-gray-50 px-5 py-3 border-t border-gray-100">
+            <p className="text-gray-500 text-xs italic">{brandWelcome || 'Message d'accueil de votre portail client'}</p>
+          </div>
+        </div>
+
+        {/* Logo de marque */}
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo du portail</label>
+          <div className="flex items-center gap-5">
+            {brandLogoUrl ? (
+              <img src={brandLogoUrl} alt="Logo marque" className="w-20 h-20 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
+            ) : (
+              <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 bg-gray-50">
+                <Upload className="w-7 h-7" />
+              </div>
+            )}
+            <div>
+              <input type="file" accept="image/*" id="brand-logo-upload" className="hidden"
+                onChange={(e) => { if (e.target.files?.[0]) handleBrandLogoUpload(e.target.files[0]); }} />
+              <label htmlFor="brand-logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors block text-center">
+                {isBrandUploading ? 'Chargement...' : 'Choisir un logo'}
+              </label>
+              <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
+              {brandLogoUrl && (
+                <button onClick={() => setBrandLogoUrl('')} className="text-xs text-red-400 hover:text-red-600 mt-1">Supprimer</button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Nom de marque */}
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom affiché dans le portail</label>
+          <input type="text" value={brandName} onChange={e => setBrandName(e.target.value)}
+            placeholder="Ex : VB Coaching"
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 transition-all"
+            style={{'--tw-ring-color': brandColor}} />
+        </div>
+
+        {/* Couleur principale */}
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Couleur principale</label>
+          <div className="flex items-center gap-4 flex-wrap">
+            <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)}
+              className="w-14 h-14 rounded-xl border-2 border-gray-200 cursor-pointer p-1" />
+            <div className="flex gap-2 flex-wrap">
+              {['#7C3AED','#2563EB','#059669','#DC2626','#D97706','#0F172A','#EC4899','#0EA5E9'].map(c => (
+                <button key={c} onClick={() => setBrandColor(c)} title={c}
+                  className={`w-9 h-9 rounded-xl border-2 transition-all ${brandColor === c ? 'border-gray-800 scale-110' : 'border-transparent hover:scale-105'}`}
+                  style={{background: c}} />
+              ))}
+            </div>
+            <span className="text-sm font-mono text-gray-500">{brandColor}</span>
+          </div>
+        </div>
+
+        {/* Message d'accueil */}
+        <div>
+          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Message d'accueil (portail client)</label>
+          <textarea value={brandWelcome} onChange={e => setBrandWelcome(e.target.value)} rows={2}
+            placeholder="Ex : Bienvenue sur votre espace de suivi de formation."
+            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 transition-all resize-none" />
+        </div>
+
+        <button onClick={handleBrandSave} disabled={isBrandSaving}
+          className="w-full text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          style={{background: brandColor}}>
+          <Save className="w-4 h-4" />
+          {isBrandSaving ? 'Sauvegarde...' : 'Sauvegarder la personnalisation'}
         </button>
       </div>
     </div>
@@ -10951,6 +11103,7 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
+  const [brandSettings, setBrandSettings] = useState({ org_name: 'Trainly', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -11189,6 +11342,22 @@ export default function App() {
     const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
+
+  const fetchBrandSettings = React.useCallback(async () => {
+    const { data } = await supabase.from('organisation_settings').select('*').limit(1).single();
+    if (data) {
+      setBrandSettings(prev => ({ ...prev, ...data }));
+      // Appliquer la couleur primaire comme CSS variable globale
+      if (data.primary_color) {
+        document.documentElement.style.setProperty('--brand-primary', data.primary_color);
+        // Générer des variantes claires/foncées
+        document.documentElement.style.setProperty('--brand-primary-light', data.primary_color + '20');
+        document.documentElement.style.setProperty('--brand-primary-dark', data.primary_color + 'CC');
+      }
+    }
+  }, [supabase]);
+
+  React.useEffect(() => { fetchBrandSettings(); }, [fetchBrandSettings]);
 
   const fetchPedagogicalResources = async () => {
     const { data, error } = await supabase.storage.from('ressources-pedagogiques').list();
@@ -13475,24 +13644,27 @@ export default function App() {
           .nav-glow {
             background:
               linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0) 55%),
-              linear-gradient(135deg, rgba(192,168,255,0.5) 0%, #7C3AED 50%, #5B21B6 100%);
-            box-shadow: 0 3px 16px rgba(124,58,237,0.55), inset 0 1px 0 rgba(255,255,255,0.22);
+              linear-gradient(135deg, rgba(255,255,255,0.3) 0%, var(--brand-primary, #7C3AED) 50%, var(--brand-primary-dark, #5B21B6) 100%);
+            box-shadow: 0 3px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.22);
             color: white !important;
             font-weight: 500;
           }
         `}</style>
-        <div className="flex items-center justify-between h-20 px-6 border-b border-violet-900/40" style={{background:'#0C0619'}}>
-          <div className="flex items-center">
-            <svg width="24" height="19" viewBox="0 0 24 19" fill="none" className="mr-3 flex-shrink-0">
-              <rect width="24" height="4" rx="2" fill="white"/>
-              <rect y="7.5" width="16" height="4" rx="2" fill="rgba(255,255,255,0.88)"/>
-              <rect y="15" width="10" height="4" rx="2" fill="rgba(255,255,255,0.68)"/>
-            </svg>
-            <span className="text-white" style={{fontSize:'17px',lineHeight:1,letterSpacing:'0.2px'}}>
-              <span style={{fontWeight:700}}>Train</span><span style={{fontWeight:300,opacity:0.85}}>ly</span>
+        <div className="flex items-center justify-between h-20 px-5 border-b border-white/10" style={{background:'#0C0619'}}>
+          <div className="flex items-center gap-3 min-w-0">
+            {brandSettings.logo_url ? (
+              <img src={brandSettings.logo_url} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white/10 p-1 flex-shrink-0" />
+            ) : (
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0"
+                style={{background: brandSettings.primary_color || '#7C3AED', color:'white'}}>
+                {(brandSettings.org_name || 'T').slice(0,2).toUpperCase()}
+              </div>
+            )}
+            <span className="text-white truncate" style={{fontSize:'15px',lineHeight:1,letterSpacing:'0.2px',fontWeight:700}}>
+              {brandSettings.org_name || 'Trainly'}
             </span>
           </div>
-          <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white">
+          <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white flex-shrink-0">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
@@ -13597,7 +13769,9 @@ export default function App() {
 
         <header className="hidden md:flex bg-white px-10 py-5 border-b border-gray-100 shadow-sm z-10 justify-between items-center w-full shrink-0">
           <div className="flex items-center space-x-3">
-            <h2 className="text-xl font-bold text-gray-800 capitalize">Espace {userRole}</h2>
+            <h2 className="text-xl font-bold text-gray-800">
+              {userRole === 'admin' ? 'Espace Admin' : userRole === 'formateur' ? (brandSettings?.org_name || 'Espace Formateur') : (brandSettings?.org_name || 'Espace Client')}
+            </h2>
             <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
           </div>
 
@@ -13699,6 +13873,8 @@ export default function App() {
               currentOrgId={currentOrgId}
               orgSettings={orgSettings}
               onSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
+              brandSettings={brandSettings}
+              onBrandSaved={(updated) => setBrandSettings(prev => ({ ...prev, ...updated }))}
             />
           )}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
@@ -13907,6 +14083,7 @@ export default function App() {
               nextSession={_nextSession}
               coachName={_coach?.nom || null}
               pendingDocsCount={_pendingDocs}
+              brandSettings={brandSettings}
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
