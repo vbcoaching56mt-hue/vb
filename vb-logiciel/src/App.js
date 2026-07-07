@@ -11270,6 +11270,7 @@ export default function App() {
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
   const [brandSettings, setBrandSettings] = useState({ org_name: 'SkorUp', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
+  const [sidebarLegalPage, setSidebarLegalPage] = useState(null);
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -13922,10 +13923,20 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-violet-900/40" style={{background:'#0C0619'}}>
+          {/* Liens légaux */}
+          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2">
+            {[['mentions','Mentions'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
+              <button key={k} onClick={() => setSidebarLegalPage(k)}
+                className="text-[10px] text-violet-400/60 hover:text-violet-300 transition-colors">
+                {label}
+              </button>
+            ))}
+          </div>
           <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
             <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
         </div>
+        {sidebarLegalPage && <LegalModal page={sidebarLegalPage} onClose={() => setSidebarLegalPage(null)} />}
       </div>
 
       {/* Main Content Area */}
