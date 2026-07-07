@@ -9252,6 +9252,7 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
   const [isSending, setIsSending] = React.useState(false);
   const [newConvReceiver, setNewConvReceiver] = React.useState('');
   const messagesEndRef = React.useRef(null);
+  const [confirmDeleteConvId, setConfirmDeleteConvId] = React.useState(null);
 
   const db = supabaseAdmin || supabase;
 
@@ -9375,6 +9376,16 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
     await fetchConversations();
   };
 
+  const handleDeleteConversation = async (otherId) => {
+    const { error } = await db.from('messages').delete()
+      .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${otherId}),and(sender_id.eq.${otherId},receiver_id.eq.${currentUserId})`);
+    if (error) { toast.error('Erreur suppression : ' + error.message); return; }
+    if (activeConvId === otherId) { setActiveConvId(null); setMessages([]); }
+    setConfirmDeleteConvId(null);
+    await fetchConversations();
+    toast.success('Conversation supprimée.');
+  };
+
   const startConversation = (receiverId) => {
     setActiveConvId(receiverId);
     setNewConvReceiver('');
@@ -9421,26 +9432,50 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
                 <p className="text-xs text-gray-400 italic p-4 text-center">Aucune conversation.</p>
               ) : (
                 conversations.map(conv => (
-                  <button
+                  <div
                     key={conv.key}
-                    onClick={() => setActiveConvId(conv.otherId)}
-                    className={`w-full text-left p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === conv.otherId ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
+                    className={`relative group border-b border-gray-50 transition-colors ${activeConvId === conv.otherId ? 'bg-teal-50 border-l-4 border-l-teal-500' : 'hover:bg-gray-50'}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-full ${roleColor(conv.otherRole)} text-white flex items-center justify-center font-bold text-xs shrink-0`}>
-                        {conv.otherLabel.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-bold text-gray-900 truncate">{conv.otherLabel}</span>
-                          {conv.unread > 0 && <span className="bg-teal-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 shrink-0">{conv.unread}</span>}
+                    <button
+                      onClick={() => setActiveConvId(conv.otherId)}
+                      className="w-full text-left p-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-full ${roleColor(conv.otherRole)} text-white flex items-center justify-center font-bold text-xs shrink-0`}>
+                          {conv.otherLabel.charAt(0).toUpperCase()}
                         </div>
-                        <p className="text-[10px] text-gray-400 truncate mt-0.5">
-                          {conv.lastMessage.content || (conv.lastMessage.attachment_name ? `📎 ${conv.lastMessage.attachment_name}` : '')}
-                        </p>
+                        <div className="flex-1 min-w-0 pr-6">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-900 truncate">{conv.otherLabel}</span>
+                            {conv.unread > 0 && <span className="bg-teal-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 shrink-0">{conv.unread}</span>}
+                          </div>
+                          <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                            {conv.lastMessage.content || (conv.lastMessage.attachment_name ? `📎 ${conv.lastMessage.attachment_name}` : '')}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                    {/* Bouton suppression */}
+                    {confirmDeleteConvId === conv.otherId ? (
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white border border-red-200 rounded-xl px-2 py-1 shadow-sm z-10">
+                        <span className="text-[10px] text-red-500 font-bold whitespace-nowrap">Supprimer ?</span>
+                        <button onClick={() => handleDeleteConversation(conv.otherId)}
+                          className="text-[10px] font-black text-white bg-red-500 hover:bg-red-600 rounded-lg px-1.5 py-0.5 transition-colors">Oui</button>
+                        <button onClick={() => setConfirmDeleteConvId(null)}
+                          className="text-[10px] font-black text-gray-500 hover:text-gray-800 rounded-lg px-1 py-0.5">Non</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteConvId(conv.otherId); }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50"
+                        title="Supprimer la conversation"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 ))
               )}
             </div>
