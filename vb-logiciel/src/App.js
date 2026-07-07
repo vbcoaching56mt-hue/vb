@@ -9745,8 +9745,8 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
             {brandLogoUrl ? (
               <img src={brandLogoUrl} alt="Logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-1" />
             ) : (
-              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center font-black text-white text-sm">
-                {(brandName || 'O').slice(0,2).toUpperCase()}
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                <svg width="18" height="14" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg>
               </div>
             )}
             <span className="text-white font-bold text-sm">{brandName || 'Nom de votre organisme'}</span>
@@ -13734,13 +13734,13 @@ export default function App() {
             {brandSettings.logo_url ? (
               <img src={brandSettings.logo_url} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white/10 p-1 flex-shrink-0" />
             ) : (
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0"
-                style={{background: brandSettings.primary_color || '#7C3AED', color:'white'}}>
-                {(brandSettings.org_name || 'T').slice(0,2).toUpperCase()}
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{background: brandSettings.primary_color || '#7C3AED'}}>
+                <svg width="22" height="17" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg>
               </div>
             )}
-            <span className="text-white truncate" style={{fontSize:'15px',lineHeight:1,letterSpacing:'0.2px',fontWeight:700}}>
-              {brandSettings.org_name || 'SkorUp'}
+            <span className="text-white truncate" style={{fontSize:'15px',lineHeight:1,letterSpacing:'0.2px'}}>
+              {brandSettings.org_name ? <span style={{fontWeight:700}}>{brandSettings.org_name}</span> : <><span style={{fontWeight:800}}>Skor</span><span style={{fontWeight:300,opacity:0.9}}>Up</span></>}
             </span>
           </div>
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white flex-shrink-0">
