@@ -1,56 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, supabaseAdmin } from '../supabaseClientConfig';
-
-const initDefaultTemplatesForOrg = async (orgId) => {
-  const { data: module } = await supabaseAdmin.from('modules')
-    .insert([{ nom: 'Bilan de Compétences 24h', seances_prevues: 8, organisation_id: orgId }])
-    .select().single();
-  if (!module) return;
-  const templates = [
-    'Séance 1 — Accueil & Cadrage', 'Séance 2 — Parcours Professionnel',
-    'Séance 3 — Compétences & Ressources', 'Séance 4 — Analyse des Motivations',
-    'Séance 5 — Exploration des Métiers', 'Séance 6 — Projet Professionnel',
-    "Séance 7 — Plan d'Action", 'Séance 8 — Synthèse & Restitution'
-  ];
-  for (let i = 0; i < templates.length; i++) {
-    const { data: tpl } = await supabaseAdmin.from('module_session_templates')
-      .insert([{ module_id: module.id, titre: templates[i], ordre: i + 1 }])
-      .select().single();
-    if (tpl) {
-      await supabaseAdmin.from('module_step_resources').insert([{
-        template_id: tpl.id, titre: 'Émargement de présence', type: 'signature', ordre: 1,
-        metadata: { requiresClientSignature: true, requiresTrainerSignature: false }
-      }]);
-    }
-  }
-};
-
-const createOrgAndProfile = async (session, orgName, adminName) => {
-  const { data: org, error: orgError } = await supabaseAdmin
-    .from('organisations')
-    .insert([{ nom: orgName }])
-    .select()
-    .single();
-  if (orgError) throw orgError;
-
-  const { error: userError } = await supabaseAdmin.from('utilisateurs').insert([{
-    nom: adminName,
-    email: session.user.email,
-    role: 'admin',
-    organisation_id: org.id
-  }]);
-  if (userError) throw userError;
-
-  await initDefaultTemplatesForOrg(org.id);
-};
+import { supabase } from '../supabaseClientConfig';
 
 const SetupOrganisationPage = () => {
   const [status, setStatus] = useState('loading'); // loading | creating | error | noMeta
   const [error, setError] = useState('');
-  // Fallback form state (si métadonnées absentes)
   const [orgName, setOrgName] = useState('');
   const [adminName, setAdminName] = useState('');
   const [sessionRef, setSessionRef] = useState(null);
+
+  const callSetupEdgeFunction = async (session, orgName, adminName) => {
+    const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/setup-organisation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ orgName, adminName })
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Erreur lors de la création');
+    return result;
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -70,30 +40,22 @@ const SetupOrganisationPage = () => {
   }, []);
 
   const handleSession = async (session) => {
-    // Vérifier si profil déjà existant
-    const { data: existing } = await supabaseAdmin
-      .from('utilisateurs').select('id').eq('email', session.user.email).maybeSingle();
-    if (existing) {
-      window.location.replace('/');
-      return;
-    }
-
     const meta = session.user.user_metadata || {};
-    const orgName = (meta.org_name || '').trim();
-    const adminName = (meta.admin_name || '').trim();
+    const orgNameMeta = (meta.org_name || '').trim();
+    const adminNameMeta = (meta.admin_name || '').trim();
 
-    if (orgName && adminName) {
-      // Métadonnées disponibles → création automatique silencieuse
+    if (orgNameMeta && adminNameMeta) {
       setStatus('creating');
       try {
-        await createOrgAndProfile(session, orgName, adminName);
-        window.location.replace('/');
+        const result = await callSetupEdgeFunction(session, orgNameMeta, adminNameMeta);
+        if (result.alreadyExists || result.success) {
+          window.location.replace('/');
+        }
       } catch (err) {
         setError(err.message || 'Une erreur est survenue.');
         setStatus('error');
       }
     } else {
-      // Métadonnées absentes (ancien compte) → afficher formulaire minimal
       setSessionRef(session);
       setStatus('noMeta');
     }
@@ -103,7 +65,7 @@ const SetupOrganisationPage = () => {
     e.preventDefault();
     setStatus('creating');
     try {
-      await createOrgAndProfile(sessionRef, orgName.trim(), adminName.trim());
+      await callSetupEdgeFunction(sessionRef, orgName.trim(), adminName.trim());
       window.location.replace('/');
     } catch (err) {
       setError(err.message || 'Une erreur est survenue.');
@@ -149,7 +111,6 @@ const SetupOrganisationPage = () => {
     );
   }
 
-  // Fallback : métadonnées absentes, formulaire minimal
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100">
