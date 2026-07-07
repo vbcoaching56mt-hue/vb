@@ -8,7 +8,7 @@ import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
-import { supabase, supabaseAdmin } from './supabaseClientConfig';
+import { supabase } from './supabaseClientConfig';
 import SetupOrganisationPage from './pages/SetupOrganisation';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
@@ -2425,30 +2425,26 @@ const ClientDetailView = ({
   const handleResendInvite = async () => {
     const email = client.email || client.email_contact || clientInfo.client_email;
     if (!email) return toast.error("Aucun email trouvé pour ce client.");
-    const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) return toast.error("Clé de service non configurée.");
-    const { createClient } = await import('@supabase/supabase-js');
-    const adminClient = createClient(process.env.REACT_APP_SUPABASE_URL, serviceKey);
-
-    // Essai 1 : invitation classique (compte pas encore créé → email "Définir mon mot de passe")
-    const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
-    if (!inviteError) {
-      toast.success(`Email d'invitation envoyé à ${email}.`);
-      return;
-    }
-
-    // Essai 2 : compte existant → envoyer un email "Réinitialiser / définir mon mot de passe"
-    // L'utilisateur reçoit un email avec un lien cliquable, exactement comme l'invitation initiale.
-    if (inviteError.message?.toLowerCase().includes('already')) {
-      const { error: resetError } = await adminClient.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin,
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authSession.access_token}`
+        },
+        body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin })
       });
-      if (resetError) return toast.error(`Erreur : ${resetError.message}`);
-      toast.success(`Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`, { duration: 6000 });
-      return;
+      const result = await res.json();
+      if (!res.ok) return toast.error(`Erreur : ${result.error}`);
+      if (result.method === 'reset') {
+        toast.success(`Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`, { duration: 6000 });
+      } else {
+        toast.success(`Email d'invitation envoyé à ${email}.`);
+      }
+    } catch (err) {
+      toast.error(`Erreur : ${err.message}`);
     }
-
-    toast.error(`Erreur : ${inviteError.message}`);
   };
 
   const handleSaveClientInfo = async () => {
@@ -5314,7 +5310,7 @@ const DocumentsView = ({
   const fetchQTemplates = React.useCallback(async () => {
     if (!currentOrgId) return;
     try {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from('module_step_resources')
         .select('id, titre, metadata, document_group_id, module_id')
         .eq('type', 'questionnaire')
@@ -7648,7 +7644,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // Uploader dans Supabase Storage (bucket 'documents')
         const safeDocName = (signingResource.titre || 'document').replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
         const storagePath = `signed-documents/${currentUserId}/${Date.now()}_${safeDocName}.pdf`;
-        const { error: uploadError } = await supabaseAdmin.storage
+        const { error: uploadError } = await supabase.storage
           .from('documents')
           .upload(storagePath, signedBlob, { contentType: 'application/pdf', upsert: true });
 
@@ -7656,7 +7652,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           console.error('[handleSignSave] Erreur upload PDF signé:', uploadError);
           toast.error('Signature intégrée mais upload échoué — PDF original conservé.', { id: toastId });
         } else {
-          const { data: { publicUrl } } = supabaseAdmin.storage.from('documents').getPublicUrl(storagePath);
+          const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
           signedPdfUrl = publicUrl;
           toast.dismiss(toastId);
         }
@@ -9004,7 +9000,7 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) =>
 // ESPACE PROCESSUS PARTAGÉS
 // ==========================================
 
-const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId, currentOrgId }) => {
+const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }) => {
   const isAdmin = userRole === 'admin';
   const isFormateur = userRole === 'formateur';
   const isClient = userRole === 'client';
@@ -9020,13 +9016,13 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
 
   const fetchProcesses = React.useCallback(async () => {
     setLoading(true);
-    const db = supabaseAdmin || supabase;
+    const db = supabase;
     let query = db.from('shared_processes').select('*').order('created_at', { ascending: false });
     if (currentOrgId) query = query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
     const { data, error } = await query;
     if (!error && data) setProcesses(data);
     setLoading(false);
-  }, [supabase, supabaseAdmin, currentOrgId]);
+  }, [supabase, currentOrgId]);
 
   React.useEffect(() => { fetchProcesses(); }, [fetchProcesses]);
 
@@ -9034,7 +9030,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
     e.preventDefault();
     if (!form.titre.trim()) { toast.error('Titre requis.'); return; }
     setIsSaving(true);
-    const db = supabaseAdmin || supabase;
+    const db = supabase;
 
     let fileUrl = form.url || null;
 
@@ -9068,7 +9064,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
 
   const handleDelete = async () => {
     if (!processToDelete) return;
-    const db = supabaseAdmin || supabase;
+    const db = supabase;
     await db.from('shared_processes').delete().eq('id', processToDelete.id);
     toast.success('Ressource supprimée.');
     setProcessToDelete(null);
@@ -9238,7 +9234,7 @@ const SharedProcessesView = ({ supabase, supabaseAdmin, userRole, currentUserId,
 // MESSAGERIE INTERNE
 // ==========================================
 
-const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, clients, formateurs, currentOrgId }) => {
+const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, currentOrgId }) => {
   const isAdmin = userRole === 'admin';
   const isFormateur = userRole === 'formateur';
   const isClient = userRole === 'client';
@@ -9254,7 +9250,7 @@ const MessagesView = ({ supabase, supabaseAdmin, userRole, currentUserId, client
   const messagesEndRef = React.useRef(null);
   const [confirmDeleteConvId, setConfirmDeleteConvId] = React.useState(null);
 
-  const db = supabaseAdmin || supabase;
+  const db = supabase;
 
   // Déterminer les interlocuteurs possibles selon le rôle
   const possibleReceivers = React.useMemo(() => {
@@ -11192,12 +11188,12 @@ export default function App() {
       
       if (session?.user?.email) {
     
-        // Utilise supabaseAdmin pour bypasser RLS et toujours trouver le profil
-        const { data: userData } = await supabaseAdmin.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
+        // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
+        const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
         if (userData && userData.role) {
           handleLogin(userData.role, userData.id, userData.organisation_id);
         } else {
-          const { data: clientData } = await supabaseAdmin.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
+          const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
           if (clientData) {
             handleLogin('client', clientData.id, clientData.organisation_id);
           } else {
@@ -11479,24 +11475,19 @@ export default function App() {
     const { email, nom, role } = formData;
     setIsAddingUser(true);
 
-    // 1. Créer un client admin avec la service_role_key
-    const serviceKey = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceKey) {
-      toast.error("Clé de service non configurée. Vérifiez REACT_APP_SUPABASE_SERVICE_ROLE_KEY dans Vercel.");
-      setIsAddingUser(false);
-      return;
-    }
-
-    const adminClient = createClient(
-      process.env.REACT_APP_SUPABASE_URL,
-      serviceKey
-    );
-
-    // 2. Envoyer l'invitation via Supabase Auth Admin
-    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: nom, role: role },
-      redirectTo: window.location.origin
+    // 1. Inviter via Edge Function sécurisée (service_role côté serveur)
+    const { data: { session: authSession } } = await supabase.auth.getSession();
+    const inviteRes = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authSession.access_token}`
+      },
+      body: JSON.stringify({ email, nom, role, action: 'invite', redirectTo: window.location.origin })
     });
+    const inviteResult = await inviteRes.json();
+    const inviteData = inviteResult.userId ? { user: { id: inviteResult.userId } } : null;
+    const inviteError = inviteRes.ok ? null : { message: inviteResult.error };
 
     if (inviteError) {
       console.error("Erreur invitation Supabase:", inviteError);
@@ -13951,7 +13942,7 @@ export default function App() {
             userRole={userRole}
             currentUserId={currentUserId}
             currentOrgId={currentOrgId}
-            supabase={supabaseAdmin}
+            supabase={supabase}
             clients={clients}
             formateurs={formateurs}
           />}
@@ -14036,13 +14027,12 @@ export default function App() {
             setNewTemplateName={setNewTemplateName}
           />}
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
-            supabase={supabaseAdmin}
+            supabase={supabase}
             currentOrgId={currentOrgId}
           />}
           {activeTab === 'processus' && (
             <SharedProcessesView
               supabase={supabase}
-              supabaseAdmin={supabaseAdmin}
               userRole={userRole}
               currentUserId={currentUserId}
               currentOrgId={currentOrgId}
@@ -14051,7 +14041,6 @@ export default function App() {
           {activeTab === 'messagerie' && (
             <MessagesView
               supabase={supabase}
-              supabaseAdmin={supabaseAdmin}
               userRole={userRole}
               currentUserId={currentUserId}
               clients={clients}
@@ -14177,7 +14166,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabaseAdmin} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={formateurs} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={formateurs} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
