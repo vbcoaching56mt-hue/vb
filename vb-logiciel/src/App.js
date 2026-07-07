@@ -2191,7 +2191,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
         <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
-        <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à Trainly</h1>
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à SkorUp</h1>
         <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
 
         {successMessage && (
@@ -3248,7 +3248,7 @@ const AdminClientsView = ({
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration Trainly
+          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration SkorUp
         </h2>
 
         <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between mb-8 shadow-sm">
@@ -7309,13 +7309,13 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
             <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'conserve' ? 'border-emerald-400 bg-emerald-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
               <input type="radio" name="conservation" value="conserve" checked={choice === 'conserve'} onChange={() => setChoice('conserve')} className="mt-0.5 shrink-0 accent-emerald-500" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                J'autorise Trainly à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
+                J'autorise SkorUp à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
               </span>
             </label>
             <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'detruire' ? 'border-violet-400 bg-violet-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
               <input type="radio" name="conservation" value="detruire" checked={choice === 'detruire'} onChange={() => setChoice('detruire')} className="mt-0.5 shrink-0 accent-violet-600" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. Trainly procédera à leur destruction dès la clôture du bilan.
+                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. SkorUp procédera à leur destruction dès la clôture du bilan.
               </span>
             </label>
           </div>
@@ -7698,7 +7698,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       el.style.cssText = 'width:794px;min-height:1100px;padding:56px 60px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;position:fixed;left:-9999px;top:-9999px;color:#111827;box-sizing:border-box;';
       el.innerHTML = `
         <div style="text-align:center;margin-bottom:28px;">
-          <div style="font-size:26px;font-weight:900;color:#7C3AED;letter-spacing:3px;font-family:Georgia,serif;">trainly</div>
+          <div style="font-size:26px;font-weight:900;color:#7C3AED;letter-spacing:3px;font-family:Georgia,serif;">SkorUp</div>
           <div style="font-size:8px;color:#9ca3af;letter-spacing:2px;margin-top:2px;text-transform:uppercase;">Gestion de formation</div>
           <div style="margin-top:14px;height:1px;background:linear-gradient(to right,transparent,#7C3AED,transparent);"></div>
         </div>
@@ -7713,15 +7713,15 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         </table>
         <h2 style="font-size:12px;font-weight:800;color:#7C3AED;margin:0 0 12px;">Choix du bénéficiaire</h2>
         <p style="font-size:9.5px;color:#374151;margin:0 0 16px;line-height:1.6;">
-          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par Trainly, autorise Trainly à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
+          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par SkorUp, autorise SkorUp à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
         </p>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
           <span style="font-size:18px;line-height:1;color:${checkColorConserve};flex-shrink:0;">${checkConserve}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise Trainly à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise SkorUp à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:30px;">
           <span style="font-size:18px;line-height:1;color:${checkColorDetruire};flex-shrink:0;">${checkDetruire}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. Trainly procédera à leur destruction dès la clôture du bilan.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. SkorUp procédera à leur destruction dès la clôture du bilan.</span>
         </div>
         <div style="border-top:1px solid #e5e7eb;padding-top:20px;display:flex;justify-content:space-between;align-items:flex-end;">
           <div>
@@ -8743,7 +8743,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
         <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
-        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à Trainly.</p>
+        <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à SkorUp.</p>
         <form onSubmit={handleSetPassword} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nouveau mot de passe</label>
@@ -9263,7 +9263,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
       const myClients = (clients || []).filter(c => String(c.formateur_id) === String(currentUserId));
       const c = myClients.map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'client' }));
       // Admin
-      const adminEntry = [{ id: 'admin', label: 'Admin Trainly', role: 'admin' }];
+      const adminEntry = [{ id: 'admin', label: 'Admin SkorUp', role: 'admin' }];
       return [...adminEntry, ...c];
     }
     if (isClient) {
@@ -10836,7 +10836,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
 
       // ── 4. Envoyer les emails via Resend ────────────────────────────────────
       const resendKey = process.env.REACT_APP_RESEND_API_KEY;
-      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'Trainly <onboarding@resend.dev>';
+      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
       let sent = 0, simulated = 0;
 
       for (const item of emailQueue) {
@@ -10852,11 +10852,11 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                 to: [item.client.email_contact],
                 subject: item.subject,
                 html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">Trainly</div>
+                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
                   <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
                     <p style="color:#111827;font-size:14px;line-height:1.7;">${item.body.replace(/\n/g, '<br>')}</p>
                     <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                    <p style="color:#9ca3af;font-size:11px;">Email automatique Trainly — ne pas répondre à ce message.</p>
+                    <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
                   </div>
                 </div>`,
               }),
@@ -11178,7 +11178,7 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
-  const [brandSettings, setBrandSettings] = useState({ org_name: 'Trainly', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
+  const [brandSettings, setBrandSettings] = useState({ org_name: 'SkorUp', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -11501,10 +11501,10 @@ export default function App() {
     // 3. Créer l'entrée dans la table correspondante
     if (role === 'client') {
       // Pour les clients : on utilise la table 'clients' avec l'UUID de l'Auth
-      // CRUCIAL : on utilise adminClient pour outrepasser les règles RLS lors de l'insertion initiale
+      // CRUCIAL : on utilise supabase pour outrepasser les règles RLS lors de l'insertion initiale
       const formateurIntId = formData.formateur_id ? Number(formData.formateur_id) : null;
       const formateurRecord = formateurIntId ? formateurs.find(f => f.id === formateurIntId) : null;
-      const { error: dbError } = await adminClient.from('clients').insert([{
+      const { error: dbError } = await supabase.from('clients').insert([{
         id: newUserId,
         nom_complet: nom,
         email_contact: email,
@@ -11528,7 +11528,7 @@ export default function App() {
             organisation_id: currentOrgId
           }));
         if (defaultClientDocs.length > 0) {
-          const { error: docsError } = await adminClient.from('client_documents').insert(defaultClientDocs);
+          const { error: docsError } = await supabase.from('client_documents').insert(defaultClientDocs);
           if (docsError) console.error('Erreur init client_documents:', docsError);
         }
       }
@@ -13414,7 +13414,7 @@ export default function App() {
               <div style="margin-top: 50px; padding: 25px; background: #fdf2f2; border-radius: 16px; border: 1px solid #fee2e2;">
                 <p style="font-size: 10px; color: #b91c1c; font-weight: bold; text-align: center; margin: 0; line-height: 1.5;">
                   Ce document certifie l'ensemble des activités réalisées et signées par les deux parties.<br/>
-                  Généré automatiquement par Trainly le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
+                  Généré automatiquement par SkorUp le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}.
                 </p>
               </div>
             </div>
@@ -13740,7 +13740,7 @@ export default function App() {
               </div>
             )}
             <span className="text-white truncate" style={{fontSize:'15px',lineHeight:1,letterSpacing:'0.2px',fontWeight:700}}>
-              {brandSettings.org_name || 'Trainly'}
+              {brandSettings.org_name || 'SkorUp'}
             </span>
           </div>
           <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400 hover:text-white flex-shrink-0">
