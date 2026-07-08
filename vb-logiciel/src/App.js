@@ -11236,6 +11236,228 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   );
 }
 
+// ─── TrialBanner (sidebar) ──────────────────────────────────────────────────
+function TrialBanner({ orgSettings, onUpgrade }) {
+  const trialEndsAt = orgSettings?.trial_ends_at ? new Date(orgSettings.trial_ends_at) : null;
+  const daysLeft = trialEndsAt ? Math.ceil((trialEndsAt - new Date()) / (1000 * 60 * 60 * 24)) : null;
+  const expired = daysLeft !== null && daysLeft <= 0;
+  return (
+    <div
+      onClick={onUpgrade}
+      className="cursor-pointer mx-1 mb-3 rounded-xl p-3 transition-all hover:opacity-80"
+      style={{
+        background: expired ? 'rgba(220,38,38,0.15)' : 'rgba(124,58,237,0.15)',
+        border: `1px solid ${expired ? 'rgba(220,38,38,0.3)' : 'rgba(124,58,237,0.3)'}`,
+      }}
+    >
+      <p className="text-xs font-bold" style={{ color: expired ? '#F87171' : '#A78BFA' }}>
+        {expired ? '⚠️ Essai expiré' : `🎁 ${daysLeft}j d'essai restant${daysLeft !== 1 ? 's' : ''}`}
+      </p>
+      <p className="text-[10px] text-slate-400 mt-0.5">
+        {expired ? 'Cliquez pour souscrire' : 'Cliquez pour choisir un plan'}
+      </p>
+    </div>
+  );
+}
+
+// ─── PaywallScreen ───────────────────────────────────────────────────────────
+function PaywallScreen({ onSubscribe }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
+      <div className="w-20 h-20 rounded-2xl bg-violet-100 flex items-center justify-center mb-6">
+        <svg className="w-10 h-10 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+      </div>
+      <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Votre période d'essai est terminée</h2>
+      <p className="text-gray-500 mb-8 max-w-md">
+        Merci d'avoir essayé SkorUp ! Pour continuer à utiliser la plateforme,
+        veuillez souscrire à l'un de nos plans.
+      </p>
+      <button
+        onClick={onSubscribe}
+        className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-4 px-10 rounded-2xl shadow-lg transition-all text-lg"
+      >
+        Choisir mon plan →
+      </button>
+      <p className="text-xs text-gray-400 mt-4">
+        Accès immédiat après paiement — Sans engagement pour le plan mensuel
+      </p>
+    </div>
+  );
+}
+
+// ─── AbonnementView ──────────────────────────────────────────────────────────
+function AbonnementView({ orgId, orgSettings, onRefresh }) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [billing, setBilling] = useState('monthly');
+
+  const status        = orgSettings?.subscription_status || 'trialing';
+  const trialEndsAt   = orgSettings?.trial_ends_at ? new Date(orgSettings.trial_ends_at) : null;
+  const daysLeft      = trialEndsAt ? Math.ceil((trialEndsAt - new Date()) / (1000 * 60 * 60 * 24)) : null;
+  const subscribedPlan = orgSettings?.subscribed_plan;
+  const isActive      = status === 'active';
+
+  const PLANS = [
+    {
+      key: 'essentiel', name: 'Essentiel', monthlyPrice: 29, annualPrice: 26,
+      limit: '50 dossiers clients',
+      features: ['Gestion clients & séances', 'Documents & signatures', 'Messagerie interne', 'Support email'],
+    },
+    {
+      key: 'pro', name: 'Pro', monthlyPrice: 49, annualPrice: 44,
+      limit: '200 dossiers clients', popular: true,
+      features: ['Tout Essentiel +', 'Relances automatiques', 'Personnalisation marque', 'Rapports avancés', 'Support prioritaire'],
+    },
+    {
+      key: 'illimite', name: 'Illimité', monthlyPrice: 89, annualPrice: 80,
+      limit: 'Dossiers illimités',
+      features: ['Tout Pro +', 'Clients illimités', 'Onboarding dédié', 'Support téléphonique'],
+    },
+  ];
+
+  const handleSubscribe = async (planKey) => {
+    setIsLoading(planKey);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/create-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orgId, plan: planKey, billing }),
+      });
+      const { url, error } = await res.json();
+      if (error) throw new Error(error);
+      if (url) window.open(url, '_blank');
+    } catch (err) {
+      toast.error('Erreur : ' + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePortal = async () => {
+    setPortalLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/customer-portal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ orgId }),
+      });
+      const { url, error } = await res.json();
+      if (error) throw new Error(error);
+      if (url) window.open(url, '_blank');
+    } catch (err) {
+      toast.error('Erreur : ' + err.message);
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const statusInfo = {
+    trialing: { label: `Essai gratuit${daysLeft !== null ? ` — ${Math.max(0, daysLeft)}j restant${daysLeft !== 1 ? 's' : ''}` : ''}`, color: 'bg-violet-50 text-violet-700 border-violet-200' },
+    active:   { label: `Abonné — Plan ${subscribedPlan || ''}`, color: 'bg-green-50 text-green-700 border-green-200' },
+    canceled: { label: 'Abonnement annulé', color: 'bg-red-50 text-red-700 border-red-200' },
+    past_due: { label: 'Paiement en retard', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  }[status] || { label: status, color: 'bg-gray-50 text-gray-700 border-gray-200' };
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h1 className="text-3xl font-extrabold text-gray-900 mb-2">Mon Abonnement</h1>
+        <p className="text-gray-500">Gérez votre formule SkorUp et vos informations de paiement.</p>
+      </div>
+
+      {/* Statut actuel */}
+      <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-semibold mb-8 ${statusInfo.color}`}>
+        <span className="w-2 h-2 rounded-full bg-current opacity-70 inline-block"></span>
+        {statusInfo.label}
+      </div>
+
+      {/* Si abonnement actif → portail Stripe */}
+      {isActive && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
+          <h2 className="text-lg font-bold text-gray-900 mb-1">Gérer votre abonnement</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Modifiez votre plan, téléchargez vos factures ou annulez votre abonnement
+            depuis le portail de paiement sécurisé Stripe.
+          </p>
+          <button
+            onClick={handlePortal}
+            disabled={portalLoading}
+            className="bg-gray-900 hover:bg-black text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            {portalLoading ? 'Redirection...' : '→ Accéder au portail de paiement'}
+          </button>
+        </div>
+      )}
+
+      {/* Plans (si pas actif) */}
+      {!isActive && (
+        <>
+          <div className="flex justify-center mb-8">
+            <div className="bg-gray-100 rounded-xl p-1 flex gap-1">
+              <button
+                onClick={() => setBilling('monthly')}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${billing === 'monthly' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >Mensuel</button>
+              <button
+                onClick={() => setBilling('annual')}
+                className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${billing === 'annual' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+              >Annuel <span className="text-green-600 font-bold text-xs">-10%</span></button>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6 mb-8">
+            {PLANS.map(plan => (
+              <div key={plan.key} className={`bg-white rounded-2xl border-2 shadow-sm p-6 flex flex-col relative ${plan.popular ? 'border-violet-500' : 'border-gray-100'}`}>
+                {plan.popular && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-violet-600 text-white text-xs font-bold px-3 py-1 rounded-full">Populaire</div>
+                )}
+                <h3 className="font-extrabold text-gray-900 text-lg mb-1">{plan.name}</h3>
+                <p className="text-xs text-gray-400 mb-4">{plan.limit}</p>
+                <div className="mb-4">
+                  <span className="text-4xl font-black text-gray-900">
+                    {billing === 'monthly' ? plan.monthlyPrice : plan.annualPrice}€
+                  </span>
+                  <span className="text-gray-400 text-sm">/mois</span>
+                  {billing === 'annual' && (
+                    <p className="text-xs text-green-600 font-semibold mt-1">
+                      Facturé {plan.annualPrice * 12}€/an
+                    </p>
+                  )}
+                </div>
+                <ul className="space-y-2 mb-6 flex-1">
+                  {plan.features.map(f => (
+                    <li key={f} className="flex items-start gap-2 text-sm text-gray-600">
+                      <svg className="w-4 h-4 text-violet-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => handleSubscribe(plan.key)}
+                  disabled={isLoading === plan.key}
+                  className={`w-full py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-50 ${plan.popular ? 'bg-violet-600 hover:bg-violet-700 text-white' : 'bg-gray-900 hover:bg-black text-white'}`}
+                >
+                  {isLoading === plan.key ? 'Redirection...' : 'Choisir ce plan →'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <p className="text-xs text-gray-400 text-center">
+        Paiement sécurisé par Stripe — Annulation possible à tout moment
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -11517,7 +11739,7 @@ export default function App() {
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web, subscription_status, trial_ends_at, stripe_customer_id, subscribed_plan').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
@@ -11661,6 +11883,22 @@ export default function App() {
     setActiveTab('accueil');
     setMobileMenuOpen(false);
   };
+
+  // --- Détection retour Stripe Checkout ---
+  useEffect(() => {
+    if (!currentOrgId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('checkout') === 'success') {
+      toast.success('🎉 Abonnement activé ! Bienvenue sur SkorUp Pro.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Rafraîchir après 3s (laisser le temps au webhook Stripe de mettre à jour Supabase)
+      setTimeout(() => fetchOrgSettings(), 3000);
+    }
+    if (params.get('checkout') === 'cancel') {
+      toast('Paiement annulé. Vous pouvez réessayer depuis "Mon Abonnement".', { icon: 'ℹ️' });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [currentOrgId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
@@ -13804,6 +14042,17 @@ export default function App() {
     return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} onNeedsSetup={() => setNeedsSetup(true)} />;
   }
 
+  // Vérification abonnement expiré (uniquement pour les admins)
+  const isSubscriptionExpired = userRole === 'admin' && orgSettings && (() => {
+    const { subscription_status, trial_ends_at } = orgSettings;
+    if (!subscription_status || subscription_status === 'active') return false;
+    if (subscription_status === 'canceled' || subscription_status === 'past_due') return true;
+    if (subscription_status === 'trialing' && trial_ends_at) {
+      return new Date(trial_ends_at) < new Date();
+    }
+    return false;
+  })();
+
   return (
     <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
       {/* Sidebar Mobile Overlay */}
@@ -13877,6 +14126,10 @@ export default function App() {
               <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
+              <button onClick={() => { setActiveTab('abonnement'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'abonnement' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                Mon Abonnement
+              </button>
             </>
           )}
 
@@ -13923,6 +14176,10 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-violet-900/40" style={{background:'#0C0619'}}>
+          {/* Bannière essai / abonnement expiré */}
+          {userRole === 'admin' && orgSettings?.subscription_status === 'trialing' && (
+            <TrialBanner orgSettings={orgSettings} onUpgrade={() => { setActiveTab('abonnement'); setMobileMenuOpen(false); }} />
+          )}
           {/* Liens légaux */}
           <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2">
             {[['mentions','Mentions'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
@@ -14006,7 +14263,13 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full">
+        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative">
+          {/* Écran paywall si essai expiré ou abonnement annulé/impayé */}
+          {isSubscriptionExpired && activeTab !== 'abonnement' && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center" style={{background:'rgba(249,250,251,0.97)', backdropFilter:'blur(4px)'}}>
+              <PaywallScreen onSubscribe={() => setActiveTab('abonnement')} />
+            </div>
+          )}
           {activeTab === 'profil' && <ProfileView
             currentUserId={currentUserId}
             supabase={supabase}
@@ -14056,6 +14319,13 @@ export default function App() {
               onSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
               brandSettings={brandSettings}
               onBrandSaved={(updated) => setBrandSettings(prev => ({ ...prev, ...updated }))}
+            />
+          )}
+          {activeTab === 'abonnement' && userRole === 'admin' && (
+            <AbonnementView
+              orgId={currentOrgId}
+              orgSettings={orgSettings}
+              onRefresh={fetchOrgSettings}
             />
           )}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
