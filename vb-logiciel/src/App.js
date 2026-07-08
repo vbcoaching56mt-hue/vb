@@ -11743,6 +11743,12 @@ export default function App() {
     if (data) setOrgSettings(data);
   };
 
+  // Recharge les infos org dès que currentOrgId est disponible (notamment au rechargement de page)
+  React.useEffect(() => {
+    if (currentOrgId) fetchOrgSettings();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrgId]);
+
   const fetchBrandSettings = React.useCallback(async () => {
     if (!currentOrgId) return;
     const { data } = await supabase.from('organisation_settings').select('*').eq('organisation_id', currentOrgId).maybeSingle();
