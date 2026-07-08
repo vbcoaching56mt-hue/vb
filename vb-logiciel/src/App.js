@@ -11299,6 +11299,16 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
   const subscribedPlan = orgSettings?.subscribed_plan;
   const isActive      = status === 'active';
 
+  const PLAN_LABELS = {
+    essentiel_monthly: 'Essentiel mensuel',
+    essentiel_annual:  'Essentiel annuel',
+    pro_monthly:       'Pro mensuel',
+    pro_annual:        'Pro annuel',
+    illimite_monthly:  'Illimité mensuel',
+    illimite_annual:   'Illimité annuel',
+  };
+  const planLabel = PLAN_LABELS[subscribedPlan] || subscribedPlan || '';
+
   const PLANS = [
     {
       key: 'essentiel', name: 'Essentiel', monthlyPrice: 29, annualPrice: 26,
@@ -11357,7 +11367,7 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
 
   const statusInfo = {
     trialing: { label: `Essai gratuit${daysLeft !== null ? ` — ${Math.max(0, daysLeft)}j restant${daysLeft !== 1 ? 's' : ''}` : ''}`, color: 'bg-violet-50 text-violet-700 border-violet-200' },
-    active:   { label: `Abonné — Plan ${subscribedPlan || ''}`, color: 'bg-green-50 text-green-700 border-green-200' },
+    active:   { label: `Abonné — ${planLabel}`, color: 'bg-green-50 text-green-700 border-green-200' },
     canceled: { label: 'Abonnement annulé', color: 'bg-red-50 text-red-700 border-red-200' },
     past_due: { label: 'Paiement en retard', color: 'bg-orange-50 text-orange-700 border-orange-200' },
   }[status] || { label: status, color: 'bg-gray-50 text-gray-700 border-gray-200' };
