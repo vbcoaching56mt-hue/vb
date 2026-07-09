@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -5272,6 +5272,283 @@ const FormateurView = ({
   );
 };
 
+/* ─────────────────────────────────────────────────────────
+   TemplateEditorModal — éditeur de modèles Word avec scanner
+   ───────────────────────────────────────────────────────── */
+const TemplateEditorModal = ({ isOpen, onClose, onUpload }) => {
+  const [file, setFile] = React.useState(null);
+  const [docText, setDocText] = React.useState('');
+  const [detectedTags, setDetectedTags] = React.useState([]);
+  const [templateName, setTemplateName] = React.useState('');
+  const [classification, setClassification] = React.useState('telechargeable');
+  const [destination, setDestination] = React.useState('client');
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [copiedTag, setCopiedTag] = React.useState(null);
+  const fileInputRef = React.useRef(null);
+
+  const ALL_TAGS = {
+    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
+    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
+  };
+  const allKnownTags = Object.values(ALL_TAGS).flat();
+
+  const extractTextFromDocx = async (f) => {
+    try {
+      const arrayBuffer = await f.arrayBuffer();
+      const zip = new PizZip(arrayBuffer);
+      const xml = zip.file('word/document.xml').asText();
+      const matches = xml.match(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g) || [];
+      const text = matches.map(m => m.replace(/<[^>]+>/g, '')).join(' ');
+      const tagMatches = [...text.matchAll(/\{([^}\s]{1,40})\}/g)];
+      const tags = [...new Set(tagMatches.map(m => m[1]))];
+      return { text, tags };
+    } catch (e) {
+      return { text: '', tags: [] };
+    }
+  };
+
+  const handleFileSelect = async (f) => {
+    if (!f) return;
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (!['docx', 'pdf'].includes(ext)) { toast.error('Format accepté : .docx ou .pdf'); return; }
+    setFile(f);
+    if (!templateName) setTemplateName(f.name.replace(/\.[^/.]+$/, ''));
+    if (ext === 'docx') {
+      const { text, tags } = await extractTextFromDocx(f);
+      setDocText(text);
+      setDetectedTags(tags);
+    } else {
+      setDocText('');
+      setDetectedTags([]);
+    }
+  };
+
+  const copyTag = (tag) => {
+    navigator.clipboard.writeText(`{${tag}}`).catch(() => {});
+    setCopiedTag(tag);
+    setTimeout(() => setCopiedTag(null), 1500);
+  };
+
+  const renderPreview = () => {
+    if (!docText) return null;
+    const parts = docText.split(/(\{[^}\s]{1,40}\})/g);
+    return parts.map((part, i) => {
+      const m = part.match(/^\{([^}]+)\}$/);
+      if (m) {
+        const known = allKnownTags.includes(m[1]);
+        return (
+          <span key={i} className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] mx-0.5 ${known ? 'bg-violet-100 text-violet-700 font-bold' : 'bg-amber-100 text-amber-700'}`}>
+            {part}
+          </span>
+        );
+      }
+      return <span key={i} className="text-gray-600">{part}</span>;
+    });
+  };
+
+  const handleSave = async () => {
+    if (!file || !templateName.trim()) { toast.error('Nom et fichier requis.'); return; }
+    setIsSaving(true);
+    await onUpload(file, templateName.trim(), destination, classification);
+    setIsSaving(false);
+    onClose();
+    setFile(null); setDocText(''); setDetectedTags([]); setTemplateName('');
+    setClassification('telechargeable'); setDestination('client');
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-xl font-black text-gray-900">Ajouter un modèle de document</h2>
+            <p className="text-sm text-gray-400 mt-0.5">Importez votre fichier Word et vérifiez les balises de fusion</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {/* ── Panneau gauche ── */}
+          <div className="flex-1 overflow-y-auto p-8 space-y-5">
+
+            {/* Zone d'upload */}
+            <div
+              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${isDragging ? 'border-violet-400 bg-violet-50' : 'border-gray-200 hover:border-violet-300 hover:bg-gray-50'}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) handleFileSelect(e.dataTransfer.files[0]); }}
+            >
+              <input ref={fileInputRef} type="file" className="hidden" accept=".docx,.pdf" onChange={e => e.target.files[0] && handleFileSelect(e.target.files[0])} />
+              {file ? (
+                <div className="flex items-center justify-center gap-3">
+                  <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center shrink-0">
+                    <FileText size={20} className="text-violet-600" />
+                  </div>
+                  <div className="text-left">
+                    <p className="font-bold text-gray-900 text-sm">{file.name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{(file.size / 1024).toFixed(0)} Ko · Cliquez pour changer</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <Upload size={28} className="mx-auto mb-3 text-gray-300" />
+                  <p className="font-bold text-gray-600 text-sm">Glissez votre fichier ici</p>
+                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner un .docx ou .pdf</p>
+                </>
+              )}
+            </div>
+
+            {/* Aperçu du contenu */}
+            {docText ? (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-bold text-gray-700">Aperçu du contenu</h3>
+                  <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{detectedTags.length} balise(s) détectée(s)</span>
+                </div>
+                <div className="bg-gray-50 rounded-2xl border border-gray-100 p-5 text-sm leading-relaxed max-h-48 overflow-y-auto">
+                  {renderPreview()}
+                </div>
+              </div>
+            ) : file && file.name.toLowerCase().endsWith('.pdf') ? (
+              <div className="flex items-center gap-3 bg-blue-50 rounded-2xl border border-blue-100 p-4 text-sm text-blue-700">
+                <FileText size={16} className="shrink-0" />
+                <span>Fichier PDF — les balises ne sont pas extractibles. Le document sera enregistré tel quel.</span>
+              </div>
+            ) : null}
+
+            {/* Scanner de balises */}
+            {detectedTags.length > 0 && (
+              <div className="bg-indigo-50 rounded-2xl border border-indigo-100 p-4">
+                <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-3">Balises détectées dans votre document</h3>
+                <div className="flex flex-wrap gap-2">
+                  {detectedTags.map(tag => {
+                    const isKnown = allKnownTags.includes(tag);
+                    return (
+                      <span key={tag} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold ${isKnown ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {isKnown ? <Check size={10} /> : <AlertTriangle size={10} />}
+                        {`{${tag}}`}
+                      </span>
+                    );
+                  })}
+                </div>
+                {detectedTags.some(t => !allKnownTags.includes(t)) && (
+                  <p className="text-[11px] text-amber-600 mt-3 flex items-center gap-1.5">
+                    <AlertTriangle size={12} /> Les balises en orange ne seront pas remplacées — vérifiez l'orthographe.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Nom + classification + destination */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Nom du modèle</label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={e => setTemplateName(e.target.value)}
+                  placeholder="Ex : Convention de sous-traitance"
+                  className="w-full text-sm p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Classification</label>
+                <select
+                  value={classification}
+                  onChange={e => setClassification(e.target.value)}
+                  className="w-full text-sm p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
+                >
+                  <option value="telechargeable">📥 Téléchargeable</option>
+                  <option value="a_signer">✍️ À signer</option>
+                  <option value="a_generer">⚙️ À générer automatiquement</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Destination</label>
+              <div className="flex gap-3">
+                {[['client', '📁 Client'], ['formateur', '📋 Formateur']].map(([val, label]) => (
+                  <button key={val} onClick={() => setDestination(val)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-200 hover:border-violet-300'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Panneau droit — balises ── */}
+          <div className="w-64 shrink-0 overflow-y-auto p-5 bg-gray-50 border-l border-gray-100 space-y-5">
+            <div>
+              <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
+              <p className="text-[11px] text-gray-400 leading-relaxed">Cliquez pour copier → collez dans Word à l'endroit voulu</p>
+            </div>
+            {Object.entries(ALL_TAGS).map(([group, tags]) => (
+              <div key={group}>
+                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">— {group} —</p>
+                <div className="flex flex-col gap-1">
+                  {tags.map(tag => {
+                    const isInDoc = detectedTags.includes(tag);
+                    const isCopied = copiedTag === tag;
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => copyTag(tag)}
+                        className={`text-left w-full px-2.5 py-2 rounded-lg text-[11px] font-mono transition-all border ${
+                          isCopied ? 'bg-green-100 border-green-300 text-green-800' :
+                          isInDoc ? 'bg-violet-50 border-violet-200 text-violet-700' :
+                          'bg-white border-gray-100 text-gray-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700'
+                        }`}
+                      >
+                        <span className="flex items-center justify-between gap-1">
+                          <span className="truncate">{`{${tag}}`}</span>
+                          {isCopied ? <Check size={10} className="shrink-0" /> : isInDoc ? <span className="text-[8px] text-violet-500 font-black shrink-0">✓</span> : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-8 py-4 border-t border-gray-100 bg-gray-50/80">
+          <p className="text-xs text-gray-400">
+            {file ? `${file.name} · ${detectedTags.length} balise(s) détectée(s)` : 'Aucun fichier sélectionné'}
+          </p>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-500 hover:bg-gray-200 transition-all">
+              Annuler
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!file || !templateName.trim() || isSaving}
+              className="px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white transition-all shadow-sm disabled:opacity-40"
+            >
+              {isSaving ? 'Enregistrement…' : 'Enregistrer le modèle'}
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
 const DocumentsView = ({
   sessions, documents, clients, formateurs, userRole, currentUserId, currentOrgId,
   handleSignDocument, handleDownloadPDF, handleAddDocument,
@@ -5294,6 +5571,9 @@ const DocumentsView = ({
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
+
+  // TemplateEditorModal
+  const [isTemplateEditorOpen, setIsTemplateEditorOpen] = React.useState(false);
 
   // États pour la bibliothèque de modèles (onglet Formateurs)
   const [fplShowUpload, setFplShowUpload] = React.useState(false);
@@ -5560,16 +5840,6 @@ const DocumentsView = ({
       {isAdmin && modelesTab === 'bibliotheque' && (() => {
         const allTpls = Object.entries(documentTemplates || {});
 
-        const handleFplAdd = async () => {
-          if (!fplFile || !fplName.trim()) return;
-          setFplUploading(true);
-          await handleUploadDocxTemplate(fplFile, fplName.trim(), 'formateur', 'a_signer');
-          setFplName('');
-          setFplFile(null);
-          setFplShowUpload(false);
-          setFplUploading(false);
-        };
-
         return (
           <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8">
             {/* En-tête */}
@@ -5582,61 +5852,12 @@ const DocumentsView = ({
                 <p className="text-[12px] text-gray-400 mt-1">Tous les modèles Word de la plateforme — envoyables depuis chaque fiche formateur ou client.</p>
               </div>
               <button
-                onClick={() => setFplShowUpload(v => !v)}
-                className="flex items-center gap-2 bg-violet-700 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+                onClick={() => setIsTemplateEditorOpen(true)}
+                className="flex items-center gap-2 bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
               >
                 <Plus size={14} /> Ajouter un modèle
               </button>
             </div>
-
-            {/* Formulaire d'ajout */}
-            {fplShowUpload && (
-              <div className="mb-6 p-5 bg-violet-50 rounded-2xl border border-violet-100 space-y-4">
-                <div>
-                  <p className="text-xs text-violet-700 font-bold uppercase tracking-wider mb-1">
-                    Modèle Word avec balises automatiques
-                  </p>
-                  <p className="text-[11px] text-violet-600 mb-2">
-                    Le modèle sera enregistré dans la bibliothèque. Envoyez-le individuellement depuis la fiche de chaque formateur.
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {['{nom}', '{adresse_formateur}', '{formateur_siret}', '{formateur_nda}', '{email_formateur}', '{tel_formateur}', '{date_signature}'].map(tag => (
-                      <code key={tag} className="bg-violet-100 text-violet-700 px-2 py-0.5 rounded text-[11px] font-mono">{tag}</code>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col md:flex-row gap-3 items-end">
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Nom du modèle</label>
-                    <input
-                      type="text"
-                      placeholder="Ex : Convention de sous-traitance"
-                      value={fplName}
-                      onChange={e => setFplName(e.target.value)}
-                      className="w-full text-sm p-3 bg-white border border-violet-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1.5">Fichier Word (.docx)</label>
-                    <label className="flex items-center gap-2 bg-white border border-violet-200 text-violet-700 px-4 py-3 rounded-xl text-sm font-bold cursor-pointer hover:bg-violet-50 transition-all">
-                      <FileText size={15} />
-                      <span className="truncate">{fplFile ? fplFile.name : 'Choisir un fichier .docx'}</span>
-                      <input
-                        type="file" accept=".docx" className="hidden"
-                        onChange={e => { if (e.target.files[0]) { setFplFile(e.target.files[0]); if (!fplName) setFplName(e.target.files[0].name.replace(/\.[^/.]+$/, '')); } }}
-                      />
-                    </label>
-                  </div>
-                  <button
-                    onClick={handleFplAdd}
-                    disabled={!fplFile || !fplName.trim() || fplUploading}
-                    className="bg-violet-700 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl text-sm shadow-sm transition-all disabled:opacity-40 whitespace-nowrap"
-                  >
-                    {fplUploading ? 'Enregistrement…' : 'Ajouter à la bibliothèque'}
-                  </button>
-                </div>
-              </div>
-            )}
 
             {/* Grille des modèles */}
             {allTpls.length === 0 ? (
@@ -5799,68 +6020,27 @@ const DocumentsView = ({
             )}
           </div>
 
-          <div className="mb-8 p-5 bg-amber-50 rounded-2xl border border-amber-100">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><FileText size={18}/> Nouveau Modèle</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Nom du modèle</label>
-                <input
-                  type="text"
-                  placeholder="Nom (Ex: Attestation de Fin de Formation)"
-                  className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500"
-                  value={newTemplateName || ''}
-                  onChange={(e) => setNewTemplateName(e.target.value)}
-                />
+          {/* ── Bouton d'ajout de modèle → ouvre TemplateEditorModal ── */}
+          <div className="mb-8">
+            <button
+              onClick={() => setIsTemplateEditorOpen(true)}
+              className="w-full flex items-center justify-center gap-3 p-6 border-2 border-dashed border-violet-200 rounded-2xl text-violet-600 hover:border-violet-400 hover:bg-violet-50 transition-all group"
+            >
+              <div className="w-10 h-10 bg-violet-100 group-hover:bg-violet-200 rounded-xl flex items-center justify-center transition-all">
+                <Plus size={20} className="text-violet-600" />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Classification</label>
-                <select
-                  className="w-full text-sm p-3 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 font-medium"
-                  value={newTemplateClassification}
-                  onChange={(e) => setNewTemplateClassification(e.target.value)}
-                >
-                  <option value="telechargeable">📥 Téléchargeable</option>
-                  <option value="a_signer">✍️ À signer</option>
-                  <option value="a_generer">⚙️ À générer</option>
-                </select>
+              <div className="text-left">
+                <p className="font-bold text-sm">Ajouter un modèle de document</p>
+                <p className="text-xs text-violet-400 mt-0.5">Importez un .docx ou .pdf et vérifiez vos balises de fusion</p>
               </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-4 items-center">
-              <label className="inline-flex items-center gap-2 bg-white text-amber-600 border border-amber-600 hover:bg-amber-50 px-5 py-3 rounded-xl font-bold text-sm cursor-pointer transition-all shadow-sm">
-                {selectedTemplateFile ? selectedTemplateFile.name : 'Sélectionner un fichier (.docx, .pdf)'}
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".docx, .pdf"
-                  onChange={(e) => {
-                    if (e.target.files[0]) {
-                      const f = e.target.files[0];
-                      setSelectedTemplateFile(f);
-                      if (!newTemplateName) {
-                        setNewTemplateName(f.name.replace(/\.[^/.]+$/, ''));
-                      }
-                    }
-                  }}
-                />
-              </label>
-              <button
-                onClick={async () => {
-                  if (!selectedTemplateFile || !newTemplateName) {
-                     toast.error("Veuillez sélectionner un fichier et renseigner un nom.");
-                     return;
-                  }
-                  await handleUploadDocxTemplate(selectedTemplateFile, newTemplateName, 'client', newTemplateClassification);
-                  setNewTemplateName('');
-                  setNewTemplateClassification('telechargeable');
-                  setSelectedTemplateFile(null);
-                }}
-                disabled={!selectedTemplateFile || !newTemplateName}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-md disabled:opacity-50"
-              >
-                Créer le document
-              </button>
-            </div>
+            </button>
           </div>
+
+          <TemplateEditorModal
+            isOpen={isTemplateEditorOpen}
+            onClose={() => setIsTemplateEditorOpen(false)}
+            onUpload={handleUploadDocxTemplate}
+          />
 
           {/* ── Section Questionnaires ── */}
           <div className="mb-8 p-5 bg-violet-50 rounded-2xl border border-violet-100">
