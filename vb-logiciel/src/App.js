@@ -9666,6 +9666,15 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const [logoUrl, setLogoUrl] = useState(orgSettings?.logo_url || '');
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  // ── Champs organisme étendus ──
+  const [nda, setNda] = useState(orgSettings?.nda || '');
+  const [siteWeb, setSiteWeb] = useState(orgSettings?.site_web || '');
+  const [codePostal, setCodePostal] = useState(orgSettings?.code_postal || '');
+  const [ville, setVille] = useState(orgSettings?.ville || '');
+  const [emailContact, setEmailContact] = useState('');
+  const [telephoneContact, setTelephoneContact] = useState('');
+  const [compagnieAssurance, setCompagnieAssurance] = useState('');
+  const [numeroAssuranceRcp, setNumeroAssuranceRcp] = useState('');
   // ── Branding ──
   const [brandColor, setBrandColor] = useState(brandSettings?.primary_color || '#7C3AED');
   const [brandName, setBrandName] = useState(brandSettings?.org_name || '');
@@ -9690,8 +9699,32 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       setSiret(orgSettings.siret || '');
       setAdresse(orgSettings.adresse || '');
       setLogoUrl(orgSettings.logo_url || '');
+      setNda(orgSettings.nda || '');
+      setSiteWeb(orgSettings.site_web || '');
+      setCodePostal(orgSettings.code_postal || '');
+      setVille(orgSettings.ville || '');
     }
   }, [orgSettings]);
+
+  // Charge email / téléphone / assurance depuis la table utilisateurs (admin connecté)
+  useEffect(() => {
+    const fetchAdminContact = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser?.email) return;
+      const { data } = await supabase.from('utilisateurs')
+        .select('email, telephone, compagnie_assurance, numero_assurance_rcp')
+        .eq('email', authUser.email)
+        .maybeSingle();
+      if (data) {
+        setEmailContact(data.email || '');
+        setTelephoneContact(data.telephone || '');
+        setCompagnieAssurance(data.compagnie_assurance || '');
+        setNumeroAssuranceRcp(data.numero_assurance_rcp || '');
+      }
+    };
+    fetchAdminContact();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleBrandLogoUpload = async (file) => {
     if (!file) return;
@@ -9763,9 +9796,28 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 
   const handleSave = async () => {
     setIsSaving(true);
-    const { error } = await supabase.from('organisations').update({ nom, siret, adresse, logo_url: logoUrl }).eq('id', currentOrgId);
-    if (error) { toast.error("Erreur : " + error.message); }
-    else { toast.success("Paramètres sauvegardés !"); onSaved({ nom, siret, adresse, logo_url: logoUrl }); }
+    // 1. Mise à jour de la table organisations
+    const { error } = await supabase.from('organisations').update({
+      nom, siret, adresse, logo_url: logoUrl,
+      nda, site_web: siteWeb, code_postal: codePostal, ville
+    }).eq('id', currentOrgId);
+    if (error) {
+      toast.error("Erreur : " + error.message);
+      setIsSaving(false);
+      return;
+    }
+    // 2. Mise à jour de la table utilisateurs (email, téléphone, assurance)
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    if (authUser?.email) {
+      await supabase.from('utilisateurs').update({
+        email: emailContact,
+        telephone: telephoneContact,
+        compagnie_assurance: compagnieAssurance,
+        numero_assurance_rcp: numeroAssuranceRcp,
+      }).eq('email', authUser.email);
+    }
+    toast.success("Paramètres sauvegardés !");
+    onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville });
     setIsSaving(false);
   };
 
@@ -9791,47 +9843,124 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 
       {/* ── Onglet Organisme ── */}
       {settingsTab === 'organisme' && (
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
-        <div>
-          <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo de l'organisme</label>
-          <div className="flex items-center gap-6">
-            {logoUrl ? (
-              <img src={logoUrl} alt="Logo organisme" className="w-24 h-24 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
-            ) : (
-              <div className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 bg-gray-50">
-                <Upload className="w-8 h-8" />
+      <div className="space-y-6">
+        {/* ── Identité Professionnelle ── */}
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+          <div>
+            <h3 className="text-base font-bold text-gray-800 mb-1">Identité Professionnelle</h3>
+            <p className="text-xs text-gray-400">Ces informations apparaîtront sur vos documents officiels.</p>
+          </div>
+
+          {/* Logo */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo de l'organisme</label>
+            <div className="flex items-center gap-6">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo organisme" className="w-24 h-24 object-contain rounded-xl border border-gray-200 bg-gray-50 p-2" />
+              ) : (
+                <div className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 bg-gray-50">
+                  <Upload className="w-8 h-8" />
+                </div>
+              )}
+              <div>
+                <input type="file" accept="image/*" id="logo-upload" className="hidden"
+                  onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }} />
+                <label htmlFor="logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
+                  {isUploading ? 'Chargement...' : 'Changer le logo'}
+                </label>
+                <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
               </div>
-            )}
+            </div>
+          </div>
+
+          {/* Raison sociale */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Raison Sociale</label>
+            <input type="text" value={nom} onChange={e => setNom(e.target.value)}
+              placeholder="Nom de votre entreprise"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+          </div>
+
+          {/* SIRET + NDA */}
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <input type="file" accept="image/*" id="logo-upload" className="hidden"
-                onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }} />
-              <label htmlFor="logo-upload" className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-colors">
-                {isUploading ? 'Chargement...' : 'Changer le logo'}
-              </label>
-              <p className="text-xs text-gray-400 mt-2">PNG, JPG, SVG — 2 Mo max</p>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Numéro SIRET</label>
+              <input type="text" value={siret} onChange={e => setSiret(e.target.value)} placeholder="14 chiffres"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">NDA (Qualiopi)</label>
+              <input type="text" value={nda} onChange={e => setNda(e.target.value)} placeholder="N° Déclaration d'Activité"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+          </div>
+
+          {/* Assurance RCP */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Assurance RCP — Compagnie</label>
+              <input type="text" value={compagnieAssurance} onChange={e => setCompagnieAssurance(e.target.value)} placeholder="Ex: AXA, MAIF, Hiscox..."
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Assurance RCP — N° de contrat</label>
+              <input type="text" value={numeroAssuranceRcp} onChange={e => setNumeroAssuranceRcp(e.target.value)} placeholder="N° de contrat RCP"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
             </div>
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
-          <input type="text" value={nom} onChange={e => setNom(e.target.value)}
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+        {/* ── Coordonnées & Contact ── */}
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+          <div>
+            <h3 className="text-base font-bold text-gray-800 mb-1">Coordonnées & Contact</h3>
+            <p className="text-xs text-gray-400">Informations de contact de l'organisme.</p>
+          </div>
+
+          {/* Email + Téléphone */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Email professionnel</label>
+              <input type="email" value={emailContact} onChange={e => setEmailContact(e.target.value)} placeholder="contact@monorganisme.fr"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Téléphone</label>
+              <input type="tel" value={telephoneContact} onChange={e => setTelephoneContact(e.target.value)} placeholder="06 00 00 00 00"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+          </div>
+
+          {/* Site web */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Site Internet</label>
+            <input type="url" value={siteWeb} onChange={e => setSiteWeb(e.target.value)} placeholder="https://www.votresite.fr"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+          </div>
+
+          {/* Adresse siège */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse Siège Social</label>
+            <input type="text" value={adresse} onChange={e => setAdresse(e.target.value)} placeholder="N° et nom de rue"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+          </div>
+
+          {/* Code postal + Ville */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Code Postal</label>
+              <input type="text" value={codePostal} onChange={e => setCodePostal(e.target.value)} placeholder="75000"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Ville</label>
+              <input type="text" value={ville} onChange={e => setVille(e.target.value)} placeholder="Paris"
+                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            </div>
+          </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Numéro SIRET</label>
-          <input type="text" value={siret} onChange={e => setSiret(e.target.value)} placeholder="ex : 123 456 789 00010"
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
-        </div>
-
-        <div>
-          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse</label>
-          <textarea value={adresse} onChange={e => setAdresse(e.target.value)} rows={3}
-            placeholder="ex : 1 rue de la Formation, 75000 Paris"
-            className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all resize-none" />
-        </div>
-
+        {/* ── Bouton de sauvegarde ── */}
         <button onClick={handleSave} disabled={isSaving}
           className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50">
           <Save className="w-4 h-4" />
