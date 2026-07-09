@@ -5687,8 +5687,40 @@ const DocumentsView = ({
             <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
               <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
             </h2>
-            <div className="bg-blue-50 border border-blue-100 p-3 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono">
-              <strong>Balises :</strong> {"{nom}"}, {"{adresse_formateur}"}, {"{formateur_nda}"}, {"{nomcomplet_client}"}, {"{prix_prestation}"}, {"{adresse_session}"}, {"{date_debut}"}...
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono max-w-xl">
+              <p className="font-black text-blue-800 uppercase tracking-widest mb-2 text-[9px]">📌 Balises disponibles dans vos modèles Word</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                <div>
+                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Client —</p>
+                  <p>{"{nomcomplet_client}"}</p>
+                  <p>{"{client_email}"}</p>
+                  <p>{"{client_phone}"}</p>
+                  <p>{"{adresse_session}"}</p>
+                  <p>{"{modalite_formation}"}</p>
+                  <p>{"{prix_prestation}"}</p>
+                  <p>{"{formation_nom}"}</p>
+                  <p>{"{date_debut}"}</p>
+                  <p>{"{date_fin}"}</p>
+                  <p>{"{date_signature}"}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Formateur / Coach —</p>
+                  <p>{"{nom}"} ou {"{nom_formateur}"}</p>
+                  <p>{"{email_formateur}"}</p>
+                  <p>{"{tel_formateur}"}</p>
+                  <p>{"{adresse_formateur}"}</p>
+                  <p>{"{formateur_siret}"}</p>
+                  <p>{"{formateur_nda}"}</p>
+                  <p>{"{compagnie_assurance}"}</p>
+                  <p>{"{numero_assurance_rcp}"}</p>
+                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Organisme —</p>
+                  <p>{"{org_nom}"}</p>
+                  <p>{"{org_siret}"}</p>
+                  <p>{"{org_nda}"}</p>
+                  <p>{"{org_adresse}"}</p>
+                  <p>{"{org_code_postal}"} · {"{org_ville}"}</p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -13147,7 +13179,9 @@ export default function App() {
       }));
 
       // Sauvegarder dans module_step_resources (Source unifiée)
-      const { data: existing } = await supabase.from('module_step_resources').select('id, metadata').eq('titre', type).eq('type', 'document');
+      let msrQuery = supabase.from('module_step_resources').select('id, metadata').eq('titre', type).eq('type', 'document');
+      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+      const { data: existing } = await msrQuery;
 
       const metadataObj = { classification };
       if (existing && existing.length > 0) {
@@ -13161,12 +13195,15 @@ export default function App() {
           type: 'document',
           destination,
           metadata: JSON.stringify(metadataObj),
-          extension: fileExt
+          extension: fileExt,
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {})
         }]);
       }
 
       // Sync avec documents
-      const { data: existingDoc } = await supabase.from('documents').select('id').eq('nom', type);
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', type);
+      if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
+      const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, extension: fileExt }).eq('id', existingDoc[0].id);
       } else {
@@ -13174,7 +13211,8 @@ export default function App() {
           nom: type,
           type_action: 'Modèle Référence',
           url: publicUrl,
-          extension: fileExt
+          extension: fileExt,
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {})
         }]);
       }
 
@@ -13352,6 +13390,7 @@ export default function App() {
         if (!theFormateur) throw new Error("Formateur non trouvé");
 
         dataToMerge = {
+          // ── Formateur ──
           nom: theFormateur.nom || '',
           nom_formateur: theFormateur.nom || '',
           formateur_nom_complet: theFormateur.nom || '',
@@ -13364,7 +13403,15 @@ export default function App() {
           tel_formateur: theFormateur.telephone || '',
           compagnie_assurance: theFormateur.compagnie_assurance || '',
           numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
-          date_signature: new Date().toLocaleDateString('fr-FR')
+          date_signature: new Date().toLocaleDateString('fr-FR'),
+          // ── Organisme (variables org_*) ──
+          org_nom: orgSettings?.nom || '',
+          org_siret: orgSettings?.siret || '',
+          org_nda: orgSettings?.nda || '',
+          org_adresse: orgSettings?.adresse || '',
+          org_code_postal: orgSettings?.code_postal || '',
+          org_ville: orgSettings?.ville || '',
+          org_site_web: orgSettings?.site_web || '',
         };
         targetId = fId;
         targetName = theFormateur.nom || "Formateur";
@@ -13399,6 +13446,7 @@ export default function App() {
         }
 
         dataToMerge = {
+          // ── Formateur / Coach ──
           nom: theCoach.nom || 'Coach',
           nom_formateur: theCoach.nom || 'Coach',
           formateur_nom_complet: theCoach.nom || '',
@@ -13408,6 +13456,9 @@ export default function App() {
           formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
           email_formateur: theCoach.email || '',
           tel_formateur: theCoach.telephone || '',
+          compagnie_assurance: theCoach.compagnie_assurance || '',
+          numero_assurance_rcp: theCoach.numero_assurance_rcp || '',
+          // ── Client / Bénéficiaire ──
           nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
@@ -13417,7 +13468,15 @@ export default function App() {
           date_debut: dateDebut,
           date_fin: dateFin,
           date_signature: new Date().toLocaleDateString('fr-FR'),
-          formation_nom: module?.nom || 'Formation'
+          formation_nom: module?.nom || 'Formation',
+          // ── Organisme (variables org_*) ──
+          org_nom: orgSettings?.nom || '',
+          org_siret: orgSettings?.siret || '',
+          org_nda: orgSettings?.nda || '',
+          org_adresse: orgSettings?.adresse || '',
+          org_code_postal: orgSettings?.code_postal || '',
+          org_ville: orgSettings?.ville || '',
+          org_site_web: orgSettings?.site_web || '',
         };
         targetId = clientRow.id;
         targetName = finalClient.nom_complet || clientRow.nom || "Client";
