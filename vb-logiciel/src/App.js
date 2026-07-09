@@ -9659,7 +9659,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
 // PARAMÈTRES ORGANISME (ADMIN)
 // ==========================================
 
-const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved, brandSettings, onBrandSaved }) => {
+const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved, brandSettings, onBrandSaved, orgId, onRefresh }) => {
   const [nom, setNom] = useState(orgSettings?.nom || '');
   const [siret, setSiret] = useState(orgSettings?.siret || '');
   const [adresse, setAdresse] = useState(orgSettings?.adresse || '');
@@ -9673,6 +9673,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const [brandLogoUrl, setBrandLogoUrl] = useState(brandSettings?.logo_url || '');
   const [isBrandUploading, setIsBrandUploading] = useState(false);
   const [isBrandSaving, setIsBrandSaving] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('organisme');
 
   useEffect(() => {
     if (brandSettings) {
@@ -9770,11 +9771,26 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* ── Header + sous-navigation ── */}
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        <h2 className="text-2xl font-black text-gray-900 tracking-tight">Paramètres de l'organisme</h2>
-        <p className="text-gray-500 text-sm mt-1">Ces informations apparaîtront sur vos documents officiels.</p>
+        <h2 className="text-2xl font-black text-gray-900 tracking-tight">Paramètres</h2>
+        <p className="text-gray-500 text-sm mt-1">Gérez votre organisme, votre portail et votre abonnement.</p>
+        <div className="flex gap-1 mt-5 bg-gray-100 p-1 rounded-xl w-fit">
+          {[
+            { key: 'organisme', label: 'Organisme' },
+            { key: 'personnalisation', label: 'Personnalisation' },
+            { key: 'abonnement', label: 'Abonnement' },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setSettingsTab(tab.key)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* ── Onglet Organisme ── */}
+      {settingsTab === 'organisme' && (
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
         <div>
           <label className="block text-xs font-bold text-gray-400 uppercase mb-3">Logo de l'organisme</label>
@@ -9822,8 +9838,10 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
           {isSaving ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
         </button>
       </div>
+      )}
 
-      {/* ── Section Personnalisation du portail ── */}
+      {/* ── Onglet Personnalisation ── */}
+      {settingsTab === 'personnalisation' && (
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
         <div>
           <h3 className="text-lg font-black text-gray-900">🎨 Personnalisation du portail</h3>
@@ -9935,6 +9953,12 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
           {isBrandSaving ? 'Sauvegarde...' : 'Sauvegarder la personnalisation'}
         </button>
       </div>
+      )}
+
+      {/* ── Onglet Abonnement ── */}
+      {settingsTab === 'abonnement' && (
+        <AbonnementView orgId={orgId || currentOrgId} orgSettings={orgSettings} onRefresh={onRefresh} />
+      )}
     </div>
   );
 };
@@ -14159,10 +14183,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
-              <button onClick={() => { setActiveTab('abonnement'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'abonnement' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                Mon Abonnement
-              </button>
             </>
           )}
 
@@ -14211,7 +14231,7 @@ export default function App() {
         <div className="p-4 border-t border-violet-900/40" style={{background:'#0C0619'}}>
           {/* Bannière essai / abonnement expiré */}
           {userRole === 'admin' && orgSettings?.subscription_status === 'trialing' && (
-            <TrialBanner orgSettings={orgSettings} onUpgrade={() => { setActiveTab('abonnement'); setMobileMenuOpen(false); }} />
+            <TrialBanner orgSettings={orgSettings} onUpgrade={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} />
           )}
           {/* Liens légaux */}
           <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2">
@@ -14298,9 +14318,9 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative">
           {/* Écran paywall si essai expiré ou abonnement annulé/impayé */}
-          {isSubscriptionExpired && activeTab !== 'abonnement' && (
+          {isSubscriptionExpired && activeTab !== 'parametres_org' && (
             <div className="absolute inset-0 z-50 flex items-center justify-center" style={{background:'rgba(249,250,251,0.97)', backdropFilter:'blur(4px)'}}>
-              <PaywallScreen onSubscribe={() => setActiveTab('abonnement')} />
+              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} />
             </div>
           )}
           {activeTab === 'profil' && <ProfileView
@@ -14348,16 +14368,11 @@ export default function App() {
             <OrganisationSettingsView
               supabase={supabase}
               currentOrgId={currentOrgId}
+              orgId={currentOrgId}
               orgSettings={orgSettings}
               onSaved={(updated) => setOrgSettings(prev => ({ ...prev, ...updated }))}
               brandSettings={brandSettings}
               onBrandSaved={(updated) => setBrandSettings(prev => ({ ...prev, ...updated }))}
-            />
-          )}
-          {activeTab === 'abonnement' && userRole === 'admin' && (
-            <AbonnementView
-              orgId={currentOrgId}
-              orgSettings={orgSettings}
               onRefresh={fetchOrgSettings}
             />
           )}
