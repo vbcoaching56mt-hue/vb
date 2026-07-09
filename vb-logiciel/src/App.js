@@ -14085,6 +14085,23 @@ export default function App() {
             color: white !important;
             font-weight: 500;
           }
+          .nav-scroll::-webkit-scrollbar {
+            width: 3px;
+          }
+          .nav-scroll::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .nav-scroll::-webkit-scrollbar-thumb {
+            background: rgba(124, 58, 237, 0.4);
+            border-radius: 999px;
+          }
+          .nav-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(124, 58, 237, 0.7);
+          }
+          .nav-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(124,58,237,0.4) transparent;
+          }
         `}</style>
         <div className="flex items-center justify-between h-20 px-5 border-b border-white/10" style={{background:'#0C0619'}}>
           <div className="flex items-center gap-3 min-w-0">
@@ -14105,7 +14122,7 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto">
+        <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto nav-scroll">
           {userRole === 'admin' && (
             <>
               <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
