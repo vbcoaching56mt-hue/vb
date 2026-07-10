@@ -5366,6 +5366,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
   const [currentPage, setCurrentPage] = React.useState(0);
   const [fields, setFields] = React.useState([]); // [{id, tag, page, xPct, yPct}]
   const [dragTag, setDragTag] = React.useState(null);
+  const [draggingFieldId, setDraggingFieldId] = React.useState(null); // repositionnement d'un champ existant
   const [templateName, setTemplateName] = React.useState('');
   const [destination, setDestination] = React.useState('client');
   const [isSaving, setIsSaving] = React.useState(false);
@@ -5443,18 +5444,26 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
 
   const handlePageDrop = (e) => {
     e.preventDefault();
-    if (!dragTag || !pageRef.current) return;
+    if (!pageRef.current) return;
     const rect = pageRef.current.getBoundingClientRect();
-    const xPct = Math.max(1, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
-    const yPct = Math.max(1, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
-    setFields(prev => [...prev, {
-      id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      tag: dragTag,
-      page: currentPage + 1,
-      xPct,
-      yPct,
-    }]);
-    setDragTag(null);
+    const xPct = Math.max(2, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(2, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
+
+    if (draggingFieldId) {
+      // Repositionnement d'un champ déjà posé
+      setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct } : f));
+      setDraggingFieldId(null);
+    } else if (dragTag) {
+      // Nouveau champ depuis la sidebar
+      setFields(prev => [...prev, {
+        id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        tag: dragTag,
+        page: currentPage + 1,
+        xPct,
+        yPct,
+      }]);
+      setDragTag(null);
+    }
   };
 
   const handleReset = () => {
@@ -5594,7 +5603,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   ref={pageRef}
                   className="relative shadow-2xl shrink-0"
                   style={{ width: Math.min(pdfPages[currentPage]?.nativeW || 800, 680) }}
-                  onDragOver={e => { e.preventDefault(); e.currentTarget.style.outline = '3px dashed #7C3AED'; e.currentTarget.style.outlineOffset = '-3px'; }}
+                  onDragOver={e => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = draggingFieldId ? 'move' : 'copy';
+                    const color = draggingFieldId ? '#6b7280' : '#7C3AED';
+                    e.currentTarget.style.outline = `3px dashed ${color}`;
+                    e.currentTarget.style.outlineOffset = '-3px';
+                  }}
                   onDragLeave={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
                   onDrop={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; handlePageDrop(e); }}
                 >
@@ -5608,30 +5623,59 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   {/* Balises posées sur cette page */}
                   {fieldsOnPage.map(field => {
                     const isSig = isSignatureTag(field.tag);
-                    const sc = isSig ? sigTagColor(field.tag) : null;
+                    const isBeingMoved = draggingFieldId === field.id;
                     return (
-                      <div key={field.id} style={{ position: 'absolute', left: `${field.xPct}%`, top: `${field.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 10 }}>
+                      <div
+                        key={field.id}
+                        draggable
+                        onDragStart={e => {
+                          e.stopPropagation();
+                          setDraggingFieldId(field.id);
+                          setDragTag(null);
+                          e.dataTransfer.effectAllowed = 'move';
+                          // Image fantôme transparente pour éviter l'aperçu natif
+                          const ghost = document.createElement('div');
+                          ghost.style.width = '1px'; ghost.style.height = '1px'; ghost.style.opacity = '0';
+                          document.body.appendChild(ghost);
+                          e.dataTransfer.setDragImage(ghost, 0, 0);
+                          setTimeout(() => document.body.removeChild(ghost), 0);
+                        }}
+                        onDragEnd={() => setDraggingFieldId(null)}
+                        style={{
+                          position: 'absolute',
+                          left: `${field.xPct}%`,
+                          top: `${field.yPct}%`,
+                          transform: 'translate(-50%, -50%)',
+                          zIndex: 10,
+                          cursor: 'grab',
+                          opacity: isBeingMoved ? 0.35 : 1,
+                          transition: 'opacity 0.15s',
+                        }}
+                        title="Glissez pour repositionner"
+                      >
                         {isSig ? (
-                          // Zone signature : rectangle avec bordure colorée
-                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
-                            <span className="text-base">✍️</span>
-                            <div className="flex-1">
+                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
+                            <span className="text-base select-none">✍️</span>
+                            <div className="flex-1 select-none">
                               <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
                                 {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
                               </p>
-                              <p className="text-[9px] text-gray-400">Zone de signature</p>
+                              <p className="text-[9px] text-gray-400">Glissez pour déplacer</p>
                             </div>
-                            <button onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
-                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0">
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                            >
                               <X size={8} />
                             </button>
                           </div>
                         ) : (
-                          // Badge texte classique
-                          <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white">
-                            <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
-                            <button onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
-                              className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0">
+                          <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white select-none">
+                            <span className="font-mono select-none">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
+                            >
                               <X size={8} />
                             </button>
                           </div>
@@ -5642,16 +5686,19 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   })}
 
                   {/* Hint zone de dépôt */}
-                  {dragTag && (
-                    <div className="absolute inset-0 pointer-events-none bg-violet-50/10 flex items-center justify-center">
+                  {(dragTag || draggingFieldId) && (
+                    <div className="absolute inset-0 pointer-events-none bg-gray-900/5 flex items-end justify-center pb-4">
                       <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
+                        draggingFieldId ? 'bg-gray-700/90' :
                         dragTag === 'signature_client' ? 'bg-blue-600/90' :
                         dragTag === 'signature_formateur' ? 'bg-orange-500/90' :
                         'bg-violet-700/90'
                       }`}>
-                        {isSignatureTag(dragTag)
-                          ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
-                          : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
+                        {draggingFieldId
+                          ? '↕ Déposez pour repositionner'
+                          : isSignatureTag(dragTag)
+                            ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
+                            : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
                         }
                       </div>
                     </div>
@@ -13671,12 +13718,12 @@ export default function App() {
       if (existingMsr && existingMsr.length > 0) {
         msrId = existingMsr[0].id;
         await supabase.from('module_step_resources').update({
-          file_url: publicUrl, destination, extension: 'docx',
+          file_url: publicUrl, destination,
           metadata: JSON.stringify(metadataObj),
         }).eq('id', msrId);
       } else {
         const { data: insertedMsr, error: msrErr } = await supabase.from('module_step_resources').insert([{
-          titre: name, file_url: publicUrl, type: 'document', destination, extension: 'docx',
+          titre: name, file_url: publicUrl, type: 'document', destination,
           metadata: JSON.stringify(metadataObj),
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }]).select('id').single();
@@ -13708,10 +13755,10 @@ export default function App() {
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl, extension: 'docx' }).eq('id', existingDoc[0].id);
+        await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
-          nom: name, type_action: 'Modèle Référence', url: publicUrl, extension: 'docx',
+          nom: name, type_action: 'Modèle Référence', url: publicUrl,
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }]);
       }
