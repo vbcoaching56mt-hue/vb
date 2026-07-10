@@ -542,6 +542,44 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
   }
 };
 
+/**
+ * overlayFieldsOnPdf — superpose les valeurs des balises sur un PDF avec pdf-lib.
+ * @param {Blob} pdfBlob — PDF source
+ * @param {Array} templateFields — [{page, x_percent, y_percent, font_size, tag}]
+ * @param {Object} dataValues — {nomcomplet_client: "...", ...}
+ * @returns {Blob} PDF modifié
+ */
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues) => {
+  const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer());
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const pages = pdfDoc.getPages();
+  for (const field of templateFields) {
+    const pageIndex = (field.page || 1) - 1;
+    if (pageIndex >= pages.length) continue;
+    const page = pages[pageIndex];
+    const { width: pageW, height: pageH } = page.getSize();
+    const x = (field.x_percent / 100) * pageW;
+    // PDF Y=0 est en bas de page ; notre yPct est depuis le haut
+    const y = pageH - (field.y_percent / 100) * pageH;
+    const value = String(dataValues[field.tag] || '');
+    if (!value) continue;
+    try {
+      page.drawText(value, {
+        x: Math.max(0, x),
+        y: Math.max(0, y),
+        size: field.font_size || 11,
+        font,
+        color: rgb(0, 0, 0),
+        maxWidth: pageW * 0.85,
+      });
+    } catch (e) {
+      console.warn(`[overlayFieldsOnPdf] Balise ${field.tag} ignorée :`, e.message);
+    }
+  }
+  const pdfBytes = await pdfDoc.save();
+  return new Blob([pdfBytes], { type: 'application/pdf' });
+};
+
 const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
@@ -5273,277 +5311,358 @@ const FormateurView = ({
 };
 
 /* ─────────────────────────────────────────────────────────
-   TemplateEditorModal — éditeur de modèles Word avec scanner
+   VisualTemplateEditor — éditeur style Yousign
+   Upload DOCX → aperçu PDF → drag-drop balises sur le document
    ───────────────────────────────────────────────────────── */
-const TemplateEditorModal = ({ isOpen, onClose, onUpload }) => {
+const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
+  const [step, setStep] = React.useState('upload'); // 'upload' | 'converting' | 'editor'
   const [file, setFile] = React.useState(null);
-  const [docText, setDocText] = React.useState('');
-  const [detectedTags, setDetectedTags] = React.useState([]);
+  const [pdfPages, setPdfPages] = React.useState([]); // [{dataUrl, nativeW, nativeH}]
+  const [currentPage, setCurrentPage] = React.useState(0);
+  const [fields, setFields] = React.useState([]); // [{id, tag, page, xPct, yPct}]
+  const [dragTag, setDragTag] = React.useState(null);
   const [templateName, setTemplateName] = React.useState('');
-  const [classification, setClassification] = React.useState('telechargeable');
   const [destination, setDestination] = React.useState('client');
-  const [isDragging, setIsDragging] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [copiedTag, setCopiedTag] = React.useState(null);
   const fileInputRef = React.useRef(null);
+  const pageRef = React.useRef(null);
 
   const ALL_TAGS = {
     'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
   };
-  const allKnownTags = Object.values(ALL_TAGS).flat();
 
-  const extractTextFromDocx = async (f) => {
-    try {
-      const arrayBuffer = await f.arrayBuffer();
-      const zip = new PizZip(arrayBuffer);
-      const xml = zip.file('word/document.xml').asText();
-      const matches = xml.match(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g) || [];
-      const text = matches.map(m => m.replace(/<[^>]+>/g, '')).join(' ');
-      const tagMatches = [...text.matchAll(/\{([^}\s]{1,40})\}/g)];
-      const tags = [...new Set(tagMatches.map(m => m[1]))];
-      return { text, tags };
-    } catch (e) {
-      return { text: '', tags: [] };
-    }
-  };
+  // Chargement dynamique de PDF.js depuis le CDN
+  const loadPdfJs = () => new Promise((resolve, reject) => {
+    if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = () => reject(new Error('Impossible de charger PDF.js'));
+    document.head.appendChild(script);
+  });
 
   const handleFileSelect = async (f) => {
     if (!f) return;
-    const ext = f.name.split('.').pop().toLowerCase();
-    if (!['docx', 'pdf'].includes(ext)) { toast.error('Format accepté : .docx ou .pdf'); return; }
+    if (f.name.split('.').pop().toLowerCase() !== 'docx') {
+      toast.error('Seuls les fichiers .docx sont acceptés pour l\'éditeur visuel.');
+      return;
+    }
     setFile(f);
     if (!templateName) setTemplateName(f.name.replace(/\.[^/.]+$/, ''));
-    if (ext === 'docx') {
-      const { text, tags } = await extractTextFromDocx(f);
-      setDocText(text);
-      setDetectedTags(tags);
-    } else {
-      setDocText('');
-      setDetectedTags([]);
+    setStep('converting');
+    try {
+      // 1. Convertir DOCX → PDF (pipeline existant)
+      let pdfBlob;
+      try { pdfBlob = await convertDocxBlobToPdf(f); }
+      catch (_) { pdfBlob = await convertDocxBlobToPdfLocal(f); }
+
+      // 2. Charger PDF.js et rendre chaque page en canvas
+      const pdfjsLib = await loadPdfJs();
+      const arr = await pdfBlob.arrayBuffer();
+      const pdfjsDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arr) }).promise;
+      const pages = [];
+      const SCALE = 1.5;
+      for (let i = 1; i <= pdfjsDoc.numPages; i++) {
+        const page = await pdfjsDoc.getPage(i);
+        const vp = page.getViewport({ scale: SCALE });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(vp.width);
+        canvas.height = Math.floor(vp.height);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+        pages.push({ dataUrl: canvas.toDataURL('image/png'), nativeW: canvas.width, nativeH: canvas.height });
+      }
+      setPdfPages(pages);
+      setCurrentPage(0);
+      setFields([]);
+      setStep('editor');
+    } catch (err) {
+      toast.error('Conversion impossible : ' + err.message);
+      setStep('upload');
     }
   };
 
-  const copyTag = (tag) => {
-    navigator.clipboard.writeText(`{${tag}}`).catch(() => {});
-    setCopiedTag(tag);
-    setTimeout(() => setCopiedTag(null), 1500);
+  const handlePageDrop = (e) => {
+    e.preventDefault();
+    if (!dragTag || !pageRef.current) return;
+    const rect = pageRef.current.getBoundingClientRect();
+    const xPct = Math.max(1, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(1, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
+    setFields(prev => [...prev, {
+      id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      tag: dragTag,
+      page: currentPage + 1,
+      xPct,
+      yPct,
+    }]);
+    setDragTag(null);
   };
 
-  const renderPreview = () => {
-    if (!docText) return null;
-    const parts = docText.split(/(\{[^}\s]{1,40}\})/g);
-    return parts.map((part, i) => {
-      const m = part.match(/^\{([^}]+)\}$/);
-      if (m) {
-        const known = allKnownTags.includes(m[1]);
-        return (
-          <span key={i} className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] mx-0.5 ${known ? 'bg-violet-100 text-violet-700 font-bold' : 'bg-amber-100 text-amber-700'}`}>
-            {part}
-          </span>
-        );
-      }
-      return <span key={i} className="text-gray-600">{part}</span>;
-    });
+  const handleReset = () => {
+    setFile(null); setPdfPages([]); setFields([]);
+    setCurrentPage(0); setStep('upload');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleClose = () => {
+    handleReset();
+    setTemplateName(''); setDestination('client');
+    onClose();
   };
 
   const handleSave = async () => {
-    if (!file || !templateName.trim()) { toast.error('Nom et fichier requis.'); return; }
+    if (!file || !templateName.trim()) { toast.error('Nom requis.'); return; }
+    if (fields.length === 0) { toast.error('Placez au moins une balise sur le document.'); return; }
     setIsSaving(true);
-    await onUpload(file, templateName.trim(), destination, classification);
-    setIsSaving(false);
-    onClose();
-    setFile(null); setDocText(''); setDetectedTags([]); setTemplateName('');
-    setClassification('telechargeable'); setDestination('client');
+    try {
+      await onSave(file, templateName.trim(), destination, fields);
+      handleClose();
+    } catch (err) {
+      toast.error('Erreur : ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const fieldsOnPage = fields.filter(f => f.page === currentPage + 1);
+  const placedTags = new Set(fields.map(f => f.tag));
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden">
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100">
-          <div>
-            <h2 className="text-xl font-black text-gray-900">Ajouter un modèle de document</h2>
-            <p className="text-sm text-gray-400 mt-0.5">Importez votre fichier Word et vérifiez les balises de fusion</p>
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-3">
+            {step === 'editor' && (
+              <button onClick={handleReset} className="p-2 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all">
+                <ChevronLeft size={18} />
+              </button>
+            )}
+            <div>
+              <h2 className="text-xl font-black text-gray-900">
+                {step === 'upload' ? 'Importer un modèle de document'
+                 : step === 'converting' ? 'Préparation de l\'aperçu…'
+                 : `Éditeur de balises — ${pdfPages.length} page${pdfPages.length > 1 ? 's' : ''}`}
+              </h2>
+              <p className="text-sm text-gray-400 mt-0.5">
+                {step === 'upload' ? 'Votre fichier Word reste intact · les balises sont positionnées par dessus en overlay'
+                 : step === 'converting' ? 'Conversion du DOCX en aperçu PDF (10-20 secondes)…'
+                 : `${fields.length} balise${fields.length !== 1 ? 's' : ''} posée${fields.length !== 1 ? 's' : ''} · glissez une balise depuis le panneau droit`}
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all">
+          <button onClick={handleClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl">
             <X size={20} />
           </button>
         </div>
 
-        {/* Body */}
+        {/* ── Body ── */}
         <div className="flex flex-1 overflow-hidden">
 
-          {/* ── Panneau gauche ── */}
-          <div className="flex-1 overflow-y-auto p-8 space-y-5">
-
-            {/* Zone d'upload */}
-            <div
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${isDragging ? 'border-violet-400 bg-violet-50' : 'border-gray-200 hover:border-violet-300 hover:bg-gray-50'}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) handleFileSelect(e.dataTransfer.files[0]); }}
-            >
-              <input ref={fileInputRef} type="file" className="hidden" accept=".docx,.pdf" onChange={e => e.target.files[0] && handleFileSelect(e.target.files[0])} />
-              {file ? (
-                <div className="flex items-center justify-center gap-3">
-                  <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center shrink-0">
-                    <FileText size={20} className="text-violet-600" />
+          {/* Upload / Converting */}
+          {(step === 'upload' || step === 'converting') && (
+            <div className="flex-1 flex items-center justify-center p-8">
+              {step === 'converting' ? (
+                <div className="text-center space-y-4">
+                  <div className="relative w-16 h-16 mx-auto">
+                    <div className="absolute inset-0 w-16 h-16 rounded-full border-4 border-violet-100" />
+                    <div className="absolute inset-0 w-16 h-16 rounded-full border-4 border-violet-600 border-t-transparent animate-spin" />
                   </div>
-                  <div className="text-left">
-                    <p className="font-bold text-gray-900 text-sm">{file.name}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{(file.size / 1024).toFixed(0)} Ko · Cliquez pour changer</p>
-                  </div>
+                  <p className="font-bold text-gray-700">Conversion du document…</p>
+                  <p className="text-sm text-gray-400">Préparation de l'aperçu visuel page par page</p>
                 </div>
               ) : (
-                <>
-                  <Upload size={28} className="mx-auto mb-3 text-gray-300" />
-                  <p className="font-bold text-gray-600 text-sm">Glissez votre fichier ici</p>
-                  <p className="text-sm text-gray-400 mt-1">ou cliquez pour sélectionner un .docx ou .pdf</p>
-                </>
+                <div
+                  className="border-2 border-dashed border-gray-200 rounded-3xl p-12 text-center cursor-pointer hover:border-violet-300 hover:bg-violet-50/20 transition-all max-w-lg w-full"
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); if (e.dataTransfer.files[0]) handleFileSelect(e.dataTransfer.files[0]); }}
+                >
+                  <input ref={fileInputRef} type="file" className="hidden" accept=".docx" onChange={e => e.target.files[0] && handleFileSelect(e.target.files[0])} />
+                  <div className="w-16 h-16 bg-violet-50 rounded-2xl flex items-center justify-center mx-auto mb-5">
+                    <Upload size={28} className="text-violet-500" />
+                  </div>
+                  <p className="font-black text-gray-800 text-lg mb-2">Importez votre document Word</p>
+                  <p className="text-gray-400 text-sm mb-6">Glissez un .docx ici, ou cliquez pour sélectionner</p>
+                  <div className="grid grid-cols-3 gap-3 text-left">
+                    {[
+                      ['📄', 'Fichier intact', 'Pas de modification du Word'],
+                      ['🎯', 'Balises visuelles', 'Glissez à l\'endroit exact'],
+                      ['⚡', 'Génération auto', 'Les données se remplissent seules'],
+                    ].map(([icon, title, desc]) => (
+                      <div key={title} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                        <span className="text-xl">{icon}</span>
+                        <p className="text-xs font-bold text-gray-700 mt-1">{title}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
+          )}
 
-            {/* Aperçu du contenu */}
-            {docText ? (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-bold text-gray-700">Aperçu du contenu</h3>
-                  <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{detectedTags.length} balise(s) détectée(s)</span>
-                </div>
-                <div className="bg-gray-50 rounded-2xl border border-gray-100 p-5 text-sm leading-relaxed max-h-48 overflow-y-auto">
-                  {renderPreview()}
-                </div>
-              </div>
-            ) : file && file.name.toLowerCase().endsWith('.pdf') ? (
-              <div className="flex items-center gap-3 bg-blue-50 rounded-2xl border border-blue-100 p-4 text-sm text-blue-700">
-                <FileText size={16} className="shrink-0" />
-                <span>Fichier PDF — les balises ne sont pas extractibles. Le document sera enregistré tel quel.</span>
-              </div>
-            ) : null}
+          {/* Éditeur visuel */}
+          {step === 'editor' && (
+            <>
+              {/* ── Visionneuse centrale ── */}
+              <div className="flex-1 bg-[#e8e8e8] overflow-auto flex flex-col items-center gap-3 p-4">
+                {/* Navigation pages */}
+                {pdfPages.length > 1 && (
+                  <div className="shrink-0 flex items-center gap-2 bg-white rounded-xl px-4 py-2 shadow-sm border border-gray-200">
+                    <button onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage === 0}
+                      className="text-gray-400 hover:text-violet-600 disabled:opacity-30 transition-colors">
+                      <ChevronLeft size={16} />
+                    </button>
+                    {pdfPages.map((_, i) => (
+                      <button key={i} onClick={() => setCurrentPage(i)}
+                        className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${currentPage === i ? 'bg-violet-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
+                        {i + 1}
+                      </button>
+                    ))}
+                    <button onClick={() => setCurrentPage(p => Math.min(pdfPages.length - 1, p + 1))} disabled={currentPage === pdfPages.length - 1}
+                      className="text-gray-400 hover:text-violet-600 disabled:opacity-30 transition-colors">
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
 
-            {/* Scanner de balises */}
-            {detectedTags.length > 0 && (
-              <div className="bg-indigo-50 rounded-2xl border border-indigo-100 p-4">
-                <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-3">Balises détectées dans votre document</h3>
-                <div className="flex flex-wrap gap-2">
-                  {detectedTags.map(tag => {
-                    const isKnown = allKnownTags.includes(tag);
-                    return (
-                      <span key={tag} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold ${isKnown ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {isKnown ? <Check size={10} /> : <AlertTriangle size={10} />}
-                        {`{${tag}}`}
-                      </span>
-                    );
-                  })}
+                {/* Page avec overlay de balises */}
+                <div
+                  ref={pageRef}
+                  className="relative shadow-2xl shrink-0"
+                  style={{ width: Math.min(pdfPages[currentPage]?.nativeW || 800, 680) }}
+                  onDragOver={e => { e.preventDefault(); e.currentTarget.style.outline = '3px dashed #7C3AED'; e.currentTarget.style.outlineOffset = '-3px'; }}
+                  onDragLeave={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
+                  onDrop={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; handlePageDrop(e); }}
+                >
+                  <img
+                    src={pdfPages[currentPage]?.dataUrl}
+                    style={{ width: '100%', display: 'block' }}
+                    alt={`Page ${currentPage + 1}`}
+                    draggable={false}
+                  />
+
+                  {/* Balises posées sur cette page */}
+                  {fieldsOnPage.map(field => (
+                    <div key={field.id} style={{ position: 'absolute', left: `${field.xPct}%`, top: `${field.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 10 }}>
+                      <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white">
+                        <span className="font-mono">{`{${field.tag}}`}</span>
+                        <button
+                          onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
+                          className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
+                        >
+                          <X size={8} />
+                        </button>
+                      </div>
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 w-0.5 h-2 bg-violet-500/60" />
+                    </div>
+                  ))}
+
+                  {/* Hint zone de dépôt */}
+                  {dragTag && (
+                    <div className="absolute inset-0 pointer-events-none bg-violet-50/20 flex items-center justify-center">
+                      <div className="bg-violet-700/90 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl">
+                        Déposez ici → <span className="font-mono">{`{${dragTag}}`}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {detectedTags.some(t => !allKnownTags.includes(t)) && (
-                  <p className="text-[11px] text-amber-600 mt-3 flex items-center gap-1.5">
-                    <AlertTriangle size={12} /> Les balises en orange ne seront pas remplacées — vérifiez l'orthographe.
-                  </p>
+
+                {pdfPages.length > 1 && (
+                  <p className="text-xs text-gray-400 shrink-0">Page {currentPage + 1} / {pdfPages.length}</p>
                 )}
               </div>
-            )}
 
-            {/* Nom + classification + destination */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Nom du modèle</label>
-                <input
-                  type="text"
-                  value={templateName}
-                  onChange={e => setTemplateName(e.target.value)}
-                  placeholder="Ex : Convention de sous-traitance"
-                  className="w-full text-sm p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Classification</label>
-                <select
-                  value={classification}
-                  onChange={e => setClassification(e.target.value)}
-                  className="w-full text-sm p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
-                >
-                  <option value="telechargeable">📥 Téléchargeable</option>
-                  <option value="a_signer">✍️ À signer</option>
-                  <option value="a_generer">⚙️ À générer automatiquement</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Destination</label>
-              <div className="flex gap-3">
-                {[['client', '📁 Client'], ['formateur', '📋 Formateur']].map(([val, label]) => (
-                  <button key={val} onClick={() => setDestination(val)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-200 hover:border-violet-300'}`}>
-                    {label}
+              {/* ── Panneau droit ── */}
+              <div className="w-60 shrink-0 border-l border-gray-100 bg-white flex flex-col overflow-hidden">
+                {/* Liste des balises */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div>
+                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
+                    <p className="text-[11px] text-gray-400 leading-snug">Glissez une balise et déposez-la sur la page à l'endroit souhaité</p>
+                  </div>
+                  {Object.entries(ALL_TAGS).map(([group, tags]) => (
+                    <div key={group}>
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— {group} —</p>
+                      <div className="flex flex-col gap-1">
+                        {tags.map(tag => {
+                          const isPlaced = placedTags.has(tag);
+                          const isDraggingThis = dragTag === tag;
+                          return (
+                            <div
+                              key={tag}
+                              draggable
+                              onDragStart={e => { setDragTag(tag); e.dataTransfer.effectAllowed = 'copy'; }}
+                              onDragEnd={() => setDragTag(null)}
+                              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-[11px] font-mono border select-none cursor-grab active:cursor-grabbing transition-all ${
+                                isDraggingThis ? 'opacity-40 scale-95' :
+                                isPlaced ? 'bg-violet-50 border-violet-200 text-violet-700' :
+                                'bg-white border-gray-100 text-gray-600 hover:border-violet-200 hover:bg-violet-50/50 hover:text-violet-600'
+                              }`}
+                            >
+                              <span className="text-gray-300 shrink-0 text-[10px]">⠿</span>
+                              <span className="truncate flex-1">{`{${tag}}`}</span>
+                              {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0 text-violet-500" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Paramètres + Enregistrer */}
+                <div className="p-4 border-t border-gray-100 space-y-3 shrink-0">
+                  <div>
+                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Nom du modèle</label>
+                    <input
+                      type="text"
+                      value={templateName}
+                      onChange={e => setTemplateName(e.target.value)}
+                      className="w-full text-xs p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-400"
+                      placeholder="Ex : Convention de formation"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destination</label>
+                    <div className="flex gap-2">
+                      {[['client', '📁 Client'], ['formateur', '📋 Formateur']].map(([val, label]) => (
+                        <button key={val} onClick={() => setDestination(val)}
+                          className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSave}
+                    disabled={isSaving || !templateName.trim() || fields.length === 0}
+                    className="w-full py-3 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white transition-all disabled:opacity-40 shadow-sm"
+                  >
+                    {isSaving ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Enregistrement…
+                      </span>
+                    ) : `Enregistrer (${fields.length} balise${fields.length !== 1 ? 's' : ''})`}
                   </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* ── Panneau droit — balises ── */}
-          <div className="w-64 shrink-0 overflow-y-auto p-5 bg-gray-50 border-l border-gray-100 space-y-5">
-            <div>
-              <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
-              <p className="text-[11px] text-gray-400 leading-relaxed">Cliquez pour copier → collez dans Word à l'endroit voulu</p>
-            </div>
-            {Object.entries(ALL_TAGS).map(([group, tags]) => (
-              <div key={group}>
-                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">— {group} —</p>
-                <div className="flex flex-col gap-1">
-                  {tags.map(tag => {
-                    const isInDoc = detectedTags.includes(tag);
-                    const isCopied = copiedTag === tag;
-                    return (
-                      <button
-                        key={tag}
-                        onClick={() => copyTag(tag)}
-                        className={`text-left w-full px-2.5 py-2 rounded-lg text-[11px] font-mono transition-all border ${
-                          isCopied ? 'bg-green-100 border-green-300 text-green-800' :
-                          isInDoc ? 'bg-violet-50 border-violet-200 text-violet-700' :
-                          'bg-white border-gray-100 text-gray-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700'
-                        }`}
-                      >
-                        <span className="flex items-center justify-between gap-1">
-                          <span className="truncate">{`{${tag}}`}</span>
-                          {isCopied ? <Check size={10} className="shrink-0" /> : isInDoc ? <span className="text-[8px] text-violet-500 font-black shrink-0">✓</span> : null}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {fields.length === 0 && (
+                    <p className="text-[11px] text-amber-600 text-center">Glissez au moins une balise sur le document</p>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
-
+            </>
+          )}
         </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between px-8 py-4 border-t border-gray-100 bg-gray-50/80">
-          <p className="text-xs text-gray-400">
-            {file ? `${file.name} · ${detectedTags.length} balise(s) détectée(s)` : 'Aucun fichier sélectionné'}
-          </p>
-          <div className="flex gap-3">
-            <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-500 hover:bg-gray-200 transition-all">
-              Annuler
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!file || !templateName.trim() || isSaving}
-              className="px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white transition-all shadow-sm disabled:opacity-40"
-            >
-              {isSaving ? 'Enregistrement…' : 'Enregistrer le modèle'}
-            </button>
-          </div>
-        </div>
-
       </div>
     </div>
   );
@@ -5558,7 +5677,7 @@ const DocumentsView = ({
   newDocVisClient, setNewDocVisClient, newDocVisFormateur, setNewDocVisFormateur,
   isAddingDoc, selectedClientForDocs, setSelectedClientForDocs,
   signingDocId, setSigningDocId, viewingDocId, setViewingDocId,
-  handleSignatureSave, documentTemplates, handleUploadDocxTemplate,
+  handleSignatureSave, documentTemplates, handleUploadDocxTemplate, handleUploadVisualTemplate,
   newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete,
   newTemplateDestination, setNewTemplateDestination, supabase,
   onUpdateTemplateDestination,
@@ -6020,7 +6139,7 @@ const DocumentsView = ({
             )}
           </div>
 
-          {/* ── Bouton d'ajout de modèle → ouvre TemplateEditorModal ── */}
+          {/* ── Bouton d'ajout de modèle → ouvre VisualTemplateEditor ── */}
           <div className="mb-8">
             <button
               onClick={() => setIsTemplateEditorOpen(true)}
@@ -6031,15 +6150,15 @@ const DocumentsView = ({
               </div>
               <div className="text-left">
                 <p className="font-bold text-sm">Ajouter un modèle de document</p>
-                <p className="text-xs text-violet-400 mt-0.5">Importez un .docx ou .pdf et vérifiez vos balises de fusion</p>
+                <p className="text-xs text-violet-400 mt-0.5">Importez un .docx · positionnez vos balises visuellement sur le document</p>
               </div>
             </button>
           </div>
 
-          <TemplateEditorModal
+          <VisualTemplateEditor
             isOpen={isTemplateEditorOpen}
             onClose={() => setIsTemplateEditorOpen(false)}
-            onUpload={handleUploadDocxTemplate}
+            onSave={handleUploadVisualTemplate}
           />
 
           {/* ── Section Questionnaires ── */}
@@ -13407,6 +13526,91 @@ export default function App() {
     }
   };
 
+  // ── VisualTemplateEditor : upload DOCX + sauvegarde des champs visuels ──
+  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg) => {
+    try {
+      const file = fileArg;
+      const name = nameArg || (file ? file.name.replace(/\.[^/.]+$/, '') : 'modele');
+      const destination = destinationArg || 'client';
+      const fieldsToSave = fieldsArg || [];
+
+      if (!file) throw new Error('Aucun fichier fourni.');
+
+      // 1. Upload du DOCX dans le Storage
+      const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `template_visual_${safeName}_${Date.now()}.docx`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+      // 2. Insérer / mettre à jour dans module_step_resources avec has_visual_fields:true
+      const metadataObj = { classification: 'a_generer', has_visual_fields: true };
+      let msrId = null;
+      let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
+      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+      const { data: existingMsr } = await msrQuery;
+
+      if (existingMsr && existingMsr.length > 0) {
+        msrId = existingMsr[0].id;
+        await supabase.from('module_step_resources').update({
+          file_url: publicUrl, destination, extension: 'docx',
+          metadata: JSON.stringify(metadataObj),
+        }).eq('id', msrId);
+      } else {
+        const { data: insertedMsr, error: msrErr } = await supabase.from('module_step_resources').insert([{
+          titre: name, file_url: publicUrl, type: 'document', destination, extension: 'docx',
+          metadata: JSON.stringify(metadataObj),
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+        }]).select('id').single();
+        if (msrErr) throw msrErr;
+        msrId = insertedMsr.id;
+      }
+
+      // 3. Sauvegarder les champs visuels dans template_fields
+      if (fieldsToSave.length > 0 && msrId) {
+        // Supprimer les anciens champs pour ce template
+        await supabase.from('template_fields').delete().eq('template_id', msrId);
+        // Insérer les nouveaux
+        const rows = fieldsToSave.map(f => ({
+          template_id: msrId,
+          tag: f.tag,
+          page: f.page || 1,
+          x_percent: parseFloat(f.xPct.toFixed(4)),
+          y_percent: parseFloat(f.yPct.toFixed(4)),
+          font_size: 11,
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+        }));
+        const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
+        if (fieldsErr) throw fieldsErr;
+      }
+
+      // 4. Sync avec table documents (pour affichage)
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', name);
+      if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
+      const { data: existingDoc } = await docCheckQuery;
+      if (existingDoc && existingDoc.length > 0) {
+        await supabase.from('documents').update({ url: publicUrl, extension: 'docx' }).eq('id', existingDoc[0].id);
+      } else {
+        await supabase.from('documents').insert([{
+          nom: name, type_action: 'Modèle Référence', url: publicUrl, extension: 'docx',
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+        }]);
+      }
+
+      // 5. Mettre à jour le state local
+      setDocumentTemplates(prev => ({
+        ...prev,
+        [name]: { id: msrId, url: publicUrl, name, destination, classification: 'a_generer', metadata: metadataObj }
+      }));
+
+      await fetchDocuments();
+      toast.success(`Modèle "${name}" enregistré avec ${fieldsToSave.length} balise${fieldsToSave.length !== 1 ? 's' : ''}.`);
+    } catch (err) {
+      console.error('[handleUploadVisualTemplate]', err);
+      toast.error('Erreur : ' + (err.message || 'Erreur inconnue'));
+    }
+  };
+
   const handleDeleteDocxTemplate = async (templateKey) => {
     try {
       const template = documentTemplates[templateKey];
@@ -13662,6 +13866,80 @@ export default function App() {
         targetName = finalClient.nom_complet || clientRow.nom || "Client";
       }
 
+      // ── Branche : template visuel (balises posées via VisualTemplateEditor) ──
+      const isVisualTemplate = templateInfo?.metadata?.has_visual_fields === true;
+      if (isVisualTemplate && templateInfo.id) {
+        toast.loading('Génération du document visuel…', { id: 'gen-doc' });
+        const safeName = targetName.replace(/\s+/g, '_');
+
+        // 1. Charger les champs visuels depuis Supabase
+        const { data: templateFieldsData, error: tfErr } = await supabase
+          .from('template_fields')
+          .select('*')
+          .eq('template_id', templateInfo.id)
+          .order('page', { ascending: true });
+        if (tfErr) throw new Error('Erreur chargement balises : ' + tfErr.message);
+
+        // 2. Récupérer le DOCX original
+        const docxResp = await fetch(templateInfo.url);
+        if (!docxResp.ok) throw new Error('Impossible de récupérer le modèle.');
+        const docxBlob = await docxResp.blob();
+
+        // 3. Convertir DOCX → PDF (même pipeline que l'éditeur → rendu cohérent)
+        let basePdfBlob;
+        try {
+          toast.loading('Conversion DOCX → PDF…', { id: 'gen-doc' });
+          basePdfBlob = await convertDocxBlobToPdf(docxBlob);
+        } catch (_) {
+          toast.loading('Conversion locale…', { id: 'gen-doc' });
+          basePdfBlob = await convertDocxBlobToPdfLocal(docxBlob);
+        }
+
+        // 4. Superposer les valeurs aux positions stockées
+        toast.loading('Superposition des données…', { id: 'gen-doc' });
+        const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, templateFieldsData || [], dataToMerge);
+
+        const finalFileName = `${type}_${safeName}_${Date.now()}.pdf`;
+
+        // 5. Téléchargement local si applicable
+        const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
+        if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
+          saveAs(filledPdfBlob, finalFileName);
+        }
+
+        // 6. Upload + insert Supabase (même logique que la branche classique)
+        toast.loading('Upload du document…', { id: 'gen-doc' });
+        const uploadFile = new File([filledPdfBlob], finalFileName, { type: 'application/pdf' });
+        const { error: upErr } = await supabase.storage.from(uploadBucket).upload(finalFileName, uploadFile);
+        if (upErr) throw upErr;
+        const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
+
+        const docToInsert = {
+          nom: `${type} - ${targetName}`,
+          type_document: 'Administratif',
+          url: publicUrl,
+          signe_par_client: false,
+          signe_par_formateur: false,
+          visible_admin: true,
+        };
+        if (effectiveIsForFormateur || formateurId) {
+          docToInsert.assigned_formateur_id = targetId;
+          docToInsert.visible_formateur = true;
+          docToInsert.visible_client = false;
+        } else {
+          docToInsert.user_id = targetId;
+          docToInsert.visible_client = true;
+          docToInsert.visible_formateur = true;
+          if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
+        }
+        const { error: insertErr } = await supabase.from('documents').insert([docToInsert]);
+        if (insertErr) throw new Error('Erreur Supabase : ' + insertErr.message);
+        await fetchDocuments();
+        toast.success(`Document "${type}" généré.`, { id: 'gen-doc' });
+        return;
+      }
+      // ── Fin branche visuelle ──
+
       const response = await fetch(templateInfo.url);
       if (!response.ok) throw new Error(`Fetch template error: ${response.statusText}`);
       const arrayBuffer = await response.arrayBuffer();
@@ -13670,7 +13948,7 @@ export default function App() {
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
       doc.render(dataToMerge);
-      
+
       const docxBlob = doc.getZip().generate({
         type: 'blob',
         mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -14995,6 +15273,7 @@ export default function App() {
             supabase={supabase}
             currentOrgId={currentOrgId}
             handleUploadDocxTemplate={handleUploadDocxTemplate}
+            handleUploadVisualTemplate={handleUploadVisualTemplate}
             onUpdateTemplateDestination={handleUpdateTemplateDestination}
           />}
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
