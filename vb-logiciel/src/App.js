@@ -549,31 +549,76 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  * @param {Object} dataValues — {nomcomplet_client: "...", ...}
  * @returns {Blob} PDF modifié
  */
-const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues) => {
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}) => {
+  // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
   const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer());
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const pages = pdfDoc.getPages();
+
   for (const field of templateFields) {
     const pageIndex = (field.page || 1) - 1;
     if (pageIndex >= pages.length) continue;
     const page = pages[pageIndex];
     const { width: pageW, height: pageH } = page.getSize();
-    const x = (field.x_percent / 100) * pageW;
-    // PDF Y=0 est en bas de page ; notre yPct est depuis le haut
-    const y = pageH - (field.y_percent / 100) * pageH;
-    const value = String(dataValues[field.tag] || '');
-    if (!value) continue;
-    try {
-      page.drawText(value, {
-        x: Math.max(0, x),
-        y: Math.max(0, y),
-        size: field.font_size || 11,
-        font,
-        color: rgb(0, 0, 0),
-        maxWidth: pageW * 0.85,
-      });
-    } catch (e) {
-      console.warn(`[overlayFieldsOnPdf] Balise ${field.tag} ignorée :`, e.message);
+    const cx = (field.x_percent / 100) * pageW;
+    const cy = pageH - (field.y_percent / 100) * pageH; // PDF Y=0 en bas
+    const isSignature = field.field_type === 'signature' || (field.tag || '').startsWith('signature_');
+
+    if (isSignature) {
+      const sigW = pageW * 0.22;
+      const sigH = 44;
+      const bx = Math.max(0, cx - sigW / 2);
+      const by = Math.max(0, cy - sigH / 2);
+      const isClient = field.tag === 'signature_client';
+      // Couleur : bleu pour client, orange pour formateur
+      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+
+      const sigDataUrl = signaturesMap[field.tag];
+      if (sigDataUrl) {
+        // Signature réelle déjà disponible → on l'incrust
+        try {
+          const sigBytes = await fetch(sigDataUrl).then(r => r.arrayBuffer());
+          const sigImg = await pdfDoc.embedPng(sigBytes).catch(async () => {
+            // Si PNG échoue, essayer JPG
+            return await pdfDoc.embedJpg(sigBytes);
+          });
+          const aspect = sigImg.width / sigImg.height;
+          const drawW = Math.min(sigW, sigImg.width);
+          const drawH = drawW / aspect;
+          page.drawImage(sigImg, { x: bx, y: by + sigH - drawH, width: drawW, height: drawH });
+          // Ligne de séparation + label
+          page.drawLine({ start: { x: bx, y: by }, end: { x: bx + sigW, y: by }, thickness: 0.5, color: bc, opacity: 0.6 });
+          page.drawText(isClient ? 'Signature bénéficiaire' : 'Signature formateur', {
+            x: bx, y: by - 9, size: 6.5, font, color: rgb(0.4, 0.4, 0.4),
+          });
+        } catch (e) {
+          console.warn('[overlayFieldsOnPdf] Erreur incrust. signature:', e.message);
+        }
+      } else {
+        // Placeholder : rectangle pointillé
+        page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
+        const label = isClient ? '✦ Signature bénéficiaire' : '✦ Signature formateur';
+        page.drawText(label, {
+          x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
+        });
+      }
+    } else {
+      // Balise texte (y compris date_du_jour)
+      const value = String(dataValues[field.tag] || '');
+      if (!value) continue;
+      try {
+        page.drawText(value, {
+          x: Math.max(0, cx),
+          y: Math.max(0, cy),
+          size: field.font_size || 11,
+          font,
+          color: rgb(0, 0, 0),
+          maxWidth: pageW * 0.85,
+        });
+      } catch (e) {
+        console.warn(`[overlayFieldsOnPdf] Balise ${field.tag} ignorée :`, e.message);
+      }
     }
   }
   const pdfBytes = await pdfDoc.save();
@@ -5331,7 +5376,16 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
     'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
+    'Divers': ['date_du_jour'],
   };
+  const SIGNATURE_TAGS = [
+    { tag: 'signature_client', label: 'Signature client', color: 'blue' },
+    { tag: 'signature_formateur', label: 'Signature formateur', color: 'orange' },
+  ];
+  const isSignatureTag = (tag) => tag === 'signature_client' || tag === 'signature_formateur';
+  const sigTagColor = (tag) => tag === 'signature_client'
+    ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
+    : { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' };
 
   // Chargement dynamique de PDF.js depuis le CDN
   const loadPdfJs = () => new Promise((resolve, reject) => {
@@ -5552,26 +5606,53 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   />
 
                   {/* Balises posées sur cette page */}
-                  {fieldsOnPage.map(field => (
-                    <div key={field.id} style={{ position: 'absolute', left: `${field.xPct}%`, top: `${field.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 10 }}>
-                      <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white">
-                        <span className="font-mono">{`{${field.tag}}`}</span>
-                        <button
-                          onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
-                          className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
-                        >
-                          <X size={8} />
-                        </button>
+                  {fieldsOnPage.map(field => {
+                    const isSig = isSignatureTag(field.tag);
+                    const sc = isSig ? sigTagColor(field.tag) : null;
+                    return (
+                      <div key={field.id} style={{ position: 'absolute', left: `${field.xPct}%`, top: `${field.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 10 }}>
+                        {isSig ? (
+                          // Zone signature : rectangle avec bordure colorée
+                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
+                            <span className="text-base">✍️</span>
+                            <div className="flex-1">
+                              <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
+                                {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
+                              </p>
+                              <p className="text-[9px] text-gray-400">Zone de signature</p>
+                            </div>
+                            <button onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
+                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0">
+                              <X size={8} />
+                            </button>
+                          </div>
+                        ) : (
+                          // Badge texte classique
+                          <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white">
+                            <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
+                            <button onClick={() => setFields(prev => prev.filter(f => f.id !== field.id))}
+                              className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0">
+                              <X size={8} />
+                            </button>
+                          </div>
+                        )}
+                        <div className={`absolute top-full left-1/2 -translate-x-1/2 w-0.5 h-2 ${isSig ? (field.tag === 'signature_client' ? 'bg-blue-400/60' : 'bg-orange-400/60') : 'bg-violet-500/60'}`} />
                       </div>
-                      <div className="absolute top-full left-1/2 -translate-x-1/2 w-0.5 h-2 bg-violet-500/60" />
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {/* Hint zone de dépôt */}
                   {dragTag && (
-                    <div className="absolute inset-0 pointer-events-none bg-violet-50/20 flex items-center justify-center">
-                      <div className="bg-violet-700/90 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl">
-                        Déposez ici → <span className="font-mono">{`{${dragTag}}`}</span>
+                    <div className="absolute inset-0 pointer-events-none bg-violet-50/10 flex items-center justify-center">
+                      <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
+                        dragTag === 'signature_client' ? 'bg-blue-600/90' :
+                        dragTag === 'signature_formateur' ? 'bg-orange-500/90' :
+                        'bg-violet-700/90'
+                      }`}>
+                        {isSignatureTag(dragTag)
+                          ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
+                          : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
+                        }
                       </div>
                     </div>
                   )}
@@ -5590,6 +5671,41 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                     <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
                     <p className="text-[11px] text-gray-400 leading-snug">Glissez une balise et déposez-la sur la page à l'endroit souhaité</p>
                   </div>
+
+                  {/* ── Zones de signature ── */}
+                  <div>
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Signatures —</p>
+                    <div className="flex flex-col gap-1.5">
+                      {SIGNATURE_TAGS.map(({ tag, label, color }) => {
+                        const isPlaced = placedTags.has(tag);
+                        const isDraggingThis = dragTag === tag;
+                        const isBlue = color === 'blue';
+                        return (
+                          <div
+                            key={tag}
+                            draggable
+                            onDragStart={e => { setDragTag(tag); e.dataTransfer.effectAllowed = 'copy'; }}
+                            onDragEnd={() => setDragTag(null)}
+                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 select-none cursor-grab active:cursor-grabbing transition-all ${
+                              isDraggingThis ? 'opacity-40 scale-95' :
+                              isBlue
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-400'
+                                : 'bg-orange-50 border-orange-200 text-orange-700 hover:border-orange-400'
+                            }`}
+                          >
+                            <span className="text-base shrink-0">✍️</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold truncate">{label}</p>
+                              <p className="text-[9px] opacity-60">Zone de signature</p>
+                            </div>
+                            {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Balises texte ── */}
                   {Object.entries(ALL_TAGS).map(([group, tags]) => (
                     <div key={group}>
                       <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— {group} —</p>
@@ -5597,6 +5713,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                         {tags.map(tag => {
                           const isPlaced = placedTags.has(tag);
                           const isDraggingThis = dragTag === tag;
+                          const isDate = tag === 'date_du_jour';
                           return (
                             <div
                               key={tag}
@@ -5605,12 +5722,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                               onDragEnd={() => setDragTag(null)}
                               className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-[11px] font-mono border select-none cursor-grab active:cursor-grabbing transition-all ${
                                 isDraggingThis ? 'opacity-40 scale-95' :
+                                isDate ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:border-emerald-400' :
                                 isPlaced ? 'bg-violet-50 border-violet-200 text-violet-700' :
                                 'bg-white border-gray-100 text-gray-600 hover:border-violet-200 hover:bg-violet-50/50 hover:text-violet-600'
                               }`}
                             >
-                              <span className="text-gray-300 shrink-0 text-[10px]">⠿</span>
-                              <span className="truncate flex-1">{`{${tag}}`}</span>
+                              <span className="text-gray-300 shrink-0 text-[10px]">{isDate ? '📅' : '⠿'}</span>
+                              <span className="truncate flex-1">{isDate ? 'date_du_jour' : `{${tag}}`}</span>
                               {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0 text-violet-500" />}
                             </div>
                           );
@@ -13578,6 +13696,7 @@ export default function App() {
           x_percent: parseFloat(f.xPct.toFixed(4)),
           y_percent: parseFloat(f.yPct.toFixed(4)),
           font_size: 11,
+          field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }));
         const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
@@ -13788,6 +13907,7 @@ export default function App() {
           compagnie_assurance: theFormateur.compagnie_assurance || '',
           numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
           date_signature: new Date().toLocaleDateString('fr-FR'),
+          date_du_jour: new Date().toLocaleDateString('fr-FR'),
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
           org_siret: orgSettings?.siret || '',
@@ -13852,6 +13972,7 @@ export default function App() {
           date_debut: dateDebut,
           date_fin: dateFin,
           date_signature: new Date().toLocaleDateString('fr-FR'),
+          date_du_jour: new Date().toLocaleDateString('fr-FR'),
           formation_nom: module?.nom || 'Formation',
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
@@ -13921,6 +14042,7 @@ export default function App() {
           signe_par_client: false,
           signe_par_formateur: false,
           visible_admin: true,
+          template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
         };
         if (effectiveIsForFormateur || formateurId) {
           docToInsert.assigned_formateur_id = targetId;
@@ -14102,20 +14224,16 @@ export default function App() {
     // signerType = 'client' ou 'formateur'
     const updateColumn = signerType === 'client'
       ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
-      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() }; // Ajout de la date formateur utile
+      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() };
 
     if (signatureDataUrl) {
-      // Sauvegarde de l'image en Base64 directement dans les colonnes comme demandé
       if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
       else updateColumn.signature_formateur = signatureDataUrl;
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
-
-    // Met à jour Supabase, mais aussi on empêche les clics multiples
     setDocuments(documents.map(d => d.id === docId ? simulatedDoc : d));
 
-    // Progression : Chaque signature doit faire avancer la barre (demande)
     if (signerType === 'client') {
       const client = clients.find(c => c.id === simulatedDoc.user_id);
       if (client) {
@@ -14125,18 +14243,58 @@ export default function App() {
       }
     }
 
+    let signedPdfUpdate = {};
+
+    // ── Incrustation de la signature à la position visuelle si le doc a un template_id ──
+    if (signatureDataUrl && doc.template_id) {
+      try {
+        const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
+        // Charger les champs signature de ce template
+        const { data: sigFields } = await supabase
+          .from('template_fields')
+          .select('*')
+          .eq('template_id', doc.template_id)
+          .eq('field_type', 'signature')
+          .eq('tag', sigTag);
+
+        if (sigFields && sigFields.length > 0) {
+          // Charger le PDF actuel (signed_pdf_url si existe, sinon url)
+          const pdfUrl = doc.signed_pdf_url || doc.url;
+          if (pdfUrl && pdfUrl.endsWith('.pdf')) {
+            const pdfResp = await fetch(pdfUrl);
+            if (pdfResp.ok) {
+              const pdfBlob = await pdfResp.blob();
+              // Overlay de la signature
+              const signaturesMap = { [sigTag]: signatureDataUrl };
+              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap);
+              // Upload du PDF mis à jour
+              const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
+              const { error: upErr } = await supabase.storage.from('documents')
+                .upload(fileName, new File([updatedPdfBlob], fileName, { type: 'application/pdf' }));
+              if (!upErr) {
+                const { data: { publicUrl: newPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+                signedPdfUpdate = { signed_pdf_url: newPdfUrl, url: newPdfUrl };
+              }
+            }
+          }
+        }
+      } catch (sigErr) {
+        console.warn('[handleSignDocument] Incrustation signature échouée (non bloquant):', sigErr.message);
+      }
+    }
+
     const { error } = await supabase
       .from('documents')
       .update({
         ...updateColumn,
+        ...signedPdfUpdate,
         statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur) ? 'Signé' : doc.statut,
-        visible_admin: true // S'assurer que l'admin le voit dans "Documents Signés"
+        visible_admin: true,
       })
       .eq('id', docId);
 
     if (error) {
       toast.error("Erreur signature: " + error.message);
-      // rollback state en cas d'erreur
       await fetchDocuments();
     }
   };
