@@ -5471,18 +5471,25 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
 
   const handleFileSelect = async (f) => {
     if (!f) return;
-    if (f.name.split('.').pop().toLowerCase() !== 'docx') {
-      toast.error('Seuls les fichiers .docx sont acceptés pour l\'éditeur visuel.');
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (ext !== 'docx' && ext !== 'pdf') {
+      toast.error('Seuls les fichiers .docx ou .pdf sont acceptés pour l\'éditeur visuel.');
       return;
     }
     setFile(f);
     if (!templateName) setTemplateName(f.name.replace(/\.[^/.]+$/, ''));
     setStep('converting');
     try {
-      // 1. Convertir DOCX → PDF (pipeline existant)
+      // 1. Obtenir un PDF — si PDF directement uploadé, pas de conversion nécessaire
       let pdfBlob;
-      try { pdfBlob = await convertDocxBlobToPdf(f); }
-      catch (_) { pdfBlob = await convertDocxBlobToPdfLocal(f); }
+      if (ext === 'pdf') {
+        // PDF direct : aucune conversion, design préservé à 100%
+        pdfBlob = new Blob([await f.arrayBuffer()], { type: 'application/pdf' });
+      } else {
+        // DOCX : convertir (ConvertAPI en priorité, local en fallback)
+        try { pdfBlob = await convertDocxBlobToPdf(f); }
+        catch (_) { pdfBlob = await convertDocxBlobToPdfLocal(f); }
+      }
 
       // 2. Charger PDF.js et rendre chaque page en canvas
       const pdfjsLib = await loadPdfJs();
@@ -5504,7 +5511,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
       setFields([]);
       setStep('editor');
     } catch (err) {
-      toast.error('Conversion impossible : ' + err.message);
+      toast.error('Chargement impossible : ' + err.message);
       setStep('upload');
     }
   };
@@ -5616,7 +5623,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   onDragOver={e => e.preventDefault()}
                   onDrop={e => { e.preventDefault(); if (e.dataTransfer.files[0]) handleFileSelect(e.dataTransfer.files[0]); }}
                 >
-                  <input ref={fileInputRef} type="file" className="hidden" accept=".docx" onChange={e => e.target.files[0] && handleFileSelect(e.target.files[0])} />
+                  <input ref={fileInputRef} type="file" className="hidden" accept=".docx,.pdf" onChange={e => e.target.files[0] && handleFileSelect(e.target.files[0])} />
                   <div className="w-16 h-16 bg-violet-50 rounded-2xl flex items-center justify-center mx-auto mb-5">
                     <Upload size={28} className="text-violet-500" />
                   </div>
@@ -8424,22 +8431,28 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         } catch { return {}; }
       })();
       const hasVisualFields = parsedMeta.has_visual_fields === true;
+      const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
 
-      if (hasVisualFields && isTemplateDocx) {
-        // ── Chemin visuel : convertir DOCX → PDF puis appliquer les balises ──
+      if (hasVisualFields) {
+        // ── Chemin visuel : obtenir un PDF base + appliquer les balises ──
         toast.loading('Génération du document personnalisé…', { id: toastId });
 
-        // 1. Télécharger le DOCX template
-        const docxResp = await fetch(templateUrl);
-        if (!docxResp.ok) throw new Error(`HTTP ${docxResp.status} lors du téléchargement du template`);
-        const docxBlob = new Blob([await docxResp.arrayBuffer()], {
-          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        });
+        // 1. Télécharger le fichier template (PDF ou DOCX)
+        const templateResp = await fetch(templateUrl);
+        if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} lors du téléchargement du template`);
+        const templateBytes = await templateResp.arrayBuffer();
 
-        // 2. Convertir DOCX → PDF
-        toast.loading('Conversion du document en PDF…', { id: toastId });
-        try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
-        catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+        // 2. Si PDF → utiliser directement (design préservé) ; si DOCX → convertir
+        if (templateIsPdf) {
+          pdfBlob = new Blob([templateBytes], { type: 'application/pdf' });
+        } else {
+          const docxBlob = new Blob([templateBytes], {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          });
+          toast.loading('Conversion DOCX → PDF…', { id: toastId });
+          try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
+          catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+        }
 
         // 3. Charger les champs visuels depuis template_fields
         const { data: templateFields } = await supabase
@@ -14041,9 +14054,10 @@ export default function App() {
 
       if (!file) throw new Error('Aucun fichier fourni.');
 
-      // 1. Upload du DOCX dans le Storage
+      // 1. Upload du fichier dans le Storage (DOCX ou PDF selon ce qui a été fourni)
+      const fileExt = (file.name.split('.').pop() || 'docx').toLowerCase();
       const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileName = `template_visual_${safeName}_${Date.now()}.docx`;
+      const fileName = `template_visual_${safeName}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
@@ -14394,19 +14408,24 @@ export default function App() {
           .order('page', { ascending: true });
         if (tfErr) throw new Error('Erreur chargement balises : ' + tfErr.message);
 
-        // 2. Récupérer le DOCX original
-        const docxResp = await fetch(templateInfo.url);
-        if (!docxResp.ok) throw new Error('Impossible de récupérer le modèle.');
-        const docxBlob = await docxResp.blob();
+        // 2. Récupérer le fichier template (PDF ou DOCX)
+        const templateResp = await fetch(templateInfo.url);
+        if (!templateResp.ok) throw new Error('Impossible de récupérer le modèle.');
+        const templateBlob = await templateResp.blob();
+        const templateIsPdf = /\.pdf$/i.test((templateInfo.url || '').split('?')[0]);
 
-        // 3. Convertir DOCX → PDF (même pipeline que l'éditeur → rendu cohérent)
+        // 3. Si DOCX → convertir en PDF ; si déjà PDF → utiliser directement
         let basePdfBlob;
-        try {
-          toast.loading('Conversion DOCX → PDF…', { id: 'gen-doc' });
-          basePdfBlob = await convertDocxBlobToPdf(docxBlob);
-        } catch (_) {
-          toast.loading('Conversion locale…', { id: 'gen-doc' });
-          basePdfBlob = await convertDocxBlobToPdfLocal(docxBlob);
+        if (templateIsPdf) {
+          basePdfBlob = templateBlob;
+        } else {
+          try {
+            toast.loading('Conversion DOCX → PDF…', { id: 'gen-doc' });
+            basePdfBlob = await convertDocxBlobToPdf(templateBlob);
+          } catch (_) {
+            toast.loading('Conversion locale…', { id: 'gen-doc' });
+            basePdfBlob = await convertDocxBlobToPdfLocal(templateBlob);
+          }
         }
 
         // 4. Superposer les valeurs aux positions stockées
