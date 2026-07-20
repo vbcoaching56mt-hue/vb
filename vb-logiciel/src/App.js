@@ -1085,6 +1085,36 @@ const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title =
   );
 };
 
+// ─── Modale de Confirmation Générique SkorUp ───────────────────────────────
+const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel, confirmLabel = 'Supprimer', danger = true }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 text-center animate-slide-up">
+        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5 ${danger ? 'bg-red-50' : 'bg-violet-50'}`}>
+          <Trash2 size={28} className={danger ? 'text-red-500' : 'text-violet-500'} />
+        </div>
+        <h3 className="text-lg font-black text-gray-900 mb-2">{title || 'Confirmer la suppression'}</h3>
+        {message && <p className="text-sm text-gray-500 mb-7 leading-relaxed">{message}</p>}
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-3 rounded-2xl text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all shadow-md ${danger ? 'bg-red-500 hover:bg-red-600 shadow-red-100' : 'bg-violet-600 hover:bg-violet-700 shadow-violet-100'}`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Modale Paramètres d'un Document/Session ───────────────────────────────
 const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
   const [nom, setNom] = React.useState('');
@@ -2514,6 +2544,9 @@ const ClientDetailView = ({
   const [activeId, setActiveId] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
+  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
+  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
   const [assignedDocs, setAssignedDocs] = React.useState([]);
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
@@ -2663,11 +2696,17 @@ const ClientDetailView = ({
     if (!error && fetchSessions) fetchSessions();
   };
 
-  const handleDeleteSession = async (id) => {
-    if (!window.confirm("Supprimer cet élément ?")) return;
-    const { error } = await supabase.from('sessions').delete().eq('id', id);
-    if (error) { toast.error('Erreur suppression : ' + error.message); return; }
-    if (fetchSessions) fetchSessions();
+  const handleDeleteSession = (id) => {
+    showDeleteConfirm(
+      'Supprimer cette séance ?',
+      'Cette action est irréversible. La séance sera définitivement supprimée.',
+      async () => {
+        hideDeleteConfirm();
+        const { error } = await supabase.from('sessions').delete().eq('id', id);
+        if (error) { toast.error('Erreur suppression : ' + error.message); return; }
+        if (fetchSessions) fetchSessions();
+      }
+    );
   };
 
   return (
@@ -3328,7 +3367,7 @@ const ClientDetailView = ({
                 <div className="flex items-center gap-2">
                   <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
                   <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
-                  <button onClick={async () => { if (window.confirm(`Supprimer "${doc.nom}" ?`)) { await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); } }} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
+                  <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
                 </div>
               </div>
               );
@@ -3341,6 +3380,13 @@ const ClientDetailView = ({
         onClose={() => setCorrectionModalSession(null)}
         session={correctionModalSession}
         onSave={handleSaveCorrection}
+      />
+      <ConfirmModal
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={confirmState.onConfirm}
+        onCancel={hideDeleteConfirm}
       />
     </div>
   );
@@ -4082,15 +4128,21 @@ const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
       {...attributes}
-      className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm cursor-grab active:cursor-grabbing hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
+      className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
     >
-      <div className="flex items-center gap-3">
+      {/* Drag handle — only this area activates drag */}
+      <div className="flex items-center gap-3 flex-1 cursor-grab active:cursor-grabbing" {...listeners}>
         <Layout size={16} className="text-indigo-600" />
         <span className="font-bold text-indigo-900">Groupe de documents : {group?.nom || 'Groupe Inconnu'}</span>
       </div>
-      <button onClick={(e) => { e.stopPropagation(); onDelete(resourceId); }} className="text-gray-300 hover:text-red-500 transition-colors p-1"><Trash2 size={14} /></button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(resourceId); }}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="text-gray-300 hover:text-red-500 transition-colors p-1 z-10 relative"
+      >
+        <Trash2 size={14} />
+      </button>
     </div>
   );
 };
@@ -5859,6 +5911,11 @@ const DocumentsView = ({
   // TemplateEditorModal
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = React.useState(false);
 
+  // Modale de confirmation suppression
+  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
+  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
+
   // États pour la bibliothèque de modèles (onglet Formateurs)
   const [fplShowUpload, setFplShowUpload] = React.useState(false);
   const [fplName, setFplName] = React.useState('');
@@ -5914,18 +5971,23 @@ const DocumentsView = ({
     }
   };
 
-  const handleDeleteGroup = async (groupId) => {
-    if (window.confirm("Supprimer ce groupe ? Les documents associés seront simplement détachés, pas supprimés.")) {
-      await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
-      const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
-      if (!error) {
-        fetchDocumentGroups();
-        if (fetchDocuments) fetchDocuments();
-        toast.success("Groupe supprimé.");
-      } else {
-        toast.error("Erreur lors de la suppression : " + error.message);
+  const handleDeleteGroup = (groupId) => {
+    showDeleteConfirm(
+      'Supprimer ce groupe ?',
+      'Les documents associés seront simplement détachés, pas supprimés.',
+      async () => {
+        hideDeleteConfirm();
+        await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
+        const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
+        if (!error) {
+          fetchDocumentGroups();
+          if (fetchDocuments) fetchDocuments();
+          toast.success("Groupe supprimé.");
+        } else {
+          toast.error("Erreur lors de la suppression : " + error.message);
+        }
       }
-    }
+    );
   };
 
   const handleToggleDocumentGroup = async (docId, nextGroupId) => {
@@ -6026,10 +6088,16 @@ const DocumentsView = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDeleteQTemplate = async (id) => {
-    if (!window.confirm('Supprimer ce questionnaire ?')) return;
-    const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
-    if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
+  const handleDeleteQTemplate = (id) => {
+    showDeleteConfirm(
+      'Supprimer ce questionnaire ?',
+      'Ce questionnaire sera définitivement supprimé.',
+      async () => {
+        hideDeleteConfirm();
+        const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
+        if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
+      }
+    );
   };
 
   const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
@@ -7015,6 +7083,13 @@ const DocumentsView = ({
         )}
       </div>
 
+      <ConfirmModal
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={confirmState.onConfirm}
+        onCancel={hideDeleteConfirm}
+      />
     </div>
   );
 };
@@ -11396,6 +11471,9 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [customTriggerName, setCustomTriggerName] = useState('');
+  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
+  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
 
   const fetchSettings = async () => {
     if (!currentOrgId) return;
@@ -11492,12 +11570,18 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
     fetchSettings();
   };
 
-  const deleteSetting = async (id) => {
-    if (!window.confirm('Supprimer cette relance ?')) return;
-    const { error } = await supabase.from('automation_settings').delete().eq('id', id);
-    if (error) { toast.error('Erreur lors de la suppression.'); return; }
-    toast.success('Relance supprimée.');
-    fetchSettings();
+  const deleteSetting = (id) => {
+    showDeleteConfirm(
+      'Supprimer cette relance ?',
+      'Cette relance automatique sera définitivement supprimée.',
+      async () => {
+        hideDeleteConfirm();
+        const { error } = await supabase.from('automation_settings').delete().eq('id', id);
+        if (error) { toast.error('Erreur lors de la suppression.'); return; }
+        toast.success('Relance supprimée.');
+        fetchSettings();
+      }
+    );
   };
 
   const triggerManual = async () => {
@@ -11881,6 +11965,13 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
           </div>
         )}
       </div>
+      <ConfirmModal
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={confirmState.onConfirm}
+        onCancel={hideDeleteConfirm}
+      />
     </div>
   );
 }
@@ -12152,6 +12243,11 @@ export default function App() {
   const [orgSettings, setOrgSettings] = useState(null);
   const [brandSettings, setBrandSettings] = useState({ org_name: 'SkorUp', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
   const [sidebarLegalPage, setSidebarLegalPage] = useState(null);
+
+  // --- Modale de confirmation suppression globale ---
+  const [appConfirmState, setAppConfirmState] = useState({ open: false, title: '', message: '', onConfirm: null });
+  const showAppConfirm = (title, message, onConfirmFn) => setAppConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideAppConfirm = () => setAppConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
 
   // --- Vérification initiale de la session ---
   useEffect(() => {
@@ -12984,18 +13080,30 @@ export default function App() {
     toast.success(`✅ Documents redistribués à ${assignedClients.length} client(s)`);
   };
 
-  const handleDeleteFolder = async (folderId) => {
-    if (!window.confirm("Supprimer ce dossier et tout son contenu ?")) return;
-    const { error } = await supabase.from('module_session_templates').delete().eq('id', folderId);
-    if (!error) await fetchModules();
-    else toast.error("Erreur supression : " + error.message);
+  const handleDeleteFolder = (folderId) => {
+    showAppConfirm(
+      'Supprimer ce dossier ?',
+      'Le dossier et tout son contenu seront définitivement supprimés.',
+      async () => {
+        hideAppConfirm();
+        const { error } = await supabase.from('module_session_templates').delete().eq('id', folderId);
+        if (!error) await fetchModules();
+        else toast.error("Erreur suppression : " + error.message);
+      }
+    );
   };
 
-  const handleDeleteStepResource = async (resourceId) => {
-    if (!window.confirm("Supprimer cet élément ?")) return;
-    const { error } = await supabase.from('module_step_resources').delete().eq('id', resourceId);
-    if (!error) await fetchModules();
-    else toast.error("Erreur supression : " + error.message);
+  const handleDeleteStepResource = (resourceId) => {
+    showAppConfirm(
+      'Supprimer cet élément ?',
+      'Cet élément sera définitivement supprimé du module.',
+      async () => {
+        hideAppConfirm();
+        const { error } = await supabase.from('module_step_resources').delete().eq('id', resourceId);
+        if (!error) await fetchModules();
+        else toast.error("Erreur suppression : " + error.message);
+      }
+    );
   };
 
   const generateSessions = async (client) => {
@@ -13584,30 +13692,31 @@ export default function App() {
     }
   };
 
-  const handleDeleteSession = async (sessionOrId) => {
+  const handleDeleteSession = (sessionOrId) => {
     const session = typeof sessionOrId === 'object' ? sessionOrId : sessions.find(s => s.id === sessionOrId);
     if (!session) return;
 
     const isCustom = session.metadata?.isCustom === true;
-    const confirmMsg = isCustom ? "Supprimer cet élément personnalisé ?" : `Supprimer la séance N°${session.numero_seance} ?`;
-    
-    if (!window.confirm(confirmMsg)) return;
+    const confirmTitle = isCustom ? "Supprimer cet élément personnalisé ?" : `Supprimer la séance N°${session.numero_seance} ?`;
+    const confirmMsg = 'Cette action est irréversible.';
 
-    const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
-
-    if (!delError) {
-      if (!isCustom) {
-        const client = clients.find(c => c.id === session.client_id);
-        if (client) {
-          const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
-          await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
-          await fetchUtilisateurs();
+    showAppConfirm(confirmTitle, confirmMsg, async () => {
+      hideAppConfirm();
+      const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
+      if (!delError) {
+        if (!isCustom) {
+          const client = clients.find(c => c.id === session.client_id);
+          if (client) {
+            const newTotal = Math.max(0, (client.seances_totales || 0) - 1);
+            await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
+            await fetchUtilisateurs();
+          }
         }
+        await fetchSessions();
+      } else {
+        toast.error("Erreur suppression: " + delError.message);
       }
-      await fetchSessions();
-    } else {
-      toast.error("Erreur suppression: " + delError.message);
-    }
+    });
   };
 
   const assignFormateur = async (userId, formateurId) => {
@@ -15574,6 +15683,14 @@ export default function App() {
         session={docSettingsTarget}
         onClose={() => { setIsDocSettingsOpen(false); setDocSettingsTarget(null); }}
         onSave={handleSaveDocSettings}
+      />
+
+      <ConfirmModal
+        isOpen={appConfirmState.open}
+        title={appConfirmState.title}
+        message={appConfirmState.message}
+        onConfirm={appConfirmState.onConfirm}
+        onCancel={hideAppConfirm}
       />
 
       <Toaster />
