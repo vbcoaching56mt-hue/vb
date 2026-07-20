@@ -8423,15 +8423,20 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Nécessaire car signingResource.id peut être l'id de la table `documents` (per-client)
   // alors que template_fields.template_id est l'id de module_step_resources
   const resolveVisualTemplate = React.useCallback(async (titre) => {
-    const { data } = await supabase
+    // Use .limit() instead of .maybeSingle() to handle cases where
+    // multiple MSR rows share the same title (standalone template + module-linked copy)
+    const { data: rows } = await supabase
       .from('module_step_resources')
       .select('id, metadata')
       .eq('titre', titre)
       .eq('type', 'document')
-      .maybeSingle();
-    if (!data) return { templateId: null, hasVisualFields: false };
-    const msrMeta = (() => { try { return typeof data.metadata === 'string' ? JSON.parse(data.metadata) : (data.metadata || {}); } catch { return {}; } })();
-    return { templateId: data.id, hasVisualFields: msrMeta.has_visual_fields === true };
+      .limit(10);
+    if (!rows || rows.length === 0) return { templateId: null, hasVisualFields: false };
+    // Prefer the row that has has_visual_fields: true
+    const parseMeta = (r) => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } };
+    const visualRow = rows.find(r => parseMeta(r).has_visual_fields === true);
+    if (!visualRow) return { templateId: null, hasVisualFields: false };
+    return { templateId: visualRow.id, hasVisualFields: true };
   }, [supabase]);
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
@@ -12810,10 +12815,20 @@ export default function App() {
         seances_effectuees: c.seances_effectuees || 0,
         seances_totales: c.seances_totales || 0,
         nomcomplet_client: c.nom_complet,
+        nom_complet: c.nom_complet,
+        nom: c.nom_complet || "Client sans nom",
+        prenom: c.prenom || '',
         client_phone: c.telephone,
+        telephone: c.telephone || '',
         client_email: c.email_contact,
+        email_contact: c.email_contact,
         adresse_session: c.adresse_postale,
+        adresse: c.adresse_postale || c.rue || '',
+        rue: c.rue || '',
+        code_postal: c.code_postal || '',
+        ville: c.ville || '',
         montant_prestation: c.montant_prestation,
+        prix_prestation: c.montant_prestation || '',
         modalite_formation: c.modalite_formation || 'Mixte',
         organisation_id: c.organisation_id || null
       }));
