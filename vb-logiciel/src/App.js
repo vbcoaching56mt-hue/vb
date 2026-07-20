@@ -8394,18 +8394,44 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
 
-    let signedPdfUrl = signingResource.file_url; // fallback : URL originale
+    // ── Chercher le document pré-rempli déjà généré pour ce client ──────────
+    // Priorité : doc généré (PDF avec données du client) > template original (DOCX)
+    const existingGeneratedDoc = (documents || []).find(d =>
+      String(d.user_id) === String(currentUserId) &&
+      d.nom === signingResource.titre &&
+      d.url &&
+      !d.signe_par_client
+    );
+    const sourceUrl = existingGeneratedDoc?.url || signingResource.file_url;
+
+    let signedPdfUrl = sourceUrl; // fallback : URL source
 
     // ── Étape 1 : Intégrer la signature dans le PDF via pdf-lib ──────────────
-    if (signatureDataUrl && signingResource.file_url) {
+    if (signatureDataUrl && sourceUrl) {
       const toastId = 'pdf-sign';
       try {
         toast.loading('Intégration de la signature dans le document…', { id: toastId });
 
-        // Télécharger le PDF original
-        const pdfResponse = await fetch(signingResource.file_url);
-        if (!pdfResponse.ok) throw new Error('Impossible de télécharger le PDF original.');
-        const pdfBytes = await pdfResponse.arrayBuffer();
+        // Obtenir les octets PDF — si le fichier est un DOCX, le convertir d'abord
+        let pdfBytes;
+        const isDocx = /\.(docx|doc)$/i.test(sourceUrl.split('?')[0]);
+        if (isDocx) {
+          toast.loading('Conversion du document en PDF…', { id: toastId });
+          const docxBytes = await fetch(sourceUrl).then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.arrayBuffer();
+          });
+          const docxBlob = new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          let pdfBlob;
+          try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
+          catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+          pdfBytes = await pdfBlob.arrayBuffer();
+          toast.loading('Intégration de la signature…', { id: toastId });
+        } else {
+          const pdfResponse = await fetch(sourceUrl);
+          if (!pdfResponse.ok) throw new Error('Impossible de télécharger le PDF original.');
+          pdfBytes = await pdfResponse.arrayBuffer();
+        }
 
         // Charger le PDF avec pdf-lib
         const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
@@ -8466,18 +8492,38 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
 
     // ── Étape 2 : Enregistrer en base avec l'URL du PDF signé ────────────────
-    const { error } = await supabase.from('documents').insert([{
-      user_id: currentUserId,
-      organisation_id: currentClient.organisation_id,
-      nom: signingResource.titre,
-      url: signedPdfUrl,        // ← PDF avec signature intégrée
-      type_document: 'À signer',
-      visible_client: true,
-      visible_formateur: true,
-      signe_par_client: true,
-      signature_client: signatureDataUrl, // ← PNG brut conservé en backup
-    }]);
-    if (error) { toast.error('Erreur lors de la signature : ' + error.message); return; }
+    let dbError;
+    if (existingGeneratedDoc) {
+      // Mettre à jour le document déjà généré pour ce client
+      const { error } = await supabase.from('documents').update({
+        url: signedPdfUrl,
+        signe_par_client: true,
+        date_signature_client: new Date().toISOString(),
+        signature_client: signatureDataUrl,
+        statut: 'Signé',
+        visible_formateur: true,
+        visible_admin: true,
+      }).eq('id', existingGeneratedDoc.id);
+      dbError = error;
+    } else {
+      // Pas de doc généré existant → créer une nouvelle entrée
+      const { error } = await supabase.from('documents').insert([{
+        user_id: currentUserId,
+        organisation_id: currentClient.organisation_id,
+        nom: signingResource.titre,
+        url: signedPdfUrl,
+        type_document: 'À signer',
+        visible_client: true,
+        visible_formateur: true,
+        visible_admin: true,
+        signe_par_client: true,
+        date_signature_client: new Date().toISOString(),
+        statut: 'Signé',
+        signature_client: signatureDataUrl,
+      }]);
+      dbError = error;
+    }
+    if (dbError) { toast.error('Erreur lors de la signature : ' + dbError.message); return; }
     setSigningResource(null);
     if (fetchDocuments) await fetchDocuments();
     toast.success('✅ Document signé avec succès !');
