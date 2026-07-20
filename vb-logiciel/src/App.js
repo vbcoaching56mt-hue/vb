@@ -7208,7 +7208,7 @@ const DocumentsView = ({
                             return (
                               <div
                                 key={fi}
-                                style={{ position: 'absolute', left: `${f.x_percent * 100}%`, top: `${f.y_percent * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)' }}
                                 className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black shadow-lg border pointer-events-none ${isSignature ? 'bg-blue-500 text-white border-blue-400' : 'bg-violet-600 text-white border-violet-500'}`}
                               >
                                 {isSignature ? `✍️ ${f.tag}` : `{${f.tag}}`}
