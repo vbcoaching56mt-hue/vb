@@ -8414,6 +8414,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const isSignedByClient = (resource) =>
     (documents || []).some(d => String(d.user_id) === String(currentUserId) && d.nom === resource.titre && d.signe_par_client);
 
+  // ─── Résoudre le vrai template (module_step_resources) depuis le titre ───────
+  // Nécessaire car signingResource.id peut être l'id de la table `documents` (per-client)
+  // alors que template_fields.template_id est l'id de module_step_resources
+  const resolveVisualTemplate = React.useCallback(async (titre) => {
+    const { data } = await supabase
+      .from('module_step_resources')
+      .select('id, metadata')
+      .eq('titre', titre)
+      .eq('type', 'document')
+      .maybeSingle();
+    if (!data) return { templateId: null, hasVisualFields: false };
+    const msrMeta = (() => { try { return typeof data.metadata === 'string' ? JSON.parse(data.metadata) : (data.metadata || {}); } catch { return {}; } })();
+    return { templateId: data.id, hasVisualFields: msrMeta.has_visual_fields === true };
+  }, [supabase]);
+
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
   const handleCloseSigningModal = React.useCallback(() => {
     if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
@@ -8431,18 +8446,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
 
-    const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
-
-    if (!meta.has_visual_fields) {
-      // Pas de champs visuels → ouvrir immédiatement avec le template brut
-      setSigningResource(resource);
-      return;
-    }
-
-    // Pré-remplir AVANT d'ouvrir la modal
+    // Résoudre le vrai template depuis module_step_resources (l'id du doc client ≠ template_id)
     const toastId = 'prefill-sign';
     toast.loading('Préparation du document…', { id: toastId });
     try {
+      const { templateId, hasVisualFields } = await resolveVisualTemplate(resource.titre);
+
+      if (!hasVisualFields || !templateId) {
+        // Pas de champs visuels → ouvrir immédiatement avec le template brut
+        toast.dismiss(toastId);
+        setSigningResource(resource);
+        return;
+      }
+
       const templateUrl = resource.file_url;
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
       const resp = await fetch(templateUrl);
@@ -8458,8 +8474,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
       }
 
+      // ← utiliser templateId (module_step_resources) et non resource.id (documents table)
       const { data: tplFields } = await supabase
-        .from('template_fields').select('*').eq('template_id', resource.id).order('page', { ascending: true });
+        .from('template_fields').select('*').eq('template_id', templateId).order('page', { ascending: true });
 
       if (tplFields && tplFields.length > 0) {
         const today = new Date().toLocaleDateString('fr-FR');
@@ -8528,27 +8545,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const templateUrl = signingResource.file_url;
       const isTemplateDocx = /\.(docx|doc)$/i.test((templateUrl || '').split('?')[0]);
 
-      // Vérifier si le template a des champs visuels
-      const parsedMeta = (() => {
-        try {
-          return typeof signingResource.metadata === 'string'
-            ? JSON.parse(signingResource.metadata)
-            : (signingResource.metadata || {});
-        } catch { return {}; }
-      })();
-      const hasVisualFields = parsedMeta.has_visual_fields === true;
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
 
-      if (hasVisualFields) {
+      // ── Résoudre le vrai template_id via module_step_resources (l'id du doc client ≠ template_id) ──
+      const { templateId: visualTemplateId, hasVisualFields } = await resolveVisualTemplate(signingResource.titre);
+
+      if (hasVisualFields && visualTemplateId) {
         // ── Chemin visuel : données déjà overlayées dans handleOpenSigning → ajouter la signature ──
         toast.loading('Génération du document signé…', { id: toastId });
 
         if (prefilledSignBlob.current) {
-          // ✅ Blob pré-rempli disponible → ajouter UNIQUEMENT la signature
+          // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter UNIQUEMENT la signature
           pdfBlob = prefilledSignBlob.current;
           if (signatureDataUrl) {
             const { data: sigFieldsData } = await supabase
-              .from('template_fields').select('*').eq('template_id', signingResource.id).order('page', { ascending: true });
+              .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
             const sigFields = (sigFieldsData || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
             if (sigFields.length > 0) {
               pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, { signature_client: signatureDataUrl });
@@ -8570,8 +8581,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
           }
 
+          // ← utiliser visualTemplateId (module_step_resources), pas signingResource.id (documents table)
           const { data: templateFields } = await supabase
-            .from('template_fields').select('*').eq('template_id', signingResource.id).order('page', { ascending: true });
+            .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
 
           if (templateFields && templateFields.length > 0) {
             const today = new Date().toLocaleDateString('fr-FR');
