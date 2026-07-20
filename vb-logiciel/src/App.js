@@ -12494,8 +12494,6 @@ export default function App() {
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
-  const [isDocSettingsOpen, setIsDocSettingsOpen] = useState(false);
-  const [docSettingsTarget, setDocSettingsTarget] = useState(null);
   const [clientSkills, setClientSkills] = useState([]);
 
 
