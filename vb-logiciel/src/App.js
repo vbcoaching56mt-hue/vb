@@ -8283,6 +8283,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
+  const [prefilledSignUrl, setPrefilledSignUrl] = React.useState(null);
+  const prefilledSignBlob = React.useRef(null);
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
@@ -8403,6 +8405,83 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const isSignedByClient = (resource) =>
     (documents || []).some(d => String(d.user_id) === String(currentUserId) && d.nom === resource.titre && d.signe_par_client);
 
+  // ─── Nettoyage de la modal de signature ─────────────────────────────────────
+  const handleCloseSigningModal = React.useCallback(() => {
+    if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
+    setPrefilledSignUrl(null);
+    prefilledSignBlob.current = null;
+    setSigningResource(null);
+  }, [prefilledSignUrl]);
+
+  // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
+  // → le client voit ses informations dans le document AVANT de signer
+  const handleOpenSigning = React.useCallback(async (resource) => {
+    // Nettoyer l'éventuel précédent blob
+    if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
+    setPrefilledSignUrl(null);
+    prefilledSignBlob.current = null;
+
+    // Ouvrir la modal immédiatement (avec template brut en attendant)
+    setSigningResource(resource);
+
+    const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
+    if (!meta.has_visual_fields) return; // Pas de champs visuels → pas de pré-remplissage
+
+    try {
+      const templateUrl = resource.file_url;
+      const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
+      const resp = await fetch(templateUrl);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const bytes = await resp.arrayBuffer();
+
+      let pdfBlob;
+      if (templateIsPdf) {
+        pdfBlob = new Blob([bytes], { type: 'application/pdf' });
+      } else {
+        const docxBlob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
+        catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+      }
+
+      const { data: tplFields } = await supabase
+        .from('template_fields').select('*').eq('template_id', resource.id).order('page', { ascending: true });
+
+      if (tplFields && tplFields.length > 0) {
+        const today = new Date().toLocaleDateString('fr-FR');
+        const dataValues = {
+          nomcomplet_client:  (currentClient?.nom_complet || currentClient?.nom || '').trim(),
+          client_email:       currentClient?.email_contact || currentClient?.email || '',
+          client_phone:       currentClient?.telephone || '',
+          rue_client:         currentClient?.adresse || currentClient?.rue || '',
+          code_postal_client: currentClient?.code_postal || '',
+          ville_client:       currentClient?.ville || '',
+          adresse_session:    currentClient?.adresse || '',
+          prix_prestation:    currentClient?.prix_prestation || '',
+          formation_nom:      '',
+          modalite_formation: '',
+          date_debut:         '',
+          date_fin:           '',
+          date_signature:     today,
+          date_du_jour:       today,
+          // Compatibilité anciens noms
+          nom_client:         currentClient?.nom || '',
+          prenom_client:      currentClient?.prenom || '',
+          email_client:       currentClient?.email_contact || currentClient?.email || '',
+          telephone_client:   currentClient?.telephone || '',
+          ville:              currentClient?.ville || '',
+        };
+        // Overlay données uniquement — pas de signature (affichée comme placeholder)
+        pdfBlob = await overlayFieldsOnPdf(pdfBlob, tplFields, dataValues, {});
+      }
+
+      prefilledSignBlob.current = pdfBlob;
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      setPrefilledSignUrl(blobUrl);
+    } catch(e) {
+      console.warn('[handleOpenSigning] Pré-remplissage échoué (fallback template brut) :', e.message);
+    }
+  }, [currentClient, supabase, prefilledSignUrl]);
+
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
 
@@ -8440,64 +8519,67 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
 
       if (hasVisualFields) {
-        // ── Chemin visuel : obtenir un PDF base + appliquer les balises ──
-        toast.loading('Génération du document personnalisé…', { id: toastId });
+        // ── Chemin visuel : données déjà overlayées dans handleOpenSigning → ajouter la signature ──
+        toast.loading('Génération du document signé…', { id: toastId });
 
-        // 1. Télécharger le fichier template (PDF ou DOCX)
-        const templateResp = await fetch(templateUrl);
-        if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} lors du téléchargement du template`);
-        const templateBytes = await templateResp.arrayBuffer();
-
-        // 2. Si PDF → utiliser directement (design préservé) ; si DOCX → convertir
-        if (templateIsPdf) {
-          pdfBlob = new Blob([templateBytes], { type: 'application/pdf' });
+        if (prefilledSignBlob.current) {
+          // ✅ Blob pré-rempli disponible → ajouter UNIQUEMENT la signature
+          pdfBlob = prefilledSignBlob.current;
+          if (signatureDataUrl) {
+            const { data: sigFieldsData } = await supabase
+              .from('template_fields').select('*').eq('template_id', signingResource.id).order('page', { ascending: true });
+            const sigFields = (sigFieldsData || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            if (sigFields.length > 0) {
+              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, { signature_client: signatureDataUrl });
+              signatureEmbeddedByOverlay = true;
+            }
+          }
         } else {
-          const docxBlob = new Blob([templateBytes], {
-            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          });
-          toast.loading('Conversion DOCX → PDF…', { id: toastId });
-          try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
-          catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
-        }
+          // Fallback : télécharger template + appliquer données + signature en une passe
+          const templateResp = await fetch(templateUrl);
+          if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} lors du téléchargement du template`);
+          const templateBytes = await templateResp.arrayBuffer();
 
-        // 3. Charger les champs visuels depuis template_fields
-        const { data: templateFields } = await supabase
-          .from('template_fields')
-          .select('*')
-          .eq('template_id', signingResource.id)
-          .order('page', { ascending: true });
+          if (templateIsPdf) {
+            pdfBlob = new Blob([templateBytes], { type: 'application/pdf' });
+          } else {
+            const docxBlob = new Blob([templateBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+            toast.loading('Conversion DOCX → PDF…', { id: toastId });
+            try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
+            catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+          }
 
-        if (templateFields && templateFields.length > 0) {
-          // 4. Construire les données du client — noms de tags IDENTIQUES à ALL_TAGS de VisualTemplateEditor
-          const today = new Date().toLocaleDateString('fr-FR');
-          const dataValues = {
-            // Tags CLIENT (ALL_TAGS)
-            nomcomplet_client: currentClient.nom_complet || currentClient.nom || '',
-            client_email:      currentClient.email_contact || currentClient.email || '',
-            client_phone:      currentClient.telephone || '',
-            rue_client:        currentClient.adresse || currentClient.rue || '',
-            code_postal_client: currentClient.code_postal || '',
-            ville_client:      currentClient.ville || '',
-            adresse_session:   currentClient.adresse || '',
-            prix_prestation:   currentClient.prix_prestation || '',
-            formation_nom:     '',
-            modalite_formation: '',
-            date_debut:        '',
-            date_fin:          '',
-            date_signature:    today,
-            date_du_jour:      today,
-            // Compatibilité anciens noms
-            nom_client:        currentClient.nom || '',
-            prenom_client:     currentClient.prenom || '',
-            email_client:      currentClient.email_contact || currentClient.email || '',
-            telephone_client:  currentClient.telephone || '',
-            ville:             currentClient.ville || '',
-          };
-          // 5. Superposer valeurs + signature à SA POSITION VISUELLE dans le PDF
-          toast.loading('Personnalisation du document…', { id: toastId });
-          const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
-          pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap);
-          signatureEmbeddedByOverlay = true;
+          const { data: templateFields } = await supabase
+            .from('template_fields').select('*').eq('template_id', signingResource.id).order('page', { ascending: true });
+
+          if (templateFields && templateFields.length > 0) {
+            const today = new Date().toLocaleDateString('fr-FR');
+            const dataValues = {
+              nomcomplet_client:  currentClient.nom_complet || currentClient.nom || '',
+              client_email:       currentClient.email_contact || currentClient.email || '',
+              client_phone:       currentClient.telephone || '',
+              rue_client:         currentClient.adresse || currentClient.rue || '',
+              code_postal_client: currentClient.code_postal || '',
+              ville_client:       currentClient.ville || '',
+              adresse_session:    currentClient.adresse || '',
+              prix_prestation:    currentClient.prix_prestation || '',
+              formation_nom:      '',
+              modalite_formation: '',
+              date_debut:         '',
+              date_fin:           '',
+              date_signature:     today,
+              date_du_jour:       today,
+              nom_client:         currentClient.nom || '',
+              prenom_client:      currentClient.prenom || '',
+              email_client:       currentClient.email_contact || currentClient.email || '',
+              telephone_client:   currentClient.telephone || '',
+              ville:              currentClient.ville || '',
+            };
+            toast.loading('Personnalisation du document…', { id: toastId });
+            const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap);
+            signatureEmbeddedByOverlay = true;
+          }
         }
       } else if (existingGeneratedDoc?.url && !/\.(docx|doc)$/i.test(existingGeneratedDoc.url.split('?')[0])) {
         // Doc pré-rempli existant en PDF → utiliser directement
@@ -8602,7 +8684,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
 
     if (dbError) { toast.error('Erreur lors de la signature : ' + dbError.message); return; }
-    setSigningResource(null);
+    handleCloseSigningModal();
     if (fetchDocuments) await fetchDocuments();
     toast.success('✅ Document signé avec succès !');
   };
@@ -8784,7 +8866,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         )}
                         {!isDocSigned && canSign && (
                           <button
-                            onClick={() => setSigningResource({ id: doc.id, titre: doc.nom, file_url: fileUrl, moment: resource.moment, metadata: { ...docMeta, classification: 'a_signer' } })}
+                            onClick={() => handleOpenSigning({ id: doc.id, titre: doc.nom, file_url: fileUrl, moment: resource.moment, metadata: { ...docMeta, classification: 'a_signer' } })}
                             className="px-3 py-1.5 bg-violet-600 text-white font-bold rounded-lg text-xs hover:bg-violet-700 transition-colors shadow-sm"
                           >Signer</button>
                         )}
@@ -8888,7 +8970,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {signed && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Signé</span>}
           {!signed && needsSignature && resource.file_url && (
-            <button onClick={() => setSigningResource(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Signer le document</button>
+            <button onClick={() => handleOpenSigning(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Signer le document</button>
           )}
           {resource.file_url && (
             <button onClick={() => setViewingResource(resource)} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
@@ -9018,9 +9100,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       {signingResource && (
         <DocumentViewerModal
           isOpen={true}
-          url={signingResource.file_url}
+          url={prefilledSignUrl || signingResource.file_url}
           title={signingResource.titre}
-          onClose={() => setSigningResource(null)}
+          onClose={handleCloseSigningModal}
           supabase={supabase}
           mode="sign"
           isInteractiveConsent={false}
