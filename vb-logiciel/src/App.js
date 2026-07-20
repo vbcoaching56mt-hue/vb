@@ -5925,6 +5925,57 @@ const DocumentsView = ({
 
   // TemplateEditorModal
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = React.useState(false);
+  // Prévisualisation des balises d'un template
+  const [previewTemplate, setPreviewTemplate] = React.useState(null); // { key, tpl }
+  const [previewPages, setPreviewPages] = React.useState([]);
+  const [previewFields, setPreviewFields] = React.useState([]);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+
+  const openTemplatePreview = async (key, tpl) => {
+    setPreviewTemplate({ key, tpl });
+    setPreviewLoading(true);
+    setPreviewPages([]);
+    setPreviewFields([]);
+    try {
+      // 1. Charger les champs visuels
+      if (tpl.id) {
+        const { data: fields } = await supabase.from('template_fields').select('*').eq('template_id', tpl.id).order('page', { ascending: true });
+        setPreviewFields(fields || []);
+      }
+      // 2. Convertir le DOCX en pages PDF
+      const resp = await fetch(tpl.url);
+      const blob = await resp.blob();
+      let pdfBlob;
+      try { pdfBlob = await convertDocxBlobToPdf(blob); }
+      catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(blob); }
+      // 3. Rendre avec PDF.js
+      const loadPdfJs = () => new Promise((resolve, reject) => {
+        if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; resolve(window.pdfjsLib); };
+        s.onerror = () => reject(new Error('PDF.js indisponible'));
+        document.head.appendChild(s);
+      });
+      const pdfjsLib = await loadPdfJs();
+      const arrBuf = await pdfBlob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrBuf }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const vp = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.width = vp.width; canvas.height = vp.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+        pages.push({ dataUrl: canvas.toDataURL(), w: vp.width, h: vp.height });
+      }
+      setPreviewPages(pages);
+    } catch(e) {
+      toast.error('Impossible de charger la prévisualisation : ' + e.message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   // Modale de confirmation suppression
   const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
@@ -6572,12 +6623,21 @@ const DocumentsView = ({
                         Mettre à jour
                         <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
-                      <button 
+                      {documentTemplates[doc.nom]?.metadata?.has_visual_fields && (
+                        <button
+                          onClick={() => openTemplatePreview(doc.nom, documentTemplates[doc.nom])}
+                          className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                          title="Prévisualiser les balises"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      )}
+                      <button
                         onClick={() => {
                           setTargetToDelete({ id: doc.nom, type: 'template' });
                           setIsDeleteModalOpen(true);
                         }}
-                        className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -7108,6 +7168,68 @@ const DocumentsView = ({
         onConfirm={confirmState.onConfirm}
         onCancel={hideDeleteConfirm}
       />
+
+      {/* ── Modal prévisualisation balises template ── */}
+      {previewTemplate && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}>
+          <div className="bg-white rounded-3xl shadow-2xl flex flex-col w-full max-w-3xl max-h-[90vh] overflow-hidden">
+            {/* En-tête */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+              <div>
+                <h3 className="font-black text-gray-900 text-base">{previewTemplate.key}</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{previewFields.length} balise{previewFields.length !== 1 ? 's' : ''} positionnée{previewFields.length !== 1 ? 's' : ''}</p>
+              </div>
+              <button onClick={() => { setPreviewTemplate(null); setPreviewPages([]); setPreviewFields([]); }} className="p-2 rounded-xl hover:bg-gray-100 transition-all text-gray-400 hover:text-gray-700">
+                <X size={18} />
+              </button>
+            </div>
+            {/* Contenu */}
+            <div className="overflow-y-auto p-6 flex-1">
+              {previewLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <div className="w-10 h-10 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin"></div>
+                  <p className="text-sm text-gray-400">Chargement du document…</p>
+                </div>
+              ) : previewPages.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-gray-400 text-sm">Aucune page à afficher.</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {previewPages.map((pg, pi) => {
+                    const pageFields = previewFields.filter(f => (f.page || 1) === pi + 1);
+                    return (
+                      <div key={pi}>
+                        <p className="text-[10px] font-black uppercase text-gray-400 mb-2 tracking-widest">Page {pi + 1}</p>
+                        <div className="relative inline-block w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                          <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
+                          {pageFields.map((f, fi) => {
+                            const isSignature = f.field_type === 'signature';
+                            return (
+                              <div
+                                key={fi}
+                                style={{ position: 'absolute', left: `${f.x_percent * 100}%`, top: `${f.y_percent * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black shadow-lg border pointer-events-none ${isSignature ? 'bg-blue-500 text-white border-blue-400' : 'bg-violet-600 text-white border-violet-500'}`}
+                              >
+                                {isSignature ? '✍️' : '{'}{f.tag}{isSignature ? '' : '}'}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {!previewLoading && previewFields.length === 0 && previewPages.length > 0 && (
+                <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-700">
+                  <strong>Aucune balise enregistrée</strong> pour ce modèle. Ouvrez le modèle dans l'éditeur visuel pour en ajouter.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -12372,6 +12494,8 @@ export default function App() {
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
+  const [isDocSettingsOpen, setIsDocSettingsOpen] = useState(false);
+  const [docSettingsTarget, setDocSettingsTarget] = useState(null);
   const [clientSkills, setClientSkills] = useState([]);
 
 
@@ -15671,6 +15795,29 @@ export default function App() {
         mode={viewingSession?.mode || 'view'}
         isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
         onClose={() => setViewingSession(null)}
+      />
+
+      <InviteModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+        onInvite={handleInviteUser}
+        isAddingUser={isAddingUser}
+        formateurs={formateurs}
+      />
+
+      <DeleteConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title="Supprimer définitivement ?"
+        itemName={targetToDelete?.type === 'template' ? `le modèle "${targetToDelete.id}"` : "cet élément"}
+      />
+
+      <DocumentSettingsModal
+        isOpen={isDocSettingsOpen}
+        session={docSettingsTarget}
+        onClose={() => { setIsDocSettingsOpen(false); setDocSettingsTarget(null); }}
+        onSave={handleSaveDocSettings}
       />
 
       <ConfirmModal
