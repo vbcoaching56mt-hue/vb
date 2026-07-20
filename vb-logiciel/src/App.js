@@ -15729,3 +15729,18 @@ export default function App() {
     </div>
   );
 }
+
+      />
+
+      <ConfirmModal
+        isOpen={appConfirmState.open}
+        title={appConfirmState.title}
+        message={appConfirmState.message}
+        onConfirm={appConfirmState.onConfirm}
+        onCancel={hideAppConfirm}
+      />
+
+      <Toaster />
+    </div>
+  );
+}
