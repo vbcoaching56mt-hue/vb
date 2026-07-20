@@ -6623,9 +6623,9 @@ const DocumentsView = ({
                         Mettre à jour
                         <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
-                      {documentTemplates[doc.nom]?.metadata?.has_visual_fields && (
+                      {(documentTemplates || {})[doc.nom]?.metadata?.has_visual_fields && (
                         <button
-                          onClick={() => openTemplatePreview(doc.nom, documentTemplates[doc.nom])}
+                          onClick={() => openTemplatePreview(doc.nom, (documentTemplates || {})[doc.nom])}
                           className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
                           title="Prévisualiser les balises"
                         >
@@ -15734,6 +15734,7 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             handleUploadVisualTemplate={handleUploadVisualTemplate}
             onUpdateTemplateDestination={handleUpdateTemplateDestination}
+            documentTemplates={documentTemplates}
           />}
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
 
