@@ -37,6 +37,8 @@ const DownloadIcon = () => <FileText className="w-4 h-4 mr-2" />;
 // Buckets autorisés : 'documents', 'ressources-pedagogiques', 'signed_documents'
 const resolveFileUrl = (rawUrl) => {
   if (!rawUrl) return null;
+  // Blob et data URLs sont des URLs locales → passer directement
+  if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return rawUrl;
   if (rawUrl.startsWith('http')) return rawUrl;
 
   // Nettoyage : si le chemin commence par un nom de bucket connu + slash, on le retire
@@ -694,6 +696,13 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setLoadingPdf(true);
       setPdfError(null);
       setBlobUrl(null);
+
+      // Blob ou data URL = PDF local pré-rempli → afficher directement sans passer par Supabase
+      if (pdfUrl.startsWith('blob:') || pdfUrl.startsWith('data:')) {
+        setBlobUrl(pdfUrl);
+        setLoadingPdf(false);
+        return;
+      }
 
       const initialExtracted = extractBucketPath(pdfUrl);
       if (!initialExtracted) {
@@ -8415,18 +8424,24 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
   // → le client voit ses informations dans le document AVANT de signer
+  // La modal ne s'ouvre qu'APRÈS le pré-remplissage (évite la race condition)
   const handleOpenSigning = React.useCallback(async (resource) => {
     // Nettoyer l'éventuel précédent blob
     if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
 
-    // Ouvrir la modal immédiatement (avec template brut en attendant)
-    setSigningResource(resource);
-
     const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
-    if (!meta.has_visual_fields) return; // Pas de champs visuels → pas de pré-remplissage
 
+    if (!meta.has_visual_fields) {
+      // Pas de champs visuels → ouvrir immédiatement avec le template brut
+      setSigningResource(resource);
+      return;
+    }
+
+    // Pré-remplir AVANT d'ouvrir la modal
+    const toastId = 'prefill-sign';
+    toast.loading('Préparation du document…', { id: toastId });
     try {
       const templateUrl = resource.file_url;
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
@@ -8477,8 +8492,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       prefilledSignBlob.current = pdfBlob;
       const blobUrl = URL.createObjectURL(pdfBlob);
       setPrefilledSignUrl(blobUrl);
+      toast.dismiss(toastId);
+      // Ouvrir la modal avec le blob URL déjà prêt
+      setSigningResource(resource);
     } catch(e) {
       console.warn('[handleOpenSigning] Pré-remplissage échoué (fallback template brut) :', e.message);
+      toast.dismiss(toastId);
+      // Fallback : ouvrir avec template brut
+      setSigningResource(resource);
     }
   }, [currentClient, supabase, prefilledSignUrl]);
 
