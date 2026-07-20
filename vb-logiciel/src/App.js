@@ -6008,6 +6008,31 @@ const DocumentsView = ({
   const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
   const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
 
+  // ── Source fusionnée pour la grille de modèles (documents table + MSR via documentTemplates) ──
+  // Assure l'affichage même si l'insert dans la table documents échoue silencieusement
+  const displayTemplates = React.useMemo(() => {
+    const fromDocs = (documents || []).filter(d => !d.user_id && !d.assigned_formateur_id);
+    const fromDocsNoms = new Set(fromDocs.map(d => d.nom));
+    const fromMsr = Object.entries(documentTemplates || {})
+      .filter(([nom]) => !fromDocsNoms.has(nom))
+      .map(([nom, tpl]) => {
+        const ext = tpl.url ? tpl.url.split('.').pop().split('?')[0].toLowerCase() : 'pdf';
+        return {
+          id: tpl.id || nom,
+          nom,
+          url: tpl.url,
+          type_action: 'Modèle Référence',
+          metadata: tpl.metadata || {},
+          extension: ext,
+          visible_formateur: tpl.destination === 'formateur',
+          group_ids: [],
+          group_id: null,
+          _fromMsrOnly: true,
+        };
+      });
+    return [...fromDocs, ...fromMsr];
+  }, [documents, documentTemplates]);
+
   // États pour la bibliothèque de modèles (onglet Formateurs)
   const [fplShowUpload, setFplShowUpload] = React.useState(false);
   const [fplName, setFplName] = React.useState('');
@@ -6623,7 +6648,7 @@ const DocumentsView = ({
           </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).map((doc) => {
+            {displayTemplates.map((doc) => {
               const classif = typeof doc.metadata === 'object' && doc.metadata ? doc.metadata.classification : 'telechargeable';
               const dest = doc.visible_formateur ? 'formateur' : 'client';
               return (
@@ -6723,7 +6748,7 @@ const DocumentsView = ({
                 </div>
               );
             })}
-            {documents.filter(d => !d.user_id && !d.assigned_formateur_id).length === 0 && (
+            {displayTemplates.length === 0 && (
               <div className="col-span-full py-4 text-center text-gray-400 italic text-sm">Aucun modèle enregistré.</div>
             )}
           </div>
@@ -14276,19 +14301,21 @@ export default function App() {
       }
 
       // Sync avec documents
-      let docCheckQuery = supabase.from('documents').select('id').eq('nom', type);
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', type).is('user_id', null);
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, extension: fileExt }).eq('id', existingDoc[0].id);
       } else {
-        await supabase.from('documents').insert([{
+        const { error: docInsertErr } = await supabase.from('documents').insert([{
           nom: type,
           type_action: 'Modèle Référence',
           url: publicUrl,
           extension: fileExt,
+          user_id: null,
           ...(currentOrgId ? { organisation_id: currentOrgId } : {})
         }]);
+        if (docInsertErr) console.warn('[handleUploadDocxTemplate] documents insert error (non-bloquant):', docInsertErr.message);
       }
 
       await fetchDocuments();
@@ -14376,17 +14403,19 @@ export default function App() {
 
       // 4. Sync avec table documents (pour affichage) — stocker visual_template_id pour bypass RLS client
       const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId });
-      let docCheckQuery = supabase.from('documents').select('id').eq('nom', name);
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, metadata: visualDocMeta }).eq('id', existingDoc[0].id);
       } else {
-        await supabase.from('documents').insert([{
+        const { error: docInsertErr } = await supabase.from('documents').insert([{
           nom: name, type_action: 'Modèle Référence', url: publicUrl,
           metadata: visualDocMeta,
+          user_id: null,
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }]);
+        if (docInsertErr) console.warn('[handleUploadVisualTemplate] documents insert error (non-bloquant):', docInsertErr.message);
       }
 
       // 5. Mettre à jour le state local
