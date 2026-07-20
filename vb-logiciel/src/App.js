@@ -8455,8 +8455,28 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
 
-    // Résoudre le vrai template depuis module_step_resources (l'id du doc client ≠ template_id)
     const toastId = 'prefill-sign';
+
+    // ── Voie rapide : document déjà pré-généré par l'admin pour ce client ──
+    // S'il existe un PDF non signé avec le même nom pour ce client, l'utiliser
+    // directement comme aperçu (il contient déjà les données personnalisées)
+    const existingPregenDoc = (documents || []).find(d =>
+      String(d.user_id) === String(currentUserId) &&
+      d.nom === resource.titre &&
+      d.url &&
+      !d.signe_par_client &&
+      !/\.(docx|doc)$/i.test((d.url || '').split('?')[0])
+    );
+
+    if (existingPregenDoc) {
+      // Le document admin-prégénéré contient déjà les données → utiliser son URL comme aperçu
+      // (handleSignSave le retrouvera via existingGeneratedDoc et signera dessus)
+      setPrefilledSignUrl(existingPregenDoc.url);
+      setSigningResource(resource);
+      return;
+    }
+
+    // ── Voie overlay : tenter le pré-remplissage visuel via pdf-lib ──
     toast.loading('Préparation du document…', { id: toastId });
     try {
       const { templateId, hasVisualFields } = await resolveVisualTemplate(resource.titre);
