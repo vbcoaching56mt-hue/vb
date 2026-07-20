@@ -12916,7 +12916,8 @@ export default function App() {
       metadata: stepData.metadata,
       destination: stepData.destination || 'client',
       ordre: moduleStepResources.filter(r => r.template_id === templateId).length + 1,
-      ...(stepData.instructions ? { instructions: stepData.instructions } : {})
+      ...(stepData.instructions ? { instructions: stepData.instructions } : {}),
+      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
     }]);
 
     if (error) {
@@ -12943,6 +12944,7 @@ export default function App() {
       destination: stepData.destination || 'client',
       document_group_id: stepData.document_group_id || null,
       ordre: moduleStepResources.filter(r => r.module_id === moduleId && r.moment === moment).length + 1,
+      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
     }]).select().single();
     if (error) {
       toast.error("Erreur lors de l'ajout : " + error.message);
