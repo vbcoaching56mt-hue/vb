@@ -2557,7 +2557,9 @@ const ClientDetailView = ({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
     client_phone: client.client_phone || '',
-    adresse_client: client.adresse_client || client.adresse_session || '',
+    rue_client: '',
+    code_postal_client: '',
+    ville_client: '',
     numero_dossier: client.numero_dossier || '',
     modalite_formation: client.modalite_formation || 'Mixte',
     montant_prestation: client.montant_prestation || ''
@@ -2571,7 +2573,9 @@ const ClientDetailView = ({
           nomcomplet_client: data.nom_complet || '',
           client_email: data.email_contact || '',
           client_phone: data.telephone || '',
-          adresse_client: data.adresse_postale || '',
+          rue_client: data.rue || '',
+          code_postal_client: data.code_postal || '',
+          ville_client: data.ville || '',
           numero_dossier: data.numero_dossier || '',
           modalite_formation: data.modalite_formation || 'Mixte',
           montant_prestation: data.montant_prestation || ''
@@ -2656,18 +2660,19 @@ const ClientDetailView = ({
 
   const handleSaveClientInfo = async () => {
     setIsSavingInfo(true);
-    const { error } = await supabase.from('clients').upsert({
-      id: client.id,
+    const fullAddress = [clientInfo.rue_client, clientInfo.code_postal_client, clientInfo.ville_client].filter(Boolean).join(', ');
+    const { error } = await supabase.from('clients').update({
       nom_complet: clientInfo.nomcomplet_client,
       email_contact: clientInfo.client_email,
       telephone: clientInfo.client_phone,
-      adresse_postale: clientInfo.adresse_client,
+      rue: clientInfo.rue_client,
+      code_postal: clientInfo.code_postal_client,
+      ville: clientInfo.ville_client,
+      adresse_postale: fullAddress,
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
-      module_id: client.module_id,
-      formateur_id: client.formateur_id
-    }, { onConflict: 'id' });
+    }).eq('id', client.id);
 
     if (error) {
       toast.error("Erreur lors de la sauvegarde : " + error.message);
@@ -2788,9 +2793,19 @@ const ClientDetailView = ({
               <label className="block text-xs font-bold text-gray-400 mb-1">Téléphone</label>
               <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.client_phone} onChange={e => setClientInfo({ ...clientInfo, client_phone: e.target.value })} placeholder="Téléphone" />
             </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 mb-1">Adresse Postale</label>
-              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.adresse_client} onChange={e => setClientInfo({ ...clientInfo, adresse_client: e.target.value })} placeholder="Adresse complète" />
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-3">
+                <label className="block text-xs font-bold text-gray-400 mb-1">Rue / N° de voie</label>
+                <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.rue_client} onChange={e => setClientInfo({ ...clientInfo, rue_client: e.target.value })} placeholder="Ex : 245 rue Jeanine" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 mb-1">Code Postal</label>
+                <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.code_postal_client} onChange={e => setClientInfo({ ...clientInfo, code_postal_client: e.target.value })} placeholder="Ex : 75001" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-gray-400 mb-1">Ville</label>
+                <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.ville_client} onChange={e => setClientInfo({ ...clientInfo, ville_client: e.target.value })} placeholder="Ex : Paris" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">N° de Dossier</label>
@@ -5426,7 +5441,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
   const pageRef = React.useRef(null);
 
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
     'Divers': ['date_du_jour'],
@@ -6268,7 +6283,10 @@ const DocumentsView = ({
                   <p>{"{nomcomplet_client}"}</p>
                   <p>{"{client_email}"}</p>
                   <p>{"{client_phone}"}</p>
-                  <p>{"{adresse_session}"}</p>
+                  <p>{"{rue_client}"}</p>
+                  <p>{"{code_postal_client}"}</p>
+                  <p>{"{ville_client}"}</p>
+                  <p>{"{adresse_session}"} (adresse complète)</p>
                   <p>{"{modalite_formation}"}</p>
                   <p>{"{prix_prestation}"}</p>
                   <p>{"{formation_nom}"}</p>
@@ -14125,6 +14143,9 @@ export default function App() {
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
           prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+          rue_client: finalClient.rue || '',
+          code_postal_client: finalClient.code_postal || '',
+          ville_client: finalClient.ville || '',
           adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
           modalite_formation: finalClient.modalite_formation || 'Mixte',
           date_debut: dateDebut,
@@ -15650,10 +15671,21 @@ export default function App() {
         mode={viewingSession?.mode || 'view'}
         isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
         onClose={() => setViewingSession(null)}
-        onSave={viewingSession?.mode === 'sign' ? async (signatureDataUrl, documentChoice) => {
-          const sessionOrDoc = viewingSession.session;
-          setViewingSession(null);
-          const isDocument = documents.some(d => String(d.id) === String(sessionOrDoc.id));
+      />
+
+      <ConfirmModal
+        isOpen={appConfirmState.open}
+        title={appConfirmState.title}
+        message={appConfirmState.message}
+        onConfirm={appConfirmState.onConfirm}
+        onCancel={hideAppConfirm}
+      />
+
+      <Toaster />
+    </div>
+  );
+}
+));
           if (isDocument) {
             await handleDocumentSignatureSave(sessionOrDoc.id, signatureDataUrl, documentChoice);
           } else {
