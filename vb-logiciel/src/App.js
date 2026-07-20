@@ -5590,7 +5590,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                  : `Éditeur de balises — ${pdfPages.length} page${pdfPages.length > 1 ? 's' : ''}`}
               </h2>
               <p className="text-sm text-gray-400 mt-0.5">
-                {step === 'upload' ? 'Votre fichier Word reste intact · les balises sont positionnées par dessus en overlay'
+                {step === 'upload' ? 'Votre fichier PDF reste intact · les balises sont positionnées par dessus en overlay'
                  : step === 'converting' ? 'Conversion du DOCX en aperçu PDF (10-20 secondes)…'
                  : `${fields.length} balise${fields.length !== 1 ? 's' : ''} posée${fields.length !== 1 ? 's' : ''} · glissez une balise depuis le panneau droit`}
               </p>
@@ -5627,8 +5627,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   <div className="w-16 h-16 bg-violet-50 rounded-2xl flex items-center justify-center mx-auto mb-5">
                     <Upload size={28} className="text-violet-500" />
                   </div>
-                  <p className="font-black text-gray-800 text-lg mb-2">Importez votre document Word</p>
-                  <p className="text-gray-400 text-sm mb-6">Glissez un .docx ici, ou cliquez pour sélectionner</p>
+                  <p className="font-black text-gray-800 text-lg mb-2">Importez votre document</p>
+                  <p className="text-gray-400 text-sm mb-6">Glissez un <strong>.pdf</strong> ou .docx ici, ou cliquez pour sélectionner</p>
                   <div className="grid grid-cols-3 gap-3 text-left">
                     {[
                       ['📄', 'Fichier intact', 'Pas de modification du Word'],
@@ -8422,6 +8422,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
       // ── Étape 1 : Obtenir un PDF de base (pré-rempli avec données client) ──
       let pdfBlob;
+      let signatureEmbeddedByOverlay = false; // true quand overlayFieldsOnPdf gère la signature
 
       // Déterminer la source : doc généré existant (PDF) > template (DOCX)
       const templateUrl = signingResource.file_url;
@@ -8467,21 +8468,36 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           .order('page', { ascending: true });
 
         if (templateFields && templateFields.length > 0) {
-          // 4. Construire les données du client pour pré-remplissage
+          // 4. Construire les données du client — noms de tags IDENTIQUES à ALL_TAGS de VisualTemplateEditor
           const today = new Date().toLocaleDateString('fr-FR');
           const dataValues = {
+            // Tags CLIENT (ALL_TAGS)
             nomcomplet_client: currentClient.nom_complet || currentClient.nom || '',
-            prenom_client: currentClient.prenom || '',
-            nom_client: currentClient.nom || '',
-            email_client: currentClient.email_contact || currentClient.email || '',
-            telephone_client: currentClient.telephone || '',
-            date_signature: today,
-            date_du_jour: today,
-            ville: currentClient.ville || '',
+            client_email:      currentClient.email_contact || currentClient.email || '',
+            client_phone:      currentClient.telephone || '',
+            rue_client:        currentClient.adresse || currentClient.rue || '',
+            code_postal_client: currentClient.code_postal || '',
+            ville_client:      currentClient.ville || '',
+            adresse_session:   currentClient.adresse || '',
+            prix_prestation:   currentClient.prix_prestation || '',
+            formation_nom:     '',
+            modalite_formation: '',
+            date_debut:        '',
+            date_fin:          '',
+            date_signature:    today,
+            date_du_jour:      today,
+            // Compatibilité anciens noms
+            nom_client:        currentClient.nom || '',
+            prenom_client:     currentClient.prenom || '',
+            email_client:      currentClient.email_contact || currentClient.email || '',
+            telephone_client:  currentClient.telephone || '',
+            ville:             currentClient.ville || '',
           };
-          // 5. Superposer les valeurs + placeholder signature
+          // 5. Superposer valeurs + signature à SA POSITION VISUELLE dans le PDF
           toast.loading('Personnalisation du document…', { id: toastId });
-          pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, {});
+          const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
+          pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap);
+          signatureEmbeddedByOverlay = true;
         }
       } else if (existingGeneratedDoc?.url && !/\.(docx|doc)$/i.test(existingGeneratedDoc.url.split('?')[0])) {
         // Doc pré-rempli existant en PDF → utiliser directement
@@ -8510,8 +8526,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const pages = pdfDoc.getPages();
       const lastPage = pages[pages.length - 1];
 
-      if (signatureDataUrl) {
-        // Décoder la signature PNG
+      if (signatureDataUrl && !signatureEmbeddedByOverlay) {
+        // Fallback position fixe — uniquement si la signature n'est PAS gérée par overlayFieldsOnPdf
+        // (cas : document sans balise signature_client positionnée)
         const base64Data = signatureDataUrl.split(',')[1];
         const sigBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
         const sigImage = await pdfDoc.embedPng(sigBytes);
