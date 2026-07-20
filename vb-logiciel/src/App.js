@@ -8479,7 +8479,32 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     // ── Voie overlay : tenter le pré-remplissage visuel via pdf-lib ──
     toast.loading('Préparation du document…', { id: toastId });
     try {
-      const { templateId, hasVisualFields } = await resolveVisualTemplate(resource.titre);
+      // Priorité 1 : lire visual_template_id depuis resource.metadata (évite RLS sur module_step_resources)
+      // Ce champ est injecté lors de l'upload du template dans handleUploadVisualTemplate
+      const parseMeta = (m) => { try { return typeof m === 'string' ? JSON.parse(m) : (m || {}); } catch { return {}; } };
+      const rMeta = parseMeta(resource.metadata);
+      let templateId = rMeta.visual_template_id || null;
+      let hasVisualFields = rMeta.has_visual_fields === true;
+
+      // Priorité 2 : chercher dans la liste documents (template reference) — bypass RLS
+      if (!hasVisualFields || !templateId) {
+        const refDoc = (documents || []).find(d =>
+          (d.nom === resource.titre || d.nom === resource.nom) &&
+          d.type_action === 'Modèle Référence'
+        );
+        const refMeta = parseMeta(refDoc?.metadata);
+        if (refMeta.has_visual_fields === true && refMeta.visual_template_id) {
+          templateId = refMeta.visual_template_id;
+          hasVisualFields = true;
+        }
+      }
+
+      // Priorité 3 : résolution via module_step_resources (peut échouer pour les nouveaux docs sans admin pre-gen)
+      if (!hasVisualFields || !templateId) {
+        const resolved = await resolveVisualTemplate(resource.titre || resource.nom);
+        templateId = resolved.templateId;
+        hasVisualFields = resolved.hasVisualFields;
+      }
 
       if (!hasVisualFields || !templateId) {
         // Pas de champs visuels → ouvrir immédiatement avec le template brut
@@ -8488,7 +8513,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         return;
       }
 
-      const templateUrl = resource.file_url;
+      const templateUrl = resource.file_url || resource.url;
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
       const resp = await fetch(templateUrl);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -8509,6 +8534,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
       if (tplFields && tplFields.length > 0) {
         const today = new Date().toLocaleDateString('fr-FR');
+        // Récupérer les données du formateur/consultant assigné au client
+        const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
         const dataValues = {
           nomcomplet_client:  (currentClient?.nom_complet || currentClient?.nom || '').trim(),
           client_email:       currentClient?.email_contact || currentClient?.email || '',
@@ -8516,10 +8543,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           rue_client:         currentClient?.adresse || currentClient?.rue || '',
           code_postal_client: currentClient?.code_postal || '',
           ville_client:       currentClient?.ville || '',
-          adresse_session:    currentClient?.adresse || '',
-          prix_prestation:    currentClient?.prix_prestation || '',
+          adresse_session:    currentClient?.adresse || currentClient?.rue || '',
+          prix_prestation:    currentClient?.prix_prestation || currentClient?.montant_prestation || '',
           formation_nom:      '',
-          modalite_formation: '',
+          modalite_formation: currentClient?.modalite_formation || '',
           date_debut:         '',
           date_fin:           '',
           date_signature:     today,
@@ -8530,6 +8557,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           email_client:       currentClient?.email_contact || currentClient?.email || '',
           telephone_client:   currentClient?.telephone || '',
           ville:              currentClient?.ville || '',
+          // Données formateur / consultant
+          nom_formateur:         formateur?.nom || '',
+          prenom_formateur:      formateur?.prenom || '',
+          email_formateur:       formateur?.email || '',
+          tel_formateur:         formateur?.telephone || '',
+          telephone_formateur:   formateur?.telephone || '',
+          adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
+          formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
+          formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
+          compagnie_assurance:   formateur?.compagnie_assurance || '',
+          numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
+          // Alias consultant (même données)
+          nom_consultant:        formateur?.nom || '',
+          email_consultant:      formateur?.email || '',
+          tel_consultant:        formateur?.telephone || '',
         };
         // Overlay données uniquement — pas de signature (affichée comme placeholder)
         pdfBlob = await overlayFieldsOnPdf(pdfBlob, tplFields, dataValues, {});
@@ -8553,7 +8595,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // Fallback : ouvrir avec template brut
       setSigningResource(resource);
     }
-  }, [currentClient, supabase, resolveVisualTemplate]);
+  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs]);
 
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
@@ -8582,8 +8624,27 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
 
-      // ── Résoudre le vrai template_id via module_step_resources (l'id du doc client ≠ template_id) ──
-      const { templateId: visualTemplateId, hasVisualFields } = await resolveVisualTemplate(signingResource.titre);
+      // ── Résoudre le vrai template_id (priorité : resource.metadata → documents → MSR) ──
+      const _parseMeta = (m) => { try { return typeof m === 'string' ? JSON.parse(m) : (m || {}); } catch { return {}; } };
+      const _rMeta = _parseMeta(signingResource.metadata);
+      let visualTemplateId = _rMeta.visual_template_id || null;
+      let hasVisualFields = _rMeta.has_visual_fields === true;
+      if (!hasVisualFields || !visualTemplateId) {
+        const _refDoc = (documents || []).find(d =>
+          (d.nom === signingResource.titre || d.nom === signingResource.nom) &&
+          d.type_action === 'Modèle Référence'
+        );
+        const _refMeta = _parseMeta(_refDoc?.metadata);
+        if (_refMeta.has_visual_fields === true && _refMeta.visual_template_id) {
+          visualTemplateId = _refMeta.visual_template_id;
+          hasVisualFields = true;
+        }
+      }
+      if (!hasVisualFields || !visualTemplateId) {
+        const _resolved = await resolveVisualTemplate(signingResource.titre || signingResource.nom);
+        visualTemplateId = _resolved.templateId;
+        hasVisualFields = _resolved.hasVisualFields;
+      }
 
       if (hasVisualFields && visualTemplateId) {
         // ── Chemin visuel : données déjà overlayées dans handleOpenSigning → ajouter la signature ──
@@ -8622,6 +8683,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
           if (templateFields && templateFields.length > 0) {
             const today = new Date().toLocaleDateString('fr-FR');
+            const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
             const dataValues = {
               nomcomplet_client:  currentClient.nom_complet || currentClient.nom || '',
               client_email:       currentClient.email_contact || currentClient.email || '',
@@ -8629,10 +8691,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               rue_client:         currentClient.adresse || currentClient.rue || '',
               code_postal_client: currentClient.code_postal || '',
               ville_client:       currentClient.ville || '',
-              adresse_session:    currentClient.adresse || '',
-              prix_prestation:    currentClient.prix_prestation || '',
+              adresse_session:    currentClient.adresse || currentClient.rue || '',
+              prix_prestation:    currentClient.prix_prestation || currentClient.montant_prestation || '',
               formation_nom:      '',
-              modalite_formation: '',
+              modalite_formation: currentClient.modalite_formation || '',
               date_debut:         '',
               date_fin:           '',
               date_signature:     today,
@@ -8642,6 +8704,20 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               email_client:       currentClient.email_contact || currentClient.email || '',
               telephone_client:   currentClient.telephone || '',
               ville:              currentClient.ville || '',
+              // Données formateur / consultant
+              nom_formateur:         formateur?.nom || '',
+              prenom_formateur:      formateur?.prenom || '',
+              email_formateur:       formateur?.email || '',
+              tel_formateur:         formateur?.telephone || '',
+              telephone_formateur:   formateur?.telephone || '',
+              adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
+              formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
+              formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
+              compagnie_assurance:   formateur?.compagnie_assurance || '',
+              numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
+              nom_consultant:        formateur?.nom || '',
+              email_consultant:      formateur?.email || '',
+              tel_consultant:        formateur?.telephone || '',
             };
             toast.loading('Personnalisation du document…', { id: toastId });
             const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
@@ -14286,15 +14362,29 @@ export default function App() {
         if (fieldsErr) throw fieldsErr;
       }
 
-      // 4. Sync avec table documents (pour affichage)
+      // 3.5. Propager has_visual_fields + visual_template_id aux copies MSR module-liées (même titre)
+      // → Nécessaire pour que les clients voient les champs visuels sans bloquer sur RLS (module_id=null invisible)
+      if (msrId) {
+        let linkedMsrQuery = supabase.from('module_step_resources')
+          .update({ metadata: JSON.stringify({ ...metadataObj, visual_template_id: msrId }) })
+          .eq('titre', name)
+          .eq('type', 'document')
+          .neq('id', msrId);
+        if (currentOrgId) linkedMsrQuery = linkedMsrQuery.eq('organisation_id', currentOrgId);
+        await linkedMsrQuery;
+      }
+
+      // 4. Sync avec table documents (pour affichage) — stocker visual_template_id pour bypass RLS client
+      const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId });
       let docCheckQuery = supabase.from('documents').select('id').eq('nom', name);
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl }).eq('id', existingDoc[0].id);
+        await supabase.from('documents').update({ url: publicUrl, metadata: visualDocMeta }).eq('id', existingDoc[0].id);
       } else {
         await supabase.from('documents').insert([{
           nom: name, type_action: 'Modèle Référence', url: publicUrl,
+          metadata: visualDocMeta,
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }]);
       }
