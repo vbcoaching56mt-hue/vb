@@ -5728,13 +5728,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          transform: 'translate(-50%, -50%)',
+                          // Le BAS de la balise est à la position exacte du texte dans le PDF
+                          // → la balise "pointe" vers sa zone de rendu
+                          transform: 'translate(-50%, -100%)',
                           zIndex: 10,
                           cursor: 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
                           transition: 'opacity 0.15s',
                         }}
-                        title="Glissez pour repositionner"
+                        title="Glissez pour repositionner — le bas de la balise indique où le texte apparaîtra"
                       >
                         {isSig ? (
                           <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
@@ -5743,7 +5745,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                               <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
                                 {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
                               </p>
-                              <p className="text-[9px] text-gray-400">Glissez pour déplacer</p>
+                              <p className="text-[9px] text-gray-400">Bas = position dans le PDF</p>
                             </div>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
@@ -5753,17 +5755,20 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                             </button>
                           </div>
                         ) : (
-                          <div className="group flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-lg whitespace-nowrap ring-2 ring-white select-none">
-                            <span className="font-mono select-none">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
-                            <button
-                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                              className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
-                            >
-                              <X size={8} />
-                            </button>
+                          <div className="group flex flex-col select-none">
+                            <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-t-md shadow-lg whitespace-nowrap ring-2 ring-white ring-b-0">
+                              <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
+                              <button
+                                onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                                className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
+                              >
+                                <X size={8} />
+                              </button>
+                            </div>
+                            {/* Ligne pointillée = ligne de base du texte dans le PDF */}
+                            <div className="border-t-2 border-dashed border-violet-400/70 w-full" style={{ minWidth: 80 }} />
                           </div>
                         )}
-                        <div className={`absolute top-full left-1/2 -translate-x-1/2 w-0.5 h-2 ${isSig ? (field.tag === 'signature_client' ? 'bg-blue-400/60' : 'bg-orange-400/60') : 'bg-violet-500/60'}`} />
                       </div>
                     );
                   })}
@@ -8431,18 +8436,17 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
   const handleCloseSigningModal = React.useCallback(() => {
-    if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
+    // Les data URLs ne nécessitent pas de révocation (contrairement aux blob URLs)
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
     setSigningResource(null);
-  }, [prefilledSignUrl]);
+  }, []);
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
   // → le client voit ses informations dans le document AVANT de signer
   // La modal ne s'ouvre qu'APRÈS le pré-remplissage (évite la race condition)
   const handleOpenSigning = React.useCallback(async (resource) => {
-    // Nettoyer l'éventuel précédent blob
-    if (prefilledSignUrl) URL.revokeObjectURL(prefilledSignUrl);
+    // Nettoyer l'éventuel précédent pré-remplissage
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
 
@@ -8507,10 +8511,16 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       }
 
       prefilledSignBlob.current = pdfBlob;
-      const blobUrl = URL.createObjectURL(pdfBlob);
-      setPrefilledSignUrl(blobUrl);
+      // Convertir en data URL (base64) — plus fiable qu'un blob URL dans les iframes (Vercel CSP, cross-browser)
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(pdfBlob);
+      });
+      setPrefilledSignUrl(dataUrl);
       toast.dismiss(toastId);
-      // Ouvrir la modal avec le blob URL déjà prêt
+      // Ouvrir la modal — la data URL est déjà prête, le client verra ses données immédiatement
       setSigningResource(resource);
     } catch(e) {
       console.warn('[handleOpenSigning] Pré-remplissage échoué (fallback template brut) :', e.message);
@@ -8518,7 +8528,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // Fallback : ouvrir avec template brut
       setSigningResource(resource);
     }
-  }, [currentClient, supabase, prefilledSignUrl]);
+  }, [currentClient, supabase, resolveVisualTemplate]);
 
   const handleSignSave = async (signatureDataUrl) => {
     if (!signingResource || !currentClient) return;
@@ -8888,8 +8898,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         <FileText size={14} className={`shrink-0 ${canSign ? 'text-violet-400' : 'text-gray-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{doc.nom}</p>
-                          <p className="text-[10px] uppercase tracking-wider" style={{ color: canSign ? '#f87171' : '#9ca3af' }}>
-                            {canSign ? 'À signer' : (doc.type_document || 'Document')}
+                          <p className="text-[10px] uppercase tracking-wider" style={{ color: isDocSigned ? '#16a34a' : (canSign ? '#f87171' : '#9ca3af') }}>
+                            {isDocSigned ? 'Signé' : (canSign ? 'À signer' : (doc.type_document || 'Document'))}
                           </p>
                         </div>
                       </div>
