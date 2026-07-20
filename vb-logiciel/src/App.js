@@ -14040,7 +14040,7 @@ export default function App() {
       await supabase.storage.from('documents').remove([fileName]);
 
       // 2. Supprimer de documents (Modèle Référence)
-      await supabase.from('documents').delete().eq('nom', templateKey).eq('type_document', 'Modèle Référence');
+      await supabase.from('documents').delete().eq('nom', templateKey).eq('type_action', 'Modèle Référence');
 
       // 3. Supprimer de module_step_resources
       await supabase.from('module_step_resources').delete().eq('titre', templateKey);
