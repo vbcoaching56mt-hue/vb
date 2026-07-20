@@ -14050,6 +14050,9 @@ export default function App() {
       delete newTemplates[templateKey];
       setDocumentTemplates(newTemplates);
 
+      // 5. Rafraîchir la liste des documents
+      await fetchDocuments();
+
       toast.success(`Modèle "${templateKey}" supprimé définitivement.`);
     } catch (err) {
       console.error("Delete Template Error:", err);
