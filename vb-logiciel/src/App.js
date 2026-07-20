@@ -5949,12 +5949,17 @@ const DocumentsView = ({
         const { data: fields } = await supabase.from('template_fields').select('*').eq('template_id', tpl.id).order('page', { ascending: true });
         setPreviewFields(fields || []);
       }
-      // 2. Convertir le DOCX en pages PDF
+      // 2. Obtenir le PDF — si déjà PDF pas de conversion, sinon convertir DOCX
       const resp = await fetch(tpl.url);
       const blob = await resp.blob();
       let pdfBlob;
-      try { pdfBlob = await convertDocxBlobToPdf(blob); }
-      catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(blob); }
+      const tplIsPdf = /\.pdf$/i.test((tpl.url || '').split('?')[0]);
+      if (tplIsPdf) {
+        pdfBlob = blob; // PDF direct : aucune conversion nécessaire
+      } else {
+        try { pdfBlob = await convertDocxBlobToPdf(blob); }
+        catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(blob); }
+      }
       // 3. Rendre avec PDF.js
       const loadPdfJs = () => new Promise((resolve, reject) => {
         if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
