@@ -5449,7 +5449,7 @@ const FormateurView = ({
    VisualTemplateEditor — éditeur style Yousign
    Upload DOCX → aperçu PDF → drag-drop balises sur le document
    ───────────────────────────────────────────────────────── */
-const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
+const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [step, setStep] = React.useState('upload'); // 'upload' | 'converting' | 'editor'
   const [file, setFile] = React.useState(null);
   const [pdfPages, setPdfPages] = React.useState([]); // [{dataUrl, nativeW, nativeH}]
@@ -5477,6 +5477,47 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
   const sigTagColor = (tag) => tag === 'signature_client'
     ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
     : { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' };
+
+  // Pré-chargement quand on édite un template existant (initialData fourni)
+  React.useEffect(() => {
+    if (!isOpen || !initialData?.url) return;
+    setTemplateName(initialData.name || '');
+    setDestination(initialData.destination || 'client');
+    setStep('converting');
+    (async () => {
+      try {
+        const resp = await fetch(initialData.url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        // Créer un File fictif pour que handleSave puisse le réutiliser
+        const fakeFile = new File([blob], (initialData.name || 'template') + '.pdf', { type: 'application/pdf' });
+        setFile(fakeFile);
+        const pdfjsLib = await loadPdfJs();
+        const arr = await blob.arrayBuffer();
+        const pdfjsDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arr) }).promise;
+        const pages = [];
+        const SCALE = 1.5;
+        for (let i = 1; i <= pdfjsDoc.numPages; i++) {
+          const page = await pdfjsDoc.getPage(i);
+          const vp = page.getViewport({ scale: SCALE });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(vp.width);
+          canvas.height = Math.floor(vp.height);
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+          pages.push({ dataUrl: canvas.toDataURL('image/png'), nativeW: canvas.width, nativeH: canvas.height });
+        }
+        setPdfPages(pages);
+        setCurrentPage(0);
+        // Pré-charger les champs existants
+        setFields(initialData.fields || []);
+        setStep('editor');
+      } catch(e) {
+        toast.error('Chargement du template impossible : ' + e.message);
+        setStep('upload');
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialData]);
 
   // Chargement dynamique de PDF.js depuis le CDN
   const loadPdfJs = () => new Promise((resolve, reject) => {
@@ -5962,6 +6003,24 @@ const DocumentsView = ({
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
+
+  // Renommer un modèle inline
+  const [editingName, setEditingName] = React.useState(null); // nom actuel en cours d'édition
+  const [editingNameValue, setEditingNameValue] = React.useState('');
+  const handleRenameSubmit = async (oldName) => {
+    const newName = editingNameValue.trim();
+    if (!newName || newName === oldName) { setEditingName(null); return; }
+    try {
+      await supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName);
+      await supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null);
+      if (fetchDocuments) await fetchDocuments();
+      toast.success(`Renommé en "${newName}"`);
+    } catch(e) { toast.error('Erreur renommage : ' + e.message); }
+    setEditingName(null);
+  };
+
+  // Modifier les balises d'un template visuel existant
+  const [editingTemplate, setEditingTemplate] = React.useState(null); // { url, fields, name, destination }
 
   // TemplateEditorModal
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = React.useState(false);
@@ -6555,8 +6614,9 @@ const DocumentsView = ({
 
           <VisualTemplateEditor
             isOpen={isTemplateEditorOpen}
-            onClose={() => setIsTemplateEditorOpen(false)}
+            onClose={() => { setIsTemplateEditorOpen(false); setEditingTemplate(null); }}
             onSave={handleUploadVisualTemplate}
+            initialData={editingTemplate}
           />
 
           {/* ── Section Questionnaires ── */}
@@ -6695,14 +6755,16 @@ const DocumentsView = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayTemplates.map((doc) => {
               const classif = typeof doc.metadata === 'object' && doc.metadata ? doc.metadata.classification : 'telechargeable';
-              const dest = doc.visible_formateur ? 'formateur' : 'client';
+              // Lire la destination réelle depuis documentTemplates (MSR) en priorité
+              const tplInfo = (documentTemplates || {})[doc.nom];
+              const dest = tplInfo?.destination || (doc.visible_formateur ? 'formateur' : 'client');
               return (
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
-                      dest === 'formateur' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-600'
+                      dest === 'formateur' ? 'bg-violet-100 text-violet-700' : dest === 'both' ? 'bg-teal-100 text-teal-700' : 'bg-indigo-100 text-indigo-600'
                     }`}>
-                      {dest === 'formateur' ? '📋 Formateur' : '📁 Client'}
+                      {dest === 'formateur' ? '📋 Formateur' : dest === 'both' ? '👥 Les deux' : '📁 Client'}
                     </span>
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
@@ -6720,13 +6782,35 @@ const DocumentsView = ({
                         <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
                       {(documentTemplates || {})[doc.nom]?.metadata?.has_visual_fields && (
-                        <button
-                          onClick={() => openTemplatePreview(doc.nom, (documentTemplates || {})[doc.nom])}
-                          className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
-                          title="Prévisualiser les balises"
-                        >
-                          <Eye size={14} />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => openTemplatePreview(doc.nom, (documentTemplates || {})[doc.nom])}
+                            className="p-1.5 text-gray-300 hover:text-violet-600 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Prévisualiser les balises"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const tpl = (documentTemplates || {})[doc.nom];
+                              if (!tpl?.id && !tpl?.url) return;
+                              // Charger les champs existants depuis la DB
+                              const { data: existingFields } = await supabase
+                                .from('template_fields').select('*').eq('template_id', tpl.id).order('page');
+                              const mappedFields = (existingFields || []).map(f => ({
+                                id: `f_${f.id || Date.now()}_${Math.random().toString(36).slice(2)}`,
+                                tag: f.tag, page: f.page || 1,
+                                xPct: parseFloat(f.x_percent), yPct: parseFloat(f.y_percent),
+                              }));
+                              setEditingTemplate({ url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id });
+                              setIsTemplateEditorOpen(true);
+                            }}
+                            className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Modifier les balises"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => {
@@ -6739,16 +6823,34 @@ const DocumentsView = ({
                       </button>
                     </div>
                   </div>
-                  <h3 className="font-bold text-gray-900 text-sm mb-1">{doc.nom}</h3>
+                  {editingName === doc.nom ? (
+                    <input
+                      autoFocus
+                      className="font-bold text-gray-900 text-sm mb-1 border-b border-violet-400 outline-none w-full bg-transparent"
+                      value={editingNameValue}
+                      onChange={e => setEditingNameValue(e.target.value)}
+                      onBlur={() => handleRenameSubmit(doc.nom)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRenameSubmit(doc.nom); if (e.key === 'Escape') setEditingName(null); }}
+                    />
+                  ) : (
+                    <h3
+                      className="font-bold text-gray-900 text-sm mb-1 cursor-pointer hover:text-violet-600 transition-colors"
+                      title="Double-cliquer pour renommer"
+                      onDoubleClick={() => { setEditingName(doc.nom); setEditingNameValue(doc.nom); }}
+                    >
+                      {doc.nom}
+                    </h3>
+                  )}
                   <div className="mt-auto pt-4 space-y-2">
                     {/* Modifier la destination inline */}
                     <select
                       className="w-full text-xs p-1.5 rounded-lg border border-gray-100 bg-gray-50 text-gray-500 font-medium cursor-pointer hover:border-amber-300 transition-colors"
                       value={dest}
-                      onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(doc.id, e.target.value)}
+                      onChange={(e) => onUpdateTemplateDestination && onUpdateTemplateDestination(doc.nom, e.target.value)}
                     >
                       <option value="client">📁 Client</option>
                       <option value="formateur">📋 Formateur</option>
+                      <option value="both">👥 Les deux</option>
                     </select>
                     {/* Associer à un ou plusieurs groupes */}
                     {(() => {
