@@ -13785,7 +13785,7 @@ export default function App() {
 
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
           user_id: client.id,
-          organisation_id: client.organisation_id,
+          organisation_id: client.organisation_id || currentOrgId,
           nom: templateResource.titre,
           url: prefilledUrl,
           type_document: 'À signer',
@@ -13809,9 +13809,9 @@ export default function App() {
           fields: tplFields || [],
           resolved_values: resolvedValues || {},
         });
-        const { data: newDoc } = await supabase.from('documents').insert([{
+        const { data: newDoc, error: fallbackErr } = await supabase.from('documents').insert([{
           user_id: client.id,
-          organisation_id: client.organisation_id,
+          organisation_id: client.organisation_id || currentOrgId,
           nom: templateResource.titre,
           url: templateResource.file_url,
           type_document: 'À signer',
@@ -13820,6 +13820,10 @@ export default function App() {
           signe_par_client: false,
           metadata: fallbackMeta,
         }]).select().single();
+        if (fallbackErr) {
+          console.error('[instantiateDocument] Erreur fallback insert:', fallbackErr.message);
+          toast.error(`Erreur (fallback) "${templateResource.titre}": ${fallbackErr.message || fallbackErr.code}`);
+        }
         if (newDoc) docId = newDoc.id;
       }
 
