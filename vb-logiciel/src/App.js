@@ -2682,7 +2682,19 @@ const ClientDetailView = ({
       }
 
       await fetchDocuments();
-      toast.success(`${groupDocs.length} document${groupDocs.length > 1 ? 's' : ''} envoyé${groupDocs.length > 1 ? 's' : ''} pour signature !`, { id: toastId });
+      // Vérifier que des documents ont bien été créés pour ce client
+      const { data: createdDocs } = await supabase
+        .from('documents')
+        .select('id, nom')
+        .eq('user_id', compatibleClient.id)
+        .in('nom', groupDocs.map(d => d.nom));
+      const nbCreated = (createdDocs || []).length;
+      if (nbCreated === 0) {
+        toast.error('Aucun document n\'a pu être créé. Vérifiez les droits ou consultez la console.', { id: toastId });
+        setIsSendingDocs(false);
+        return;
+      }
+      toast.success(`${nbCreated} document${nbCreated > 1 ? 's' : ''} envoyé${nbCreated > 1 ? 's' : ''} pour signature !`, { id: toastId });
       setShowSendDocsModal(false);
       setSelectedGroupId(null);
     } catch (e) {
@@ -13834,6 +13846,7 @@ export default function App() {
 
       if (insertErr) {
         console.error('[instantiateDocument] Erreur insertion document:', insertErr.message, { client: client.id, doc: templateResource.titre });
+        toast.error(`Erreur création "${templateResource.titre}" : ${insertErr.message || insertErr.code || 'RLS ?'}`);
         return;
       }
       if (newDoc) docId = newDoc.id;
