@@ -553,7 +553,7 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  */
 const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}) => {
   // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
-  const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer());
+  const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer(), { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const pages = pdfDoc.getPages();
@@ -8615,7 +8615,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     const parseMeta = (r) => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } };
     const visualRow = rows.find(r => parseMeta(r).has_visual_fields === true);
     if (!visualRow) return { templateId: null, hasVisualFields: false };
-    return { templateId: visualRow.id, hasVisualFields: true };
+    // Utiliser visual_template_id du metadata si présent (pointe vers le MSR standalone où template_fields sont stockés)
+    // sinon fallback sur l'id de la ligne trouvée
+    const vizMeta = parseMeta(visualRow);
+    const realTemplateId = vizMeta.visual_template_id || visualRow.id;
+    return { templateId: realTemplateId, hasVisualFields: true, embeddedFields: vizMeta.template_fields || null };
   }, [supabase]);
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
@@ -8652,16 +8656,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const pregenMeta = (() => { try { return typeof existingPregenDoc.metadata === 'string' ? JSON.parse(existingPregenDoc.metadata) : (existingPregenDoc.metadata || {}); } catch { return {}; } })();
 
       if (pregenMeta.fields?.length > 0 && pregenMeta.resolved_values) {
-        // ✅ Nouvelle architecture : overlay côté client avec valeurs pré-calculées par l'admin
-        // Le client lit ses propres métadonnées (pas de RLS), le template PDF est public
+        // ✅ Voie rapide : overlay avec valeurs pré-calculées par l'admin (pas de RLS, zéro requête DB)
         toast.loading('Préparation du document…', { id: toastId });
         try {
           const tplUrl = pregenMeta.template_url || existingPregenDoc.url;
           const resp = await fetch(tplUrl);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-
-          // Overlay des données uniquement (signatures exclues — ajoutées lors de la signature)
           const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && !(f.tag || '').startsWith('signature_'));
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
@@ -8675,93 +8676,29 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           });
           setPrefilledSignUrl(dataUrl);
           toast.dismiss(toastId);
+          setSigningResource(resource);
+          return;
         } catch(e) {
-          console.warn('[handleOpenSigning] Overlay métadonnées échoué, fallback URL brute :', e.message);
+          console.warn('[handleOpenSigning] Overlay métadonnées échoué, chemin overlay standard :', e.message);
           toast.dismiss(toastId);
-          setPrefilledSignUrl(existingPregenDoc.url);
-        }
-      } else {
-        // Document existant sans données pré-calculées (créé avant le fix) → overlay à la volée
-        const vizId = pregenMeta.visual_template_id || null;
-        if (vizId) {
-          toast.loading('Préparation du document…', { id: toastId });
-          try {
-            const { data: tplFields } = await supabase
-              .from('template_fields').select('*').eq('template_id', vizId).order('page', { ascending: true });
-            if (tplFields && tplFields.length > 0) {
-              const tplUrl = pregenMeta.template_url || existingPregenDoc.url;
-              const resp = await fetch(tplUrl);
-              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-              let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-              const today = new Date().toLocaleDateString('fr-FR');
-              const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
-              const dataValues = {
-                nomcomplet_client: (currentClient?.nom_complet || ((currentClient?.prenom||'')+' '+(currentClient?.nom||'')).trim()||'').trim(),
-                client_email: currentClient?.email_contact || currentClient?.email || '',
-                client_phone: currentClient?.telephone || '',
-                rue_client: currentClient?.adresse || currentClient?.adresse_postale || '',
-                code_postal_client: currentClient?.code_postal || '',
-                ville_client: currentClient?.ville || '',
-                adresse_session: currentClient?.adresse || currentClient?.adresse_postale || '',
-                prix_prestation: currentClient?.prix_prestation || currentClient?.montant_prestation || '',
-                modalite_formation: currentClient?.modalite_formation || '',
-                formation_nom: '', date_debut: '', date_fin: '',
-                date_signature: today, date_du_jour: today,
-                nom_client: currentClient?.nom || '', prenom_client: currentClient?.prenom || '',
-                email_client: currentClient?.email_contact || currentClient?.email || '',
-                telephone_client: currentClient?.telephone || '',
-                ville: currentClient?.ville || '',
-                nom_formateur: formateur?.nom || '', prenom_formateur: formateur?.prenom || '',
-                email_formateur: formateur?.email || '', tel_formateur: formateur?.telephone || '',
-                telephone_formateur: formateur?.telephone || '',
-                adresse_formateur: formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
-                formateur_siret: formateur?.formateur_siret || formateur?.siret || '',
-                formateur_nda: formateur?.formateur_nda || formateur?.nda || '',
-                compagnie_assurance: formateur?.compagnie_assurance || '',
-                numero_assurance_rcp: formateur?.numero_assurance_rcp || '',
-                nom_consultant: formateur?.nom || '', email_consultant: formateur?.email || '',
-                tel_consultant: formateur?.telephone || '',
-              };
-              const dataFields = tplFields.filter(f => f.field_type !== 'signature' && !(f.tag||'').startsWith('signature_'));
-              if (dataFields.length > 0) {
-                pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, dataValues, {});
-              }
-              prefilledSignBlob.current = pdfBlob;
-              const dataUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(pdfBlob);
-              });
-              setPrefilledSignUrl(dataUrl);
-              toast.dismiss(toastId);
-            } else {
-              // Pas de champs trouvés (template vide ou RLS) → URL brute
-              setPrefilledSignUrl(existingPregenDoc.url);
-            }
-          } catch(eOverlay) {
-            console.warn('[handleOpenSigning] Overlay à la volée échoué:', eOverlay.message);
-            toast.dismiss(toastId);
-            setPrefilledSignUrl(existingPregenDoc.url);
-          }
-        } else {
-          // Pas de visual_template_id → URL brute
-          setPrefilledSignUrl(existingPregenDoc.url);
+          // Pas de return → continue vers le chemin overlay standard (Priorité 0/1/2/3)
         }
       }
-      setSigningResource(resource);
-      return;
+      // Pas de données pré-calculées (doc créé avant fix ou overlay échoué)
+      // → on continue vers le chemin overlay standard ci-dessous
+      // resource.metadata.template_fields (embarqués) = Priorité 0, sans RLS
     }
 
     // ── Voie overlay : tenter le pré-remplissage visuel via pdf-lib ──
     toast.loading('Préparation du document…', { id: toastId });
     try {
-      // Priorité 1 : lire visual_template_id depuis resource.metadata (évite RLS sur module_step_resources)
-      // Ce champ est injecté lors de l'upload du template dans handleUploadVisualTemplate
+      // Priorité 0 : champs embarqués dans resource.metadata (zéro RLS, zéro requête DB)
+      // Injectés par handleUploadVisualTemplate via fullMetadataObj.template_fields
       const parseMeta = (m) => { try { return typeof m === 'string' ? JSON.parse(m) : (m || {}); } catch { return {}; } };
       const rMeta = parseMeta(resource.metadata);
       let templateId = rMeta.visual_template_id || null;
       let hasVisualFields = rMeta.has_visual_fields === true;
+      let embeddedTplFields = (rMeta.template_fields && rMeta.template_fields.length > 0) ? rMeta.template_fields : null;
 
       // Priorité 2 : chercher dans la liste documents (template reference) — bypass RLS
       if (!hasVisualFields || !templateId) {
@@ -8773,18 +8710,25 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         if (refMeta.has_visual_fields === true && refMeta.visual_template_id) {
           templateId = refMeta.visual_template_id;
           hasVisualFields = true;
+          if (!embeddedTplFields && refMeta.template_fields && refMeta.template_fields.length > 0) {
+            embeddedTplFields = refMeta.template_fields;
+          }
         }
       }
 
-      // Priorité 3 : résolution via module_step_resources (peut échouer pour les nouveaux docs sans admin pre-gen)
+      // Priorité 3 : résolution via module_step_resources
       if (!hasVisualFields || !templateId) {
         const resolved = await resolveVisualTemplate(resource.titre || resource.nom);
         templateId = resolved.templateId;
         hasVisualFields = resolved.hasVisualFields;
+        // Récupérer les champs embarqués depuis le MSR trouvé si pas encore disponibles
+        if (!embeddedTplFields && resolved.embeddedFields && resolved.embeddedFields.length > 0) {
+          embeddedTplFields = resolved.embeddedFields;
+        }
       }
 
-      if (!hasVisualFields || !templateId) {
-        // Pas de champs visuels → ouvrir immédiatement avec le template brut
+      if ((!hasVisualFields || !templateId) && !embeddedTplFields) {
+        // Pas de champs visuels ni de champs embarqués → ouvrir avec le template brut
         toast.dismiss(toastId);
         setSigningResource(resource);
         return;
@@ -8805,9 +8749,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
       }
 
-      // ← utiliser templateId (module_step_resources) et non resource.id (documents table)
-      const { data: tplFields } = await supabase
-        .from('template_fields').select('*').eq('template_id', templateId).order('page', { ascending: true });
+      // Priorité 0 : champs embarqués dans resource.metadata (zéro RLS) → sinon requête DB par templateId
+      const tplFieldsRaw = embeddedTplFields || (templateId
+        ? (await supabase.from('template_fields').select('*').eq('template_id', templateId).order('page', { ascending: true })).data
+        : null);
+      const tplFields = tplFieldsRaw || [];
 
       if (tplFields && tplFields.length > 0) {
         const today = new Date().toLocaleDateString('fr-FR');
@@ -8931,9 +8877,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter UNIQUEMENT la signature
           pdfBlob = prefilledSignBlob.current;
           if (signatureDataUrl) {
-            // Chercher les champs signature : d'abord dans les métadonnées du doc (pas de RLS client), puis DB
+            // Chercher les champs signature : doc metadata → resource.metadata (embarqués) → DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
             let sigFields = (_docMeta.fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            if (sigFields.length === 0) {
+              // Priorité : champs embarqués dans resource.metadata (zéro RLS)
+              const _embedded = _rMeta.template_fields || [];
+              sigFields = _embedded.filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            }
             if (sigFields.length === 0 && visualTemplateId) {
               const { data: sigFieldsData } = await supabase
                 .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
@@ -13587,10 +13538,15 @@ export default function App() {
     // Avantages : aucun upload Storage, aucune conversion PDF, aucun risque CORS/pdf-lib côté admin.
     if (hasVisualFields && visualTemplateId) {
       try {
-        // 1. Récupérer les champs de positionnement (admin peut lire sans RLS)
-        const { data: tplFields, error: fieldsErr } = await supabase
-          .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
-        if (fieldsErr) throw fieldsErr;
+        // 1. Récupérer les champs de positionnement
+        // Priorité : champs embarqués dans metadata (zéro RLS) → fallback requête DB si absents
+        let tplFields = (meta.template_fields && meta.template_fields.length > 0) ? meta.template_fields : null;
+        if (!tplFields) {
+          const { data: dbFields, error: fieldsErr } = await supabase
+            .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
+          if (fieldsErr) throw fieldsErr;
+          tplFields = dbFields;
+        }
 
         // 2. Construire les valeurs résolues (admin-side → accès complet données client + formateur)
         const formateur = (formateurs || []).find(f => String(f.id) === String(client.formateur_id));
@@ -14334,7 +14290,7 @@ export default function App() {
         return res.arrayBuffer();
       });
       
-      const pdfDoc = await PDFDocument.load(existingPdfBytes);
+      const pdfDoc = await PDFDocument.load(existingPdfBytes, { ignoreEncryption: true });
       const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
       const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
@@ -14824,9 +14780,20 @@ export default function App() {
         }
       }
 
-      // FIX 1 — Ajouter visual_template_id (auto-référence) au MSR maître maintenant que msrId est connu.
-      // CRITIQUE : sans ce champ, instantiateDocument branch 1 ne s'exécute pas → doc client créé sans données pré-remplies.
-      const fullMetadataObj = { ...metadataObj, visual_template_id: msrId };
+      // FIX 1 — Ajouter visual_template_id + champs embarqués dans le metadata MSR.
+      // visual_template_id : auto-référence, nécessaire pour instantiateDocument branch 1.
+      // template_fields embarqués : élimine la dépendance RLS sur la table template_fields
+      //   → champs accessibles sans requête DB partout (handleOpenSigning, instantiateDocument, handleSignSave).
+      const embeddedFields = fieldsToSave.map(f => ({
+        template_id: msrId,
+        tag: f.tag,
+        page: f.page || 1,
+        x_percent: parseFloat(f.xPct.toFixed(4)),
+        y_percent: parseFloat(f.yPct.toFixed(4)),
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
+        font_size: 11,
+      }));
+      const fullMetadataObj = { ...metadataObj, visual_template_id: msrId, template_fields: embeddedFields };
       await supabase.from('module_step_resources').update({
         metadata: JSON.stringify(fullMetadataObj),
       }).eq('id', msrId);
@@ -14858,8 +14825,8 @@ export default function App() {
           .neq('id', msrId);
       }
 
-      // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id pour le fallback Priority 2
-      const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId });
+      // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id + champs pour Priority 2
+      const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId, template_fields: embeddedFields });
       let docCheckQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
@@ -15614,7 +15581,7 @@ export default function App() {
 
       if (!signatureAlreadyEmbedded) {
         // Étape 2 : On superpose la signature par coordonnées (pdf-lib)
-        const pdfDoc = await PDFDocument.load(targetPdfBytes);
+        const pdfDoc = await PDFDocument.load(targetPdfBytes, { ignoreEncryption: true });
         const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
@@ -15871,7 +15838,7 @@ export default function App() {
 
         if (blob.type === 'application/pdf' || urlToDownload.toLowerCase().includes('.pdf')) {
           const pdfBytes = await blob.arrayBuffer();
-          pdfDoc = await PDFDocument.load(pdfBytes);
+          pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
         } else {
           pdfDoc = await PDFDocument.create();
           const page = pdfDoc.addPage([595.28, 841.89]);
@@ -15953,7 +15920,7 @@ export default function App() {
         certPdf.addImage(imgData, 'PNG', 0, 0, 595.28, 841.89);
 
         const certPdfBytes = certPdf.output('arraybuffer');
-        const certPageDoc = await PDFDocument.load(certPdfBytes);
+        const certPageDoc = await PDFDocument.load(certPdfBytes, { ignoreEncryption: true });
         const [certPage] = await pdfDoc.copyPages(certPageDoc, [0]);
         pdfDoc.addPage(certPage);
 
