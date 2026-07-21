@@ -2553,7 +2553,7 @@ const ClientDetailView = ({
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
-  handleRegenerateVisualDocs
+  handleRegenerateVisualDocs, instantiateDocument, currentOrgId
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
@@ -2567,6 +2567,10 @@ const ClientDetailView = ({
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
+  const [localDocGroups, setLocalDocGroups] = React.useState([]);
+  const [showSendDocsModal, setShowSendDocsModal] = React.useState(false);
+  const [selectedGroupId, setSelectedGroupId] = React.useState(null);
+  const [isSendingDocs, setIsSendingDocs] = React.useState(false);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
   const [clientInfo, setClientInfo] = React.useState({
@@ -2623,6 +2627,46 @@ const ClientDetailView = ({
     supabase.from('questionnaire_responses').select('*').eq('client_id', client.id)
       .then(({ data }) => { if (data) setClientQuestionnaireResponses(data); });
   }, [client.id, client.module_id, supabase]);
+
+  React.useEffect(() => {
+    if (!currentOrgId || !supabase) return;
+    supabase.from('document_groups').select('*').eq('organisation_id', currentOrgId).order('nom', { ascending: true })
+      .then(({ data }) => { if (data) setLocalDocGroups(data); });
+  }, [currentOrgId, supabase]);
+
+  const handleSendDocs = async () => {
+    if (!selectedGroupId || !instantiateDocument) return;
+    setIsSendingDocs(true);
+    const toastId = 'send-docs';
+    toast.loading('Préparation des documents…', { id: toastId });
+    try {
+      const { data: fullClient } = await supabase.from('clients').select('*').eq('id', client.id).single();
+      if (!fullClient) throw new Error('Client introuvable');
+      const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
+      const { data: groupDocs } = await supabase
+        .from('module_step_resources')
+        .select('*')
+        .eq('document_group_id', selectedGroupId)
+        .eq('type', 'document');
+      if (!groupDocs || groupDocs.length === 0) {
+        toast.error('Aucun document dans ce groupe.', { id: toastId });
+        setIsSendingDocs(false);
+        return;
+      }
+      for (const doc of groupDocs) {
+        await instantiateDocument(compatibleClient, doc);
+      }
+      await fetchDocuments();
+      toast.success(`${groupDocs.length} document${groupDocs.length > 1 ? 's' : ''} envoyé${groupDocs.length > 1 ? 's' : ''} pour signature !`, { id: toastId });
+      setShowSendDocsModal(false);
+      setSelectedGroupId(null);
+    } catch (e) {
+      console.error('[handleSendDocs]', e);
+      toast.error('Erreur : ' + e.message, { id: toastId });
+    } finally {
+      setIsSendingDocs(false);
+    }
+  };
 
   const handleRemoveAssignedDoc = async (docId) => {
     await supabase.from('client_documents').delete().eq('id', docId);
@@ -2971,6 +3015,14 @@ const ClientDetailView = ({
                   ↺ Régénérer PDF
                 </button>
               )}
+              {instantiateDocument && localDocGroups.length > 0 && (
+                <button
+                  onClick={() => setShowSendDocsModal(true)}
+                  className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+                >
+                  ✉️ Envoyer pour signature
+                </button>
+              )}
               <button
                 onClick={() => setShowAddDocModal(true)}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
@@ -3075,6 +3127,45 @@ const ClientDetailView = ({
                 >
                   Annuler
                 </button>
+              </div>
+            </div>
+          )}
+
+          {showSendDocsModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <h4 className="text-base font-black text-gray-900 mb-1">Envoyer pour signature</h4>
+                <p className="text-xs text-gray-400 mb-4">Choisissez le groupe de documents à envoyer à ce client. Tous les documents du groupe seront pré-remplis et mis en attente de signature.</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 mb-4">
+                  {localDocGroups.length === 0 ? (
+                    <p className="text-gray-400 text-sm italic text-center py-6">Aucun groupe de documents disponible.</p>
+                  ) : localDocGroups.map(grp => (
+                    <button
+                      key={grp.id}
+                      onClick={() => setSelectedGroupId(grp.id)}
+                      className={`w-full flex items-center gap-3 text-left font-bold text-sm px-4 py-3 rounded-xl border transition-all ${selectedGroupId === grp.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-gray-50 hover:bg-violet-50 text-gray-700 border-gray-100 hover:border-violet-200'}`}
+                    >
+                      <span className="text-base">📁</span>
+                      {grp.nom}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowSendDocsModal(false); setSelectedGroupId(null); }}
+                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                    disabled={isSendingDocs}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleSendDocs}
+                    disabled={!selectedGroupId || isSendingDocs}
+                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm py-2.5 rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {isSendingDocs ? 'Envoi…' : 'Envoyer ✉️'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -3380,7 +3471,7 @@ const ClientDetailView = ({
 
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-800 mb-6">Documents Uploadés</h3>
+          <h3 className="text-lg font-bold text-gray-800 mb-6">Documents envoyés pour signature</h3>
           <div className="grid grid-cols-1 gap-3">
             {clientDocs.length > 0 ? clientDocs.map(doc => {
               const clientSigned = doc.signe_par_client;
@@ -3396,7 +3487,7 @@ const ClientDetailView = ({
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                        Client: {clientSigned ? 'Signé ✓' : 'En attente'}
+                        {clientSigned ? '✓ Signé' : '⏳ En attente de signature'}
                       </span>
                       {(needsFormateurSign || formateurSigned) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
@@ -3413,7 +3504,13 @@ const ClientDetailView = ({
                 </div>
               </div>
               );
-            }) : <p className="text-gray-500 italic text-sm">Aucun document rattaché.</p>}
+            }) : (
+              <div className="text-center py-10 text-gray-400">
+                <p className="text-2xl mb-2">✉️</p>
+                <p className="text-sm italic">Aucun document envoyé pour signature.</p>
+                <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer pour signature" ci-dessus.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3451,7 +3548,7 @@ const AdminClientsView = ({
   editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
-  handleRegenerateVisualDocs
+  handleRegenerateVisualDocs, instantiateDocument, currentOrgId
 }) => {
   const [clientSearchTerm, setClientSearchTerm] = React.useState('');
 
@@ -3503,6 +3600,8 @@ const AdminClientsView = ({
           handleSaveCorrection={handleSaveCorrection}
           handleAddAdminBloc={handleAddAdminBloc}
           handleRegenerateVisualDocs={handleRegenerateVisualDocs}
+          instantiateDocument={instantiateDocument}
+          currentOrgId={currentOrgId}
         />
       );
     }
@@ -8653,12 +8752,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
     if (existingPregenDoc) {
       const pregenMeta = (() => { try { return typeof existingPregenDoc.metadata === 'string' ? JSON.parse(existingPregenDoc.metadata) : (existingPregenDoc.metadata || {}); } catch { return {}; } })();
-
-      // ── DIAGNOSTIC TEMPORAIRE ── à supprimer après résolution
-      toast.success(
-        `🔍 Doc: prefilled=${pregenMeta.prefilled||false} | fields=${pregenMeta.fields?.length||0} | sigF=${pregenMeta.signature_fields?.length||0} | date="${pregenMeta.resolved_values?.date_du_jour||'?'}" | ville="${pregenMeta.resolved_values?.ville_client||'(vide)'}" | tplId=${pregenMeta.visual_template_id?.slice(-6)||'none'}`,
-        { id: 'debug-signing', duration: 20000 }
-      );
 
       if (pregenMeta.prefilled === true) {
         // ✅ Voie directe : PDF déjà pré-généré côté admin → charger sans aucun overlay
@@ -16488,6 +16581,8 @@ export default function App() {
             handleSaveCorrection={handleSaveCorrection}
             handleAddAdminBloc={handleAddAdminBloc}
             handleRegenerateVisualDocs={handleRegenerateVisualDocs}
+            instantiateDocument={instantiateDocument}
+            currentOrgId={currentOrgId}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
