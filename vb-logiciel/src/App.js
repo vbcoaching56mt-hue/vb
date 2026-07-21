@@ -8654,6 +8654,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     if (existingPregenDoc) {
       const pregenMeta = (() => { try { return typeof existingPregenDoc.metadata === 'string' ? JSON.parse(existingPregenDoc.metadata) : (existingPregenDoc.metadata || {}); } catch { return {}; } })();
 
+      // ── DIAGNOSTIC TEMPORAIRE ── à supprimer après résolution
+      toast.success(
+        `🔍 Doc: prefilled=${pregenMeta.prefilled||false} | fields=${pregenMeta.fields?.length||0} | sigF=${pregenMeta.signature_fields?.length||0} | date="${pregenMeta.resolved_values?.date_du_jour||'?'}" | ville="${pregenMeta.resolved_values?.ville_client||'(vide)'}" | tplId=${pregenMeta.visual_template_id?.slice(-6)||'none'}`,
+        { id: 'debug-signing', duration: 20000 }
+      );
+
       if (pregenMeta.prefilled === true) {
         // ✅ Voie directe : PDF déjà pré-généré côté admin → charger sans aucun overlay
         toast.loading('Chargement du document…', { id: toastId });
