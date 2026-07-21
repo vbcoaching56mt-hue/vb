@@ -14724,12 +14724,13 @@ export default function App() {
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-      // 2. Insérer / mettre à jour dans module_step_resources avec has_visual_fields:true
+      // 2. Insérer / mettre à jour le MSR maître dans module_step_resources
+      // Note : visual_template_id sera ajouté juste après (auto-référence, nécessite msrId)
       const metadataObj = { classification, has_visual_fields: true };
       let msrId = null;
 
       if (editingTemplateId) {
-        // Mode édition : toujours mettre à jour par ID — jamais créer de doublon
+        // Mode édition : mettre à jour par ID — jamais créer de doublon
         msrId = editingTemplateId;
         await supabase.from('module_step_resources').update({
           titre: name, file_url: publicUrl, destination,
@@ -14758,11 +14759,16 @@ export default function App() {
         }
       }
 
+      // FIX 1 — Ajouter visual_template_id (auto-référence) au MSR maître maintenant que msrId est connu.
+      // CRITIQUE : sans ce champ, instantiateDocument branch 1 ne s'exécute pas → doc client créé sans données pré-remplies.
+      const fullMetadataObj = { ...metadataObj, visual_template_id: msrId };
+      await supabase.from('module_step_resources').update({
+        metadata: JSON.stringify(fullMetadataObj),
+      }).eq('id', msrId);
+
       // 3. Sauvegarder les champs visuels dans template_fields
       if (fieldsToSave.length > 0 && msrId) {
-        // Supprimer les anciens champs pour ce template
         await supabase.from('template_fields').delete().eq('template_id', msrId);
-        // Insérer les nouveaux
         const rows = fieldsToSave.map(f => ({
           template_id: msrId,
           tag: f.tag,
@@ -14777,19 +14783,17 @@ export default function App() {
         if (fieldsErr) throw fieldsErr;
       }
 
-      // 3.5. Propager has_visual_fields + visual_template_id aux copies MSR module-liées (même titre)
-      // → Nécessaire pour que les clients voient les champs visuels sans bloquer sur RLS (module_id=null invisible)
+      // FIX 2 — Propager visual_template_id à TOUTES les copies MSR module-liées (même titre, tout org).
+      // Filtre organisation_id SUPPRIMÉ : les copies module peuvent avoir un org différent ou null.
       if (msrId) {
-        let linkedMsrQuery = supabase.from('module_step_resources')
-          .update({ metadata: JSON.stringify({ ...metadataObj, visual_template_id: msrId }) })
+        await supabase.from('module_step_resources')
+          .update({ metadata: JSON.stringify(fullMetadataObj) })
           .eq('titre', name)
           .eq('type', 'document')
           .neq('id', msrId);
-        if (currentOrgId) linkedMsrQuery = linkedMsrQuery.eq('organisation_id', currentOrgId);
-        await linkedMsrQuery;
       }
 
-      // 4. Sync avec table documents (pour affichage) — stocker visual_template_id pour bypass RLS client
+      // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id pour le fallback Priority 2
       const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId });
       let docCheckQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
@@ -14806,10 +14810,50 @@ export default function App() {
         if (docInsertErr) console.warn('[handleUploadVisualTemplate] documents insert error (non-bloquant):', docInsertErr.message);
       }
 
+      // FIX 3 — Auto-distribuer aux clients des modules qui contiennent ce template.
+      // Exécuté en contexte admin (pas de RLS) → instantiateDocument Branch 1 stocke fields + resolved_values.
+      // Garantit que existingPregenDoc existe pour le fast path dans handleOpenSigning.
+      if (msrId) {
+        try {
+          // Trouver tous les modules qui ont ce template (MSR avec module_id non null)
+          const { data: linkedModules } = await supabase
+            .from('module_step_resources')
+            .select('module_id')
+            .eq('titre', name)
+            .eq('type', 'document')
+            .not('module_id', 'is', null);
+
+          const moduleIds = [...new Set((linkedModules || []).map(m => m.module_id).filter(Boolean))];
+
+          if (moduleIds.length > 0) {
+            // Clients dont le module_id est dans la liste
+            const affectedClients = (clients || []).filter(c => c.module_id && moduleIds.includes(c.module_id));
+
+            if (affectedClients.length > 0) {
+              // Construire le templateResource avec visual_template_id pour que Branch 1 s'exécute
+              const masterResource = {
+                titre: name,
+                file_url: publicUrl,
+                destination,
+                metadata: JSON.stringify(fullMetadataObj),
+              };
+              // Série (pas Promise.all) pour éviter surcharge Supabase
+              for (const client of affectedClients) {
+                await instantiateDocument(client, masterResource);
+              }
+              console.log(`[handleUploadVisualTemplate] Auto-distribué à ${affectedClients.length} client(s).`);
+            }
+          }
+        } catch (distErr) {
+          // Non bloquant — la création du template réussit même si la distribution échoue
+          console.warn('[handleUploadVisualTemplate] Auto-distribution error:', distErr.message);
+        }
+      }
+
       // 5. Mettre à jour le state local
       setDocumentTemplates(prev => ({
         ...prev,
-        [name]: { id: msrId, url: publicUrl, name, destination, classification, metadata: metadataObj }
+        [name]: { id: msrId, url: publicUrl, name, destination, classification, metadata: fullMetadataObj }
       }));
 
       await fetchDocuments();
