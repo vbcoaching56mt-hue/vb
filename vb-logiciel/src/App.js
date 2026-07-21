@@ -8652,11 +8652,35 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     );
 
     if (existingPregenDoc) {
-      // Vérifier si le document a des métadonnées avec champs + valeurs pré-calculées (nouvelle architecture)
       const pregenMeta = (() => { try { return typeof existingPregenDoc.metadata === 'string' ? JSON.parse(existingPregenDoc.metadata) : (existingPregenDoc.metadata || {}); } catch { return {}; } })();
 
+      if (pregenMeta.prefilled === true) {
+        // ✅ Voie directe : PDF déjà pré-généré côté admin → charger sans aucun overlay
+        toast.loading('Chargement du document…', { id: toastId });
+        try {
+          const resp = await fetch(existingPregenDoc.url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
+          prefilledSignBlob.current = pdfBlob;
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(pdfBlob);
+          });
+          setPrefilledSignUrl(dataUrl);
+          toast.dismiss(toastId);
+          setSigningResource(resource);
+          return;
+        } catch(e) {
+          console.warn('[handleOpenSigning] PDF pré-généré inaccessible, chemin fallback :', e.message);
+          toast.dismiss(toastId);
+          // Pas de return → continue vers le chemin overlay standard
+        }
+      }
+
       if (pregenMeta.fields?.length > 0 && pregenMeta.resolved_values) {
-        // ✅ Voie rapide : overlay avec valeurs pré-calculées par l'admin (pas de RLS, zéro requête DB)
+        // ✅ Voie rapide (fallback format précédent) : overlay avec valeurs pré-calculées
         toast.loading('Préparation du document…', { id: toastId });
         try {
           const tplUrl = pregenMeta.template_url || existingPregenDoc.url;
@@ -8681,12 +8705,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         } catch(e) {
           console.warn('[handleOpenSigning] Overlay métadonnées échoué, chemin overlay standard :', e.message);
           toast.dismiss(toastId);
-          // Pas de return → continue vers le chemin overlay standard (Priorité 0/1/2/3)
         }
       }
-      // Pas de données pré-calculées (doc créé avant fix ou overlay échoué)
-      // → on continue vers le chemin overlay standard ci-dessous
-      // resource.metadata.template_fields (embarqués) = Priorité 0, sans RLS
+      // Pas de données pré-calculées → continue vers le chemin overlay standard
     }
 
     // ── Voie overlay : tenter le pré-remplissage visuel via pdf-lib ──
@@ -8877,14 +8898,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter UNIQUEMENT la signature
           pdfBlob = prefilledSignBlob.current;
           if (signatureDataUrl) {
-            // Chercher les champs signature : doc metadata → resource.metadata (embarqués) → DB
+            // Chercher les champs signature : P1 = signature_fields (nouveau format pré-généré)
+            //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
-            let sigFields = (_docMeta.fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            // P1 : signature_fields du format pré-généré
+            let sigFields = (_docMeta.signature_fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            // P2 : champs dans fields[] (ancien format)
             if (sigFields.length === 0) {
-              // Priorité : champs embarqués dans resource.metadata (zéro RLS)
+              sigFields = (_docMeta.fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            }
+            // P3 : champs embarqués dans resource.metadata (zéro RLS)
+            if (sigFields.length === 0) {
               const _embedded = _rMeta.template_fields || [];
               sigFields = _embedded.filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
             }
+            // P4 : requête DB
             if (sigFields.length === 0 && visualTemplateId) {
               const { data: sigFieldsData } = await supabase
                 .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
@@ -13525,33 +13553,35 @@ export default function App() {
       if (existing.signe_par_client) return; // SIGNÉ : ne jamais écraser
       // Vérifier si le doc a déjà été préparé avec le nouveau système (metadata.fields + resolved_values)
       const existMeta = (() => { try { return typeof existing.metadata === 'string' ? JSON.parse(existing.metadata) : (existing.metadata || {}); } catch { return {}; } })();
-      if (existMeta.fields?.length > 0 && existMeta.resolved_values) return; // déjà prêt → skip
-      // Ancien format sans données pré-calculées → supprimer pour passer au nouveau format
+      if (existMeta.prefilled === true) return; // PDF pré-généré → skip (format le plus récent)
+      if (existMeta.fields?.length > 0 && existMeta.resolved_values) return; // fallback métadonnées → skip
+      // Ancien format sans données → supprimer pour régénérer avec pré-génération PDF
       await supabase.from('documents').delete().eq('id', existing.id);
     }
 
     let docId = null;
 
-    // ── Branche 1 : template visuel avec balises → stocker champs + valeurs résolues dans les métadonnées ──
-    // Architecture fiable : l'admin (accès DB complet) pré-calcule les valeurs et les stocke dans le doc.
-    // Le client lit ses propres métadonnées (pas de RLS) et fait l'overlay PDF côté client à l'ouverture.
-    // Avantages : aucun upload Storage, aucune conversion PDF, aucun risque CORS/pdf-lib côté admin.
+    // ── Branche 1 : template visuel avec balises → générer PDF pré-rempli côté admin + upload Storage ──
+    // L'admin (accès DB complet, pdf-lib disponible) génère le PDF et l'uploade une fois.
+    // Le client charge simplement l'URL pré-générée → aucun overlay côté client, aucun problème RLS.
     if (hasVisualFields && visualTemplateId) {
+      let tplFields = null;
+      let resolvedValues = null;
       try {
-        // 1. Récupérer les champs de positionnement
-        // Priorité : champs embarqués dans metadata (zéro RLS) → fallback requête DB si absents
-        let tplFields = (meta.template_fields && meta.template_fields.length > 0) ? meta.template_fields : null;
+        // 1. Récupérer les champs (métadonnées embarquées prioritaires → DB fallback)
+        tplFields = (meta.template_fields && meta.template_fields.length > 0) ? meta.template_fields : null;
         if (!tplFields) {
           const { data: dbFields, error: fieldsErr } = await supabase
             .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
           if (fieldsErr) throw fieldsErr;
           tplFields = dbFields;
         }
+        if (!tplFields || tplFields.length === 0) throw new Error('Aucun champ de positionnement trouvé');
 
         // 2. Construire les valeurs résolues (admin-side → accès complet données client + formateur)
         const formateur = (formateurs || []).find(f => String(f.id) === String(client.formateur_id));
         const today = new Date().toLocaleDateString('fr-FR');
-        const resolvedValues = {
+        resolvedValues = {
           nomcomplet_client:   (client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || '').trim(),
           client_email:        client.email_contact || client.email || '',
           client_phone:        client.telephone || '',
@@ -13586,22 +13616,42 @@ export default function App() {
           tel_consultant:      formateur?.telephone || '',
         };
 
-        // 3. Stocker champs + valeurs dans les métadonnées → le client lit son propre document (zéro RLS)
-        //    L'overlay PDF se fera côté client dans handleOpenSigning à partir de ces valeurs pré-calculées
+        // 3. Générer le PDF pré-rempli (navigateur admin, avec ignoreEncryption: true)
+        const templateResp = await fetch(templateResource.file_url);
+        if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} pour ${templateResource.file_url}`);
+        let pdfBlob = new Blob([await templateResp.arrayBuffer()], { type: 'application/pdf' });
+
+        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && !(f.tag || '').startsWith('signature_'));
+        if (dataFields.length > 0) {
+          pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, resolvedValues, {});
+        }
+
+        // 4. Uploader le PDF pré-rempli dans Supabase Storage
+        const safeName = (templateResource.titre || 'doc')
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
+        const storagePath = `prefilled-documents/${client.id}/${Date.now()}_${safeName}.pdf`;
+        const { error: uploadErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, pdfBlob, { contentType: 'application/pdf', upsert: true });
+        if (uploadErr) throw uploadErr;
+        const { data: { publicUrl: prefilledUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
+
+        // 5. Stocker avec URL pré-remplie + positions des champs signature pour l'étape de signature
+        const sigFields = tplFields.filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
         const docMetadata = JSON.stringify({
           has_visual_fields: true,
           visual_template_id: visualTemplateId,
           template_url: templateResource.file_url,
-          fields: tplFields || [],
-          resolved_values: resolvedValues,
+          prefilled: true,
+          signature_fields: sigFields,
         });
 
-        // 4. Insérer avec l'URL brute + métadonnées enrichies (pas d'upload PDF)
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
           user_id: client.id,
           organisation_id: client.organisation_id,
           nom: templateResource.titre,
-          url: templateResource.file_url,
+          url: prefilledUrl,
           type_document: 'À signer',
           visible_client: true,
           visible_formateur: true,
@@ -13611,11 +13661,18 @@ export default function App() {
 
         if (insertErr) throw insertErr;
         if (newDoc) docId = newDoc.id;
-        console.log(`[instantiateDocument] Métadonnées visuelles pré-calculées pour ${client.nom} : ${templateResource.titre}`, { fields: tplFields?.length, ville: resolvedValues.ville });
+        console.log(`[instantiateDocument] PDF pré-généré pour ${client.nom_complet || client.nom} → ${prefilledUrl}`);
 
       } catch (e) {
-        console.error('[instantiateDocument] Erreur préparation métadonnées visuelles :', e.message);
-        // Fallback : lier le template brut sans métadonnées
+        console.error('[instantiateDocument] Erreur génération PDF pré-rempli, fallback métadonnées :', e.message);
+        // Fallback : stocker champs + valeurs résolues pour overlay côté client
+        const fallbackMeta = JSON.stringify({
+          has_visual_fields: true,
+          visual_template_id: visualTemplateId,
+          template_url: templateResource.file_url,
+          fields: tplFields || [],
+          resolved_values: resolvedValues || {},
+        });
         const { data: newDoc } = await supabase.from('documents').insert([{
           user_id: client.id,
           organisation_id: client.organisation_id,
@@ -13625,6 +13682,7 @@ export default function App() {
           visible_client: true,
           visible_formateur: true,
           signe_par_client: false,
+          metadata: fallbackMeta,
         }]).select().single();
         if (newDoc) docId = newDoc.id;
       }
