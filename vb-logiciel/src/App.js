@@ -5907,7 +5907,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
                   <div>
                     <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destination</label>
                     <div className="flex gap-2">
-                      {[['client', '📁 Client'], ['formateur', '📋 Formateur']].map(([val, label]) => (
+                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['both', '👥 Les deux']].map(([val, label]) => (
                         <button key={val} onClick={() => setDestination(val)}
                           className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
                           {label}
@@ -13538,6 +13538,42 @@ export default function App() {
         moment: moment,
         metadata: { classification }
       }]);
+    }
+
+    // ── Destination "Les deux" : créer aussi un document pour le formateur ──
+    // Le formateur voit le document dans sa section "Documents administratifs" et peut le signer
+    const resourceDestination = templateResource.destination || 'client';
+    if (resourceDestination === 'both' && client.formateur_id) {
+      try {
+        // Anti-doublon formateur
+        const { data: existingFDoc } = await supabase.from('documents')
+          .select('id').eq('assigned_formateur_id', client.formateur_id)
+          .eq('nom', templateResource.titre).maybeSingle();
+
+        if (!existingFDoc) {
+          // Reprendre les mêmes métadonnées enrichies (champs + valeurs résolues) si template visuel
+          const fDocMetadata = (hasVisualFields && visualTemplateId) ? JSON.stringify({
+            has_visual_fields: true,
+            visual_template_id: visualTemplateId,
+            template_url: templateResource.file_url,
+          }) : null;
+
+          await supabase.from('documents').insert([{
+            assigned_formateur_id: client.formateur_id,
+            organisation_id: client.organisation_id,
+            nom: templateResource.titre,
+            url: templateResource.file_url,
+            type_document: 'À signer',
+            visible_client: false,
+            visible_formateur: true,
+            signe_par_formateur: false,
+            ...(fDocMetadata ? { metadata: fDocMetadata } : {}),
+          }]);
+          console.log(`[instantiateDocument] Document formateur créé (destination=both) : ${templateResource.titre} → formateur ${client.formateur_id}`);
+        }
+      } catch (e) {
+        console.error('[instantiateDocument] Erreur création doc formateur (destination=both) :', e.message);
+      }
     }
   };
 
