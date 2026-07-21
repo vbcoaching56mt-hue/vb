@@ -2644,13 +2644,14 @@ const ClientDetailView = ({
       if (!fullClient) throw new Error('Client introuvable');
       const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
 
-      // Les documents d'un groupe sont dans la table 'documents' avec group_id = selectedGroupId (user_id = null → template)
-      const { data: rawGroupDocs } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('group_id', selectedGroupId);
-      // Filtrer côté client pour tolérer NULL vs chaîne vide
-      const groupDocs = (rawGroupDocs || []).filter(d => !d.user_id);
+      // Les docs d'un groupe peuvent être liés via group_id (primaire) OU group_ids (tableau, secondaire)
+      const [{ data: rawByPrimary }, { data: rawBySecondary }] = await Promise.all([
+        supabase.from('documents').select('*').eq('group_id', selectedGroupId),
+        supabase.from('documents').select('*').contains('group_ids', [selectedGroupId]),
+      ]);
+      const seenIds = new Set();
+      const groupDocs = [...(rawByPrimary || []), ...(rawBySecondary || [])]
+        .filter(d => !d.user_id && !seenIds.has(d.id) && seenIds.add(d.id));
 
       if (!groupDocs || groupDocs.length === 0) {
         toast.error('Aucun document dans ce groupe.', { id: toastId });
