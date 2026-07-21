@@ -5565,8 +5565,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave }) => {
     if (!file || !templateName.trim()) { toast.error('Nom requis.'); return; }
     if (fields.length === 0) { toast.error('Placez au moins une balise sur le document.'); return; }
     setIsSaving(true);
+    // Classification automatique selon les balises posées
+    const SIGNATURE_TAGS = ['signature_client', 'signature_formateur'];
+    const hasDataFields = fields.some(f => !SIGNATURE_TAGS.includes(f.tag));
+    const hasSignature = fields.some(f => SIGNATURE_TAGS.includes(f.tag));
+    const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
     try {
-      await onSave(file, templateName.trim(), destination, fields);
+      await onSave(file, templateName.trim(), destination, fields, autoClassification);
       handleClose();
     } catch (err) {
       toast.error('Erreur : ' + err.message);
@@ -14357,12 +14362,13 @@ export default function App() {
   };
 
   // ── VisualTemplateEditor : upload DOCX + sauvegarde des champs visuels ──
-  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg) => {
+  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg) => {
     try {
       const file = fileArg;
       const name = nameArg || (file ? file.name.replace(/\.[^/.]+$/, '') : 'modele');
       const destination = destinationArg || 'client';
       const fieldsToSave = fieldsArg || [];
+      const classification = classificationArg || 'a_generer';
 
       if (!file) throw new Error('Aucun fichier fourni.');
 
@@ -14375,7 +14381,7 @@ export default function App() {
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
       // 2. Insérer / mettre à jour dans module_step_resources avec has_visual_fields:true
-      const metadataObj = { classification: 'a_generer', has_visual_fields: true };
+      const metadataObj = { classification, has_visual_fields: true };
       let msrId = null;
       let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
       if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
@@ -14448,7 +14454,7 @@ export default function App() {
       // 5. Mettre à jour le state local
       setDocumentTemplates(prev => ({
         ...prev,
-        [name]: { id: msrId, url: publicUrl, name, destination, classification: 'a_generer', metadata: metadataObj }
+        [name]: { id: msrId, url: publicUrl, name, destination, classification, metadata: metadataObj }
       }));
 
       await fetchDocuments();
