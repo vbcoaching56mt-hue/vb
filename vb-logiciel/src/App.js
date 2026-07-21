@@ -2546,7 +2546,8 @@ const ClientDetailView = ({
   setViewingSession, handleDownloadPDF, updateSessionDate, updateSessionTime,
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc
+  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
+  handleRegenerateVisualDocs
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
@@ -2954,12 +2955,23 @@ const ClientDetailView = ({
               <h3 className="text-lg font-bold text-gray-800">Documents de ce client</h3>
               <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
-            <button
-              onClick={() => setShowAddDocModal(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
-            >
-              <Plus className="w-4 h-4" /> Ajouter
-            </button>
+            <div className="flex items-center gap-2">
+              {handleRegenerateVisualDocs && client.module_id && (
+                <button
+                  onClick={() => handleRegenerateVisualDocs(client.id)}
+                  className="bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all border border-violet-200"
+                  title="Regénère les PDF pré-remplis pour les documents visuels (balises)"
+                >
+                  ↺ Régénérer PDF
+                </button>
+              )}
+              <button
+                onClick={() => setShowAddDocModal(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+              >
+                <Plus className="w-4 h-4" /> Ajouter
+              </button>
+            </div>
           </div>
 
           {isLoadingAssigned ? (
@@ -3426,13 +3438,14 @@ const AdminClientsView = ({
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
   activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, 
-  generateSessions, handleDeleteClient, setIsSessionItemModalOpen, 
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
+  generateSessions, handleDeleteClient, setIsSessionItemModalOpen,
   setTargetSessionForAddition, setViewingSession,
   handleDownloadPDF, updateSessionDate, updateSessionTime, onTimeChange, onSaveTimes,
   editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
-  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc
+  handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
+  handleRegenerateVisualDocs
 }) => {
   const [clientSearchTerm, setClientSearchTerm] = React.useState('');
 
@@ -3483,6 +3496,7 @@ const AdminClientsView = ({
           handleMoveSessionItem={handleMoveSessionItem}
           handleSaveCorrection={handleSaveCorrection}
           handleAddAdminBloc={handleAddAdminBloc}
+          handleRegenerateVisualDocs={handleRegenerateVisualDocs}
         />
       );
     }
@@ -13342,9 +13356,18 @@ export default function App() {
     const visualTemplateId = meta.visual_template_id || null;
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
+    // Exception : pour les templates visuels, si le document existant a encore l'URL brute du template
+    // (créé avant la génération automatique), on le supprime pour le régénérer correctement
     const { data: existing } = await supabase.from('documents')
-      .select('id').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
-    if (existing) return;
+      .select('id, url').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
+    if (existing) {
+      if (!hasVisualFields) return; // doc classique : anti-doublon strict
+      const existingIsPrefilled = existing.url && existing.url !== templateResource.file_url
+        && !existing.url.includes(templateResource.file_url?.split('/').pop()?.split('?')[0] || '___');
+      if (existingIsPrefilled) return; // déjà un PDF pré-rempli → ne pas écraser
+      // URL brute du template → supprimer pour régénérer avec les données client
+      await supabase.from('documents').delete().eq('id', existing.id);
+    }
 
     let docId = null;
 
@@ -13529,6 +13552,50 @@ export default function App() {
       fetchDocuments();
     } catch (e) {
       console.error("[distributeDocuments] Erreur :", e);
+    }
+  };
+
+  // Régénère les PDF pré-remplis pour tous les templates visuels du module d'un client
+  // Utile pour les clients existants dont les documents ont été créés avant la génération automatique
+  const handleRegenerateVisualDocs = async (clientId) => {
+    const toastId = 'regen-docs';
+    toast.loading('Régénération des documents…', { id: toastId });
+    try {
+      const clientObj = clients.find(c => String(c.id) === String(clientId));
+      if (!clientObj || !clientObj.module_id) {
+        toast.error('Client sans module assigné.', { id: toastId });
+        return;
+      }
+      // Récupérer les données complètes du client depuis Supabase
+      const { data: fullClient } = await supabase.from('clients').select('*').eq('id', clientId).single();
+      if (!fullClient) { toast.error('Client introuvable.', { id: toastId }); return; }
+      const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
+
+      // Supprimer les entrées documents non signées dont l'URL est l'URL brute du template
+      // (l'anti-doublon dans instantiateDocument s'en charge aussi, mais on force ici)
+      const { data: resources } = await supabase
+        .from('module_step_resources').select('*')
+        .eq('module_id', fullClient.module_id)
+        .in('moment', ['debut', 'fin']);
+
+      for (const res of (resources || [])) {
+        const meta = typeof res.metadata === 'string' ? (() => { try { return JSON.parse(res.metadata); } catch { return {}; } })() : (res.metadata || {});
+        if (!meta.has_visual_fields) continue; // ignorer les non-visuels
+
+        // Supprimer les docs non signés avec l'URL brute du template (pour forcer régénération)
+        await supabase.from('documents').delete()
+          .eq('user_id', clientId)
+          .eq('nom', res.titre)
+          .eq('signe_par_client', false);
+      }
+
+      // Relancer la distribution (instantiateDocument régénère les PDFs visuels)
+      await distributeDocumentsForModule(compatibleClient, fullClient.module_id);
+      await fetchDocuments();
+      toast.success('Documents régénérés avec succès !', { id: toastId });
+    } catch (e) {
+      console.error('[handleRegenerateVisualDocs]', e);
+      toast.error('Erreur : ' + e.message, { id: toastId });
     }
   };
 
@@ -16089,6 +16156,7 @@ export default function App() {
             handleMoveSessionItem={handleMoveSessionItem}
             handleSaveCorrection={handleSaveCorrection}
             handleAddAdminBloc={handleAddAdminBloc}
+            handleRegenerateVisualDocs={handleRegenerateVisualDocs}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
