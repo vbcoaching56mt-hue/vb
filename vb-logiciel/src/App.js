@@ -9529,13 +9529,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setConservationTargetDoc({ id: doc.id, titre: doc.nom });
       setIsConservationModalOpen(true);
     };
+    // Docs envoyés pour signature (via "Envoyer pour signature") : bouton Signer générique
+    const isToSign = !isConsDoc && doc.type_document === 'À signer' && !doc.signe_par_client;
+    const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
+    const fileUrl = doc.url || doc.file_url;
     return (
       <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-violet-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isConsDoc ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isToSign || isConsDoc ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || 'Document'}</p>
+            <p className={`text-[10px] uppercase tracking-wider ${doc.signe_par_client ? 'text-green-600' : (isToSign ? 'text-red-400' : 'text-gray-500')}`}>
+              {doc.signe_par_client ? 'Signé' : (doc.type_document || 'Document')}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -9545,8 +9551,16 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               Signer le document
             </button>
           )}
-          {(doc.url || doc.file_url) && (
-            <button onClick={() => setViewingResource({ ...doc, titre: doc.nom, file_url: doc.url || doc.file_url })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
+          {isToSign && handleOpenSigning && (
+            <button
+              onClick={() => handleOpenSigning({ id: doc.id, titre: doc.nom, file_url: fileUrl, metadata: { ...docMeta, classification: 'a_signer' } })}
+              className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors"
+            >
+              Signer ✍️
+            </button>
+          )}
+          {fileUrl && (
+            <button onClick={() => setViewingResource({ ...doc, titre: doc.nom, file_url: fileUrl })} className="px-3 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm text-xs">Consulter</button>
           )}
         </div>
       </div>
