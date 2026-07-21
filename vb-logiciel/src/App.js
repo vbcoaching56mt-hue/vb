@@ -6118,9 +6118,35 @@ const DocumentsView = ({
     }
   };
 
-  const handleToggleDocumentGroups = async (docId, selectedGroupIds) => {
-    if (!docId) return;
+  const handleToggleDocumentGroups = async (docOrId, selectedGroupIds, docMeta) => {
+    // docOrId peut être : un bigint ID (table documents) OU un objet doc (cas _fromMsrOnly)
+    const isDocObj = typeof docOrId === 'object' && docOrId !== null;
+    const doc = isDocObj ? docOrId : null;
+    let docId = isDocObj ? null : docOrId;
+
     const primary = selectedGroupIds[0] || null;
+
+    // Cas MSR-only : pas d'entrée dans documents → la créer d'abord
+    if (isDocObj && doc._fromMsrOnly) {
+      const { data: created, error: createErr } = await supabase.from('documents').insert([{
+        nom: doc.nom,
+        type_action: 'Modèle Référence',
+        url: doc.url,
+        user_id: null,
+        group_id: primary,
+        group_ids: selectedGroupIds,
+        ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+      }]).select('id').single();
+      if (createErr) {
+        toast.error("Erreur d'association : " + createErr.message);
+        return;
+      }
+      if (fetchDocuments) fetchDocuments();
+      toast.success(selectedGroupIds.length > 0 ? `Document associé à ${selectedGroupIds.length} groupe(s).` : "Document détaché des groupes.");
+      return;
+    }
+
+    if (!docId) return;
     const { error } = await supabase.from('documents').update({
       group_id: primary,
       group_ids: selectedGroupIds
@@ -6723,7 +6749,8 @@ const DocumentsView = ({
                                       const next = isChecked
                                         ? docGroupIds.filter(id => id !== g.id)
                                         : [...docGroupIds, g.id];
-                                      handleToggleDocumentGroups(doc.id, next);
+                                      // Passer l'objet doc si MSR-only (pas d'id bigint documents)
+                                      handleToggleDocumentGroups(doc._fromMsrOnly ? doc : doc.id, next);
                                     }}
                                     className="w-3 h-3 accent-indigo-600 rounded"
                                   />
@@ -6735,7 +6762,7 @@ const DocumentsView = ({
                           </div>
                           {docGroupIds.length > 0 && (
                             <button
-                              onClick={() => handleToggleDocumentGroups(doc.id, [])}
+                              onClick={() => handleToggleDocumentGroups(doc._fromMsrOnly ? doc : doc.id, [])}
                               className="mt-1.5 text-[9px] text-violet-600 hover:text-violet-700 font-bold"
                             >
                               ✕ Détacher tous
