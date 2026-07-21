@@ -2645,11 +2645,12 @@ const ClientDetailView = ({
       const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
 
       // Les documents d'un groupe sont dans la table 'documents' avec group_id = selectedGroupId (user_id = null → template)
-      const { data: groupDocs } = await supabase
+      const { data: rawGroupDocs } = await supabase
         .from('documents')
         .select('*')
-        .eq('group_id', selectedGroupId)
-        .is('user_id', null);
+        .eq('group_id', selectedGroupId);
+      // Filtrer côté client pour tolérer NULL vs chaîne vide
+      const groupDocs = (rawGroupDocs || []).filter(d => !d.user_id);
 
       if (!groupDocs || groupDocs.length === 0) {
         toast.error('Aucun document dans ce groupe.', { id: toastId });
@@ -2676,7 +2677,8 @@ const ClientDetailView = ({
           destination: doc.visible_formateur ? 'formateur' : 'client',
           metadata: (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })(),
         };
-        await instantiateDocument(compatibleClient, templateResource);
+        // Passer 'debut' pour que visible_client = true (sinon le client ne voit pas le document)
+        await instantiateDocument(compatibleClient, templateResource, 'debut');
       }
 
       await fetchDocuments();
@@ -13822,7 +13824,7 @@ export default function App() {
     } else {
       const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
         user_id: client.id,
-        organisation_id: client.organisation_id,
+        organisation_id: client.organisation_id || currentOrgId,
         nom: templateResource.titre,
         url: templateResource.file_url,
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
@@ -15529,11 +15531,19 @@ export default function App() {
       }
 
       await fetchDocuments();
-      if (!isAutoGenerate) toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      if (isAutoGenerate) {
+        toast.dismiss('gen-doc');
+      } else {
+        toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
+      }
       return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
-      if (!isAutoGenerate) toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      if (isAutoGenerate) {
+        toast.dismiss('gen-doc');
+      } else {
+        toast.error("Erreur lors de la génération : " + error.message, { id: 'gen-doc' });
+      }
       return null;
     }
   };
