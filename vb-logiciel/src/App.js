@@ -13338,6 +13338,8 @@ export default function App() {
   const instantiateDocument = async (client, templateResource, moment) => {
     const meta = typeof templateResource.metadata === 'string' && templateResource.metadata.startsWith('{') ? JSON.parse(templateResource.metadata) : (templateResource.metadata || {});
     const classification = meta.classification || 'telechargeable';
+    const hasVisualFields = meta.has_visual_fields === true;
+    const visualTemplateId = meta.visual_template_id || null;
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
     const { data: existing } = await supabase.from('documents')
@@ -13346,13 +13348,128 @@ export default function App() {
 
     let docId = null;
 
-    if (classification === 'a_generer') {
+    // ── Branche 1 : template visuel avec balises → générer PDF pré-rempli côté admin ──
+    // Avantage : s'exécute dans la session admin (pas de RLS client), client voit son PDF directement
+    if (hasVisualFields && visualTemplateId) {
       try {
-            const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
+        const templateUrl = templateResource.file_url;
+        if (!templateUrl) throw new Error('URL template manquante');
+
+        // 1. Télécharger le template
+        const resp = await fetch(templateUrl);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const bytes = await resp.arrayBuffer();
+
+        // 2. Convertir en PDF si nécessaire
+        let pdfBlob;
+        const isPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
+        if (isPdf) {
+          pdfBlob = new Blob([bytes], { type: 'application/pdf' });
+        } else {
+          const docxBlob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
+          catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
+        }
+
+        // 3. Récupérer les champs de positionnement (admin peut lire sans RLS)
+        const { data: tplFields } = await supabase
+          .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
+
+        if (tplFields && tplFields.length > 0) {
+          // 4. Construire les données client + formateur
+          const formateur = (formateurs || []).find(f => String(f.id) === String(client.formateur_id));
+          const today = new Date().toLocaleDateString('fr-FR');
+          const dataValues = {
+            nomcomplet_client:  (client.nom_complet || client.nom || '').trim(),
+            client_email:       client.email_contact || client.email || '',
+            client_phone:       client.telephone || '',
+            rue_client:         client.adresse_postale || client.rue || '',
+            code_postal_client: client.code_postal || '',
+            ville_client:       client.ville || '',
+            adresse_session:    client.adresse_postale || client.rue || '',
+            prix_prestation:    client.montant_prestation || '',
+            modalite_formation: client.modalite_formation || '',
+            formation_nom:      '',
+            date_debut:         '',
+            date_fin:           '',
+            date_signature:     today,
+            date_du_jour:       today,
+            nom_client:         client.nom || '',
+            prenom_client:      client.prenom || '',
+            email_client:       client.email_contact || client.email || '',
+            telephone_client:   client.telephone || '',
+            ville:              client.ville || '',
+            nom_formateur:         formateur?.nom || '',
+            prenom_formateur:      formateur?.prenom || '',
+            email_formateur:       formateur?.email || '',
+            tel_formateur:         formateur?.telephone || '',
+            telephone_formateur:   formateur?.telephone || '',
+            adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
+            formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
+            formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
+            compagnie_assurance:   formateur?.compagnie_assurance || '',
+            numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
+            nom_consultant:        formateur?.nom || '',
+            email_consultant:      formateur?.email || '',
+            tel_consultant:        formateur?.telephone || '',
+          };
+
+          // 5. Overlay des données seulement (pas la signature — sera ajoutée lors de la signature client)
+          const dataFields = tplFields.filter(f => f.field_type !== 'signature');
+          if (dataFields.length > 0) {
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, dataValues, {});
+          }
+        }
+
+        // 6. Upload du PDF pré-rempli dans le storage
+        const safeName = (templateResource.titre || 'doc').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const fileName = `prefilled_${safeName}_${client.id}_${Date.now()}.pdf`;
+        const { error: uploadErr } = await supabase.storage.from('documents').upload(fileName, pdfBlob, { contentType: 'application/pdf' });
+        if (uploadErr) throw uploadErr;
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+        // 7. Insérer dans la table documents avec l'URL du PDF pré-rempli
+        const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
+          user_id: client.id,
+          organisation_id: client.organisation_id,
+          nom: templateResource.titre,
+          url: publicUrl,
+          type_document: 'À signer',
+          visible_client: true,
+          visible_formateur: true,
+          signe_par_client: false,
+        }]).select().single();
+
+        if (insertErr) throw insertErr;
+        if (newDoc) docId = newDoc.id;
+        console.log(`[instantiateDocument] PDF pré-rempli généré pour ${client.nom} : ${templateResource.titre}`);
+
+      } catch (e) {
+        console.error('[instantiateDocument] Erreur génération PDF visuel, fallback template brut :', e.message);
+        // Fallback : lier le template brut (le client verra le document vide mais pourra quand même signer)
+        const { data: newDoc } = await supabase.from('documents').insert([{
+          user_id: client.id,
+          organisation_id: client.organisation_id,
+          nom: templateResource.titre,
+          url: templateResource.file_url,
+          type_document: 'À signer',
+          visible_client: true,
+          visible_formateur: true,
+          signe_par_client: false,
+        }]).select().single();
+        if (newDoc) docId = newDoc.id;
+      }
+
+    // ── Branche 2 : template DOCX classique à générer (remplacement de balises Word) ──
+    } else if (classification === 'a_generer') {
+      try {
+        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
         if (generatedDoc) docId = generatedDoc.id;
       } catch (e) {
         console.error("Erreur génération automatique :", e);
       }
+
+    // ── Branche 3 : document statique (téléchargeable ou à signer sans données) ──
     } else {
       const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
         user_id: client.id,
@@ -13362,7 +13479,6 @@ export default function App() {
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
         visible_client: moment === 'debut',
         visible_formateur: true,
-        // metadata retiré : colonne inexistante dans la table documents
       }]).select().single();
 
       if (insertErr) {
