@@ -8540,9 +8540,42 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     );
 
     if (existingPregenDoc) {
-      // Le document admin-prégénéré contient déjà les données → utiliser son URL comme aperçu
-      // (handleSignSave le retrouvera via existingGeneratedDoc et signera dessus)
-      setPrefilledSignUrl(existingPregenDoc.url);
+      // Vérifier si le document a des métadonnées avec champs + valeurs pré-calculées (nouvelle architecture)
+      const pregenMeta = (() => { try { return typeof existingPregenDoc.metadata === 'string' ? JSON.parse(existingPregenDoc.metadata) : (existingPregenDoc.metadata || {}); } catch { return {}; } })();
+
+      if (pregenMeta.fields?.length > 0 && pregenMeta.resolved_values) {
+        // ✅ Nouvelle architecture : overlay côté client avec valeurs pré-calculées par l'admin
+        // Le client lit ses propres métadonnées (pas de RLS), le template PDF est public
+        toast.loading('Préparation du document…', { id: toastId });
+        try {
+          const tplUrl = pregenMeta.template_url || existingPregenDoc.url;
+          const resp = await fetch(tplUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
+
+          // Overlay des données uniquement (signatures exclues — ajoutées lors de la signature)
+          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && !(f.tag || '').startsWith('signature_'));
+          if (dataFields.length > 0) {
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
+          }
+          prefilledSignBlob.current = pdfBlob;
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(pdfBlob);
+          });
+          setPrefilledSignUrl(dataUrl);
+          toast.dismiss(toastId);
+        } catch(e) {
+          console.warn('[handleOpenSigning] Overlay métadonnées échoué, fallback URL brute :', e.message);
+          toast.dismiss(toastId);
+          setPrefilledSignUrl(existingPregenDoc.url);
+        }
+      } else {
+        // Ancien format ou URL déjà pré-remplie → utiliser directement
+        setPrefilledSignUrl(existingPregenDoc.url);
+      }
       setSigningResource(resource);
       return;
     }
@@ -8725,9 +8758,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter UNIQUEMENT la signature
           pdfBlob = prefilledSignBlob.current;
           if (signatureDataUrl) {
-            const { data: sigFieldsData } = await supabase
-              .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
-            const sigFields = (sigFieldsData || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            // Chercher les champs signature : d'abord dans les métadonnées du doc (pas de RLS client), puis DB
+            const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
+            let sigFields = (_docMeta.fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            if (sigFields.length === 0 && visualTemplateId) {
+              const { data: sigFieldsData } = await supabase
+                .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
+              sigFields = (sigFieldsData || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            }
             if (sigFields.length > 0) {
               pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, { signature_client: signatureDataUrl });
               signatureEmbeddedByOverlay = true;
@@ -13371,105 +13409,85 @@ export default function App() {
 
     let docId = null;
 
-    // ── Branche 1 : template visuel avec balises → générer PDF pré-rempli côté admin ──
-    // Avantage : s'exécute dans la session admin (pas de RLS client), client voit son PDF directement
+    // ── Branche 1 : template visuel avec balises → stocker champs + valeurs résolues dans les métadonnées ──
+    // Architecture fiable : l'admin (accès DB complet) pré-calcule les valeurs et les stocke dans le doc.
+    // Le client lit ses propres métadonnées (pas de RLS) et fait l'overlay PDF côté client à l'ouverture.
+    // Avantages : aucun upload Storage, aucune conversion PDF, aucun risque CORS/pdf-lib côté admin.
     if (hasVisualFields && visualTemplateId) {
       try {
-        const templateUrl = templateResource.file_url;
-        if (!templateUrl) throw new Error('URL template manquante');
-
-        // 1. Télécharger le template
-        const resp = await fetch(templateUrl);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const bytes = await resp.arrayBuffer();
-
-        // 2. Convertir en PDF si nécessaire
-        let pdfBlob;
-        const isPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
-        if (isPdf) {
-          pdfBlob = new Blob([bytes], { type: 'application/pdf' });
-        } else {
-          const docxBlob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-          try { pdfBlob = await convertDocxBlobToPdf(docxBlob); }
-          catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
-        }
-
-        // 3. Récupérer les champs de positionnement (admin peut lire sans RLS)
-        const { data: tplFields } = await supabase
+        // 1. Récupérer les champs de positionnement (admin peut lire sans RLS)
+        const { data: tplFields, error: fieldsErr } = await supabase
           .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
+        if (fieldsErr) throw fieldsErr;
 
-        if (tplFields && tplFields.length > 0) {
-          // 4. Construire les données client + formateur
-          const formateur = (formateurs || []).find(f => String(f.id) === String(client.formateur_id));
-          const today = new Date().toLocaleDateString('fr-FR');
-          const dataValues = {
-            nomcomplet_client:  (client.nom_complet || client.nom || '').trim(),
-            client_email:       client.email_contact || client.email || '',
-            client_phone:       client.telephone || '',
-            rue_client:         client.adresse_postale || client.rue || '',
-            code_postal_client: client.code_postal || '',
-            ville_client:       client.ville || '',
-            adresse_session:    client.adresse_postale || client.rue || '',
-            prix_prestation:    client.montant_prestation || '',
-            modalite_formation: client.modalite_formation || '',
-            formation_nom:      '',
-            date_debut:         '',
-            date_fin:           '',
-            date_signature:     today,
-            date_du_jour:       today,
-            nom_client:         client.nom || '',
-            prenom_client:      client.prenom || '',
-            email_client:       client.email_contact || client.email || '',
-            telephone_client:   client.telephone || '',
-            ville:              client.ville || '',
-            nom_formateur:         formateur?.nom || '',
-            prenom_formateur:      formateur?.prenom || '',
-            email_formateur:       formateur?.email || '',
-            tel_formateur:         formateur?.telephone || '',
-            telephone_formateur:   formateur?.telephone || '',
-            adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
-            formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
-            formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
-            compagnie_assurance:   formateur?.compagnie_assurance || '',
-            numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
-            nom_consultant:        formateur?.nom || '',
-            email_consultant:      formateur?.email || '',
-            tel_consultant:        formateur?.telephone || '',
-          };
+        // 2. Construire les valeurs résolues (admin-side → accès complet données client + formateur)
+        const formateur = (formateurs || []).find(f => String(f.id) === String(client.formateur_id));
+        const today = new Date().toLocaleDateString('fr-FR');
+        const resolvedValues = {
+          nomcomplet_client:   (client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || '').trim(),
+          client_email:        client.email_contact || client.email || '',
+          client_phone:        client.telephone || '',
+          rue_client:          client.adresse || client.adresse_postale || client.rue || '',
+          code_postal_client:  client.code_postal || '',
+          ville_client:        client.ville || '',
+          adresse_session:     client.adresse || client.adresse_postale || client.rue || '',
+          prix_prestation:     client.prix_prestation || client.montant_prestation || '',
+          modalite_formation:  client.modalite_formation || '',
+          formation_nom:       '',
+          date_debut:          '',
+          date_fin:            '',
+          date_signature:      today,
+          date_du_jour:        today,
+          nom_client:          client.nom || '',
+          prenom_client:       client.prenom || '',
+          email_client:        client.email_contact || client.email || '',
+          telephone_client:    client.telephone || '',
+          ville:               client.ville || '',
+          nom_formateur:       formateur?.nom || '',
+          prenom_formateur:    formateur?.prenom || '',
+          email_formateur:     formateur?.email || '',
+          tel_formateur:       formateur?.telephone || '',
+          telephone_formateur: formateur?.telephone || '',
+          adresse_formateur:   formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
+          formateur_siret:     formateur?.formateur_siret || formateur?.siret || '',
+          formateur_nda:       formateur?.formateur_nda || formateur?.nda || '',
+          compagnie_assurance: formateur?.compagnie_assurance || '',
+          numero_assurance_rcp: formateur?.numero_assurance_rcp || '',
+          nom_consultant:      formateur?.nom || '',
+          email_consultant:    formateur?.email || '',
+          tel_consultant:      formateur?.telephone || '',
+        };
 
-          // 5. Overlay des données seulement (pas la signature — sera ajoutée lors de la signature client)
-          const dataFields = tplFields.filter(f => f.field_type !== 'signature');
-          if (dataFields.length > 0) {
-            pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, dataValues, {});
-          }
-        }
+        // 3. Stocker champs + valeurs dans les métadonnées → le client lit son propre document (zéro RLS)
+        //    L'overlay PDF se fera côté client dans handleOpenSigning à partir de ces valeurs pré-calculées
+        const docMetadata = JSON.stringify({
+          has_visual_fields: true,
+          visual_template_id: visualTemplateId,
+          template_url: templateResource.file_url,
+          fields: tplFields || [],
+          resolved_values: resolvedValues,
+        });
 
-        // 6. Upload du PDF pré-rempli dans le storage
-        const safeName = (templateResource.titre || 'doc').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const fileName = `prefilled_${safeName}_${client.id}_${Date.now()}.pdf`;
-        const { error: uploadErr } = await supabase.storage.from('documents').upload(fileName, pdfBlob, { contentType: 'application/pdf' });
-        if (uploadErr) throw uploadErr;
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-
-        // 7. Insérer dans la table documents avec l'URL du PDF pré-rempli
+        // 4. Insérer avec l'URL brute + métadonnées enrichies (pas d'upload PDF)
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
           user_id: client.id,
           organisation_id: client.organisation_id,
           nom: templateResource.titre,
-          url: publicUrl,
+          url: templateResource.file_url,
           type_document: 'À signer',
           visible_client: true,
           visible_formateur: true,
           signe_par_client: false,
+          metadata: docMetadata,
         }]).select().single();
 
         if (insertErr) throw insertErr;
         if (newDoc) docId = newDoc.id;
-        console.log(`[instantiateDocument] PDF pré-rempli généré pour ${client.nom} : ${templateResource.titre}`);
+        console.log(`[instantiateDocument] Métadonnées visuelles pré-calculées pour ${client.nom} : ${templateResource.titre}`, { fields: tplFields?.length, ville: resolvedValues.ville });
 
       } catch (e) {
-        console.error('[instantiateDocument] Erreur génération PDF visuel, fallback template brut :', e.message);
-        // Fallback : lier le template brut (le client verra le document vide mais pourra quand même signer)
+        console.error('[instantiateDocument] Erreur préparation métadonnées visuelles :', e.message);
+        // Fallback : lier le template brut sans métadonnées
         const { data: newDoc } = await supabase.from('documents').insert([{
           user_id: client.id,
           organisation_id: client.organisation_id,
