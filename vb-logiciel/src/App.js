@@ -8681,8 +8681,73 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           setPrefilledSignUrl(existingPregenDoc.url);
         }
       } else {
-        // Ancien format ou URL déjà pré-remplie → utiliser directement
-        setPrefilledSignUrl(existingPregenDoc.url);
+        // Document existant sans données pré-calculées (créé avant le fix) → overlay à la volée
+        const vizId = pregenMeta.visual_template_id || null;
+        if (vizId) {
+          toast.loading('Préparation du document…', { id: toastId });
+          try {
+            const { data: tplFields } = await supabase
+              .from('template_fields').select('*').eq('template_id', vizId).order('page', { ascending: true });
+            if (tplFields && tplFields.length > 0) {
+              const tplUrl = pregenMeta.template_url || existingPregenDoc.url;
+              const resp = await fetch(tplUrl);
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
+              const today = new Date().toLocaleDateString('fr-FR');
+              const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
+              const dataValues = {
+                nomcomplet_client: (currentClient?.nom_complet || ((currentClient?.prenom||'')+' '+(currentClient?.nom||'')).trim()||'').trim(),
+                client_email: currentClient?.email_contact || currentClient?.email || '',
+                client_phone: currentClient?.telephone || '',
+                rue_client: currentClient?.adresse || currentClient?.adresse_postale || '',
+                code_postal_client: currentClient?.code_postal || '',
+                ville_client: currentClient?.ville || '',
+                adresse_session: currentClient?.adresse || currentClient?.adresse_postale || '',
+                prix_prestation: currentClient?.prix_prestation || currentClient?.montant_prestation || '',
+                modalite_formation: currentClient?.modalite_formation || '',
+                formation_nom: '', date_debut: '', date_fin: '',
+                date_signature: today, date_du_jour: today,
+                nom_client: currentClient?.nom || '', prenom_client: currentClient?.prenom || '',
+                email_client: currentClient?.email_contact || currentClient?.email || '',
+                telephone_client: currentClient?.telephone || '',
+                ville: currentClient?.ville || '',
+                nom_formateur: formateur?.nom || '', prenom_formateur: formateur?.prenom || '',
+                email_formateur: formateur?.email || '', tel_formateur: formateur?.telephone || '',
+                telephone_formateur: formateur?.telephone || '',
+                adresse_formateur: formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
+                formateur_siret: formateur?.formateur_siret || formateur?.siret || '',
+                formateur_nda: formateur?.formateur_nda || formateur?.nda || '',
+                compagnie_assurance: formateur?.compagnie_assurance || '',
+                numero_assurance_rcp: formateur?.numero_assurance_rcp || '',
+                nom_consultant: formateur?.nom || '', email_consultant: formateur?.email || '',
+                tel_consultant: formateur?.telephone || '',
+              };
+              const dataFields = tplFields.filter(f => f.field_type !== 'signature' && !(f.tag||'').startsWith('signature_'));
+              if (dataFields.length > 0) {
+                pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, dataValues, {});
+              }
+              prefilledSignBlob.current = pdfBlob;
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(pdfBlob);
+              });
+              setPrefilledSignUrl(dataUrl);
+              toast.dismiss(toastId);
+            } else {
+              // Pas de champs trouvés (template vide ou RLS) → URL brute
+              setPrefilledSignUrl(existingPregenDoc.url);
+            }
+          } catch(eOverlay) {
+            console.warn('[handleOpenSigning] Overlay à la volée échoué:', eOverlay.message);
+            toast.dismiss(toastId);
+            setPrefilledSignUrl(existingPregenDoc.url);
+          }
+        } else {
+          // Pas de visual_template_id → URL brute
+          setPrefilledSignUrl(existingPregenDoc.url);
+        }
       }
       setSigningResource(resource);
       return;
@@ -14810,42 +14875,61 @@ export default function App() {
         if (docInsertErr) console.warn('[handleUploadVisualTemplate] documents insert error (non-bloquant):', docInsertErr.message);
       }
 
-      // FIX 3 — Auto-distribuer aux clients des modules qui contiennent ce template.
-      // Exécuté en contexte admin (pas de RLS) → instantiateDocument Branch 1 stocke fields + resolved_values.
-      // Garantit que existingPregenDoc existe pour le fast path dans handleOpenSigning.
+      // FIX 3 — Auto-distribuer aux clients concernés (contexte admin, pas de RLS).
+      // Couvre 3 sources : module direct, document_group→module, documents clients existants.
       if (msrId) {
         try {
-          // Trouver tous les modules qui ont ce template (MSR avec module_id non null)
-          const { data: linkedModules } = await supabase
-            .from('module_step_resources')
-            .select('module_id')
-            .eq('titre', name)
-            .eq('type', 'document')
-            .not('module_id', 'is', null);
+          const masterResource = {
+            titre: name, file_url: publicUrl, destination,
+            metadata: JSON.stringify(fullMetadataObj),
+          };
 
-          const moduleIds = [...new Set((linkedModules || []).map(m => m.module_id).filter(Boolean))];
+          // Source 1 : MSR liés directement à un module (type=document, module_id non null)
+          const { data: directLinks } = await supabase
+            .from('module_step_resources').select('module_id')
+            .eq('titre', name).eq('type', 'document').not('module_id', 'is', null);
+          const directModuleIds = [...new Set((directLinks || []).map(m => m.module_id).filter(Boolean))];
 
-          if (moduleIds.length > 0) {
-            // Clients dont le module_id est dans la liste
-            const affectedClients = (clients || []).filter(c => c.module_id && moduleIds.includes(c.module_id));
+          // Source 2 : document dans un document_group → remonter au module via le groupe
+          const { data: groupLinks } = await supabase
+            .from('module_step_resources').select('document_group_id')
+            .eq('titre', name).eq('type', 'document').not('document_group_id', 'is', null);
+          const groupIds = [...new Set((groupLinks || []).map(d => d.document_group_id).filter(Boolean))];
+          let groupModuleIds = [];
+          if (groupIds.length > 0) {
+            const { data: groupParents } = await supabase
+              .from('module_step_resources').select('module_id')
+              .eq('type', 'document_group').in('document_group_id', groupIds).not('module_id', 'is', null);
+            groupModuleIds = [...new Set((groupParents || []).map(m => m.module_id).filter(Boolean))];
+          }
 
-            if (affectedClients.length > 0) {
-              // Construire le templateResource avec visual_template_id pour que Branch 1 s'exécute
-              const masterResource = {
-                titre: name,
-                file_url: publicUrl,
-                destination,
-                metadata: JSON.stringify(fullMetadataObj),
-              };
-              // Série (pas Promise.all) pour éviter surcharge Supabase
-              for (const client of affectedClients) {
-                await instantiateDocument(client, masterResource);
-              }
-              console.log(`[handleUploadVisualTemplate] Auto-distribué à ${affectedClients.length} client(s).`);
+          const allModuleIds = [...new Set([...directModuleIds, ...groupModuleIds])];
+
+          // Source 3 : clients ayant déjà un document avec ce nom (non signé) → mettre à jour leur doc
+          const { data: existingClientDocs } = await supabase
+            .from('documents').select('user_id')
+            .eq('nom', name).not('user_id', 'is', null).eq('signe_par_client', false);
+          const existingClientIds = new Set((existingClientDocs || []).map(d => String(d.user_id)));
+
+          // Union de toutes les sources
+          const clientsFromModules = allModuleIds.length > 0
+            ? (clients || []).filter(c => c.module_id && allModuleIds.includes(c.module_id))
+            : [];
+          const clientsFromExisting = (clients || []).filter(c => existingClientIds.has(String(c.id)));
+
+          const allClientIds = new Set([
+            ...clientsFromModules.map(c => String(c.id)),
+            ...clientsFromExisting.map(c => String(c.id)),
+          ]);
+          const allClientsToUpdate = (clients || []).filter(c => allClientIds.has(String(c.id)));
+
+          if (allClientsToUpdate.length > 0) {
+            for (const client of allClientsToUpdate) {
+              await instantiateDocument(client, masterResource);
             }
+            console.log(`[handleUploadVisualTemplate] Auto-distribué à ${allClientsToUpdate.length} client(s).`);
           }
         } catch (distErr) {
-          // Non bloquant — la création du template réussit même si la distribution échoue
           console.warn('[handleUploadVisualTemplate] Auto-distribution error:', distErr.message);
         }
       }
