@@ -5626,7 +5626,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     const hasSignature = fields.some(f => SIGNATURE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
     try {
-      await onSave(file, templateName.trim(), destination, fields, autoClassification);
+      await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null);
       handleClose();
     } catch (err) {
       toast.error('Erreur : ' + err.message);
@@ -14700,7 +14700,7 @@ export default function App() {
   };
 
   // ── VisualTemplateEditor : upload DOCX + sauvegarde des champs visuels ──
-  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg) => {
+  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg, editingTemplateId = null) => {
     try {
       const file = fileArg;
       const name = nameArg || (file ? file.name.replace(/\.[^/.]+$/, '') : 'modele');
@@ -14708,37 +14708,58 @@ export default function App() {
       const fieldsToSave = fieldsArg || [];
       const classification = classificationArg || 'a_generer';
 
-      if (!file) throw new Error('Aucun fichier fourni.');
+      if (!file && !editingTemplateId) throw new Error('Aucun fichier fourni.');
 
-      // 1. Upload du fichier dans le Storage (DOCX ou PDF selon ce qui a été fourni)
-      const fileExt = (file.name.split('.').pop() || 'docx').toLowerCase();
-      const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileName = `template_visual_${safeName}_${Date.now()}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
-      if (uploadError) throw uploadError;
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+      // 1. Upload du fichier dans le Storage — SKIP si on édite un template existant (même fichier)
+      let publicUrl;
+      if (editingTemplateId) {
+        // Mode édition : récupérer l'URL existante sans re-uploader
+        const { data: currentMsr } = await supabase.from('module_step_resources').select('file_url').eq('id', editingTemplateId).single();
+        publicUrl = currentMsr?.file_url || '';
+        if (!publicUrl) throw new Error('URL du template introuvable.');
+      } else {
+        if (!file) throw new Error('Aucun fichier fourni.');
+        const fileExt = (file.name.split('.').pop() || 'docx').toLowerCase();
+        const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const fileName = `template_visual_${safeName}_${Date.now()}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+        if (uploadError) throw uploadError;
+        const { data: { publicUrl: pUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+        publicUrl = pUrl;
+      }
 
       // 2. Insérer / mettre à jour dans module_step_resources avec has_visual_fields:true
       const metadataObj = { classification, has_visual_fields: true };
       let msrId = null;
-      let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
-      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
-      const { data: existingMsr } = await msrQuery;
 
-      if (existingMsr && existingMsr.length > 0) {
-        msrId = existingMsr[0].id;
+      if (editingTemplateId) {
+        // Mode édition : toujours mettre à jour par ID — jamais créer de doublon
+        msrId = editingTemplateId;
         await supabase.from('module_step_resources').update({
-          file_url: publicUrl, destination,
+          titre: name, file_url: publicUrl, destination,
           metadata: JSON.stringify(metadataObj),
         }).eq('id', msrId);
       } else {
-        const { data: insertedMsr, error: msrErr } = await supabase.from('module_step_resources').insert([{
-          titre: name, file_url: publicUrl, type: 'document', destination,
-          metadata: JSON.stringify(metadataObj),
-          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
-        }]).select('id').single();
-        if (msrErr) throw msrErr;
-        msrId = insertedMsr.id;
+        // Nouveau template : chercher par nom ou créer
+        let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
+        if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+        const { data: existingMsr } = await msrQuery;
+
+        if (existingMsr && existingMsr.length > 0) {
+          msrId = existingMsr[0].id;
+          await supabase.from('module_step_resources').update({
+            file_url: publicUrl, destination,
+            metadata: JSON.stringify(metadataObj),
+          }).eq('id', msrId);
+        } else {
+          const { data: insertedMsr, error: msrErr } = await supabase.from('module_step_resources').insert([{
+            titre: name, file_url: publicUrl, type: 'document', destination,
+            metadata: JSON.stringify(metadataObj),
+            ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+          }]).select('id').single();
+          if (msrErr) throw msrErr;
+          msrId = insertedMsr.id;
+        }
       }
 
       // 3. Sauvegarder les champs visuels dans template_fields
