@@ -748,9 +748,14 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         if (cancelled) return;
 
         if (!finalSignedUrl) {
-          // Fallback final : utiliser directement la pdfUrl publique si disponible
-          if (pdfUrl && pdfUrl.startsWith('http')) {
-            console.warn('[DocumentViewerModal] Signed URL introuvable — fallback sur URL publique directe.');
+          // Fallback final : utiliser directement la pdfUrl publique SAUF si le fichier est clairement absent
+          const fileGenuinelyMissing = lastError && (
+            lastError.toLowerCase().includes('not found') ||
+            lastError.toLowerCase().includes('object not found')
+          );
+          if (!fileGenuinelyMissing && pdfUrl && pdfUrl.startsWith('http')) {
+            // Signed URL indisponible pour raison de config (pas "not found") → tenter l'URL publique
+            console.warn('[DocumentViewerModal] Signed URL indisponible (non-404) — fallback sur URL publique directe.');
             const fallbackPath = pdfUrl.split('?')[0].toLowerCase();
             const isFallbackWord = fallbackPath.endsWith('.docx') || fallbackPath.endsWith('.doc');
             if (isFallbackWord) {
@@ -761,6 +766,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             setLoadingPdf(false);
             return;
           }
+          // Fichier introuvable → afficher l'état d'erreur propre (pas de JSON brut dans iframe)
           setDebugInfo({ bucket: initialBucket, path: initialPath, error: lastError || 'Fichier introuvable dans tous les buckets testés.' });
           throw new Error(lastError || 'Fichier introuvable');
         }
@@ -14708,25 +14714,15 @@ export default function App() {
       const fieldsToSave = fieldsArg || [];
       const classification = classificationArg || 'a_generer';
 
-      if (!file && !editingTemplateId) throw new Error('Aucun fichier fourni.');
+      if (!file) throw new Error('Aucun fichier fourni.');
 
-      // 1. Upload du fichier dans le Storage — SKIP si on édite un template existant (même fichier)
-      let publicUrl;
-      if (editingTemplateId) {
-        // Mode édition : récupérer l'URL existante sans re-uploader
-        const { data: currentMsr } = await supabase.from('module_step_resources').select('file_url').eq('id', editingTemplateId).single();
-        publicUrl = currentMsr?.file_url || '';
-        if (!publicUrl) throw new Error('URL du template introuvable.');
-      } else {
-        if (!file) throw new Error('Aucun fichier fourni.');
-        const fileExt = (file.name.split('.').pop() || 'docx').toLowerCase();
-        const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const fileName = `template_visual_${safeName}_${Date.now()}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
-        if (uploadError) throw uploadError;
-        const { data: { publicUrl: pUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-        publicUrl = pUrl;
-      }
+      // 1. Upload du fichier dans le Storage (toujours — même en mode édition pour garantir une URL valide)
+      const fileExt = (file.name.split('.').pop() || 'docx').toLowerCase();
+      const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `template_visual_${safeName}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
       // 2. Insérer / mettre à jour dans module_step_resources avec has_visual_fields:true
       const metadataObj = { classification, has_visual_fields: true };
