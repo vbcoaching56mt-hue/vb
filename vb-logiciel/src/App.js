@@ -2643,19 +2643,42 @@ const ClientDetailView = ({
       const { data: fullClient } = await supabase.from('clients').select('*').eq('id', client.id).single();
       if (!fullClient) throw new Error('Client introuvable');
       const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
+
+      // Les documents d'un groupe sont dans la table 'documents' avec group_id = selectedGroupId (user_id = null → template)
       const { data: groupDocs } = await supabase
-        .from('module_step_resources')
+        .from('documents')
         .select('*')
-        .eq('document_group_id', selectedGroupId)
-        .eq('type', 'document');
+        .eq('group_id', selectedGroupId)
+        .is('user_id', null);
+
       if (!groupDocs || groupDocs.length === 0) {
         toast.error('Aucun document dans ce groupe.', { id: toastId });
         setIsSendingDocs(false);
         return;
       }
+
+      // Chercher les entrées MSR correspondantes (par nom) pour récupérer les métadonnées visuelles (has_visual_fields, visual_template_id, file_url)
+      const docNames = groupDocs.map(d => d.nom);
+      const { data: msrEntries } = await supabase
+        .from('module_step_resources')
+        .select('*')
+        .eq('type', 'document')
+        .in('titre', docNames);
+      const msrByName = {};
+      (msrEntries || []).forEach(m => { msrByName[m.titre] = m; });
+
       for (const doc of groupDocs) {
-        await instantiateDocument(compatibleClient, doc);
+        // Préférer l'entrée MSR (qui a file_url + metadata visuels complets) ; sinon adapter le doc de la table documents
+        const msrEntry = msrByName[doc.nom];
+        const templateResource = msrEntry || {
+          titre: doc.nom,
+          file_url: doc.url,
+          destination: doc.visible_formateur ? 'formateur' : 'client',
+          metadata: (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })(),
+        };
+        await instantiateDocument(compatibleClient, templateResource);
       }
+
       await fetchDocuments();
       toast.success(`${groupDocs.length} document${groupDocs.length > 1 ? 's' : ''} envoyé${groupDocs.length > 1 ? 's' : ''} pour signature !`, { id: toastId });
       setShowSendDocsModal(false);
