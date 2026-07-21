@@ -13496,16 +13496,15 @@ export default function App() {
     const visualTemplateId = meta.visual_template_id || null;
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
-    // Exception : pour les templates visuels, si le document existant a encore l'URL brute du template
-    // (créé avant la génération automatique), on le supprime pour le régénérer correctement
     const { data: existing } = await supabase.from('documents')
-      .select('id, url').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
+      .select('id, url, signe_par_client, metadata').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
     if (existing) {
       if (!hasVisualFields) return; // doc classique : anti-doublon strict
-      const existingIsPrefilled = existing.url && existing.url !== templateResource.file_url
-        && !existing.url.includes(templateResource.file_url?.split('/').pop()?.split('?')[0] || '___');
-      if (existingIsPrefilled) return; // déjà un PDF pré-rempli → ne pas écraser
-      // URL brute du template → supprimer pour régénérer avec les données client
+      if (existing.signe_par_client) return; // SIGNÉ : ne jamais écraser
+      // Vérifier si le doc a déjà été préparé avec le nouveau système (metadata.fields + resolved_values)
+      const existMeta = (() => { try { return typeof existing.metadata === 'string' ? JSON.parse(existing.metadata) : (existing.metadata || {}); } catch { return {}; } })();
+      if (existMeta.fields?.length > 0 && existMeta.resolved_values) return; // déjà prêt → skip
+      // Ancien format sans données pré-calculées → supprimer pour passer au nouveau format
       await supabase.from('documents').delete().eq('id', existing.id);
     }
 
