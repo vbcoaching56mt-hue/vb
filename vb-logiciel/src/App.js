@@ -6316,6 +6316,8 @@ const DocumentsView = ({
       async () => {
         hideDeleteConfirm();
         await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
+        // Détacher les documents dont group_id = ce groupe (évite FK orpheline)
+        await supabase.from('documents').update({ group_id: null }).eq('group_id', groupId).is('user_id', null);
         const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
         if (!error) {
           fetchDocumentGroups();
@@ -7010,9 +7012,12 @@ const DocumentsView = ({
                                     type="checkbox"
                                     checked={isChecked}
                                     onChange={() => {
+                                      // Filtrer les IDs de groupes périmés (groupe supprimé mais encore dans doc.group_ids)
+                                      const validGroupIds = documentGroups.map(g => String(g.id));
+                                      const cleanDocGroupIds = docGroupIds.filter(id => validGroupIds.includes(String(id)));
                                       const next = isChecked
-                                        ? docGroupIds.filter(id => id !== g.id)
-                                        : [...docGroupIds, g.id];
+                                        ? cleanDocGroupIds.filter(id => id !== g.id)
+                                        : [...cleanDocGroupIds, g.id];
                                       // Passer l'objet doc si MSR-only (pas d'id bigint documents)
                                       handleToggleDocumentGroups(doc._fromMsrOnly ? doc : doc.id, next);
                                     }}
