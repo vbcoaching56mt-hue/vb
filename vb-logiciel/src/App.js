@@ -6314,7 +6314,6 @@ const DocumentsView = ({
   newTemplateClassification, setNewTemplateClassification, fetchDocuments
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
-  const [modelesTab, setModelesTab] = React.useState('modeles');
   const [clientDocTab, setClientDocTab] = React.useState('avant');
   const [docAudienceTab, setDocAudienceTab] = React.useState('client');
   const isAdmin = userRole === 'admin';
@@ -6756,99 +6755,8 @@ const DocumentsView = ({
         )}
       </div>
 
-      {/* ── Navigation Modèles (admin uniquement) ───────────────────────── */}
+
       {isAdmin && (
-        <div className="border-b border-gray-100 pb-0">
-          <div className="flex gap-1">
-            {[
-              { key: 'modeles', label: 'Modèles Clients', icon: '📁' },
-              { key: 'bibliotheque', label: 'Bibliothèque de modèles', icon: '📚' },
-              { key: 'manuel', label: 'Documents libres', icon: '⬆️' },
-            ].map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setModelesTab(tab.key)}
-                className={`flex items-center gap-2 px-4 py-3 text-sm font-bold border-b-2 transition-all whitespace-nowrap ${
-                  modelesTab === tab.key
-                    ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-600 hover:border-gray-200'
-                }`}
-              >
-                <span>{tab.icon}</span>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Onglet : Bibliothèque de modèles (clients + formateurs) ─────── */}
-      {isAdmin && modelesTab === 'bibliotheque' && (() => {
-        const allTpls = Object.entries(documentTemplates || {});
-
-        return (
-          <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 mb-8">
-            {/* En-tête */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-                  <span className="w-2 h-6 bg-violet-500 rounded-full"></span>
-                  Bibliothèque de modèles
-                </h2>
-                <p className="text-[12px] text-gray-400 mt-1">Tous les modèles Word de la plateforme — envoyables depuis chaque fiche formateur ou client.</p>
-              </div>
-              <button
-                onClick={() => setIsTemplateEditorOpen(true)}
-                className="flex items-center gap-2 bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
-              >
-                <Plus size={14} /> Ajouter un modèle
-              </button>
-            </div>
-
-            {/* Grille des modèles */}
-            {allTpls.length === 0 ? (
-              <div className="py-12 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                <FileText className="mx-auto mb-3 text-gray-300" size={32} />
-                <p className="text-gray-400 text-sm italic">Aucun modèle dans la bibliothèque.</p>
-                <p className="text-gray-300 text-xs mt-1">Cliquez sur "Ajouter un modèle" pour importer votre premier document.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {allTpls.map(([key, tpl]) => {
-                  const dest = tpl.destination || 'client';
-                  return (
-                    <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-violet-200 hover:shadow-sm transition-all">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 bg-violet-100 text-violet-700 rounded-xl flex items-center justify-center shrink-0">
-                          <FileText size={18} />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-gray-900 text-sm truncate">{key}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md shrink-0 ${dest === 'formateur' ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-600'}`}>
-                              {dest === 'formateur' ? 'Formateur' : 'Client'}
-                            </span>
-                            <span className="text-[10px] text-gray-400">Modèle Word</span>
-                          </div>
-                        </div>
-                      </div>
-                      <a
-                        href={tpl.url} target="_blank" rel="noreferrer"
-                        className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all shrink-0 ml-2"
-                        title="Télécharger le modèle"
-                      >
-                        <Download size={15} />
-                      </a>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {isAdmin && modelesTab === 'modeles' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
             <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
@@ -7264,8 +7172,8 @@ const DocumentsView = ({
         </div>
       )}
 
-      {/* Formulaire Administrateur d'ajout de document */}
-      {isAdmin && modelesTab === 'manuel' && (
+      {/* Formulaire Administrateur d'ajout de document — conservé pour la logique handleAddDocument */}
+      {false && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 relative overflow-hidden mb-8">
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-bl-full -z-10"></div>
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
