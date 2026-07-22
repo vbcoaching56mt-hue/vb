@@ -6341,6 +6341,60 @@ const DocumentsView = ({
 
   // TemplateEditorModal
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = React.useState(false);
+  // Upload simple (sans balises)
+  const [isUploadingSimple, setIsUploadingSimple] = React.useState(false);
+  const simpleUploadRef = React.useRef(null);
+  const handleUploadSimpleTemplate = async (file) => {
+    if (!file) return;
+    const name = file.name.replace(/\.[^/.]+$/, '');
+    const fileExt = (file.name.split('.').pop() || 'pdf').toLowerCase();
+    setIsUploadingSimple(true);
+    const toastId = 'simple-upload';
+    toast.loading('Envoi du document…', { id: toastId });
+    try {
+      const safeName = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `template_simple_${safeName}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+      const metadataObj = { has_visual_fields: false, classification: 'a_signer' };
+      let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
+      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+      const { data: existingMsr } = await msrQuery;
+      if (existingMsr && existingMsr.length > 0) {
+        await supabase.from('module_step_resources').update({
+          file_url: publicUrl, destination: 'client', metadata: JSON.stringify(metadataObj),
+        }).eq('id', existingMsr[0].id);
+      } else {
+        const { error: msrErr } = await supabase.from('module_step_resources').insert([{
+          titre: name, file_url: publicUrl, type: 'document', destination: 'client',
+          metadata: JSON.stringify(metadataObj),
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+        }]);
+        if (msrErr) throw msrErr;
+      }
+      let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
+      if (currentOrgId) docQuery = docQuery.eq('organisation_id', currentOrgId);
+      const { data: existingDoc } = await docQuery;
+      if (existingDoc && existingDoc.length > 0) {
+        await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
+      } else {
+        await supabase.from('documents').insert([{
+          nom: name, type_action: 'Modèle Référence', url: publicUrl,
+          metadata: JSON.stringify(metadataObj), user_id: null,
+          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+        }]);
+      }
+      if (fetchDocuments) await fetchDocuments();
+      toast.success(`"${name}" ajouté comme document à signer !`, { id: toastId });
+    } catch (e) {
+      console.error('[handleUploadSimpleTemplate]', e);
+      toast.error('Erreur : ' + e.message, { id: toastId });
+    } finally {
+      setIsUploadingSimple(false);
+      if (simpleUploadRef.current) simpleUploadRef.current.value = '';
+    }
+  };
   // Prévisualisation des balises d'un template
   const [previewTemplate, setPreviewTemplate] = React.useState(null); // { key, tpl }
   const [previewPages, setPreviewPages] = React.useState([]);
@@ -6796,49 +6850,9 @@ const DocumentsView = ({
 
       {isAdmin && modelesTab === 'modeles' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
-          <div className="flex justify-between items-start">
-            <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
-            </h2>
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl shadow-sm text-[10px] text-blue-700 font-mono max-w-xl">
-              <p className="font-black text-blue-800 uppercase tracking-widest mb-2 text-[9px]">📌 Balises disponibles dans vos modèles Word</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-                <div>
-                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Client —</p>
-                  <p>{"{nomcomplet_client}"}</p>
-                  <p>{"{client_email}"}</p>
-                  <p>{"{client_phone}"}</p>
-                  <p>{"{rue_client}"}</p>
-                  <p>{"{code_postal_client}"}</p>
-                  <p>{"{ville_client}"}</p>
-                  <p>{"{adresse_session}"} (adresse complète)</p>
-                  <p>{"{modalite_formation}"}</p>
-                  <p>{"{prix_prestation}"}</p>
-                  <p>{"{formation_nom}"}</p>
-                  <p>{"{date_debut}"}</p>
-                  <p>{"{date_fin}"}</p>
-                  <p>{"{date_signature}"}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Formateur / Coach —</p>
-                  <p>{"{nom}"} ou {"{nom_formateur}"}</p>
-                  <p>{"{email_formateur}"}</p>
-                  <p>{"{tel_formateur}"}</p>
-                  <p>{"{adresse_formateur}"}</p>
-                  <p>{"{formateur_siret}"}</p>
-                  <p>{"{formateur_nda}"}</p>
-                  <p>{"{compagnie_assurance}"}</p>
-                  <p>{"{numero_assurance_rcp}"}</p>
-                  <p className="text-[9px] font-black text-blue-500 uppercase mt-1 mb-0.5">— Organisme —</p>
-                  <p>{"{org_nom}"}</p>
-                  <p>{"{org_siret}"}</p>
-                  <p>{"{org_nda}"}</p>
-                  <p>{"{org_adresse}"}</p>
-                  <p>{"{org_code_postal}"} · {"{org_ville}"}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
+            <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
+          </h2>
 
           <div className="mb-8 p-5 bg-indigo-50 rounded-2xl border border-indigo-100">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2"><Layout size={18}/> Groupes de documents</h3>
@@ -6915,20 +6929,45 @@ const DocumentsView = ({
             )}
           </div>
 
-          {/* ── Bouton d'ajout de modèle → ouvre VisualTemplateEditor ── */}
-          <div className="mb-8">
+          {/* ── Boutons d'ajout de modèles ── */}
+          <div className="mb-8 flex flex-col gap-3">
+            {/* Avec balises → VisualTemplateEditor */}
             <button
               onClick={() => setIsTemplateEditorOpen(true)}
-              className="w-full flex items-center justify-center gap-3 p-6 border-2 border-dashed border-violet-200 rounded-2xl text-violet-600 hover:border-violet-400 hover:bg-violet-50 transition-all group"
+              className="w-full flex items-center justify-center gap-3 p-5 border-2 border-dashed border-violet-200 rounded-2xl text-violet-600 hover:border-violet-400 hover:bg-violet-50 transition-all group"
             >
-              <div className="w-10 h-10 bg-violet-100 group-hover:bg-violet-200 rounded-xl flex items-center justify-center transition-all">
-                <Plus size={20} className="text-violet-600" />
+              <div className="w-9 h-9 bg-violet-100 group-hover:bg-violet-200 rounded-xl flex items-center justify-center transition-all">
+                <Plus size={18} className="text-violet-600" />
               </div>
               <div className="text-left">
-                <p className="font-bold text-sm">Ajouter un modèle de document</p>
-                <p className="text-xs text-violet-400 mt-0.5">Importez un .docx · positionnez vos balises visuellement sur le document</p>
+                <p className="font-bold text-sm">Ajouter un modèle avec balises</p>
+                <p className="text-xs text-violet-400 mt-0.5">Importez un .docx ou .pdf · positionnez vos balises visuellement</p>
               </div>
             </button>
+            {/* Sans balises → upload direct */}
+            <button
+              onClick={() => simpleUploadRef.current?.click()}
+              disabled={isUploadingSimple}
+              className="w-full flex items-center justify-center gap-3 p-5 border-2 border-dashed border-gray-200 rounded-2xl text-gray-500 hover:border-gray-400 hover:bg-gray-50 transition-all group disabled:opacity-50"
+            >
+              <div className="w-9 h-9 bg-gray-100 group-hover:bg-gray-200 rounded-xl flex items-center justify-center transition-all">
+                {isUploadingSimple
+                  ? <div className="w-4 h-4 border-2 border-gray-400/30 border-t-gray-500 rounded-full animate-spin" />
+                  : <Upload size={18} className="text-gray-500" />
+                }
+              </div>
+              <div className="text-left">
+                <p className="font-bold text-sm">{isUploadingSimple ? 'Envoi en cours…' : 'Ajouter un document sans balises'}</p>
+                <p className="text-xs text-gray-400 mt-0.5">PDF ou .docx envoyé tel quel pour signature — sans remplissage automatique</p>
+              </div>
+            </button>
+            <input
+              ref={simpleUploadRef}
+              type="file"
+              accept=".pdf,.docx,.doc"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadSimpleTemplate(f); }}
+            />
           </div>
 
           <VisualTemplateEditor
