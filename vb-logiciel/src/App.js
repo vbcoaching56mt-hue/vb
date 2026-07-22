@@ -2644,14 +2644,12 @@ const ClientDetailView = ({
       if (!fullClient) throw new Error('Client introuvable');
       const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
 
-      // Les docs d'un groupe peuvent être liés via group_id (primaire) OU group_ids (tableau, secondaire)
-      const [{ data: rawByPrimary }, { data: rawBySecondary }] = await Promise.all([
-        supabase.from('documents').select('*').eq('group_id', selectedGroupId),
-        supabase.from('documents').select('*').contains('group_ids', [selectedGroupId]),
-      ]);
-      const seenIds = new Set();
-      const groupDocs = [...(rawByPrimary || []), ...(rawBySecondary || [])]
-        .filter(d => !d.user_id && !seenIds.has(d.id) && seenIds.add(d.id));
+      // Utiliser le state documents déjà en mémoire (même logique que l'UI admin ligne 6690)
+      // Évite les problèmes de type JSONB avec PostgREST contains()
+      const groupDocs = (documents || []).filter(d =>
+        !d.user_id &&
+        (d.group_id === selectedGroupId || (Array.isArray(d.group_ids) && d.group_ids.includes(selectedGroupId)))
+      );
 
       if (!groupDocs || groupDocs.length === 0) {
         toast.error('Aucun document dans ce groupe.', { id: toastId });
