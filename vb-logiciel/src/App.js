@@ -600,7 +600,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       } else {
         // Placeholder : rectangle pointillé
         page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-        const label = isClient ? '✦ Signature bénéficiaire' : '✦ Signature formateur';
+        const label = isClient ? 'Signature beneficiaire' : 'Signature formateur';
         page.drawText(label, {
           x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
         });
@@ -5598,6 +5598,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [fields, setFields] = React.useState([]); // [{id, tag, page, xPct, yPct}]
   const [dragTag, setDragTag] = React.useState(null);
   const [draggingFieldId, setDraggingFieldId] = React.useState(null); // repositionnement d'un champ existant
+  const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
   const [templateName, setTemplateName] = React.useState('');
   const [destination, setDestination] = React.useState('client');
   const [isSaving, setIsSaving] = React.useState(false);
@@ -5748,9 +5749,46 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     }
   };
 
+  // Touche Escape pour annuler le mode clic-pour-placer
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e) => { if (e.key === 'Escape') setClickPlaceTag(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen]);
+
+  // Clic sur la page : placer ou déplacer une balise (mode clic-pour-placer)
+  const handlePageClick = (e) => {
+    if (!clickPlaceTag || !pageRef.current) return;
+    e.stopPropagation();
+    const rect = pageRef.current.getBoundingClientRect();
+    const xPct = Math.max(0, Math.min(98, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(2, Math.min(98, ((e.clientY - rect.top) / rect.height) * 100));
+
+    if (clickPlaceTag.fieldId) {
+      // Repositionner un champ déjà posé
+      setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct } : f));
+    } else if (clickPlaceTag.tag) {
+      const alreadyPlaced = fields.find(f => f.tag === clickPlaceTag.tag);
+      if (alreadyPlaced) {
+        // Déjà placé → déplacer
+        setFields(prev => prev.map(f => f.tag === clickPlaceTag.tag && f.page === currentPage + 1 ? { ...f, xPct, yPct } : f));
+      } else {
+        setFields(prev => [...prev, {
+          id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          tag: clickPlaceTag.tag,
+          page: currentPage + 1,
+          xPct, yPct,
+        }]);
+      }
+    }
+    setClickPlaceTag(null);
+  };
+
   const handleReset = () => {
     setFile(null); setPdfPages([]); setFields([]);
     setCurrentPage(0); setStep('upload');
+    setClickPlaceTag(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -5928,7 +5966,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                 <div
                   ref={pageRef}
                   className="relative shadow-2xl shrink-0"
-                  style={{ width: Math.min(pdfPages[currentPage]?.nativeW || 800, 680) }}
+                  style={{
+                    width: Math.min(pdfPages[currentPage]?.nativeW || 800, 680),
+                    cursor: clickPlaceTag ? 'crosshair' : 'default',
+                    outline: clickPlaceTag ? '3px dashed #7C3AED' : '',
+                    outlineOffset: clickPlaceTag ? '-3px' : '',
+                  }}
+                  onClick={handlePageClick}
                   onDragOver={e => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = draggingFieldId ? 'move' : 'copy';
@@ -5936,8 +5980,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     e.currentTarget.style.outline = `3px dashed ${color}`;
                     e.currentTarget.style.outlineOffset = '-3px';
                   }}
-                  onDragLeave={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }}
-                  onDrop={e => { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; handlePageDrop(e); }}
+                  onDragLeave={e => {
+                    if (!clickPlaceTag) { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }
+                  }}
+                  onDrop={e => {
+                    if (!clickPlaceTag) { e.currentTarget.style.outline = ''; e.currentTarget.style.outlineOffset = ''; }
+                    handlePageDrop(e);
+                  }}
                 >
                   <img
                     src={pdfPages[currentPage]?.dataUrl}
@@ -5950,6 +5999,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   {fieldsOnPage.map(field => {
                     const isSig = isSignatureTag(field.tag);
                     const isBeingMoved = draggingFieldId === field.id;
+                    const isSelectedForMove = clickPlaceTag?.fieldId === field.id;
                     return (
                       <div
                         key={field.id}
@@ -5958,6 +6008,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           e.stopPropagation();
                           setDraggingFieldId(field.id);
                           setDragTag(null);
+                          setClickPlaceTag(null);
                           e.dataTransfer.effectAllowed = 'move';
                           // Image fantôme transparente pour éviter l'aperçu natif
                           const ghost = document.createElement('div');
@@ -5967,6 +6018,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           setTimeout(() => document.body.removeChild(ghost), 0);
                         }}
                         onDragEnd={() => setDraggingFieldId(null)}
+                        onClick={e => {
+                          e.stopPropagation();
+                          // Clic sur balise posée → activer mode repositionnement
+                          if (!clickPlaceTag) setClickPlaceTag({ fieldId: field.id });
+                          else if (clickPlaceTag.fieldId === field.id) setClickPlaceTag(null);
+                        }}
                         style={{
                           position: 'absolute',
                           left: `${field.xPct}%`,
@@ -5975,9 +6032,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           // translateX(0%) = texte commence là où commence la balise visuellement
                           transform: 'translate(0%, -100%)',
                           zIndex: 10,
-                          cursor: 'grab',
+                          cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
                           transition: 'opacity 0.15s',
+                          outline: isSelectedForMove ? '2px solid #7C3AED' : 'none',
+                          borderRadius: 4,
                         }}
                         title="Glissez pour repositionner — le bas de la balise indique où le texte apparaîtra"
                       >
@@ -6015,6 +6074,21 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       </div>
                     );
                   })}
+
+                  {/* Bannière mode clic-pour-placer */}
+                  {clickPlaceTag && (
+                    <div className="absolute inset-0 pointer-events-none flex items-end justify-center pb-4">
+                      <div className="bg-violet-700/95 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl flex items-center gap-3">
+                        <span>🎯</span>
+                        <span>
+                          {clickPlaceTag.fieldId
+                            ? 'Cliquez sur la page pour déplacer la balise · Échap pour annuler'
+                            : <>Cliquez sur la page pour placer <span className="font-mono bg-white/20 px-1 rounded">{clickPlaceTag.tag}</span> · Échap pour annuler</>
+                          }
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Hint zone de dépôt */}
                   {(dragTag || draggingFieldId) && (
@@ -6057,14 +6131,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       {SIGNATURE_TAGS.map(({ tag, label, color }) => {
                         const isPlaced = placedTags.has(tag);
                         const isDraggingThis = dragTag === tag;
+                        const isClickSelected = clickPlaceTag?.tag === tag;
                         const isBlue = color === 'blue';
                         return (
                           <div
                             key={tag}
                             draggable
-                            onDragStart={e => { setDragTag(tag); e.dataTransfer.effectAllowed = 'copy'; }}
+                            onDragStart={e => { setDragTag(tag); setClickPlaceTag(null); e.dataTransfer.effectAllowed = 'copy'; }}
                             onDragEnd={() => setDragTag(null)}
-                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 select-none cursor-grab active:cursor-grabbing transition-all ${
+                            onClick={() => setClickPlaceTag(isClickSelected ? null : { tag })}
+                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 select-none cursor-pointer transition-all ${
+                              isClickSelected ? 'bg-violet-600 text-white border-violet-600 scale-95 shadow-inner' :
                               isDraggingThis ? 'opacity-40 scale-95' :
                               isBlue
                                 ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-400'
@@ -6091,14 +6168,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                         {tags.map(tag => {
                           const isPlaced = placedTags.has(tag);
                           const isDraggingThis = dragTag === tag;
+                          const isClickSelected = clickPlaceTag?.tag === tag;
                           const isDate = tag === 'date_du_jour';
                           return (
                             <div
                               key={tag}
                               draggable
-                              onDragStart={e => { setDragTag(tag); e.dataTransfer.effectAllowed = 'copy'; }}
+                              onDragStart={e => { setDragTag(tag); setClickPlaceTag(null); e.dataTransfer.effectAllowed = 'copy'; }}
                               onDragEnd={() => setDragTag(null)}
-                              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-[11px] font-mono border select-none cursor-grab active:cursor-grabbing transition-all ${
+                              onClick={() => setClickPlaceTag(isClickSelected ? null : { tag })}
+                              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-[11px] font-mono border select-none cursor-pointer transition-all ${
+                                isClickSelected ? 'bg-violet-600 text-white border-violet-600 shadow-inner' :
                                 isDraggingThis ? 'opacity-40 scale-95' :
                                 isDate ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:border-emerald-400' :
                                 isPlaced ? 'bg-violet-50 border-violet-200 text-violet-700' :
