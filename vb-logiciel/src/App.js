@@ -5603,6 +5603,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const pageRef = React.useRef(null);
+  const pdfBlobRef = React.useRef(null); // stocke le blob PDF pour prévisualisation
 
   const ALL_TAGS = {
     'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
@@ -5630,6 +5631,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         const resp = await fetch(initialData.url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const blob = await resp.blob();
+        pdfBlobRef.current = blob; // stocker pour prévisualisation
         // Créer un File fictif pour que handleSave puisse le réutiliser
         const fakeFile = new File([blob], (initialData.name || 'template') + '.pdf', { type: 'application/pdf' });
         setFile(fakeFile);
@@ -5695,6 +5697,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         try { pdfBlob = await convertDocxBlobToPdf(f); }
         catch (_) { pdfBlob = await convertDocxBlobToPdfLocal(f); }
       }
+      pdfBlobRef.current = pdfBlob; // stocker pour prévisualisation
 
       // 2. Charger PDF.js et rendre chaque page en canvas
       const pdfjsLib = await loadPdfJs();
@@ -5773,6 +5776,45 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       toast.error('Erreur : ' + err.message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Prévisualisation avec valeurs test — génère le vrai PDF pour vérifier le positionnement
+  const [isPreviewing, setIsPreviewing] = React.useState(false);
+  const handlePreview = async () => {
+    if (!pdfBlobRef.current || fields.length === 0) {
+      toast.error('Aucune balise à prévisualiser.'); return;
+    }
+    setIsPreviewing(true);
+    try {
+      const testValues = {
+        nomcomplet_client: 'Jean DUPONT', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
+        client_email: 'jean@exemple.fr', client_phone: '06 12 34 56 78',
+        rue_client: '12 rue de la Paix', code_postal_client: '56000',
+        adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
+        formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
+        date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
+        nom_formateur: 'Marie LEROY', email_formateur: 'marie@formateur.fr', tel_formateur: '06 00 00 00 00',
+        adresse_formateur: '5 av. Victor Hugo', formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
+        compagnie_assurance: 'AXA', numero_assurance_rcp: 'RCP-2026-001',
+        org_nom: 'VB Coaching', org_siret: '399 146 067 00034', org_nda: '53560969356',
+        org_adresse: '2 rue du Général Baron Fabre', org_code_postal: '56000', org_ville: 'Vannes',
+        org_site_web: 'www.vbcoaching56.com',
+      };
+      const tplFields = fields.map(f => ({
+        template_id: 0, tag: f.tag, page: f.page || 1,
+        x_percent: f.xPct, y_percent: f.yPct,
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
+        font_size: 11,
+      }));
+      const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {});
+      const url = URL.createObjectURL(resultBlob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+    } catch(e) {
+      toast.error('Erreur prévisualisation : ' + e.message);
+    } finally {
+      setIsPreviewing(false);
     }
   };
 
@@ -5929,9 +5971,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // Le BAS de la balise est à la position exacte du texte dans le PDF
-                          // → la balise "pointe" vers sa zone de rendu
-                          transform: 'translate(-50%, -100%)',
+                          // Le BAS-GAUCHE de la balise = début exact du texte dans le PDF
+                          // translateX(0%) = texte commence là où commence la balise visuellement
+                          transform: 'translate(0%, -100%)',
                           zIndex: 10,
                           cursor: 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
@@ -6097,6 +6139,19 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       ))}
                     </div>
                   </div>
+                  <button
+                    onClick={handlePreview}
+                    disabled={isPreviewing || fields.length === 0 || !pdfBlobRef.current}
+                    className="w-full py-2.5 rounded-xl text-sm font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-all disabled:opacity-40"
+                    title="Génère le PDF avec des valeurs test pour vérifier le positionnement exact"
+                  >
+                    {isPreviewing ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="w-3.5 h-3.5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                        Génération…
+                      </span>
+                    ) : '👁 Prévisualiser le résultat'}
+                  </button>
                   <button
                     onClick={handleSave}
                     disabled={isSaving || !templateName.trim() || fields.length === 0}
