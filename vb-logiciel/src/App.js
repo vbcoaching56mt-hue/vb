@@ -5599,6 +5599,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [dragTag, setDragTag] = React.useState(null);
   const [draggingFieldId, setDraggingFieldId] = React.useState(null); // repositionnement d'un champ existant
   const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
+  const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
   const [templateName, setTemplateName] = React.useState('');
   const [destination, setDestination] = React.useState('client');
   const [isSaving, setIsSaving] = React.useState(false);
@@ -5788,7 +5789,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const handleReset = () => {
     setFile(null); setPdfPages([]); setFields([]);
     setCurrentPage(0); setStep('upload');
-    setClickPlaceTag(null);
+    setClickPlaceTag(null); setHoverPos(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -5973,6 +5974,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     outlineOffset: clickPlaceTag ? '-3px' : '',
                   }}
                   onClick={handlePageClick}
+                  onMouseMove={e => {
+                    if (!clickPlaceTag || !pageRef.current) { if (hoverPos) setHoverPos(null); return; }
+                    const rect = pageRef.current.getBoundingClientRect();
+                    setHoverPos({
+                      xPct: Math.max(1, Math.min(98, ((e.clientX - rect.left) / rect.width) * 100)),
+                      yPct: Math.max(2, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100)),
+                    });
+                  }}
+                  onMouseLeave={() => setHoverPos(null)}
                   onDragOver={e => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = draggingFieldId ? 'move' : 'copy';
@@ -5994,6 +6004,38 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     alt={`Page ${currentPage + 1}`}
                     draggable={false}
                   />
+
+                  {/* Ghost cursor — balise fantôme qui suit la souris en mode clic-pour-placer */}
+                  {clickPlaceTag && hoverPos && (() => {
+                    const tag = clickPlaceTag.tag || fields.find(f => f.id === clickPlaceTag.fieldId)?.tag;
+                    if (!tag) return null;
+                    const isSig = isSignatureTag(tag);
+                    return (
+                      <div
+                        key="ghost"
+                        style={{ position: 'absolute', left: `${hoverPos.xPct}%`, top: `${hoverPos.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 30, opacity: 0.6, pointerEvents: 'none' }}
+                      >
+                        {isSig ? (
+                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'signature_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
+                            <span className="text-base">✍️</span>
+                            <p className={`text-[10px] font-black ${tag === 'signature_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}</p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5 bg-violet-700 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-xl whitespace-nowrap ring-2 ring-white">
+                              <span className="font-mono">{tag === 'date_du_jour' ? '📅 date_du_jour' : `{${tag}}`}</span>
+                            </div>
+                            <div className="border-t-2 border-dashed border-violet-500 w-full" style={{ minWidth: 80 }} />
+                          </div>
+                        )}
+                        {/* Croix de centrage */}
+                        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 10, height: 10, pointerEvents: 'none' }}>
+                          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1.5, background: '#7C3AED', transform: 'translateY(-50%)' }} />
+                          <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1.5, background: '#7C3AED', transform: 'translateX(-50%)' }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Balises posées sur cette page */}
                   {fieldsOnPage.map(field => {
@@ -6028,9 +6070,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // Le BAS-GAUCHE de la balise = début exact du texte dans le PDF
-                          // translateX(0%) = texte commence là où commence la balise visuellement
-                          transform: 'translate(0%, -100%)',
+                          // Centre de la balise = point de référence (curseur au centre)
+                          transform: 'translate(-50%, -50%)',
                           zIndex: 10,
                           cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
