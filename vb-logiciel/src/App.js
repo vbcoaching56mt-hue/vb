@@ -4734,11 +4734,16 @@ const FormateurView = ({
   const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
-  // Documents administratifs propres au formateur (envoyés par l'admin)
-  const myAdminDocs = React.useMemo(() =>
-    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false),
-    [documents, currentUserId]
-  );
+  // Documents à signer / consulter par le formateur :
+  // - soit assignés directement au formateur (assigned_formateur_id)
+  // - soit appartenant à l'un de ses clients (user_id) avec visible_formateur = true
+  const myAdminDocs = React.useMemo(() => {
+    const assignedClientIds = new Set(clients.filter(c => c.formateur_id === currentUserId).map(c => c.id));
+    return (documents || []).filter(d =>
+      (d.assigned_formateur_id === currentUserId && d.visible_formateur !== false) ||
+      (d.user_id && assignedClientIds.has(d.user_id) && d.visible_formateur === true)
+    );
+  }, [documents, clients, currentUserId]);
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
 
   React.useEffect(() => {
@@ -4855,68 +4860,101 @@ const FormateurView = ({
       </div>
 
       {/* Section : Mes Documents Administratifs */}
-      {formateurMainSection === 'mes_docs' && (
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
-          <h3 className="font-bold text-gray-800 text-lg mb-6 flex items-center gap-2">
-            <span className="w-2 h-6 bg-violet-600 rounded-full"></span>
-            Documents Administratifs &amp; Contrats
-          </h3>
-          {myAdminDocs.length === 0 ? (
-            <div className="py-16 text-center">
-              <Archive className="mx-auto mb-4 text-gray-300" size={40} />
-              <p className="text-gray-400 italic">Aucun document administratif ne vous a été assigné.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {myAdminDocs.map(doc => (
-                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
-                      <FileText size={20} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                          doc.signe_par_formateur ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                        }`}>
-                          {doc.signe_par_formateur ? '✓ Signé' : '⚠ À signer'}
-                        </span>
-                        {doc.created_at && (
-                          <span className="text-[10px] text-gray-400">
-                            Reçu le {new Date(doc.created_at).toLocaleDateString('fr-FR')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setViewingDocId && setViewingDocId(doc.id)}
-                      className="p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
-                      title="Consulter"
-                    >
-                      <Eye size={20} />
-                    </button>
-                    {!doc.signe_par_formateur ? (
-                      <button
-                        onClick={() => setViewingSession && setViewingSession({ session: { ...doc, file_url: doc.url || doc.file_url }, mode: 'sign' })}
-                        className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all"
-                      >
-                        <PenTool size={14} /> Signer
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-xs font-black border border-green-100">
-                        <Check size={14} strokeWidth={4} /> Signé
-                      </div>
-                    )}
+      {formateurMainSection === 'mes_docs' && (() => {
+        // Grouper les docs par client (user_id) — les docs sans client vont dans "Sans client"
+        const grouped = {};
+        myAdminDocs.forEach(doc => {
+          const clientId = doc.user_id || '__none__';
+          if (!grouped[clientId]) grouped[clientId] = [];
+          grouped[clientId].push(doc);
+        });
+        const sortedGroups = Object.entries(grouped).sort(([a], [b]) => {
+          if (a === '__none__') return 1;
+          if (b === '__none__') return -1;
+          const ca = clients.find(c => c.id === a);
+          const cb = clients.find(c => c.id === b);
+          return (ca?.nom || '').localeCompare(cb?.nom || '');
+        });
+
+        const renderDocRow = (doc) => {
+          const signed = doc.signe_par_formateur;
+          return (
+            <div key={doc.id} className={`flex items-center justify-between p-4 rounded-2xl border transition-all group ${signed ? 'border-green-100 bg-green-50/30' : 'border-gray-100 hover:border-violet-200 bg-white'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${signed ? 'bg-green-100 text-green-600' : 'bg-violet-50 text-violet-600'}`}>
+                  {signed ? <Check size={16} strokeWidth={2.5} /> : <FileText size={16} />}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-bold text-gray-900 text-sm truncate">{doc.nom}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${signed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {signed ? '✓ Signé' : '⚠ À signer'}
+                    </span>
+                    {doc.created_at && <span className="text-[10px] text-gray-400">Reçu le {new Date(doc.created_at).toLocaleDateString('fr-FR')}</span>}
                   </div>
                 </div>
-              ))}
+              </div>
+              <div className="flex items-center gap-2 shrink-0 ml-3">
+                <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all" title="Consulter">
+                  <Eye size={18} />
+                </button>
+                {!signed ? (
+                  <button
+                    onClick={() => setViewingSession && setViewingSession({ session: { ...doc, file_url: doc.url || doc.file_url }, mode: 'sign' })}
+                    className="bg-violet-700 hover:bg-violet-800 text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 transition-all"
+                  >
+                    <PenTool size={13} /> Signer
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-3 py-2 rounded-xl text-xs font-black border border-green-100">
+                    <Check size={13} strokeWidth={3} /> Signé
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-      )}
+          );
+        };
+
+        return (
+          <div className="space-y-4">
+            {myAdminDocs.length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
+                <Archive className="mx-auto mb-4 text-gray-300" size={40} />
+                <p className="text-gray-400 italic">Aucun document ne vous a été assigné.</p>
+              </div>
+            ) : sortedGroups.map(([clientId, docs]) => {
+              const client = clientId !== '__none__' ? clients.find(c => c.id === clientId) : null;
+              const pendingCount = docs.filter(d => !d.signe_par_formateur).length;
+              const allSigned = pendingCount === 0;
+              return (
+                <div key={clientId} className={`bg-white rounded-3xl border shadow-sm overflow-hidden ${allSigned ? 'border-green-100' : 'border-amber-100'}`}>
+                  {/* En-tête client */}
+                  <div className={`flex items-center justify-between px-6 py-4 ${allSigned ? 'bg-green-50/40' : 'bg-amber-50/40'} border-b ${allSigned ? 'border-green-100' : 'border-amber-100'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base ${allSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {client ? (client.nom?.charAt(0) || '?') : '📄'}
+                      </div>
+                      <div>
+                        <p className="font-black text-gray-900 text-sm">
+                          {client ? (client.nom_complet || client.nom || client.email) : 'Documents généraux'}
+                        </p>
+                        <p className="text-[11px] text-gray-400">{docs.length} document{docs.length > 1 ? 's' : ''}</p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full ${allSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {allSigned ? '✓ Tout signé' : `${pendingCount} à signer`}
+                    </span>
+                  </div>
+                  {/* Liste des docs */}
+                  <div className="p-4 space-y-2">
+                    {docs.map(renderDocRow)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Section : Mes Clients */}
       {formateurMainSection === 'clients' && (
@@ -7519,7 +7557,7 @@ const DocumentsView = ({
 
                       {/* Badges signature */}
                       <div className="flex flex-wrap gap-1.5">
-                        {doc.visible_client !== false && (
+                        {doc.visible_client === true && (
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
                             doc.signe_par_client
                               ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
@@ -7529,7 +7567,7 @@ const DocumentsView = ({
                             Client {doc.signe_par_client ? '✓' : '–'}
                           </span>
                         )}
-                        {doc.visible_formateur && (
+                        {doc.visible_formateur === true && (
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
                             doc.signe_par_formateur
                               ? 'bg-blue-50 text-blue-700 border-blue-100'
@@ -13821,6 +13859,10 @@ export default function App() {
     const classification = meta.classification || 'telechargeable';
     const hasVisualFields = meta.has_visual_fields === true;
     const visualTemplateId = meta.visual_template_id || null;
+    // Destination : 'client' | 'formateur' | 'les_deux' → détermine visible_client / visible_formateur
+    const dest = templateResource.destination || 'client';
+    const visClient    = dest !== 'formateur';   // true pour 'client' et 'les_deux'
+    const visFormateur = dest !== 'client';      // true pour 'formateur' et 'les_deux'
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
     const { data: existing } = await supabase.from('documents')
@@ -13930,8 +13972,8 @@ export default function App() {
           nom: templateResource.titre,
           url: prefilledUrl,
           type_document: 'À signer',
-          visible_client: true,
-          visible_formateur: true,
+          visible_client: visClient,
+          visible_formateur: visFormateur,
           signe_par_client: false,
           metadata: docMetadata,
         }]).select().single();
@@ -13956,8 +13998,8 @@ export default function App() {
           nom: templateResource.titre,
           url: templateResource.file_url,
           type_document: 'À signer',
-          visible_client: true,
-          visible_formateur: true,
+          visible_client: visClient,
+          visible_formateur: visFormateur,
           signe_par_client: false,
           metadata: fallbackMeta,
         }]).select().single();
@@ -13985,8 +14027,8 @@ export default function App() {
         nom: templateResource.titre,
         url: templateResource.file_url,
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
-        visible_client: moment === 'debut',
-        visible_formateur: true,
+        visible_client: visClient && moment === 'debut',
+        visible_formateur: visFormateur,
       }]).select().single();
 
       if (insertErr) {
