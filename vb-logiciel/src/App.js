@@ -4734,16 +4734,13 @@ const FormateurView = ({
   const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
-  // Documents à signer / consulter par le formateur :
-  // - soit assignés directement au formateur (assigned_formateur_id)
-  // - soit appartenant à l'un de ses clients (user_id) avec visible_formateur = true
-  const myAdminDocs = React.useMemo(() => {
-    const assignedClientIds = new Set(clients.filter(c => c.formateur_id === currentUserId).map(c => c.id));
-    return (documents || []).filter(d =>
-      (d.assigned_formateur_id === currentUserId && d.visible_formateur !== false) ||
-      (d.user_id && assignedClientIds.has(d.user_id) && d.visible_formateur === true)
-    );
-  }, [documents, clients, currentUserId]);
+  // Documents à signer par le formateur : uniquement ceux qui lui sont explicitement assignés
+  // (assigned_formateur_id = ce formateur). Le champ est posé par instantiateDocument quand
+  // la destination inclut le formateur (visFormateur=true).
+  const myAdminDocs = React.useMemo(() =>
+    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false),
+    [documents, currentUserId]
+  );
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
 
   React.useEffect(() => {
@@ -13863,6 +13860,8 @@ export default function App() {
     const dest = templateResource.destination || 'client';
     const visClient    = dest !== 'formateur';   // true pour 'client' et 'les_deux'
     const visFormateur = dest !== 'client';      // true pour 'formateur' et 'les_deux'
+    // Si le formateur doit signer, on lui assigne le document explicitement via assigned_formateur_id
+    const assignedFormateurId = visFormateur ? (client.formateur_id || null) : null;
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
     const { data: existing } = await supabase.from('documents')
@@ -13976,6 +13975,7 @@ export default function App() {
           visible_formateur: visFormateur,
           signe_par_client: false,
           metadata: docMetadata,
+          ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
 
         if (insertErr) throw insertErr;
@@ -14002,6 +14002,7 @@ export default function App() {
           visible_formateur: visFormateur,
           signe_par_client: false,
           metadata: fallbackMeta,
+          ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
         if (fallbackErr) {
           console.error('[instantiateDocument] Erreur fallback insert:', fallbackErr.message);
@@ -14029,6 +14030,7 @@ export default function App() {
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
         visible_client: visClient && moment === 'debut',
         visible_formateur: visFormateur,
+        ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
       }]).select().single();
 
       if (insertErr) {
