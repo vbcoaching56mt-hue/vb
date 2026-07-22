@@ -17084,6 +17084,15 @@ export default function App() {
         mode={viewingSession?.mode || 'view'}
         isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
         onClose={() => setViewingSession(null)}
+        onSave={async (sigDataUrl) => {
+          const sess = viewingSession?.session;
+          if (sess?.id) {
+            // Signature d'un document administratif par le formateur
+            await handleSignDocument(sess.id, 'formateur', sigDataUrl);
+            toast.success('Document signé avec succès !');
+          }
+          setViewingSession(null);
+        }}
       />
 
       <InviteModal
