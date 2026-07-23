@@ -4691,7 +4691,7 @@ const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
 };
 
 const IngenierieView = ({
-  modules, handleAddModule,
+  modules, handleAddModule, handleDeleteModule,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
   handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
@@ -4776,6 +4776,9 @@ const IngenierieView = ({
                 <div className="flex gap-2 flex-wrap mt-6">
                   <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
                   <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
+                  <button onClick={() => handleDeleteModule(mod.id, mod.nom)} className="text-xs font-bold text-red-600 hover:text-white hover:bg-red-600 flex items-center gap-1.5 bg-white border border-red-200 px-4 py-2 rounded-lg transition-all ml-auto" title="Supprimer ce module">
+                    <Trash2 size={14} /> Supprimer
+                  </button>
                 </div>
 
                 {/* Interface de Modélisation du Parcours */}
@@ -14817,6 +14820,39 @@ export default function App() {
     else toast.error('Erreur lors de la création du module : ' + error.message);
   };
 
+  const handleDeleteModule = (moduleId, moduleName) => {
+    // Garde-fou : on ne supprime pas un module encore assigné à des clients, pour éviter
+    // de casser leur suivi (sessions déjà générées, documents liés, module_id orphelin).
+    const clientsAssigned = (clients || []).filter(c => String(c.module_id) === String(moduleId));
+    if (clientsAssigned.length > 0) {
+      toast.error(`Impossible de supprimer ce module : ${clientsAssigned.length} client(s) y sont encore assigné(s) (${clientsAssigned.map(c => c.nom_complet || c.nom).filter(Boolean).join(', ')}). Réassignez-les d'abord.`);
+      return;
+    }
+    showAppConfirm(
+      `Supprimer le module "${moduleName}" ?`,
+      "Ce module et tout son contenu (parcours, étapes, ressources) seront définitivement supprimés. Cette action est irréversible.",
+      async () => {
+        hideAppConfirm();
+        try {
+          // Garde-fou multi-tenant : on ne supprime que dans le périmètre de l'organisation courante
+          const { error: msrErr } = await supabase.from('module_step_resources').delete().eq('module_id', moduleId);
+          if (msrErr) throw msrErr;
+          const { error: mstErr } = await supabase.from('module_session_templates').delete().eq('module_id', moduleId);
+          if (mstErr) throw mstErr;
+          let delQuery = supabase.from('modules').delete().eq('id', moduleId);
+          delQuery = currentOrgId ? delQuery.eq('organisation_id', currentOrgId) : delQuery;
+          const { error } = await delQuery;
+          if (error) throw error;
+          await fetchModules();
+          toast.success("Module supprimé avec succès.");
+        } catch (err) {
+          console.error("Erreur suppression module:", err);
+          toast.error("Erreur lors de la suppression : " + err.message);
+        }
+      }
+    );
+  };
+
   const createSessionFolder = async (moduleId, title) => {
     if (!title.trim()) return;
 
@@ -17526,6 +17562,7 @@ export default function App() {
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
             handleAddModule={handleAddModule}
+            handleDeleteModule={handleDeleteModule}
             newModuleName={newModuleName}
             setNewModuleName={setNewModuleName}
             newModuleSeances={newModuleSeances}
