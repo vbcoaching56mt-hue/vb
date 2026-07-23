@@ -14820,12 +14820,29 @@ export default function App() {
     else toast.error('Erreur lors de la création du module : ' + error.message);
   };
 
-  const handleDeleteModule = (moduleId, moduleName) => {
+  const handleDeleteModule = async (moduleId, moduleName) => {
     // Garde-fou : on ne supprime pas un module encore assigné à des clients, pour éviter
     // de casser leur suivi (sessions déjà générées, documents liés, module_id orphelin).
     const clientsAssigned = (clients || []).filter(c => String(c.module_id) === String(moduleId));
     if (clientsAssigned.length > 0) {
       toast.error(`Impossible de supprimer ce module : ${clientsAssigned.length} client(s) y sont encore assigné(s) (${clientsAssigned.map(c => c.nom_complet || c.nom).filter(Boolean).join(', ')}). Réassignez-les d'abord.`);
+      return;
+    }
+    // Garde-fou : la table utilisateurs a elle aussi une colonne module_id avec une contrainte
+    // de clé étrangère vers modules(id) (découvert en production le 2026-07-23 via l'erreur
+    // "utilisateurs_module_id_fkey") — un formateur/admin peut donc être rattaché à un module
+    // sans que ce soit visible dans l'état React (fetchUtilisateurs ne charge pas cette colonne).
+    // On interroge la base directement pour ne pas se fier à un état local incomplet.
+    const { data: staffAssigned, error: staffCheckErr } = await supabase
+      .from('utilisateurs')
+      .select('id, nom')
+      .eq('module_id', moduleId);
+    if (staffCheckErr) {
+      toast.error("Erreur lors de la vérification : " + staffCheckErr.message);
+      return;
+    }
+    if (staffAssigned && staffAssigned.length > 0) {
+      toast.error(`Impossible de supprimer ce module : ${staffAssigned.length} utilisateur(s) y sont encore rattaché(s) (${staffAssigned.map(u => u.nom).filter(Boolean).join(', ')}). Réassignez-les d'abord.`);
       return;
     }
     showAppConfirm(
