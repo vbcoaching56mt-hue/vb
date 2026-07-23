@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -81,9 +81,10 @@ const ANCHOR_KEYS = [
 // ==========================================
 // MODALS
 // ==========================================
-const SignatureModal = ({ isOpen, onClose, onSave }) => {
+const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) => {
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [checkedIds, setCheckedIds] = useState(() => new Set());
 
   useEffect(() => {
     if (isOpen && canvasRef.current) {
@@ -92,8 +93,19 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     }
+    if (isOpen) setCheckedIds(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  // Au moins UNE case cochée suffit à débloquer la signature (pas besoin de toutes les cocher).
+  const allCheckboxesChecked = requiredCheckboxes.length === 0 || requiredCheckboxes.some(f => checkedIds.has(fieldKey(f)));
+  const toggleCheckbox = (fieldId) => {
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(fieldId)) next.delete(fieldId); else next.add(fieldId);
+      return next;
+    });
+  };
 
   const getCoordinates = (e) => {
     const canvas = canvasRef.current;
@@ -134,9 +146,9 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
   };
 
   const handleSave = () => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !allCheckboxesChecked) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
-    onSave(dataUrl);
+    onSave(dataUrl, checkedIds);
   };
 
   if (!isOpen) return null;
@@ -146,6 +158,25 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
       <div className="bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full max-w-lg border border-gray-100">
         <h3 className="text-xl font-extrabold text-gray-900 mb-2">Émargement Électronique</h3>
         <p className="text-sm text-gray-500 mb-6">Veuillez signer lisiblement dans le cadre ci-dessous pour valider votre présence ou votre accord.</p>
+        {requiredCheckboxes.length > 0 && (
+          <div className="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <p className="text-sm font-bold text-amber-800 mb-3">Avant de signer, cochez les cases suivantes :</p>
+            {requiredCheckboxes.map((f, i) => (
+              <label key={fieldKey(f) || i} className="flex items-center gap-3 cursor-pointer mb-2 select-none">
+                <input
+                  type="checkbox"
+                  checked={checkedIds.has(fieldKey(f))}
+                  onChange={() => toggleCheckbox(fieldKey(f))}
+                  className="w-4 h-4 accent-violet-600 shrink-0"
+                />
+                <span className="text-sm text-gray-700 font-medium">Case à cocher {i + 1}</span>
+              </label>
+            ))}
+            {!allCheckboxesChecked && (
+              <p className="text-xs text-amber-700 mt-2 italic">Au moins une case doit être cochée pour pouvoir signer.</p>
+            )}
+          </div>
+        )}
         <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none mb-6 relative">
           <canvas
             ref={canvasRef}
@@ -166,7 +197,13 @@ const SignatureModal = ({ isOpen, onClose, onSave }) => {
           <button onClick={clearCanvas} className="px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors w-full sm:w-auto">Effacer</button>
           <div className="flex gap-3 w-full sm:w-auto flex-col sm:flex-row">
             <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors w-full sm:w-auto">Annuler</button>
-            <button onClick={handleSave} className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg w-full sm:w-auto">Valider</button>
+            <button
+              onClick={handleSave}
+              disabled={!allCheckboxesChecked}
+              className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg w-full sm:w-auto disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Valider
+            </button>
           </div>
         </div>
       </div>
@@ -222,6 +259,36 @@ const AddressInput = ({ value, onChange }) => {
       </div>
     </div>
   );
+};
+
+// Découpe une adresse combinée "N° et rue, CP Ville" en parties distinctes.
+// Utilisé pour dériver rue_formateur / code_postal_formateur / ville_formateur
+// à partir du champ unique `adresse_formateur` lors de la résolution des balises documentaires.
+const parseAddressString = (addr) => {
+  if (!addr) return { rue: '', codePostal: '', ville: '' };
+  const m = addr.match(/^(.*?),?\s*(\d{5})\s+(.+)$/);
+  if (m) return { rue: m[1].trim().replace(/,$/, ''), codePostal: m[2], ville: m[3].trim() };
+  return { rue: addr, codePostal: '', ville: '' };
+};
+
+// Identifiant stable d'un champ de balise (signature/case à cocher), utilisé pour savoir QUELLE
+// case précise a été cochée par le signataire. Les champs venus d'une vraie ligne de la table
+// `template_fields` ont un `id` de base de données unique. Mais les champs dupliqués en zéro-RLS
+// dans metadata (module_step_resources / documents .template_fields / .signature_fields) n'ont
+// historiquement PAS de `id` du tout (voir handleUploadVisualTemplate) → tous partagent `undefined`,
+// ce qui fait que cocher UNE case en coche d'autres qui partagent la même clé "undefined".
+// `client_key` est l'identifiant posé par l'éditeur de balises (toujours unique, généré à la pose) ;
+// on le préfère quand il existe, sinon on retombe sur `id` (cas des lignes lues directement en DB).
+// Dernier repli : des DOCUMENTS DÉJÀ GÉNÉRÉS avant l'ajout de client_key ont leur propre copie figée
+// de metadata.signature_fields, sans client_key NI id — la regénérer n'est pas automatique (anti-
+// doublon dans instantiateDocument), donc on dérive une clé à partir de la position exacte du champ
+// (deux cases distinctes sont forcément à des coordonnées différentes) plutôt que de laisser
+// plusieurs cases partager encore la clé "undefined".
+const fieldKey = (f) => {
+  if (!f) return undefined;
+  if (f.client_key !== undefined && f.client_key !== null) return f.client_key;
+  if (f.id !== undefined && f.id !== null) return f.id;
+  return `pos_${f.tag || ''}_${f.page || 1}_${Number(f.x_percent).toFixed(2)}_${Number(f.y_percent).toFixed(2)}`;
 };
 
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
@@ -551,8 +618,11 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  * @param {Object} dataValues — {nomcomplet_client: "...", ...}
  * @returns {Blob} PDF modifié
  */
-const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}) => {
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}) => {
   // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
+  // checkedMap = { [field.id]: true } — état coché des cases à cocher, par identifiant de champ
+  //   (une même balise checkbox_client/checkbox_formateur peut être posée plusieurs fois : on
+  //   distingue donc chaque case par son id, pas par son tag).
   const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer(), { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -565,7 +635,37 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
     const { width: pageW, height: pageH } = page.getSize();
     const cx = (field.x_percent / 100) * pageW;
     const cy = pageH - (field.y_percent / 100) * pageH; // PDF Y=0 en bas
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+      // Coordonnées invalides (x_percent/y_percent manquants ou corrompus) → on ignore ce champ
+      // plutôt que de risquer de faire échouer tout le document pour un seul champ mal formé.
+      console.warn(`[overlayFieldsOnPdf] Champ ${field.tag || field.id} ignoré — coordonnées invalides`, field.x_percent, field.y_percent);
+      continue;
+    }
     const isSignature = field.field_type === 'signature' || (field.tag || '').startsWith('signature_');
+    const isCheckbox = field.field_type === 'checkbox' || (field.tag || '').startsWith('checkbox_');
+
+    if (isCheckbox) {
+      // Case à cocher sans texte : simple carré, coché = rempli + coche blanche, décoché = contour seul.
+      const boxSize = 12;
+      const bx = cx - boxSize / 2;
+      const by = cy - boxSize / 2;
+      const isClient = field.tag === 'checkbox_client';
+      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+      const isChecked = !!checkedMap[fieldKey(field)];
+      try {
+        if (isChecked) {
+          page.drawRectangle({ x: bx, y: by, width: boxSize, height: boxSize, color: bc, borderColor: bc, borderWidth: 1 });
+          // Coche (✓) en blanc par-dessus le carré rempli
+          page.drawLine({ start: { x: bx + boxSize * 0.2, y: by + boxSize * 0.5 }, end: { x: bx + boxSize * 0.42, y: by + boxSize * 0.25 }, thickness: 1.6, color: rgb(1, 1, 1) });
+          page.drawLine({ start: { x: bx + boxSize * 0.42, y: by + boxSize * 0.25 }, end: { x: bx + boxSize * 0.82, y: by + boxSize * 0.78 }, thickness: 1.6, color: rgb(1, 1, 1) });
+        } else {
+          page.drawRectangle({ x: bx, y: by, width: boxSize, height: boxSize, borderColor: bc, borderWidth: 1, opacity: 0.7 });
+        }
+      } catch (e) {
+        console.warn('[overlayFieldsOnPdf] Erreur case à cocher:', e.message);
+      }
+      continue;
+    }
 
     if (isSignature) {
       const sigW = pageW * 0.22;
@@ -588,6 +688,8 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           const aspect = sigImg.width / sigImg.height;
           const drawW = Math.min(sigW, sigImg.width);
           const drawH = drawW / aspect;
+          // Masque tout résidu (cadre placeholder d'un ancien passage) avant de dessiner la vraie signature
+          page.drawRectangle({ x: bx - 2, y: by - 2, width: sigW + 4, height: sigH + 4, color: rgb(1, 1, 1), opacity: 1 });
           page.drawImage(sigImg, { x: bx, y: by + sigH - drawH, width: drawW, height: drawH });
           // Ligne de séparation + label
           page.drawLine({ start: { x: bx, y: by }, end: { x: bx + sigW, y: by }, thickness: 0.5, color: bc, opacity: 0.6 });
@@ -599,11 +701,15 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
         }
       } else {
         // Placeholder : rectangle pointillé
-        page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-        const label = isClient ? 'Signature beneficiaire' : 'Signature formateur';
-        page.drawText(label, {
-          x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
-        });
+        try {
+          page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
+          const label = isClient ? 'Signature beneficiaire' : 'Signature formateur';
+          page.drawText(label, {
+            x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
+          });
+        } catch (e) {
+          console.warn('[overlayFieldsOnPdf] Erreur placeholder signature:', e.message);
+        }
       }
     } else {
       // Balise texte (y compris date_du_jour)
@@ -627,7 +733,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
   return new Blob([pdfBytes], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -643,6 +749,61 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const lastPosRef = useRef(null);
   const [hasSig, setHasSig] = useState(false);
   const [documentChoice, setDocumentChoice] = useState(null); // 'autorise' | 'refuse' | null
+  const [checkedBoxIds, setCheckedBoxIds] = useState(() => new Set());
+  // Au moins UNE case cochée suffit à débloquer la signature (pas besoin de toutes les cocher).
+  const allRequiredChecked = requiredCheckboxes.length === 0 || requiredCheckboxes.some(f => checkedBoxIds.has(fieldKey(f)));
+  const toggleRequiredCheckbox = (fieldId) => {
+    setCheckedBoxIds(prev => {
+      const next = new Set(prev);
+      if (next.has(fieldId)) next.delete(fieldId); else next.add(fieldId);
+      return next;
+    });
+  };
+  // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
+  // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
+  // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
+  // enregistrée — le texte imprimé autour donne le contexte, pas besoin de libellé inventé.
+  const [pageImages, setPageImages] = useState([]);
+  const [pageImagesLoading, setPageImagesLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setPageImages([]);
+    if (!isOpen || mode !== 'sign' || requiredCheckboxes.length === 0 || !blobUrl) return;
+    (async () => {
+      setPageImagesLoading(true);
+      try {
+        const loadPdfJs = () => new Promise((resolve, reject) => {
+          if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+          const s = window.document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; resolve(window.pdfjsLib); };
+          s.onerror = () => reject(new Error('PDF.js indisponible'));
+          window.document.head.appendChild(s);
+        });
+        const pdfjsLib = await loadPdfJs();
+        const resp = await fetch(blobUrl);
+        const arrBuf = await resp.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrBuf }).promise;
+        const pages = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const vp = page.getViewport({ scale: 1.5 });
+          const canvas = window.document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+          pages.push({ dataUrl: canvas.toDataURL() });
+        }
+        if (!cancelled) setPageImages(pages);
+      } catch (e) {
+        console.warn('[DocumentViewerModal] Rendu pages interactif impossible (repli sur la liste) :', e.message);
+        if (!cancelled) setPageImages([]);
+      } finally {
+        if (!cancelled) setPageImagesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, mode, blobUrl, requiredCheckboxes.length]);
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -794,12 +955,15 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
     if (isOpen) {
       loadSignedUrl();
+      setCheckedBoxIds(new Set());
     } else {
       setHasRead(false);
       setAgreed(false);
       setBlobUrl(null);
       setPdfError(null);
       setDocumentChoice(null);
+      setCheckedBoxIds(new Set());
+      setHasSig(false); // Sans ce reset, une signature dessinée sur un document restait "true" pour le document suivant.
     }
 
     return () => { cancelled = true; };
@@ -916,10 +1080,45 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           onScroll={mode === 'sign' ? handleScroll : undefined}
           style={{ minHeight: 0 }}
         >
-          {/* PDF Zone */}
-          <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
-            {renderPdfZone()}
-          </div>
+          {/* PDF Zone — mode interactif (cases directement sur le document) si des cases sont
+              requises ET que le rendu page-par-page a réussi ; sinon le lecteur PDF classique. */}
+          {mode === 'sign' && requiredCheckboxes.length > 0 && pageImages.length > 0 ? (
+            <div className="w-full space-y-3">
+              {pageImages.map((pg, pi) => {
+                const pageChecks = requiredCheckboxes.filter(f => (f.page || 1) === pi + 1);
+                return (
+                  <div key={pi} className="relative w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white">
+                    <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
+                    {pageChecks.map((f, fi) => {
+                      const k = fieldKey(f);
+                      const isChecked = checkedBoxIds.has(k);
+                      return (
+                        <button
+                          key={k || fi}
+                          type="button"
+                          onClick={() => toggleRequiredCheckbox(k)}
+                          title="Cliquez pour cocher / décocher"
+                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', width: 20, height: 20 }}
+                          className={`rounded-sm border-2 shadow-lg transition-all flex items-center justify-center ${isChecked ? 'bg-violet-600 border-violet-700' : 'bg-white/80 border-violet-500 hover:bg-violet-50'}`}
+                        >
+                          {isChecked && <span className="text-white text-[11px] font-black leading-none">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
+              {mode === 'sign' && requiredCheckboxes.length > 0 && pageImagesLoading ? (
+                <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
+                  <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
+                  <p className="text-sm font-medium">Préparation des cases à cocher sur le document…</p>
+                </div>
+              ) : renderPdfZone()}
+            </div>
+          )}
 
           {/* Section signature (mode sign uniquement) */}
           {mode === 'sign' && (
@@ -956,6 +1155,35 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                     </label>
                     {!documentChoice && (
                       <p className="text-xs text-amber-700 mt-2 italic">Ce choix est obligatoire pour débloquer la signature.</p>
+                    )}
+                  </div>
+                )}
+                {requiredCheckboxes.length > 0 && pageImages.length > 0 && (
+                  // Mode interactif actif : les cases se cochent directement sur le document ci-dessus,
+                  // au plus près du texte qu'elles concernent — on affiche juste un état d'avancement.
+                  <div className={`mb-4 p-3 rounded-xl border text-sm font-bold ${allRequiredChecked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-violet-50 border-violet-200 text-violet-800'}`}>
+                    {allRequiredChecked
+                      ? `✅ ${requiredCheckboxes.filter(f => checkedBoxIds.has(fieldKey(f))).length} / ${requiredCheckboxes.length} case(s) cochée(s) sur le document ci-dessus.`
+                      : `☐ 0 / ${requiredCheckboxes.length} case(s) cochée(s) — cochez au moins une case directement sur le document ci-dessus pour débloquer la signature.`}
+                  </div>
+                )}
+                {requiredCheckboxes.length > 0 && pageImages.length === 0 && (
+                  // Repli (rendu page-par-page indisponible) : liste générique, sans contexte visuel.
+                  <div className="mb-4 p-4 bg-violet-50 border border-violet-200 rounded-xl">
+                    <p className="text-sm font-bold text-violet-800 mb-3">Avant de signer, cochez la ou les cases suivantes :</p>
+                    {requiredCheckboxes.map((f, i) => (
+                      <label key={fieldKey(f) || i} className="flex items-center gap-3 cursor-pointer mb-2 last:mb-0 select-none">
+                        <input
+                          type="checkbox"
+                          checked={checkedBoxIds.has(fieldKey(f))}
+                          onChange={() => toggleRequiredCheckbox(fieldKey(f))}
+                          className="w-4 h-4 rounded accent-violet-600 shrink-0"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">Case à cocher {i + 1}</span>
+                      </label>
+                    ))}
+                    {!allRequiredChecked && (
+                      <p className="text-xs text-violet-700 mt-2 italic">Au moins une case doit être cochée pour débloquer la signature.</p>
                     )}
                   </div>
                 )}
@@ -1048,10 +1276,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null);
+                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds);
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !hasSig}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && hasSig) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -1761,7 +1989,14 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
     setIsUploading(true);
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      // Nom de fichier lisible (basé sur le nom réel du fichier) au lieu d'un simple horodatage +
+      // suite aléatoire — c'est ce nom qui apparaît quand le formateur clique sur "Consulter" et
+      // télécharge le fichier, donc un nom générique ne renseignait pas sur le contenu du document.
+      const baseName = file.name.replace(/\.[^/.]+$/, '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'document';
+      const uniqueSuffix = Math.random().toString(36).substring(2, 8);
+      const fileName = `${baseName}-${uniqueSuffix}.${fileExt}`;
       const filePath = `custom-session-items/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
@@ -2310,9 +2545,17 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
       } else {
         const metaRole = authData.user?.user_metadata?.role;
         if (metaRole === 'client') {
-          // La requête clients a été bloquée par RLS mais l'utilisateur est un client :
-          // son clients.id est identique à son UUID Auth
-          handleLogin('client', authData.user.id);
+          // La requête clients (par email, ilike) a été bloquée par RLS mais l'utilisateur est un client :
+          // son clients.id est identique à son UUID Auth. On retente une lecture par id (auth.uid() = id
+          // est en général autorisé par les policies RLS même quand la lecture par email ne l'est pas) afin
+          // de récupérer organisation_id — sans quoi currentOrgId resterait null pour toute la session et
+          // toutes les requêtes scopées par organisation_id ne renverraient plus rien pour ce client.
+          const { data: selfClientData } = await supabase
+            .from('clients')
+            .select('organisation_id')
+            .eq('id', authData.user.id)
+            .maybeSingle();
+          handleLogin('client', authData.user.id, selfClientData?.organisation_id || null);
           setIsLoading(false);
           return;
         } else if (metaRole === 'formateur') {
@@ -2728,6 +2971,10 @@ const ClientDetailView = ({
 
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
+  const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+  const clientPendingCorrections = clientExercises.filter(s =>
+    s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
+  ).length;
 
   const handleResendInvite = async () => {
     const email = client.email || client.email_contact || clientInfo.client_email;
@@ -2851,6 +3098,14 @@ const ClientDetailView = ({
         <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
         <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
+        <button onClick={() => setActiveTab('exercices')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'exercices' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
+          📝 Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
+          {clientPendingCorrections > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
+              {clientPendingCorrections}
+            </span>
+          )}
+        </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
         <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{clientQuestionnaireResources.length > 0 ? ` (${clientQuestionnaireResources.length})` : ''}</button>
       </div>
@@ -3031,6 +3286,81 @@ const ClientDetailView = ({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'exercices' && (
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm animate-fade-in">
+          {clientExercises.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+              <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+              <p className="text-gray-400 text-sm italic">Aucun exercice assigné à ce client pour le moment.</p>
+            </div>
+          ) : (() => {
+            // Priorité d'affichage : rendu et en attente de correction d'abord, puis pas encore rendu, puis déjà traité.
+            const rank = (s) => {
+              if (s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger') return 0;
+              if (!s.reponse_url) return 1;
+              return 2;
+            };
+            const sortedExercises = [...clientExercises].sort((a, b) => rank(a) - rank(b));
+            return (
+              <div className="overflow-hidden rounded-2xl border border-gray-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                    <tr>
+                      <th className="px-4 py-3">Exercice</th>
+                      <th className="px-4 py-3">Séance</th>
+                      <th className="px-4 py-3">Statut</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50 bg-white">
+                    {sortedExercises.map(session => {
+                      const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url;
+                      let badge;
+                      if (!session.reponse_url) {
+                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
+                      } else if (session.correction_statut === 'Validé') {
+                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
+                      } else if (session.correction_statut === 'À corriger') {
+                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
+                      } else {
+                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
+                      }
+                      return (
+                        <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3">
+                            <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.titre || session.nom}</span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
+                          <td className="px-4 py-3">{badge}</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex justify-end items-center gap-2">
+                              <button
+                                onClick={() => setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' })}
+                                className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
+                              >
+                                Consulter
+                              </button>
+                              {session.reponse_url && (
+                                <button
+                                  onClick={() => setCorrectionModalSession(session)}
+                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                >
+                                  {session.correction_statut === 'Validé' ? 'Validé' : session.correction_statut === 'À corriger' ? 'Modifier' : 'Corriger'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -3427,6 +3757,7 @@ const ClientDetailView = ({
 
                                     <div className="flex items-center gap-1">
                                       <button
+                                        onPointerDown={e => e.stopPropagation()}
                                         onClick={() => { setDocSettingsTarget(s); setIsDocSettingsOpen(true); }}
                                         className="p-2.5 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                                         title="Paramètres du document"
@@ -3434,6 +3765,7 @@ const ClientDetailView = ({
                                         <Settings size={17} />
                                       </button>
                                       <button
+                                        onPointerDown={e => e.stopPropagation()}
                                         onClick={() => {
                                           const docUrl = s.file_url || s.ressource_url;
                                           if (docUrl) {
@@ -3450,6 +3782,7 @@ const ClientDetailView = ({
                                       {(s.type_activite === 'Exercice' || s.type_activite === 'exercice') && (
                                         s.reponse_url ? (
                                           <button
+                                            onPointerDown={e => e.stopPropagation()}
                                             onClick={() => setCorrectionModalSession(s)}
                                             className={`relative p-2.5 rounded-xl transition-all ${s.correction_statut === 'Validé' ? 'text-green-600 hover:bg-green-50' : s.correction_statut === 'À corriger' ? 'text-amber-500 hover:bg-amber-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
                                             title="Corriger le rendu"
@@ -3464,6 +3797,7 @@ const ClientDetailView = ({
                                         )
                                       )}
                                       <button
+                                        onPointerDown={e => e.stopPropagation()}
                                         onClick={() => handleDeleteSession(s.id)}
                                         className="p-2.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                                         title="Supprimer"
@@ -3733,7 +4067,7 @@ const AdminClientsView = ({
 const FormateurDetailView = ({
   formateur, onBack, supabase, fetchUtilisateurs, modules, clients,
   handleDeleteFormateur, documents, documentTemplates, handleGenerateDocx,
-  setViewingDocId, fetchDocuments
+  setViewingDocId, fetchDocuments, isSelfAdmin = false
 }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
@@ -3881,8 +4215,14 @@ const FormateurDetailView = ({
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
-                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
-                    value={legalInfo.email} onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })} placeholder="Email pro" />
+                  <input
+                    className={`w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all ${isSelfAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    value={legalInfo.email}
+                    disabled={isSelfAdmin}
+                    title={isSelfAdmin ? "Cet email est lié à votre connexion — modifiez-le depuis vos paramètres de compte." : undefined}
+                    onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })}
+                    placeholder="Email pro"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
@@ -3895,30 +4235,38 @@ const FormateurDetailView = ({
         </div>
 
         <div className="mt-12 flex justify-end items-center gap-4">
-          <button
-            onClick={() => setIsConfirmDeleteOpen(true)}
-            className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
-          >
-            <Trash2 size={20} />
-            Supprimer le formateur
-          </button>
+          {isSelfAdmin ? (
+            <p className="text-xs text-gray-400 italic max-w-xs text-right">
+              Ceci est votre propre compte administrateur — il ne peut pas être supprimé depuis cet écran.
+            </p>
+          ) : (
+            <button
+              onClick={() => setIsConfirmDeleteOpen(true)}
+              className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
+            >
+              <Trash2 size={20} />
+              Supprimer le formateur
+            </button>
+          )}
           <button onClick={handleSave} disabled={isSaving} className="bg-violet-700 hover:bg-violet-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
             <Save size={20} />
             {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
           </button>
         </div>
 
-        <DeleteConfirmationModal
-          isOpen={isConfirmDeleteOpen}
-          onClose={() => setIsConfirmDeleteOpen(false)}
-          onConfirm={() => {
-            setIsConfirmDeleteOpen(false);
-            handleDeleteFormateur(formateur.id);
-            onBack();
-          }}
-          itemName={legalInfo.nom || "ce formateur"}
-          title="Supprimer ce formateur ?"
-        />
+        {!isSelfAdmin && (
+          <DeleteConfirmationModal
+            isOpen={isConfirmDeleteOpen}
+            onClose={() => setIsConfirmDeleteOpen(false)}
+            onConfirm={() => {
+              setIsConfirmDeleteOpen(false);
+              handleDeleteFormateur(formateur.id);
+              onBack();
+            }}
+            itemName={legalInfo.nom || "ce formateur"}
+            title="Supprimer ce formateur ?"
+          />
+        )}
         <div className="mt-12 pt-12 border-t border-gray-100">
           <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
             <Archive className="text-violet-600" /> Documents Administratifs (Contrats / NDA...)
@@ -4078,7 +4426,7 @@ const AdminFormateursView = ({
   supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab,
   modules, sessions, handleDownloadResource, handleDeleteFormateur,
   documentTemplates, handleGenerateDocx, setViewingDocId,
-  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName, adminSelfId
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
@@ -4100,6 +4448,7 @@ const AdminFormateursView = ({
           documentTemplates={documentTemplates}
           handleGenerateDocx={handleGenerateDocx}
           setViewingDocId={setViewingDocId}
+          isSelfAdmin={adminSelfId != null && String(formateur.id) === String(adminSelfId)}
         />
       );
     }
@@ -4217,6 +4566,9 @@ const AdminFormateursView = ({
                       <div className="flex items-center justify-between pr-4">
                         <div>
                           <span className="font-bold text-gray-900 text-lg hover:text-violet-700 transition-colors">{f.nom}</span>
+                          {adminSelfId != null && String(f.id) === String(adminSelfId) && (
+                            <span className="ml-2 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 align-middle">Vous — Admin</span>
+                          )}
                           <span className="text-sm text-gray-500 block">{f.email}</span>
                         </div>
                         <span className="text-violet-400 bg-violet-50 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -4327,11 +4679,8 @@ const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
 };
 
 const IngenierieView = ({
-  modules, moduleDocuments, handleAddModule, handleLinkDocument,
+  modules, handleAddModule,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
-  newModDocName, setNewModDocName, newModDocType, setNewModDocType,
-  newModDocFile, setNewModDocFile,
-  addingToModuleId, setAddingToModuleId,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
   handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
   modelingModuleId, setModelingModuleId, moduleSessionTemplates, moduleStepResources, fetchModules,
@@ -4399,7 +4748,6 @@ const IngenierieView = ({
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {modules.map(mod => {
-            const docs = moduleDocuments.filter(md => md.module_id === mod.id);
             const templates = moduleSessionTemplates.filter(t => String(t.module_id) === String(mod.id));
 
             return (
@@ -4407,36 +4755,10 @@ const IngenierieView = ({
                 <h3 className="font-bold text-gray-900 text-lg pr-24">{mod.nom}</h3>
                 <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
 
-                <h4 className="text-sm font-bold text-gray-600 mt-6 mb-3">Documents types ({docs.length})</h4>
-                <ul className="space-y-2 mb-4">
-                  {docs.map(d => (
-                    <li key={d.id} className="text-xs flex items-center bg-white p-2.5 rounded-lg border border-gray-100 shadow-sm">
-                      <strong className="w-24 shrink-0 text-gray-400 font-bold">{d.type_document}</strong>
-                      <span className="text-gray-900 font-medium truncate">{d.nom}</span>
-                    </li>
-                  ))}
-                  {docs.length === 0 && <li className="text-xs text-gray-400 italic">Aucun document type lié.</li>}
-                </ul>
-
-                {addingToModuleId === mod.id ? (
-                  <form onSubmit={(e) => handleLinkDocument(e, mod)} className="bg-white p-4 rounded-xl shadow-sm border border-purple-200 flex flex-col gap-3 animate-fade-in">
-                    <input required type="text" placeholder="Nom du document (Ex: Contrat)" value={newModDocName} onChange={e => setNewModDocName(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500" />
-                    <input type="file" onChange={(e) => setNewModDocFile(e.target.files[0] || null)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500 bg-gray-50 text-gray-700" accept=".pdf,image/*" />
-                    <div className="flex gap-2">
-                      <select value={newModDocType} onChange={e => setNewModDocType(e.target.value)} className="flex-1 text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500">
-                        <option value="Autre">Autre</option><option value="Contrat">Contrat</option><option value="Évaluation">Évaluation</option>
-                      </select>
-                      <button type="submit" className="bg-gray-900 text-white px-4 rounded-lg text-sm shrink-0 font-medium hover:bg-gray-800">Lier</button>
-                      <button type="button" onClick={() => setAddingToModuleId(null)} className="text-gray-400 hover:text-gray-600 px-2 shrink-0">✕</button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
-                    <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
-                    <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
-                  </div>
-                )}
+                <div className="flex gap-2 flex-wrap mt-6">
+                  <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
+                  <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
+                </div>
 
                 {/* Interface de Modélisation du Parcours */}
                 {modelingModuleId === mod.id && (
@@ -4725,8 +5047,6 @@ const FormateurView = ({
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
-  const [bilanDraft, setBilanDraft] = React.useState({});
-  const [savingBilan, setSavingBilan] = React.useState(false);
   const [uploadingClientId, setUploadingClientId] = React.useState(null);
   const [clientDocFile, setClientDocFile] = React.useState(null);
   const [clientDocName, setClientDocName] = React.useState('');
@@ -4745,7 +5065,6 @@ const FormateurView = ({
 
   React.useEffect(() => {
     setFormateurClientTab('seances');
-    setBilanDraft({});
   }, [expandedClientId]);
 
   const onTimeChange = (sessionId, field, value) => {
@@ -4958,6 +5277,11 @@ const FormateurView = ({
       <div className="grid grid-cols-1 gap-6">
         {assignedClients.length > 0 ? assignedClients.map(client => {
           const clientSessions = sessions.filter(s => s.client_id === client.id);
+          const clientExercisesCount = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
+          const clientPendingCorrections = clientSessions.filter(s =>
+            (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
+            s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
+          ).length;
           const isExpanded = expandedClientId === client.id;
           const assignedModule = modules?.find(m => String(m.id) === String(client.module_id));
           const progress = Math.min(100, Math.round(((client.seances_effectuees || 0) / (client.seances_totales || 10)) * 100));
@@ -4999,7 +5323,14 @@ const FormateurView = ({
                     <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
                     <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
                     <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
-                    <button onClick={() => setFormateurClientTab('bilan')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'bilan' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Bilan</button>
+                    <button onClick={() => setFormateurClientTab('exercices')} className={`relative px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'exercices' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                      📝 Exercices
+                      {clientPendingCorrections > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
+                          {clientPendingCorrections}
+                        </span>
+                      )}
+                    </button>
                   </div>
 
                   {formateurClientTab === 'administratif' && (
@@ -5443,6 +5774,7 @@ const FormateurView = ({
                                               {(userRole === 'admin' || userRole === 'formateur') && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
                                                 session.reponse_url ? (
                                                   <button
+                                                    onPointerDown={e => e.stopPropagation()}
                                                     onClick={() => setCorrectionModalSession(session)}
                                                     className={`relative text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                                   >
@@ -5467,6 +5799,7 @@ const FormateurView = ({
                                                 )
                                               )}
                                               <button
+                                                onPointerDown={e => e.stopPropagation()}
                                                 onClick={() => handleDeleteSession(session)}
                                                 className="text-gray-300 hover:text-red-500 transition-colors p-1"
                                               >
@@ -5513,90 +5846,83 @@ const FormateurView = ({
                   </>
                 )}
 
-                  {formateurClientTab === 'bilan' && (() => {
-                    const existingSkill = (clientSkills || []).find(s => s.client_id === client.id) || {};
-                    const getValue = (key) => bilanDraft[key] !== undefined ? bilanDraft[key] : (parseFloat(existingSkill[key]) || 0);
-                    const getText = (key) => bilanDraft[key] !== undefined ? bilanDraft[key] : (existingSkill[key] || '');
+                  {formateurClientTab === 'exercices' && (() => {
+                    const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+                    if (clientExercises.length === 0) return (
+                      <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                        <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+                        <p className="text-gray-400 text-sm italic">Aucun exercice assigné à ce client pour le moment.</p>
+                      </div>
+                    );
 
-                    const handleSaveBilan = async () => {
-                      setSavingBilan(true);
-                      const payload = {
-                        client_id: client.id,
-                        updated_at: new Date().toISOString(),
-                      };
-                      ANCHOR_KEYS.forEach(({ key }) => { payload[key] = getValue(key); });
-                      payload.top_skill_1 = getText('top_skill_1');
-                      payload.top_skill_2 = getText('top_skill_2');
-                      payload.top_skill_3 = getText('top_skill_3');
-                      payload.target_job = getText('target_job');
-                      const { error } = await supabase.from('client_skills').upsert(payload, { onConflict: 'client_id' });
-                      if (!error) {
-                        toast.success('Bilan sauvegardé !');
-                        await fetchClientSkills();
-                        setBilanDraft({});
-                      } else {
-                        toast.error('Erreur sauvegarde : ' + error.message);
-                      }
-                      setSavingBilan(false);
+                    // Priorité d'affichage : rendu et en attente de correction d'abord, puis pas encore rendu, puis déjà traité.
+                    const rank = (s) => {
+                      if (s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger') return 0;
+                      if (!s.reponse_url) return 1;
+                      return 2;
                     };
+                    const sortedExercises = [...clientExercises].sort((a, b) => rank(a) - rank(b));
 
                     return (
-                      <div className="space-y-6">
+                      <div className="space-y-4">
                         <div className="flex items-center gap-2">
-                          <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
-                          <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Ancres de Carrière</h4>
+                          <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
+                          <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Tous les exercices — rendus et en attente</h4>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {ANCHOR_KEYS.map(({ key, label }) => (
-                            <div key={key} className="bg-gray-50 rounded-2xl p-4">
-                              <div className="flex justify-between items-center mb-2">
-                                <label className="font-bold text-gray-700 text-sm">{label}</label>
-                                <span className="text-violet-600 font-black text-lg w-8 text-right">{getValue(key)}</span>
-                              </div>
-                              <input
-                                type="range" min="0" max="10" step="0.5"
-                                value={getValue(key)}
-                                onChange={e => setBilanDraft(prev => ({ ...prev, [key]: parseFloat(e.target.value) }))}
-                                className="w-full accent-violet-600"
-                              />
-                            </div>
-                          ))}
+                        <div className="overflow-hidden rounded-2xl border border-gray-100">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                              <tr>
+                                <th className="px-4 py-3">Exercice</th>
+                                <th className="px-4 py-3">Séance</th>
+                                <th className="px-4 py-3">Statut</th>
+                                <th className="px-4 py-3 text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50 bg-white">
+                              {sortedExercises.map(session => {
+                                const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url;
+                                let badge;
+                                if (!session.reponse_url) {
+                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
+                                } else if (session.correction_statut === 'Validé') {
+                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
+                                } else if (session.correction_statut === 'À corriger') {
+                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
+                                } else {
+                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
+                                }
+                                return (
+                                  <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-3">
+                                      <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom}</span>
+                                    </td>
+                                    <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
+                                    <td className="px-4 py-3">{badge}</td>
+                                    <td className="px-4 py-3 text-right">
+                                      <div className="flex justify-end items-center gap-2">
+                                        <button
+                                          onClick={() => setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' })}
+                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
+                                        >
+                                          Consulter
+                                        </button>
+                                        {session.reponse_url && (
+                                          <button
+                                            onClick={() => setCorrectionModalSession(session)}
+                                            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                          >
+                                            {session.correction_statut === 'Validé' ? 'Validé' : session.correction_statut === 'À corriger' ? 'Modifier' : 'Corriger'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
-                        <div className="flex items-center gap-2 pt-2">
-                          <span className="w-2 h-5 bg-indigo-500 rounded-full"></span>
-                          <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Points Forts</h4>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {['top_skill_1', 'top_skill_2', 'top_skill_3'].map((key, i) => (
-                            <div key={key}>
-                              <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Point fort {i + 1}</label>
-                              <input
-                                type="text"
-                                value={getText(key)}
-                                onChange={e => setBilanDraft(prev => ({ ...prev, [key]: e.target.value }))}
-                                placeholder="Ex: Rigueur"
-                                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 bg-white"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                        <div>
-                          <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Métier cible</label>
-                          <input
-                            type="text"
-                            value={getText('target_job')}
-                            onChange={e => setBilanDraft(prev => ({ ...prev, target_job: e.target.value }))}
-                            placeholder="Ex: Développeur Full-Stack"
-                            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 bg-white"
-                          />
-                        </div>
-                        <button
-                          onClick={handleSaveBilan}
-                          disabled={savingBilan}
-                          className="flex items-center gap-2 bg-violet-700 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-violet-100 disabled:opacity-50"
-                        >
-                          {savingBilan ? <><Clock size={16} className="animate-spin" /> Sauvegarde...</> : <><Save size={16} /> Sauvegarder le bilan</>}
-                        </button>
                       </div>
                     );
                   })()}
@@ -5643,8 +5969,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const pdfBlobRef = React.useRef(null); // stocke le blob PDF pour prévisualisation
 
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
-    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
+    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
     'Divers': ['date_du_jour'],
   };
@@ -5656,6 +5982,14 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const sigTagColor = (tag) => tag === 'signature_client'
     ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
     : { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' };
+
+  // ── Cases à cocher (sans texte — le texte est déjà imprimé dans le document) ──
+  // Peuvent être posées plusieurs fois, comme n'importe quelle balise, pour ajouter plusieurs cases distinctes.
+  const CHECKBOX_TAGS = [
+    { tag: 'checkbox_client', label: 'Case à cocher client', color: 'blue' },
+    { tag: 'checkbox_formateur', label: 'Case à cocher formateur', color: 'orange' },
+  ];
+  const isCheckboxTag = (tag) => tag === 'checkbox_client' || tag === 'checkbox_formateur';
 
   // Pré-chargement quand on édite un template existant (initialData fourni)
   React.useEffect(() => {
@@ -5805,18 +6139,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       // Repositionner un champ déjà posé
       setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct } : f));
     } else if (clickPlaceTag.tag) {
-      const alreadyPlaced = fields.find(f => f.tag === clickPlaceTag.tag);
-      if (alreadyPlaced) {
-        // Déjà placé → déplacer
-        setFields(prev => prev.map(f => f.tag === clickPlaceTag.tag && f.page === currentPage + 1 ? { ...f, xPct, yPct } : f));
-      } else {
-        setFields(prev => [...prev, {
-          id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          tag: clickPlaceTag.tag,
-          page: currentPage + 1,
-          xPct, yPct,
-        }]);
-      }
+      // Chaque clic ajoute une nouvelle occurrence de la balise — une même balise peut être
+      // posée plusieurs fois (ex: signature sur plusieurs pages, adresse rappelée 2x, etc.).
+      // Pour repositionner une occurrence déjà posée, on clique directement dessus (mode fieldId ci-dessus).
+      setFields(prev => [...prev, {
+        id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        tag: clickPlaceTag.tag,
+        page: currentPage + 1,
+        xPct, yPct,
+      }]);
     }
     setClickPlaceTag(null);
   };
@@ -5840,8 +6171,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setIsSaving(true);
     // Classification automatique selon les balises posées
     const SIGNATURE_TAGS = ['signature_client', 'signature_formateur'];
-    const hasDataFields = fields.some(f => !SIGNATURE_TAGS.includes(f.tag));
-    const hasSignature = fields.some(f => SIGNATURE_TAGS.includes(f.tag));
+    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'checkbox_client', 'checkbox_formateur'];
+    const hasDataFields = fields.some(f => !INTERACTIVE_TAGS.includes(f.tag));
+    const hasSignature = fields.some(f => INTERACTIVE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
     try {
       await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null);
@@ -5865,11 +6197,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         nomcomplet_client: 'Jean DUPONT', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
         client_email: 'jean@exemple.fr', client_phone: '06 12 34 56 78',
         rue_client: '12 rue de la Paix', code_postal_client: '56000',
+        adresse_client: '12 rue de la Paix, 56000 Vannes',
         adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
         formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
         date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
         nom_formateur: 'Marie LEROY', email_formateur: 'marie@formateur.fr', tel_formateur: '06 00 00 00 00',
-        adresse_formateur: '5 av. Victor Hugo', formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
+        adresse_formateur: '5 av. Victor Hugo, 75008 Paris', rue_formateur: '5 av. Victor Hugo', code_postal_formateur: '75008', ville_formateur: 'Paris',
+        formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
         compagnie_assurance: 'AXA', numero_assurance_rcp: 'RCP-2026-001',
         org_nom: 'VB Coaching', org_siret: '399 146 067 00034', org_nda: '53560969356',
         org_adresse: '2 rue du Général Baron Fabre', org_code_postal: '56000', org_ville: 'Vannes',
@@ -5878,7 +6212,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       const tplFields = fields.map(f => ({
         template_id: 0, tag: f.tag, page: f.page || 1,
         x_percent: f.xPct, y_percent: f.yPct,
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
         font_size: 11,
       }));
       const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {});
@@ -6045,26 +6379,37 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     const tag = clickPlaceTag.tag || fields.find(f => f.id === clickPlaceTag.fieldId)?.tag;
                     if (!tag) return null;
                     const isSig = isSignatureTag(tag);
+                    const isChk = isCheckboxTag(tag);
+                    // Ancrage réel dans le PDF : signature/case = centré sur le point ; balise texte = le point
+                    // est le coin bas-gauche de la ligne de base (comportement de drawText dans pdf-lib).
+                    // On sépare donc la croix (toujours centrée sur le point exact) de l'étiquette
+                    // (ancrée différemment selon le type) pour que l'aperçu corresponde au rendu réel.
+                    const labelTransform = (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
                     return (
                       <div
                         key="ghost"
-                        style={{ position: 'absolute', left: `${hoverPos.xPct}%`, top: `${hoverPos.yPct}%`, transform: 'translate(-50%, -50%)', zIndex: 30, opacity: 0.6, pointerEvents: 'none' }}
+                        style={{ position: 'absolute', left: `${hoverPos.xPct}%`, top: `${hoverPos.yPct}%`, zIndex: 30, opacity: 0.6, pointerEvents: 'none' }}
                       >
-                        {isSig ? (
-                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'signature_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
-                            <span className="text-base">✍️</span>
-                            <p className={`text-[10px] font-black ${tag === 'signature_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}</p>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5 bg-violet-700 text-white text-[11px] font-bold px-2 py-1 rounded-md shadow-xl whitespace-nowrap ring-2 ring-white">
+                        <div style={{ position: 'absolute', top: 0, left: 0, transform: labelTransform }}>
+                          {isSig ? (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'signature_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
+                              <span className="text-base">✍️</span>
+                              <p className={`text-[10px] font-black ${tag === 'signature_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}</p>
+                            </div>
+                          ) : isChk ? (
+                            // Carré compact — même taille que le rendu final (~12pt) pour un cadrage précis
+                            <div
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
+                              style={{ width: 16, height: 16 }}
+                            />
+                          ) : (
+                            <div className="bg-violet-700 text-white text-[11px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-xl ring-2 ring-white">
                               <span className="font-mono">{tag === 'date_du_jour' ? '📅 date_du_jour' : `{${tag}}`}</span>
                             </div>
-                            <div className="border-t-2 border-dashed border-violet-500 w-full" style={{ minWidth: 80 }} />
-                          </div>
-                        )}
-                        {/* Croix de centrage */}
-                        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 10, height: 10, pointerEvents: 'none' }}>
+                          )}
+                        </div>
+                        {/* Croix de centrage — marque le point exact (xPct, yPct) tel qu'enregistré */}
+                        <div style={{ position: 'absolute', top: 0, left: 0, transform: 'translate(-50%,-50%)', width: 10, height: 10, pointerEvents: 'none' }}>
                           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1.5, background: '#7C3AED', transform: 'translateY(-50%)' }} />
                           <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1.5, background: '#7C3AED', transform: 'translateX(-50%)' }} />
                         </div>
@@ -6075,6 +6420,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   {/* Balises posées sur cette page */}
                   {fieldsOnPage.map(field => {
                     const isSig = isSignatureTag(field.tag);
+                    const isChk = isCheckboxTag(field.tag);
                     const isBeingMoved = draggingFieldId === field.id;
                     const isSelectedForMove = clickPlaceTag?.fieldId === field.id;
                     return (
@@ -6105,8 +6451,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // Centre de la balise = point de référence (curseur au centre)
-                          transform: 'translate(-50%, -50%)',
+                          // Signature/case = centrées sur le point ; balise texte = le point est le coin
+                          // bas-gauche de la ligne de base du texte (comportement réel de drawText/pdf-lib).
+                          transform: (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)',
                           zIndex: 10,
                           cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
@@ -6114,7 +6461,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           outline: isSelectedForMove ? '2px solid #7C3AED' : 'none',
                           borderRadius: 4,
                         }}
-                        title="Glissez pour repositionner — le bas de la balise indique où le texte apparaîtra"
+                        title={(isSig || isChk) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
                       >
                         {isSig ? (
                           <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
@@ -6123,7 +6470,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
                                 {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
                               </p>
-                              <p className="text-[9px] text-gray-400">Bas = position dans le PDF</p>
+                              <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
                             </div>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
@@ -6132,19 +6479,32 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <X size={8} />
                             </button>
                           </div>
+                        ) : isChk ? (
+                          // Carré compact — même taille que le rendu final (~12pt) pour un cadrage précis.
+                          // Le bouton de suppression n'apparaît qu'au survol pour ne pas gêner l'alignement.
+                          <div className="group/chk relative select-none" style={{ width: 16, height: 16 }}>
+                            <div
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${field.tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
+                              style={{ width: 16, height: 16 }}
+                            />
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
+                            >
+                              <X size={8} />
+                            </button>
+                          </div>
                         ) : (
-                          <div className="group flex flex-col select-none">
-                            <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[11px] font-bold px-2 py-1 rounded-t-md shadow-lg whitespace-nowrap ring-2 ring-white ring-b-0">
+                          <div className="group relative inline-flex select-none">
+                            <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
                               <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
-                              <button
-                                onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                                className="w-3.5 h-3.5 rounded-full bg-white/20 hover:bg-red-500 flex items-center justify-center transition-colors shrink-0"
-                              >
-                                <X size={8} />
-                              </button>
                             </div>
-                            {/* Ligne pointillée = ligne de base du texte dans le PDF */}
-                            <div className="border-t-2 border-dashed border-violet-400/70 w-full" style={{ minWidth: 80 }} />
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="absolute -top-2 -right-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
+                            >
+                              <X size={8} />
+                            </button>
                           </div>
                         )}
                       </div>
@@ -6171,15 +6531,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     <div className="absolute inset-0 pointer-events-none bg-gray-900/5 flex items-end justify-center pb-4">
                       <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
                         draggingFieldId ? 'bg-gray-700/90' :
-                        dragTag === 'signature_client' ? 'bg-blue-600/90' :
-                        dragTag === 'signature_formateur' ? 'bg-orange-500/90' :
+                        dragTag === 'signature_client' || dragTag === 'checkbox_client' ? 'bg-blue-600/90' :
+                        dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' ? 'bg-orange-500/90' :
                         'bg-violet-700/90'
                       }`}>
                         {draggingFieldId
                           ? '↕ Déposez pour repositionner'
                           : isSignatureTag(dragTag)
                             ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
-                            : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
+                            : isCheckboxTag(dragTag)
+                              ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
+                              : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
                         }
                       </div>
                     </div>
@@ -6228,6 +6590,42 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <div className="flex-1 min-w-0">
                               <p className="text-[11px] font-bold truncate">{label}</p>
                               <p className="text-[9px] opacity-60">Zone de signature</p>
+                            </div>
+                            {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Cases à cocher (sans texte) ── */}
+                  <div>
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Cases à cocher —</p>
+                    <div className="flex flex-col gap-1.5">
+                      {CHECKBOX_TAGS.map(({ tag, label, color }) => {
+                        const isPlaced = placedTags.has(tag);
+                        const isDraggingThis = dragTag === tag;
+                        const isClickSelected = clickPlaceTag?.tag === tag;
+                        const isBlue = color === 'blue';
+                        return (
+                          <div
+                            key={tag}
+                            draggable
+                            onDragStart={e => { setDragTag(tag); setClickPlaceTag(null); e.dataTransfer.effectAllowed = 'copy'; }}
+                            onDragEnd={() => setDragTag(null)}
+                            onClick={() => setClickPlaceTag(isClickSelected ? null : { tag })}
+                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 select-none cursor-pointer transition-all ${
+                              isClickSelected ? 'bg-violet-600 text-white border-violet-600 scale-95 shadow-inner' :
+                              isDraggingThis ? 'opacity-40 scale-95' :
+                              isBlue
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-400'
+                                : 'bg-orange-50 border-orange-200 text-orange-700 hover:border-orange-400'
+                            }`}
+                          >
+                            <span className="text-base shrink-0">☑️</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold truncate">{label}</p>
+                              <p className="text-[9px] opacity-60">Case à cocher · peut être posée plusieurs fois</p>
                             </div>
                             {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
                           </div>
@@ -7707,11 +8105,24 @@ const DocumentsView = ({
                         <div className="relative inline-block w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                           <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
                           {pageFields.map((f, fi) => {
-                            const isSignature = f.field_type === 'signature';
+                            const isSignature = f.field_type === 'signature' || (f.tag || '').startsWith('signature_');
+                            const isCheckbox = f.field_type === 'checkbox' || (f.tag || '').startsWith('checkbox_');
+                            // Signature/case = centrées sur le point ; balise texte = coin bas-gauche
+                            // de la ligne de base (comportement réel de drawText/pdf-lib).
+                            const transform = (isSignature || isCheckbox) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
+                            if (isCheckbox) {
+                              return (
+                                <div
+                                  key={fi}
+                                  style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform, width: 16, height: 16 }}
+                                  className={`rounded-sm shadow-lg border-2 pointer-events-none ${f.tag === 'checkbox_client' ? 'border-blue-500 bg-blue-500/20' : 'border-orange-500 bg-orange-500/20'}`}
+                                />
+                              );
+                            }
                             return (
                               <div
                                 key={fi}
-                                style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)' }}
+                                style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform }}
                                 className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black shadow-lg border pointer-events-none ${isSignature ? 'bg-blue-500 text-white border-blue-400' : 'bg-violet-600 text-white border-violet-500'}`}
                               >
                                 {isSignature ? `✍️ ${f.tag}` : `{${f.tag}}`}
@@ -7754,6 +8165,14 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
       const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'clients' });
+      // Exercices rendus par un client, pas encore corrigés — visibilité auparavant nulle en dehors
+      // d'aller ouvrir chaque client une par une pour vérifier.
+      const pendingCorrections = sessions.filter(s =>
+        myClientIds.includes(s.client_id) &&
+        (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
+        s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
+      );
+      if (pendingCorrections.length > 0) notifs.push({ type: 'warning', message: `${pendingCorrections.length} exercice${pendingCorrections.length > 1 ? 's' : ''} rendu${pendingCorrections.length > 1 ? 's' : ''} à corriger`, action: 'clients' });
       const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
       if (todaySessions.length > 0) notifs.push({ type: 'info', message: `${todaySessions.length} séance${todaySessions.length > 1 ? 's' : ''} aujourd'hui`, action: 'calendrier' });
     } else if (userRole === 'client') {
@@ -8020,7 +8439,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
 };
 
 // ─── Accueil Formateur ─────────────────────────────────────────────────────────
-const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab }) => {
+const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab, setSigningDocId, handleSaveCorrection }) => {
   const formateur = formateurs.find(f => f.id === currentUserId);
   const myClients = clients.filter(c => c.formateur_id === currentUserId);
   const myClientIds = myClients.map(c => c.id);
@@ -8029,6 +8448,14 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
   const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
+  // Exercices rendus par un client mais pas encore corrigés — auparavant on ne le voyait qu'en
+  // ouvrant chaque client une par une dans "Mes Clients". On le remonte ici, bien visible.
+  const pendingCorrections = sessions.filter(s =>
+    myClientIds.includes(s.client_id) &&
+    (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
+    s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
+  );
+  const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
 
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
@@ -8037,7 +8464,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
         <p className="text-gray-400 text-sm mt-1">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm text-center">
           <p className="text-3xl font-black text-gray-900">{myClients.length}</p>
           <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Mes clients</p>
@@ -8049,6 +8476,10 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
         <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingDocs.length > 0 ? 'border-amber-100' : 'border-gray-100'}`}>
           <p className={`text-3xl font-black ${pendingDocs.length > 0 ? 'text-amber-500' : 'text-gray-900'}`}>{pendingDocs.length}</p>
           <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">À signer</p>
+        </div>
+        <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingCorrections.length > 0 ? 'border-emerald-100' : 'border-gray-100'}`}>
+          <p className={`text-3xl font-black ${pendingCorrections.length > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>{pendingCorrections.length}</p>
+          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Exercices à corriger</p>
         </div>
       </div>
 
@@ -8103,19 +8534,59 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
               : pendingDocs.slice(0, 5).map(doc => {
                   const client = clients.find(c => c.id === doc.user_id);
                   return (
-                    <div key={doc.id} className="px-5 py-3.5 flex items-center justify-between">
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => setSigningDocId && setSigningDocId(doc.id)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-amber-50/60 transition-colors"
+                    >
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-gray-900 truncate">{doc.nom}</p>
                         {client && <p className="text-xs text-gray-400">{client.nom}</p>}
                       </div>
                       <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À signer</span>
-                    </div>
+                    </button>
+                  );
+                })
+            }
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden lg:col-span-2">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h2 className="font-bold text-gray-900 text-sm">Exercices à corriger</h2>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {pendingCorrections.length === 0
+              ? <div className="py-8 text-center text-gray-400 text-sm">Aucun exercice en attente de correction ✓</div>
+              : pendingCorrections.slice(0, 5).map(session => {
+                  const client = myClients.find(c => c.id === session.client_id);
+                  return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => setCorrectionModalSession(session)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-emerald-50/60 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{session.ressource_titre || session.nom}</p>
+                        {client && <p className="text-xs text-gray-400">{client.nom}</p>}
+                      </div>
+                      <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À corriger</span>
+                    </button>
                   );
                 })
             }
           </div>
         </div>
       </div>
+
+      <CorrectionModal
+        isOpen={!!correctionModalSession}
+        onClose={() => setCorrectionModalSession(null)}
+        session={correctionModalSession}
+        onSave={handleSaveCorrection}
+      />
     </div>
   );
 };
@@ -8215,6 +8686,112 @@ const SessionsView = ({
     return `${h}h${m > 0 ? ` ${m}min` : ''}`;
   };
 
+  // Boutons d'action (Consulter / Signer / Exercice) — partagés entre la vue tableau (desktop) et la vue cartes (mobile).
+  const renderActions = (session, group) => {
+    const today = new Date().toISOString().split('T')[0];
+    const sessionDate = session.date || group.date;
+    const isDateLocked = sessionDate && today < sessionDate;
+    const metadata = session.metadata || {};
+
+    const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
+
+    if (isSignatureCondition) {
+      const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+      const docUrl = session.file_url || session.ressource_url;
+      return (
+        <div className="flex flex-wrap gap-2 items-center justify-end w-full">
+          {docUrl && (
+            <button
+              onClick={() => {
+                const fileUrl = signedUrl || docUrl;
+                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+              }}
+              className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+            >
+              Consulter
+            </button>
+          )}
+          <button
+            disabled={session.statut_client === 'Signé' || isDateLocked}
+            onClick={() => {
+              if (session.statut_client === 'Signé') return;
+              if (session.type_activite === 'signature') {
+                signSession && signSession(session);
+              } else {
+                const fileUrl = docUrl || null;
+                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+              }
+            }}
+            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+              session.statut_client === 'Signé'
+                ? 'bg-green-50 text-green-600 border-green-200'
+                : isDateLocked
+                ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
+            }`}
+          >
+            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+          </button>
+        </div>
+      );
+    }
+
+    if (session.type_activite === 'document') {
+      const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+      const docUrl = signedUrl || session.file_url || session.ressource_url;
+      return (
+        <div className="flex flex-wrap gap-2 items-center justify-end w-full">
+          <button
+            onClick={() => {
+              setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+            }}
+            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+              signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+            }`}
+          >
+            {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+          </button>
+        </div>
+      );
+    }
+
+    if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+      return (
+        <div className="flex flex-wrap gap-2 items-center">
+          {session.reponse_url && (
+            <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+              {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
+            </span>
+          )}
+          <button
+            onClick={() => setExerciceModalSession(session)}
+            className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+          >
+            {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // Badges de statut (Moi / Coach) — partagés entre les deux vues.
+  const renderStatus = (session) => (
+    <div className="flex flex-col gap-1 items-start md:items-center">
+      <div className="flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+        <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+      </div>
+      {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
+      <div className="flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+        <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+      </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Séances d'Accompagnement</h1>
@@ -8226,188 +8803,134 @@ const SessionsView = ({
             <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Séances
           </h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
-                <th className="pb-4">Séance</th>
-                <th className="pb-4">Planification (Date & Heures)</th>
-                <th className="pb-4 text-center">Statut</th>
-                <th className="pb-4 text-right">Émargement</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {(() => {
-                const grouped = mySessions.reduce((acc, s) => {
-                  const key = s.numero_seance;
-                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-                  acc[key].items.push(s);
-                  return acc;
-                }, {});
 
-                const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
+        {(() => {
+          const grouped = mySessions.reduce((acc, s) => {
+            const key = s.numero_seance;
+            if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+            acc[key].items.push(s);
+            return acc;
+          }, {});
 
-                return sortedGroups.map((group, gIdx) => {
+          const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
+
+          if (sortedGroups.length === 0) {
+            return <p className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</p>;
+          }
+
+          return (
+            <>
+              {/* --- Vue tableau : écrans md et plus --- */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
+                      <th className="pb-4">Séance</th>
+                      <th className="pb-4">Planification (Date & Heures)</th>
+                      <th className="pb-4 text-center">Statut</th>
+                      <th className="pb-4 text-right">Émargement</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {sortedGroups.map((group, gIdx) => {
+                      const today = new Date().toISOString().split('T')[0];
+                      const isFuture = group.date && group.date > today;
+                      // Seules les séances avec une date future sont verrouillées.
+                      // Les séances passées restent toujours accessibles pour que le client puisse signer.
+                      const isLocked = isFuture;
+
+                      return (
+                        <React.Fragment key={gIdx}>
+                          <tr className={`bg-gray-50/50 ${isLocked ? 'opacity-50' : ''}`}>
+                            <td colSpan="4" className={`py-3 px-4 border-l-4 ${isLocked ? 'border-gray-300' : 'border-gray-900'}`}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                  <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
+                                  <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
+                                </div>
+                                <div className="text-[10px] font-bold text-gray-500">
+                                  {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
+                                  {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                          {group.items.map(session => (
+                            <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
+                            <td className="py-4 pl-12">
+                              <div className="flex items-center gap-3">
+                                <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                                  <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                  {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                    <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4"></td>
+                            <td className="py-4 text-center">{renderStatus(session)}</td>
+                            <td className="py-4 text-right pr-4">
+                              <div className="flex justify-end gap-2">{renderActions(session, group)}</div>
+                            </td>
+                          </tr>
+                        ))}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* --- Vue cartes : mobile (< md) --- */}
+              <div className="md:hidden space-y-4">
+                {sortedGroups.map((group, gIdx) => {
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
-                  // Seules les séances avec une date future sont verrouillées.
-                  // Les séances passées restent toujours accessibles pour que le client puisse signer.
                   const isLocked = isFuture;
 
                   return (
-                    <React.Fragment key={gIdx}>
-                      <tr className={`bg-gray-50/50 ${isLocked ? 'opacity-50' : ''}`}>
-                        <td colSpan="4" className={`py-3 px-4 border-l-4 ${isLocked ? 'border-gray-300' : 'border-gray-900'}`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center">
-                              <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
-                              <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
+                    <div key={gIdx} className={`rounded-2xl border overflow-hidden ${isLocked ? 'border-gray-100 opacity-50' : 'border-gray-200'}`}>
+                      <div className={`px-4 py-3 ${isLocked ? 'bg-gray-100' : 'bg-gray-900'}`}>
+                        <div className="flex items-center min-w-0">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-3 text-xs font-black shrink-0 ${isLocked ? 'bg-gray-300 text-gray-500' : 'bg-white/10 text-white'}`}>#{group.numero}</div>
+                          <span className={`font-black text-xs uppercase tracking-tight truncate ${isLocked ? 'text-gray-400' : 'text-white'}`}>{group.nom}</span>
+                        </div>
+                      </div>
+                      <div className="px-4 py-2 bg-gray-50 text-[10px] font-bold text-gray-500 flex items-center justify-between flex-wrap gap-1">
+                        {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 VERROUILLÉ</span>}
+                        <span>{group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}</span>
+                      </div>
+                      <div className={`divide-y divide-gray-100 ${isLocked ? 'pointer-events-none' : ''}`}>
+                        {group.items.map(session => (
+                          <div key={session.id} className={`p-4 space-y-3 ${isLocked ? 'grayscale' : ''}`}>
+                            <div className="flex items-start gap-3">
+                              <span className="text-lg shrink-0">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                              <div className="flex flex-col min-w-0">
+                                <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                                <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                  <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">{session.instructions}</p>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-[10px] font-bold text-gray-500">
-                              {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
-                              {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              {renderStatus(session)}
+                            </div>
+                            <div className="flex justify-start">
+                              {renderActions(session, group)}
                             </div>
                           </div>
-                        </td>
-                      </tr>
-                      {group.items.map(session => (
-                        <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
-                        <td className="py-4 pl-12">
-                          <div className="flex items-center gap-3">
-                            <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                              <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
-                              {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-4"></td>
-                        <td className="py-4 text-center">
-                          <div className="flex flex-col gap-1 items-center">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                              <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                            </div>
-                            {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
-                            <div className="flex items-center gap-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                              <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-                            </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-4 text-right pr-4">
-                          <div className="flex justify-end gap-2">
-                            {(() => {
-                              const today = new Date().toISOString().split('T')[0];
-                              const sessionDate = session.date || group.date;
-                              const isDateLocked = sessionDate && today < sessionDate;
-                              const metadata = session.metadata || {};
-
-                              const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
-
-                              if (isSignatureCondition) {
-                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                const docUrl = session.file_url || session.ressource_url;
-                                return (
-                                  <div className="flex gap-2 items-center justify-end w-full">
-                                    {docUrl && (
-                                      <button
-                                        onClick={() => {
-                                          const fileUrl = signedUrl || docUrl;
-                                          console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
-                                          console.log('[Consulter] session:', session.id, session.ressource_titre);
-                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
-                                        }}
-                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
-                                      >
-                                        Consulter
-                                      </button>
-                                    )}
-                                    <button
-                                      disabled={session.statut_client === 'Signé' || isDateLocked}
-                                      onClick={() => {
-                                        if (session.statut_client === 'Signé') return;
-                                        if (session.type_activite === 'signature') {
-                                          signSession && signSession(session);
-                                        } else {
-                                          const fileUrl = docUrl || null;
-                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
-                                        }
-                                      }}
-                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                        session.statut_client === 'Signé'
-                                          ? 'bg-green-50 text-green-600 border-green-200'
-                                          : isDateLocked
-                                          ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                                          : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
-                                      }`}
-                                    >
-                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
-                                    </button>
-                                  </div>
-                                );
-                              }
-
-                              if (session.type_activite === 'document') {
-                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-                                const docUrl = signedUrl || session.file_url || session.ressource_url;
-                                return (
-                                  <div className="flex gap-2 items-center justify-end w-full">
-                                    <button
-                                      onClick={() => {
-                                        console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
-                                        setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-                                      }}
-                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-                                        signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-                                      }`}
-                                    >
-                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-                                    </button>
-                                  </div>
-                                );
-                              }
-
-                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-                                return (
-                                  <div className="flex gap-2 items-center">
-                                    {session.reponse_url && (
-                                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
-                                        {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={() => setExerciceModalSession(session)}
-                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-                                    >
-                                      {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
-                                    </button>
-                                  </div>
-                                );
-                              }
-
-                              return null;
-                            })()}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
                   );
-                });
-              })()}
-              {mySessions.length === 0 && (
-                <tr>
-                  <td colSpan="4" className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       <ExerciceModal
@@ -8776,6 +9299,15 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [signingResource, setSigningResource] = React.useState(null);
   const [prefilledSignUrl, setPrefilledSignUrl] = React.useState(null);
   const prefilledSignBlob = React.useRef(null);
+  // URL blob: (et non plus data:) utilisée pour l'aperçu — les data: URLs base64 volumineuses
+  // peuvent ne PAS s'afficher du tout dans le lecteur PDF intégré de Chrome (page blanche silencieuse,
+  // sans la moindre erreur console) ; blob: est déjà la méthode utilisée ailleurs dans l'app (ex :
+  // handlePreview de l'éditeur de balises) et fonctionne de façon fiable. On garde une réf pour
+  // pouvoir révoquer l'URL précédente et éviter une fuite mémoire.
+  const prefilledSignBlobUrlRef = React.useRef(null);
+  // Cases à cocher requises avant signature côté client (extraites du template en cours de signature)
+  const [signingCheckboxFields, setSigningCheckboxFields] = React.useState([]);
+  const isClientCheckboxField = (f) => (f.tag || '') === 'checkbox_client' || (f.field_type === 'checkbox' && (f.tag || '').includes('client'));
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
@@ -8922,10 +9454,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
   const handleCloseSigningModal = React.useCallback(() => {
-    // Les data URLs ne nécessitent pas de révocation (contrairement aux blob URLs)
+    if (prefilledSignBlobUrlRef.current) {
+      try { URL.revokeObjectURL(prefilledSignBlobUrlRef.current); } catch (_) {}
+      prefilledSignBlobUrlRef.current = null;
+    }
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
     setSigningResource(null);
+    setSigningCheckboxFields([]);
   }, []);
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
@@ -8933,8 +9469,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // La modal ne s'ouvre qu'APRÈS le pré-remplissage (évite la race condition)
   const handleOpenSigning = React.useCallback(async (resource) => {
     // Nettoyer l'éventuel précédent pré-remplissage
+    if (prefilledSignBlobUrlRef.current) {
+      try { URL.revokeObjectURL(prefilledSignBlobUrlRef.current); } catch (_) {}
+      prefilledSignBlobUrlRef.current = null;
+    }
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
+    setSigningCheckboxFields([]);
 
     const toastId = 'prefill-sign';
 
@@ -8960,14 +9501,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
           prefilledSignBlob.current = pdfBlob;
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(pdfBlob);
-          });
-          setPrefilledSignUrl(dataUrl);
+          // URL blob: (pas data:) — un data: URL base64 volumineux peut s'afficher en page blanche
+          // silencieuse dans le lecteur PDF intégré de Chrome ; blob: est fiable et déjà utilisé
+          // ailleurs dans l'app pour prévisualiser des PDF générés côté client.
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          prefilledSignBlobUrlRef.current = blobUrl;
+          setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
+          setSigningCheckboxFields((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -8985,19 +9526,16 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           const resp = await fetch(tplUrl);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && !(f.tag || '').startsWith('signature_'));
+          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
           }
           prefilledSignBlob.current = pdfBlob;
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(pdfBlob);
-          });
-          setPrefilledSignUrl(dataUrl);
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          prefilledSignBlobUrlRef.current = blobUrl;
+          setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
+          setSigningCheckboxFields((pregenMeta.fields || []).filter(isClientCheckboxField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -9115,21 +9653,23 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           email_consultant:      formateur?.email || '',
           tel_consultant:        formateur?.telephone || '',
         };
+        // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+        dataValues.adresse_client = [dataValues.rue_client, dataValues.code_postal_client, dataValues.ville_client].filter(Boolean).join(', ');
+        { const _fAddr = parseAddressString(dataValues.adresse_formateur);
+          dataValues.rue_formateur = _fAddr.rue;
+          dataValues.code_postal_formateur = _fAddr.codePostal;
+          dataValues.ville_formateur = _fAddr.ville; }
         // Overlay données uniquement — pas de signature (affichée comme placeholder)
         pdfBlob = await overlayFieldsOnPdf(pdfBlob, tplFields, dataValues, {});
       }
 
       prefilledSignBlob.current = pdfBlob;
-      // Convertir en data URL (base64) — plus fiable qu'un blob URL dans les iframes (Vercel CSP, cross-browser)
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(pdfBlob);
-      });
-      setPrefilledSignUrl(dataUrl);
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      prefilledSignBlobUrlRef.current = blobUrl;
+      setPrefilledSignUrl(blobUrl);
       toast.dismiss(toastId);
-      // Ouvrir la modal — la data URL est déjà prête, le client verra ses données immédiatement
+      setSigningCheckboxFields((tplFields || []).filter(isClientCheckboxField));
+      // Ouvrir la modal — le blob est déjà prêt, le client verra ses données immédiatement
       setSigningResource(resource);
     } catch(e) {
       console.warn('[handleOpenSigning] Pré-remplissage échoué (fallback template brut) :', e.message);
@@ -9139,8 +9679,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
   }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs]);
 
-  const handleSignSave = async (signatureDataUrl) => {
+  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null) => {
     if (!signingResource || !currentClient) return;
+    const _checkedIdSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
 
     const toastId = 'pdf-sign';
     let signedPdfUrl = signingResource.file_url; // fallback ultime
@@ -9193,31 +9734,35 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         toast.loading('Génération du document signé…', { id: toastId });
 
         if (prefilledSignBlob.current) {
-          // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter UNIQUEMENT la signature
+          // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter la signature + les cases à cocher
           pdfBlob = prefilledSignBlob.current;
-          if (signatureDataUrl) {
-            // Chercher les champs signature : P1 = signature_fields (nouveau format pré-généré)
+          {
+            const _isSigOrChk = f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_');
+            // Chercher les champs signature/case à cocher : P1 = signature_fields (nouveau format pré-généré)
             //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
             // P1 : signature_fields du format pré-généré
-            let sigFields = (_docMeta.signature_fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+            let sigFields = (_docMeta.signature_fields || []).filter(_isSigOrChk);
             // P2 : champs dans fields[] (ancien format)
             if (sigFields.length === 0) {
-              sigFields = (_docMeta.fields || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+              sigFields = (_docMeta.fields || []).filter(_isSigOrChk);
             }
             // P3 : champs embarqués dans resource.metadata (zéro RLS)
             if (sigFields.length === 0) {
               const _embedded = _rMeta.template_fields || [];
-              sigFields = _embedded.filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+              sigFields = _embedded.filter(_isSigOrChk);
             }
             // P4 : requête DB
             if (sigFields.length === 0 && visualTemplateId) {
               const { data: sigFieldsData } = await supabase
                 .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
-              sigFields = (sigFieldsData || []).filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+              sigFields = (sigFieldsData || []).filter(_isSigOrChk);
             }
-            if (sigFields.length > 0) {
-              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, { signature_client: signatureDataUrl });
+            const checkedMap = {};
+            sigFields.forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
+            if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0)) {
+              const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
+              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap);
               signatureEmbeddedByOverlay = true;
             }
           }
@@ -9278,9 +9823,17 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               email_consultant:      formateur?.email || '',
               tel_consultant:        formateur?.telephone || '',
             };
+            // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+            dataValues.adresse_client = [dataValues.rue_client, dataValues.code_postal_client, dataValues.ville_client].filter(Boolean).join(', ');
+            { const _fAddr = parseAddressString(dataValues.adresse_formateur);
+              dataValues.rue_formateur = _fAddr.rue;
+              dataValues.code_postal_formateur = _fAddr.codePostal;
+              dataValues.ville_formateur = _fAddr.ville; }
             toast.loading('Personnalisation du document…', { id: toastId });
             const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
-            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap);
+            const checkedMap = {};
+            (templateFields || []).forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap, checkedMap);
             signatureEmbeddedByOverlay = true;
           }
         }
@@ -9823,6 +10376,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           supabase={supabase}
           mode="sign"
           isInteractiveConsent={false}
+          requiredCheckboxes={signingCheckboxFields}
           onSave={handleSignSave}
         />
       )}
@@ -11129,9 +11683,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
       </div>
 
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden" style={{ minHeight: '520px' }}>
-        <div className="flex h-[600px]">
-          {/* Colonne gauche : conversations */}
-          <div className="w-72 shrink-0 border-r border-gray-100 flex flex-col">
+        <div className="flex h-[75vh] md:h-[600px]">
+          {/* Colonne gauche : conversations — masquée sur mobile dès qu'une conversation est ouverte */}
+          <div className={`w-full md:w-72 shrink-0 border-r border-gray-100 flex-col ${activeConvId ? 'hidden md:flex' : 'flex'}`}>
             <div className="p-4 border-b border-gray-100">
               <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Conversations</p>
               {/* Démarrer nouvelle conversation */}
@@ -11202,8 +11756,8 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
             </div>
           </div>
 
-          {/* Colonne droite : messages */}
-          <div className="flex-1 flex flex-col min-w-0">
+          {/* Colonne droite : messages — masquée sur mobile tant qu'aucune conversation n'est ouverte */}
+          <div className={`flex-1 flex-col min-w-0 ${activeConvId ? 'flex' : 'hidden md:flex'}`}>
             {!activeConvId ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
                 <div className="text-5xl mb-4">💬</div>
@@ -11214,6 +11768,13 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
               <>
                 {/* En-tête conversation */}
                 <div className="p-4 border-b border-gray-100 flex items-center gap-3">
+                  <button
+                    onClick={() => setActiveConvId(null)}
+                    className="md:hidden p-1.5 -ml-1.5 text-gray-400 hover:text-gray-700 shrink-0"
+                    title="Retour aux conversations"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  </button>
                   <div className={`w-9 h-9 rounded-full ${roleColor(activeOther?.role || 'client')} text-white flex items-center justify-center font-bold text-sm shrink-0`}>
                     {(activeOther?.label || '?').charAt(0).toUpperCase()}
                   </div>
@@ -12647,137 +13208,34 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
     );
   };
 
+  // Depuis ce correctif, "Tester maintenant" appelle une fonction serverless (api/automation/trigger-manual.js)
+  // au lieu de tout faire dans le navigateur : avant, cette fonction lisait automation_settings/clients/sessions
+  // SANS AUCUN filtre organisation_id (un admin pouvait déclencher l'envoi d'emails à des clients d'un AUTRE
+  // organisme) et envoyait les emails via Resend avec une clé API exposée en clair dans le bundle JS
+  // (REACT_APP_RESEND_API_KEY). La fonction serverless vérifie l'admin appelant via son token Supabase, ne
+  // traite que SON organisme, et garde la clé Resend côté serveur uniquement.
   const triggerManual = async () => {
     setIsTesting(true);
     const toastId = 'automation-trigger';
     toast.loading('Analyse des relances en cours…', { id: toastId });
     try {
-      // ── 1. Lire les relances actives ────────────────────────────────────────
-      const { data: activeSettings, error: settErr } = await supabase
-        .from('automation_settings').select('*').eq('is_active', true);
-      if (settErr) throw new Error('Lecture relances : ' + settErr.message);
-      if (!activeSettings?.length) {
-        toast.success('Aucune relance active configurée.', { id: toastId });
-        setIsTesting(false);
-        return;
-      }
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) throw new Error('Session expirée — reconnectez-vous.');
 
-      // ── 2. Lire clients + séances ────────────────────────────────────────────
-      const [{ data: clients }, { data: sessions }] = await Promise.all([
-        supabase.from('clients').select('id, nom, prenom, email_contact, formateur_id'),
-        supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance'),
-      ]);
+      const resp = await fetch('/api/automation/trigger-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(result.error || `Erreur HTTP ${resp.status}`);
 
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString().split('T')[0];
-
-      // ── 3. Construire la liste des emails à envoyer ──────────────────────────
-      const emailQueue = [];
-      for (const setting of activeSettings) {
-        let targetSessions = [];
-
-        if (setting.trigger_type === 'reminder_before_session') {
-          const offset = Math.abs(setting.delay_days ?? 1);
-          const d = new Date(today); d.setDate(d.getDate() + offset);
-          const ds = d.toISOString().split('T')[0];
-          targetSessions = (sessions || []).filter(s => s.date === ds);
-        } else if (setting.trigger_type === 'no_signature') {
-          const offset = Math.abs(setting.delay_days ?? 2);
-          const d = new Date(today); d.setDate(d.getDate() - offset);
-          const ds = d.toISOString().split('T')[0];
-          targetSessions = (sessions || []).filter(s =>
-            s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
-          );
-        }
-
-        for (const session of targetSessions) {
-          const client = (clients || []).find(c => String(c.id) === String(session.client_id));
-          if (!client?.email_contact) continue;
-
-          // Anti-doublon : déjà envoyé aujourd'hui ?
-          const { data: existing } = await supabase.from('automation_logs')
-            .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)
-            .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();
-          if (existing) continue;
-
-          const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
-          const sessionDate = session.date
-            ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-            : '';
-          const sessionTitle = session.type_activite || `Séance n°${session.numero_seance ?? ''}`;
-          const rv = (s) => (s || '')
-            .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
-            .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
-            .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle);
-
-          emailQueue.push({ setting, client, clientName, subject: rv(setting.email_subject), body: rv(setting.email_body) });
-        }
-      }
-
-      if (emailQueue.length === 0) {
-        toast.success('✅ Aucun email à envoyer aujourd\'hui (aucune séance correspondante).', { id: toastId });
-        setIsTesting(false);
-        if (showLogs) fetchLogs();
-        return;
-      }
-
-      // ── 4. Envoyer les emails via Resend ────────────────────────────────────
-      const resendKey = process.env.REACT_APP_RESEND_API_KEY;
-      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
-      let sent = 0, simulated = 0;
-
-      for (const item of emailQueue) {
-        let ok = false; let errMsg = null;
-
-        if (resendKey) {
-          try {
-            const r = await fetch('https://api.resend.com/emails', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                from: fromEmail,
-                to: [item.client.email_contact],
-                subject: item.subject,
-                html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
-                  <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
-                    <p style="color:#111827;font-size:14px;line-height:1.7;">${item.body.replace(/\n/g, '<br>')}</p>
-                    <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                    <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
-                  </div>
-                </div>`,
-              }),
-            });
-            ok = r.ok;
-            if (!r.ok) { const e = await r.json().catch(() => ({})); errMsg = e.message || `HTTP ${r.status}`; }
-          } catch (e) { errMsg = e.message; }
-        } else {
-          // Mode simulation (pas de clé Resend configurée)
-          ok = true; simulated++;
-          errMsg = 'Simulation — REACT_APP_RESEND_API_KEY non configurée';
-        }
-
-        if (ok && !simulated) sent++;
-
-        // Journaliser le résultat
-        await supabase.from('automation_logs').insert([{
-          automation_setting_id: item.setting.id,
-          client_id: item.client.id,
-          trigger_type: item.setting.trigger_type,
-          sent_at: new Date().toISOString(),
-          email_to: item.client.email_contact,
-          email_subject: item.subject,
-          status: ok ? (resendKey ? 'sent' : 'simulated') : 'error',
-          error_message: errMsg || null,
-        }]);
-      }
-
-      if (simulated > 0) {
-        toast('⚠️ Simulation : ' + simulated + ' email(s) prêt(s) — ajoutez REACT_APP_RESEND_API_KEY dans Vercel pour l\'envoi réel.', { id: toastId, icon: '⚠️', duration: 8000 });
-      } else if (sent > 0) {
-        toast.success(`✅ ${sent} email(s) envoyé(s) avec succès !`, { id: toastId });
+      if (result.simulated > 0) {
+        toast('⚠️ Simulation : ' + result.simulated + ' email(s) prêt(s) — la clé Resend n\'est pas configurée côté serveur (variable RESEND_API_KEY sur Vercel).', { id: toastId, icon: '⚠️', duration: 8000 });
+      } else if (result.sent > 0) {
+        toast.success(`✅ ${result.sent} email(s) envoyé(s) avec succès !`, { id: toastId });
       } else {
-        toast.error('Aucun email envoyé — consultez le journal pour les erreurs.', { id: toastId });
+        toast.success(result.message || 'Aucun email à envoyer.', { id: toastId });
       }
     } catch (e) {
       console.error('[triggerManual]', e);
@@ -13064,7 +13522,27 @@ function TrialBanner({ orgSettings, onUpgrade }) {
 }
 
 // ─── PaywallScreen ───────────────────────────────────────────────────────────
-function PaywallScreen({ onSubscribe }) {
+function PaywallScreen({ onSubscribe, isAdmin = true }) {
+  // Seul l'admin de l'organisme peut gérer l'abonnement : un formateur ou un client dont
+  // l'organisme a un abonnement expiré/impayé voit un message d'attente, pas le bouton de paiement
+  // (parametres_org, où mène onSubscribe, ne lui est de toute façon pas accessible).
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
+        <div className="w-20 h-20 rounded-2xl bg-violet-100 flex items-center justify-center mb-6">
+          <svg className="w-10 h-10 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Accès temporairement suspendu</h2>
+        <p className="text-gray-500 mb-8 max-w-md">
+          L'abonnement de votre organisme n'est plus actif. Merci de contacter votre administrateur
+          pour qu'il renouvelle l'abonnement — l'accès sera rétabli automatiquement dès que ce sera fait.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
       <div className="w-20 h-20 rounded-2xl bg-violet-100 flex items-center justify-center mb-6">
@@ -13275,6 +13753,9 @@ export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
   const [currentUserId, setCurrentUserId] = useState(null);
+  // true quand un compte admin visualise son espace formateur (via le bouton "Mon espace Formateur",
+  // ouvert dans un nouvel onglet avec ?view=formateur dans l'URL) — voir handleLogin plus bas.
+  const [isAdminActingAsFormateur, setIsAdminActingAsFormateur] = useState(false);
   const [activeTab, setActiveTab] = useState('accueil');
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -13366,9 +13847,29 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [documents, setDocuments] = useState([]);
 
+  // --- Admin agissant aussi comme formateur (bouton "Mon espace Formateur") ---
+  // adminSelfProfile est chargé dès que le compte connecté est admin (pour le bouton lui-même)
+  // ou déjà en train de visualiser l'espace formateur via ce même compte (pour le "Bonjour, {nom}").
+  const [adminSelfProfile, setAdminSelfProfile] = useState(null); // { id, nom }
+  useEffect(() => {
+    if ((userRole === 'admin' || isAdminActingAsFormateur) && currentUserId) {
+      supabase.from('utilisateurs').select('id, nom').eq('id', currentUserId).single()
+        .then(({ data }) => { if (data) setAdminSelfProfile(data); });
+    } else if (!isAdminActingAsFormateur && userRole !== 'admin') {
+      setAdminSelfProfile(null);
+    }
+  }, [userRole, isAdminActingAsFormateur, currentUserId]);
+  // Liste des formateurs "assignables" : les vrais formateurs + l'admin lui-même (pour qu'un client
+  // puisse lui être assigné comme coach, et pour que son propre espace formateur affiche son nom).
+  // Volontairement PAS utilisée pour AdminFormateursView (page de gestion avec suppression) afin
+  // d'éviter tout risque de suppression accidentelle du compte admin lui-même.
+  const assignableFormateurs = React.useMemo(() => {
+    if (!adminSelfProfile) return formateurs;
+    return [{ ...adminSelfProfile, role: 'formateur' }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
+  }, [formateurs, adminSelfProfile]);
+
   // États Modules Supabase
   const [modules, setModules] = useState([]);
-  const [moduleDocuments, setModuleDocuments] = useState([]);
   const [moduleSessionTemplates, setModuleSessionTemplates] = useState([]);
   const [moduleStepResources, setModuleStepResources] = useState([]);
 
@@ -13383,11 +13884,7 @@ export default function App() {
   // États formulaire "Ingénierie Modules" (Admin)
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleSeances, setNewModuleSeances] = useState(1);
-  const [newModDocName, setNewModDocName] = useState('');
-  const [newModDocType, setNewModDocType] = useState('Contrat');
   const [sessions, setSessions] = useState([]);
-  const [newModDocFile, setNewModDocFile] = useState(null);
-  const [addingToModuleId, setAddingToModuleId] = useState(null);
   const [modelingModuleId, setModelingModuleId] = useState(null);
 
   // États formulaire "Étape de Parcours"
@@ -13426,11 +13923,6 @@ export default function App() {
     if (currentOrgId) mQuery = mQuery.eq('organisation_id', currentOrgId);
     const { data: mData, error: mErr } = await mQuery;
     if (!mErr && mData) setModules(mData);
-
-    let mdQuery = supabase.from('module_documents').select('*');
-    if (currentOrgId) mdQuery = mdQuery.eq('organisation_id', currentOrgId);
-    const { data: mdData, error: mdErr } = await mdQuery;
-    if (!mdErr && mdData) setModuleDocuments(mdData);
 
     let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
     if (currentOrgId) mstQuery = mstQuery.eq('organisation_id', currentOrgId);
@@ -13701,9 +14193,15 @@ export default function App() {
 
   // --- Actions Navigation ---
   const handleLogin = (role, id = null, orgId = null) => {
-    setUserRole(role);
+    // Un admin qui clique sur "Mon espace Formateur" ouvre un nouvel onglet vers la même URL
+    // avec ?view=formateur — cette même session/compte se connecte alors normalement (role='admin'
+    // renvoyé par la DB), mais on affiche l'espace formateur à la place, avec le même currentUserId.
+    const wantsFormateurView = role === 'admin' && new URLSearchParams(window.location.search).get('view') === 'formateur';
+    setUserRole(wantsFormateurView ? 'formateur' : role);
+    setIsAdminActingAsFormateur(wantsFormateurView);
     setCurrentUserId(id);
     setCurrentOrgId(orgId);
+    if (wantsFormateurView) { setActiveTab('accueil_formateur'); return; }
     if (role === 'admin') setActiveTab('dashboard');
     if (role === 'formateur') setActiveTab('accueil_formateur');
     if (role === 'client') setActiveTab('accueil');
@@ -13714,6 +14212,7 @@ export default function App() {
     setUserRole(null);
     setCurrentUserId(null);
     setCurrentOrgId(null);
+    setIsAdminActingAsFormateur(false);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
   };
@@ -13764,6 +14263,13 @@ export default function App() {
   };
 
   const handleDeleteFormateur = async (formateurId) => {
+    // Garde-fou : ce compte peut apparaître dans la liste des formateurs (voir "assignableFormateurs")
+    // s'il s'agit d'un admin agissant aussi comme formateur — on ne le supprime jamais depuis cet écran,
+    // ce serait supprimer le compte admin lui-même (perte d'accès totale à l'organisme).
+    if (String(formateurId) === String(currentUserId) && userRole === 'admin') {
+      toast.error("Impossible de supprimer votre propre compte administrateur depuis cet écran.");
+      return;
+    }
     try {
       // 1. Désassigner les clients
       await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
@@ -13933,13 +14439,19 @@ export default function App() {
           email_consultant:    formateur?.email || '',
           tel_consultant:      formateur?.telephone || '',
         };
+        // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+        resolvedValues.adresse_client = [resolvedValues.rue_client, resolvedValues.code_postal_client, resolvedValues.ville_client].filter(Boolean).join(', ');
+        { const _fAddr = parseAddressString(resolvedValues.adresse_formateur);
+          resolvedValues.rue_formateur = _fAddr.rue;
+          resolvedValues.code_postal_formateur = _fAddr.codePostal;
+          resolvedValues.ville_formateur = _fAddr.ville; }
 
         // 3. Générer le PDF pré-rempli (navigateur admin, avec ignoreEncryption: true)
         const templateResp = await fetch(templateResource.file_url);
         if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} pour ${templateResource.file_url}`);
         let pdfBlob = new Blob([await templateResp.arrayBuffer()], { type: 'application/pdf' });
 
-        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && !(f.tag || '').startsWith('signature_'));
+        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
         if (dataFields.length > 0) {
           pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, resolvedValues, {});
         }
@@ -13956,7 +14468,7 @@ export default function App() {
         const { data: { publicUrl: prefilledUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
 
         // 5. Stocker avec URL pré-remplie + positions des champs signature pour l'étape de signature
-        const sigFields = tplFields.filter(f => f.field_type === 'signature' || (f.tag || '').startsWith('signature_'));
+        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_'));
         const docMetadata = JSON.stringify({
           has_visual_fields: true,
           visual_template_id: visualTemplateId,
@@ -14222,43 +14734,6 @@ export default function App() {
       toast.success("Module créé avec succès !");
     }
     else toast.error('Erreur lors de la création du module : ' + error.message);
-  };
-
-  const handleLinkDocument = async (e, selectedModule) => {
-    e.preventDefault();
-    const modId = selectedModule.id;
-
-    if (!newModDocName.trim()) return;
-
-    let finalUrl = '';
-    if (newModDocFile) {
-      const fileExt = newModDocFile.name.split('.').pop();
-      const fileName = `module_${modId}_${Date.now()}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, newModDocFile);
-      if (!uploadError) {
-        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-        finalUrl = publicUrl;
-      }
-    }
-
-    const { error } = await supabase.from('module_documents').insert([{
-      module_id: Number(modId),
-      nom: newModDocName,
-      type_document: newModDocType,
-      url: finalUrl,
-      organisation_id: currentOrgId
-    }]);
-
-    if (!error) {
-      setAddingToModuleId(null);
-      setNewModDocName('');
-      setNewModDocType('Autre');
-      setNewModDocFile(null);
-      await fetchModules();
-      toast.success("Document lié au module !");
-    } else {
-      toast.error("Erreur liaison document : " + error.message);
-    }
   };
 
   const createSessionFolder = async (moduleId, title) => {
@@ -14867,9 +15342,14 @@ export default function App() {
       ? Math.max(...targetGroupItems.map(s => s.position || 0)) + 1
       : 0;
 
+    // organisation_id manquant ici auparavant : les autres insertions dans `sessions` (génération
+    // automatique, bloc administratif) l'incluent toujours — sans lui, la policy RLS de la table
+    // (filtrée par organisation) rejette l'insertion avec un 403, d'où "Erreur lors de l'ajout."
+    const targetClientForItem = clients.find(c => c.id === clientId);
     const { error } = await supabase.from('sessions').insert([{
       client_id: clientId,
-      module_id: clients.find(c => c.id === clientId)?.module_id,
+      module_id: targetClientForItem?.module_id,
+      organisation_id: targetClientForItem?.organisation_id || currentOrgId || null,
       numero_seance: numero,
       nom: data.title,
       ressource_titre: data.title,
@@ -14982,6 +15462,7 @@ export default function App() {
       nom: `${moduleName} - Séance ${nextNum}`,
       client_id: client.id,
       module_id: client.module_id,
+      organisation_id: client.organisation_id || currentOrgId || null,
       metadata: {},
       statut: 'À venir',
       statut_client: 'À venir',
@@ -15170,11 +15651,15 @@ export default function App() {
       //   → champs accessibles sans requête DB partout (handleOpenSigning, instantiateDocument, handleSignSave).
       const embeddedFields = fieldsToSave.map(f => ({
         template_id: msrId,
+        // client_key : identifiant unique posé par l'éditeur (f.id) — conservé ici car cette copie
+        // "zéro RLS" dans metadata n'a pas d'id de ligne DB. Indispensable pour distinguer 2 cases
+        // à cocher entre elles (sinon elles partagent la même identité "undefined" — voir fieldKey).
+        client_key: f.id,
         tag: f.tag,
         page: f.page || 1,
         x_percent: parseFloat(f.xPct.toFixed(4)),
         y_percent: parseFloat(f.yPct.toFixed(4)),
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
         font_size: 11,
       }));
       const fullMetadataObj = { ...metadataObj, visual_template_id: msrId, template_fields: embeddedFields };
@@ -15183,30 +15668,48 @@ export default function App() {
       }).eq('id', msrId);
 
       // 3. Sauvegarder les champs visuels dans template_fields
+      // Non-bloquant : les champs sont déjà dupliqués en zéro-RLS dans metadata.template_fields
+      // (voir FIX 1 ci-dessus) → si cette table a un souci (ex : contrainte de schéma qui ne connaît
+      // pas encore 'checkbox' comme field_type), le document reste malgré tout utilisable côté client
+      // via les champs embarqués, au lieu de faire échouer TOUT l'enregistrement du modèle.
       if (fieldsToSave.length > 0 && msrId) {
-        await supabase.from('template_fields').delete().eq('template_id', msrId);
-        const rows = fieldsToSave.map(f => ({
-          template_id: msrId,
-          tag: f.tag,
-          page: f.page || 1,
-          x_percent: parseFloat(f.xPct.toFixed(4)),
-          y_percent: parseFloat(f.yPct.toFixed(4)),
-          font_size: 11,
-          field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : 'text',
-          ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
-        }));
-        const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
-        if (fieldsErr) throw fieldsErr;
+        try {
+          await supabase.from('template_fields').delete().eq('template_id', msrId);
+          const rows = fieldsToSave.map(f => ({
+            template_id: msrId,
+            tag: f.tag,
+            page: f.page || 1,
+            x_percent: parseFloat(f.xPct.toFixed(4)),
+            y_percent: parseFloat(f.yPct.toFixed(4)),
+            font_size: 11,
+            field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
+            ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+          }));
+          const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
+          if (fieldsErr) {
+            console.warn('[handleUploadVisualTemplate] Échec insertion template_fields (non-bloquant, fallback metadata embarquée) :', fieldsErr.message);
+            toast('⚠️ Positions enregistrées en secours (table technique indisponible) : ' + fieldsErr.message, { icon: '⚠️', duration: 6000 });
+          }
+        } catch (e) {
+          console.warn('[handleUploadVisualTemplate] Erreur template_fields (non-bloquant) :', e.message);
+        }
       }
 
-      // FIX 2 — Propager visual_template_id à TOUTES les copies MSR module-liées (même titre, tout org).
-      // Filtre organisation_id SUPPRIMÉ : les copies module peuvent avoir un org différent ou null.
+      // FIX 2 — Propager visual_template_id aux copies MSR module-liées (même titre), à l'intérieur
+      // du MÊME organisme uniquement — ou sans organisation_id renseigné (copies historiques non
+      // scopées). Le filtre organisation_id avait été totalement supprimé ici, ce qui permettait à
+      // l'admin d'un organisme de modifier les modèles de documents de n'importe quel AUTRE organisme
+      // partageant le même titre de modèle — un trou de cloisonnement multi-tenant critique.
       if (msrId) {
-        await supabase.from('module_step_resources')
+        let propagateQuery = supabase.from('module_step_resources')
           .update({ metadata: JSON.stringify(fullMetadataObj) })
           .eq('titre', name)
           .eq('type', 'document')
           .neq('id', msrId);
+        propagateQuery = currentOrgId
+          ? propagateQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+          : propagateQuery.is('organisation_id', null);
+        await propagateQuery;
       }
 
       // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id + champs pour Priority 2
@@ -15303,6 +15806,10 @@ export default function App() {
     try {
       const template = documentTemplates[templateKey];
       if (!template) return;
+      if (!currentOrgId) {
+        toast.error("Organisme introuvable — suppression annulée par sécurité.");
+        return;
+      }
 
       // Extraction du nom du fichier pour le storage
       const fileName = template.url.split('/').pop().split('?')[0];
@@ -15310,11 +15817,18 @@ export default function App() {
       // 1. Supprimer du storage
       await supabase.storage.from('documents').remove([fileName]);
 
-      // 2. Supprimer de documents (Modèle Référence)
-      await supabase.from('documents').delete().eq('nom', templateKey).eq('type_action', 'Modèle Référence');
+      // 2. Supprimer de documents (Modèle Référence) — limité à l'organisme courant (+ lignes
+      // historiques sans organisation_id). Avant ce correctif, aucun filtre d'organisme n'existait :
+      // un modèle du même nom appartenant à un AUTRE organisme aurait aussi été supprimé.
+      await supabase.from('documents').delete()
+        .eq('nom', templateKey).eq('type_action', 'Modèle Référence')
+        .or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
 
-      // 3. Supprimer de module_step_resources
-      await supabase.from('module_step_resources').delete().eq('titre', templateKey);
+      // 3. Supprimer de module_step_resources — même précaution, + limité au type 'document' pour ne
+      // pas toucher d'autres ressources de module qui partageraient le même titre par coïncidence.
+      await supabase.from('module_step_resources').delete()
+        .eq('titre', templateKey).eq('type', 'document')
+        .or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
 
       // 4. Update local state
       const newTemplates = { ...documentTemplates };
@@ -15333,7 +15847,13 @@ export default function App() {
 
   // Mise à jour de la destination d'un modèle existant
   const handleUpdateTemplateDestination = async (templateKey, newDest) => {
-    await supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey);
+    // Même précaution multi-tenant que handleDeleteDocxTemplate/handleUploadVisualTemplate ci-dessus :
+    // limiter aux lignes de l'organisme courant (ou historiquement sans organisation_id).
+    let destQuery = supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey);
+    destQuery = currentOrgId
+      ? destQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+      : destQuery.is('organisation_id', null);
+    await destQuery;
     setDocumentTemplates(prev => ({ ...prev, [templateKey]: { ...prev[templateKey], destination: newDest } }));
     toast.success(`Destination de "${templateKey}" mise à jour.`);
   };
@@ -15805,7 +16325,7 @@ export default function App() {
     setIsAddingDoc(false);
   };
 
-  const handleSignDocument = async (docId, signerType, signatureDataUrl = null) => {
+  const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null) => {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
 
@@ -15833,29 +16353,45 @@ export default function App() {
 
     let signedPdfUpdate = {};
 
-    // ── Incrustation de la signature à la position visuelle si le doc a un template_id ──
-    if (signatureDataUrl && doc.template_id) {
+    // ── Incrustation de la signature (+ cases à cocher éventuelles) à la position visuelle ──
+    if (signatureDataUrl) {
       try {
         const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
-        // Charger les champs signature de ce template
-        const { data: sigFields } = await supabase
-          .from('template_fields')
-          .select('*')
-          .eq('template_id', doc.template_id)
-          .eq('field_type', 'signature')
-          .eq('tag', sigTag);
+        const checkboxTag = signerType === 'client' ? 'checkbox_client' : 'checkbox_formateur';
+        let sigFields = null;
+
+        // Source 1 : template_id → charger depuis template_fields DB (ancien flow)
+        if (doc.template_id) {
+          const { data: dbFields } = await supabase
+            .from('template_fields').select('*')
+            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag]);
+          if (dbFields && dbFields.length > 0) sigFields = dbFields;
+        }
+
+        // Source 2 : metadata.signature_fields (nouveau flow instantiateDocument)
+        if (!sigFields) {
+          const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
+          const metaFields = docMeta.signature_fields || [];
+          const match = metaFields.filter(f => f.tag === sigTag || f.tag === checkboxTag);
+          if (match.length > 0) sigFields = match;
+        }
 
         if (sigFields && sigFields.length > 0) {
-          // Charger le PDF actuel (signed_pdf_url si existe, sinon url)
           const pdfUrl = doc.signed_pdf_url || doc.url;
-          if (pdfUrl && pdfUrl.endsWith('.pdf')) {
+          if (pdfUrl && /\.pdf$/i.test(pdfUrl.split('?')[0])) {
             const pdfResp = await fetch(pdfUrl);
             if (pdfResp.ok) {
               const pdfBlob = await pdfResp.blob();
-              // Overlay de la signature
               const signaturesMap = { [sigTag]: signatureDataUrl };
-              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap);
-              // Upload du PDF mis à jour
+              // checkedIds : Set (ou objet) des id de champs case-à-cocher cochés par ce signataire
+              const checkedMap = {};
+              if (checkedIds) {
+                sigFields.filter(f => f.tag === checkboxTag).forEach(f => {
+                  const k = fieldKey(f);
+                  checkedMap[k] = typeof checkedIds.has === 'function' ? checkedIds.has(k) : !!checkedIds[k];
+                });
+              }
+              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap);
               const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
               const { error: upErr } = await supabase.storage.from('documents')
                 .upload(fileName, new File([updatedPdfBlob], fileName, { type: 'application/pdf' }));
@@ -16067,9 +16603,9 @@ export default function App() {
     }
   };
 
-  const handleSignatureSave = async (dataUrl) => {
+  const handleSignatureSave = async (dataUrl, checkedIds = null) => {
     if (!signingDocId) return;
-    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl);
+    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl, checkedIds);
     setSigningDocId(null);
   };
 
@@ -16474,8 +17010,9 @@ export default function App() {
     return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} onNeedsSetup={() => setNeedsSetup(true)} />;
   }
 
-  // Vérification abonnement expiré (uniquement pour les admins)
-  const isSubscriptionExpired = userRole === 'admin' && orgSettings && (() => {
+  // Vérification abonnement expiré — s'applique à tous les rôles de l'organisme (admin, formateur,
+  // client) : un abonnement expiré doit bloquer tout le monde, pas seulement l'admin.
+  const isSubscriptionExpired = orgSettings && (() => {
     const { subscription_status, trial_ends_at } = orgSettings;
     if (!subscription_status || subscription_status === 'active') return false;
     if (subscription_status === 'canceled' || subscription_status === 'past_due') return true;
@@ -16575,6 +17112,13 @@ export default function App() {
               <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
+              <button
+                onClick={() => window.open(window.location.origin + window.location.pathname + '?view=formateur', '_blank')}
+                className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mt-2 border border-violet-800/60"
+                title="Ouvre votre espace formateur dans un nouvel onglet, sans vous déconnecter de l'espace admin"
+              >
+                <ExternalLink className="w-5 h-5 mr-3" /> Mon espace Formateur
+              </button>
             </>
           )}
 
@@ -16634,6 +17178,15 @@ export default function App() {
               </button>
             ))}
           </div>
+          {isAdminActingAsFormateur && (
+            <button
+              onClick={() => { window.location.href = window.location.origin + window.location.pathname; }}
+              className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mb-2 border border-violet-800/60"
+              title="Revenir à l'espace administrateur (dans cet onglet)"
+            >
+              <ExternalLink className="w-5 h-5 mr-3 rotate-180" /> Accéder à l'espace administrateur
+            </button>
+          )}
           <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
             <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
@@ -16673,7 +17226,7 @@ export default function App() {
               if (userRole === 'admin') {
                 displayName = orgSettings?.nom || "Mon espace";
               } else if (userRole === 'formateur') {
-                rawName = formateurs.find(f => f.id === currentUserId)?.nom;
+                rawName = assignableFormateurs.find(f => f.id === currentUserId)?.nom;
                 displayName = rawName || "Coach";
               } else if (userRole === 'client') {
                 rawName = clients.find(c => c.id === currentUserId)?.nom;
@@ -16709,17 +17262,20 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative">
-          {/* Écran paywall si essai expiré ou abonnement annulé/impayé */}
-          {isSubscriptionExpired && activeTab !== 'parametres_org' && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center" style={{background:'rgba(249,250,251,0.97)', backdropFilter:'blur(4px)'}}>
-              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} />
+          {isSubscriptionExpired && activeTab !== 'parametres_org' ? (
+            // Abonnement expiré : on n'affiche QUE l'écran paywall, le contenu de l'onglet n'est même
+            // pas monté — avant, ce n'était qu'une superposition visuelle par-dessus un contenu resté
+            // actif (chargements/mutations de données en arrière-plan malgré le blocage à l'écran).
+            <div className="w-full h-full flex items-center justify-center">
+              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} isAdmin={userRole === 'admin'} />
             </div>
-          )}
+          ) : (
+          <>
           {activeTab === 'profil' && <ProfileView
             currentUserId={currentUserId}
             supabase={supabase}
             fetchUtilisateurs={fetchUtilisateurs}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             clients={clients}
             userRole={userRole}
             orgSettings={orgSettings}
@@ -16730,23 +17286,25 @@ export default function App() {
             clients={clients}
             sessions={sessions}
             documents={documents}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             setActiveTab={setActiveTab}
           />}
           {activeTab === 'calendrier' && <CalendrierView
             sessions={sessions}
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             userRole={userRole}
             currentUserId={currentUserId}
           />}
           {activeTab === 'accueil_formateur' && userRole === 'formateur' && <FormateurAccueilView
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             clients={clients}
             sessions={sessions}
             documents={documents}
             currentUserId={currentUserId}
             setActiveTab={setActiveTab}
+            setSigningDocId={setSigningDocId}
+            handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
@@ -16754,7 +17312,7 @@ export default function App() {
             currentOrgId={currentOrgId}
             supabase={supabase}
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
           />}
           {activeTab === 'parametres_org' && userRole === 'admin' && (
             <OrganisationSettingsView
@@ -16777,7 +17335,7 @@ export default function App() {
             clientEmail={clientEmail} setClientEmail={setClientEmail}
             isAddingUser={isAddingUser}
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             assignFormateur={assignFormateur}
             handleModuleChange={handleModuleChange}
             modules={modules}
@@ -16821,7 +17379,8 @@ export default function App() {
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
+            adminSelfId={adminSelfProfile?.id}
             documents={documents}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
@@ -16859,27 +17418,17 @@ export default function App() {
               userRole={userRole}
               currentUserId={currentUserId}
               clients={clients}
-              formateurs={formateurs}
+              formateurs={assignableFormateurs}
               currentOrgId={currentOrgId}
             />
           )}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
-            moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
-            handleLinkDocument={handleLinkDocument}
             newModuleName={newModuleName}
             setNewModuleName={setNewModuleName}
             newModuleSeances={newModuleSeances}
             setNewModuleSeances={setNewModuleSeances}
-            newModDocName={newModDocName}
-            setNewModDocName={setNewModDocName}
-            newModDocType={newModDocType}
-            setNewModDocType={setNewModDocType}
-            newModDocFile={newModDocFile}
-            setNewModDocFile={setNewModDocFile}
-            addingToModuleId={addingToModuleId}
-            setAddingToModuleId={setAddingToModuleId}
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
@@ -16921,7 +17470,7 @@ export default function App() {
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             sessions={sessions}
             generateSessions={generateSessions}
             updateSessionDate={updateSessionDate}
@@ -16966,7 +17515,7 @@ export default function App() {
             const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
             const _today = new Date().toISOString().split('T')[0];
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
-            const _coach = formateurs.find(f => f.id === _client?.formateur_id);
+            const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
             const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client).length;
             return <AccueilView
               setActiveTab={setActiveTab}
@@ -16981,14 +17530,14 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={formateurs} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
             sessions={sessions}
             documents={documents}
             clients={clients}
-            formateurs={formateurs}
+            formateurs={assignableFormateurs}
             userRole={userRole}
             currentUserId={currentUserId}
             handleSignDocument={handleSignDocument}
@@ -17029,6 +17578,8 @@ export default function App() {
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
 
           {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
+          </>
+          )}
         </main>
       </div>
 
@@ -17037,6 +17588,13 @@ export default function App() {
         isOpen={signingDocId !== null}
         onClose={() => setSigningDocId(null)}
         onSave={handleSignatureSave}
+        requiredCheckboxes={(() => {
+          const signingDoc = documents.find(d => d.id === signingDocId);
+          if (!signingDoc) return [];
+          const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
+          const checkboxTag = userRole === 'client' ? 'checkbox_client' : 'checkbox_formateur';
+          return (meta.signature_fields || []).filter(f => f.tag === checkboxTag);
+        })()}
       />
 
       <EmargementModal
@@ -17100,7 +17658,7 @@ export default function App() {
         onClose={() => setIsInviteModalOpen(false)}
         onInvite={handleInviteUser}
         isAddingUser={isAddingUser}
-        formateurs={formateurs}
+        formateurs={assignableFormateurs}
       />
 
       <DeleteConfirmationModal
