@@ -14840,7 +14840,9 @@ export default function App() {
           const { error: mstErr } = await supabase.from('module_session_templates').delete().eq('module_id', moduleId);
           if (mstErr) throw mstErr;
           let delQuery = supabase.from('modules').delete().eq('id', moduleId);
-          delQuery = currentOrgId ? delQuery.eq('organisation_id', currentOrgId) : delQuery;
+          delQuery = currentOrgId
+            ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : delQuery.is('organisation_id', null);
           const { error } = await delQuery;
           if (error) throw error;
           await fetchModules();
