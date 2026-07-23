@@ -66,6 +66,56 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
+// --- Ouverture sécurisée d'un fichier de stockage ---
+// Au lieu d'ouvrir directement l'URL publique (permanente, devinable, partageable sans limite),
+// on génère un lien signé à courte durée de vie (5 min) avant d'ouvrir l'onglet.
+// Repli sur l'URL publique en cas d'échec (bucket/format non reconnu) pour ne jamais casser
+// une fonctionnalité existante. Cf. audit sécurité — exposition des URLs de stockage.
+const extractStorageBucketAndPath = (rawUrl) => {
+  if (!rawUrl) return null;
+  if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return null;
+
+  // URL Supabase complète (publique ou déjà signée)
+  const match = rawUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
+  if (match) {
+    const bucket = match[1];
+    let path = decodeURIComponent(match[2]);
+    if (path.startsWith(`${bucket}/`)) path = path.substring(bucket.length + 1);
+    return { bucket, path };
+  }
+  if (rawUrl.startsWith('http')) return null; // URL externe non-Supabase
+
+  // Chemin relatif
+  let cleanPath = rawUrl;
+  const knownBuckets = ['documents', 'ressources-pedagogiques', 'signed_documents', 'module_resources', 'client_files'];
+  for (const b of knownBuckets) {
+    if (cleanPath.startsWith(`${b}/`)) { cleanPath = cleanPath.substring(b.length + 1); break; }
+  }
+  const isRessource = cleanPath.startsWith('ressources/') || cleanPath.startsWith('modeling-imports/');
+  const isSigned = cleanPath.startsWith('signed_');
+  const bucket = isSigned ? 'signed_documents' : (isRessource ? 'ressources-pedagogiques' : 'documents');
+  return { bucket, path: cleanPath };
+};
+
+const openSecureStorageFile = async (rawUrl) => {
+  if (!rawUrl) return;
+  if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) { window.open(rawUrl, '_blank'); return; }
+  try {
+    const extracted = extractStorageBucketAndPath(rawUrl);
+    if (extracted) {
+      const { data, error } = await supabase.storage.from(extracted.bucket).createSignedUrl(extracted.path, 300);
+      if (!error && data?.signedUrl) {
+        window.open(data.signedUrl, '_blank');
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[openSecureStorageFile] Repli sur URL publique :', e.message);
+  }
+  // Repli : comportement historique (URL publique) si la génération du lien signé échoue
+  window.open(resolveFileUrl(rawUrl) || rawUrl, '_blank');
+};
+
 const ANCHOR_KEYS = [
   { key: 'score_technique', label: 'Expertise Technique', description: "Le contenu du travail est votre motivation. Vous cherchez à être expert et reconnu par vos pairs." },
   { key: 'score_management', label: 'Compétence Managériale', description: "Vous avez un désir intense de diriger, de contrôler et de prendre des décisions stratégiques." },
@@ -397,104 +447,42 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
 /**
  * Convertit un Blob DOCX en Blob PDF via CloudConvert (LibreOffice, pixel-perfect).
- * Priorité : CloudConvert (REACT_APP_CLOUDCONVERT_API_KEY) → ConvertAPI legacy (REACT_APP_CONVERT_API_SECRET).
- * Lance une erreur si aucune clé n'est disponible ou si l'API échoue.
+ * Passe désormais par la fonction serverless /api/convert/docx-to-pdf : les clés
+ * CloudConvert/ConvertAPI ne sont JAMAIS envoyées au navigateur (elles ne sont plus
+ * préfixées REACT_APP_, donc plus compilées dans le bundle JS public — cf. audit sécurité,
+ * l'ancienne implémentation exposait REACT_APP_CLOUDCONVERT_API_KEY / REACT_APP_CONVERT_API_SECRET
+ * en clair à n'importe quel visiteur du site).
+ * Lance une erreur si l'appel échoue (le fallback local convertDocxBlobToPdfLocal prend le relais).
  */
 const convertDocxBlobToPdf = async (docxBlob) => {
-  const ccKey = process.env.REACT_APP_CLOUDCONVERT_API_KEY;
-  const convertApiSecret = process.env.REACT_APP_CONVERT_API_SECRET || process.env.REACT_APP_CONVERTAPI_SECRET;
+  // Encoder le DOCX en base64 pour l'envoi inline au serverless (évite les problèmes CORS S3)
+  const base64Data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(docxBlob);
+  });
 
-  // ── CloudConvert (principal) ──────────────────────────────────────────────
-  if (ccKey) {
-    // Encoder le DOCX en base64 pour l'envoi inline (évite les problèmes CORS S3)
-    const base64Data = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(docxBlob);
-    });
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Session invalide — reconnectez-vous pour convertir ce document.');
 
-    // Créer le job : import base64 → convert docx→pdf (libreoffice) → export url
-    const jobRes = await fetch('https://api.cloudconvert.com/v2/jobs', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${ccKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        tasks: {
-          'import-file': {
-            operation: 'import/base64',
-            file: base64Data,
-            filename: 'document.docx',
-          },
-          'convert-file': {
-            operation: 'convert',
-            input: 'import-file',
-            input_format: 'docx',
-            output_format: 'pdf',
-            engine: 'libreoffice',
-          },
-          'export-file': {
-            operation: 'export/url',
-            input: 'convert-file',
-          },
-        },
-      }),
-    });
+  const response = await fetch('/api/convert/docx-to-pdf', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ docxBase64: base64Data }),
+  });
 
-    if (!jobRes.ok) {
-      const errText = await jobRes.text().catch(() => '');
-      throw new Error(`CloudConvert job création: ${jobRes.status} — ${errText}`);
-    }
-
-    const job = await jobRes.json();
-    const jobId = job.data.id;
-
-    // Polling toutes les 2s, max 90s
-    for (let i = 0; i < 45; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      const statusRes = await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
-        headers: { 'Authorization': `Bearer ${ccKey}` },
-      });
-      if (!statusRes.ok) throw new Error(`CloudConvert status: ${statusRes.status}`);
-      const status = await statusRes.json();
-
-      if (status.data.status === 'error') {
-        const failedTask = status.data.tasks?.find(t => t.status === 'error');
-        throw new Error(`CloudConvert échec: ${failedTask?.message || 'erreur inconnue'}`);
-      }
-
-      const exportTask = status.data.tasks?.find(t => t.name === 'export-file');
-      if (exportTask?.status === 'finished' && exportTask.result?.files?.[0]?.url) {
-        const pdfRes = await fetch(exportTask.result.files[0].url);
-        if (!pdfRes.ok) throw new Error(`CloudConvert téléchargement PDF: ${pdfRes.status}`);
-        return new Blob([await pdfRes.arrayBuffer()], { type: 'application/pdf' });
-      }
-    }
-    throw new Error('CloudConvert: timeout après 90 secondes');
+  if (!response.ok) {
+    let errMsg = `Conversion serveur échouée: ${response.status}`;
+    try { const errJson = await response.json(); if (errJson?.error) errMsg = errJson.error; } catch (_) {}
+    throw new Error(errMsg);
   }
 
-  // ── ConvertAPI legacy ─────────────────────────────────────────────────────
-  if (convertApiSecret) {
-    const formData = new FormData();
-    formData.append('File', new File([docxBlob], 'document.docx', {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    }));
-    const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${convertApiSecret}`, {
-      method: 'POST',
-      body: formData,
-    });
-    if (!response.ok) throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
-    const result = await response.json();
-    if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
-    const byteCharacters = atob(result.Files[0].FileData);
-    const byteArray = new Uint8Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) byteArray[i] = byteCharacters.charCodeAt(i);
-    return new Blob([byteArray], { type: 'application/pdf' });
-  }
-
-  throw new Error('Aucune clé API de conversion configurée. Ajoutez REACT_APP_CLOUDCONVERT_API_KEY dans Vercel.');
+  const pdfArrayBuffer = await response.arrayBuffer();
+  return new Blob([pdfArrayBuffer], { type: 'application/pdf' });
 };
 
 /**
@@ -1514,7 +1502,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
             <div>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
               <button
-                onClick={() => window.open(fileUrl, '_blank')}
+                onClick={() => openSecureStorageFile(fileUrl)}
                 className="w-full flex items-center justify-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl text-emerald-700 font-bold hover:bg-emerald-100 transition-all"
               >
                 <Download size={18} /> Télécharger le modèle d'exercice
@@ -1603,16 +1591,14 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
         </div>
         <div className="p-6 space-y-5">
           {session.reponse_url && (
-            <a
-              href={session.reponse_url}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              onClick={() => openSecureStorageFile(session.reponse_url)}
               className="flex items-center gap-3 w-full px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-700 font-bold text-sm hover:bg-emerald-100 transition-colors"
             >
               <FileCheck size={18} />
               Ouvrir le rendu du client
               <span className="ml-auto text-emerald-400">↗</span>
-            </a>
+            </button>
           )}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Statut de correction</p>
@@ -2312,12 +2298,22 @@ const SignupView = ({ supabase, onComplete }) => {
         .insert([{ nom: orgName.trim() }]).select().single();
       if (orgError) throw orgError;
 
-      // 3. Créer l'entrée admin dans utilisateurs
+      // 3. Créer l'entrée admin dans utilisateurs — auth_uid explicitement lié à authData.user.id pour
+      // que toute policy RLS qui vérifie auth.uid() = utilisateurs.auth_uid puisse s'appliquer ici aussi
+      // (utilisateurs.id est un entier auto-incrémenté, PAS un UUID — voir le flux d'invitation formateur
+      // un peu plus bas dans ce fichier qui utilise déjà auth_uid pour la même raison ; ne jamais y mettre
+      // authData.user.id, qui casserait l'insert avec une erreur de type).
+      // ATTENTION (signalé par l'audit, non entièrement corrigeable côté client) : cet insert crée un
+      // organisme + un compte admin directement depuis le navigateur avec la clé anon. La seule vraie
+      // protection contre un utilisateur qui s'auto-promouvrait admin d'un organisme existant (au lieu
+      // du nouvel organisme tout juste créé ci-dessus) est une policy RLS côté Supabase sur l'INSERT de
+      // 'utilisateurs' — à vérifier/durcir côté base (voir le message envoyé séparément à ce sujet).
       const { error: userError } = await supabase.from('utilisateurs').insert([{
         nom: adminName.trim(),
         email: email.trim(),
         role: 'admin',
-        organisation_id: org.id
+        organisation_id: org.id,
+        auth_uid: authData.user.id
       }]);
       if (userError) throw userError;
 
@@ -2901,12 +2897,18 @@ const ClientDetailView = ({
       }
 
       // Chercher les entrées MSR correspondantes (par nom) pour récupérer les métadonnées visuelles (has_visual_fields, visual_template_id, file_url)
+      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un modèle
+      // du même nom appartenant à un AUTRE organisme aurait pu être utilisé pour générer ce document.
       const docNames = groupDocs.map(d => d.nom);
-      const { data: msrEntries } = await supabase
+      let msrQuery = supabase
         .from('module_step_resources')
         .select('*')
         .eq('type', 'document')
         .in('titre', docNames);
+      msrQuery = currentOrgId
+        ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : msrQuery.is('organisation_id', null);
+      const { data: msrEntries } = await msrQuery;
       const msrByName = {};
       (msrEntries || []).forEach(m => { msrByName[m.titre] = m; });
 
@@ -3236,7 +3238,7 @@ const ClientDetailView = ({
                         <Eye size={14} /> Voir
                       </button>
                       <button
-                        onClick={() => window.open(signedUrl, '_blank')}
+                        onClick={() => openSecureStorageFile(signedUrl)}
                         className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                       >
                         <Download size={14} /> Télécharger
@@ -3270,7 +3272,7 @@ const ClientDetailView = ({
                       <Eye size={14} /> Voir
                     </button>
                     <button
-                      onClick={() => window.open(doc.url || doc.file_url, '_blank')}
+                      onClick={() => openSecureStorageFile(doc.url || doc.file_url)}
                       className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
                     >
                       <Download size={14} /> Télécharger
@@ -3446,7 +3448,11 @@ const ClientDetailView = ({
                       Générer
                     </button>
                     <button
-                      onClick={() => handleRemoveAssignedDoc(doc.id)}
+                      onClick={() => showDeleteConfirm(
+                        `Retirer "${doc.template_titre}" ?`,
+                        'Ce document personnalisé ne sera plus assigné à ce client.',
+                        async () => { hideDeleteConfirm(); await handleRemoveAssignedDoc(doc.id); }
+                      )}
                       className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
                       title="Retirer ce document"
                     >
@@ -3869,7 +3875,7 @@ const ClientDetailView = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
-                  <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
+                  <button onClick={() => openSecureStorageFile(doc.url || doc.file_url)} className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></button>
                   <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
                 </div>
               </div>
@@ -4067,7 +4073,7 @@ const AdminClientsView = ({
 const FormateurDetailView = ({
   formateur, onBack, supabase, fetchUtilisateurs, modules, clients,
   handleDeleteFormateur, documents, documentTemplates, handleGenerateDocx,
-  setViewingDocId, fetchDocuments, isSelfAdmin = false
+  setViewingDocId, fetchDocuments, isSelfAdmin = false, currentOrgId
 }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
@@ -4077,7 +4083,13 @@ const FormateurDetailView = ({
 
   const handleDeleteDoc = async () => {
     if (!docToDelete) return;
-    const { error } = await supabase.from('documents').delete().eq('id', docToDelete.id);
+    // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
+    // n'importe quel document portant cet id aurait pu être supprimé sans vérification d'appartenance.
+    let delQuery = supabase.from('documents').delete().eq('id', docToDelete.id);
+    delQuery = currentOrgId
+      ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+      : delQuery.is('organisation_id', null);
+    const { error } = await delQuery;
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); console.error('[handleDeleteDoc]', error); }
     else { toast.success('Document supprimé.'); }
     await fetchDocuments();
@@ -4349,15 +4361,13 @@ const FormateurDetailView = ({
                       <Eye size={20} />
                     </button>
                     {isSigned && doc.signed_pdf_url && (
-                      <a
-                        href={doc.signed_pdf_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        onClick={() => openSecureStorageFile(doc.signed_pdf_url)}
                         className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
                         title="Télécharger le PDF signé"
                       >
                         <Download size={14} /> PDF signé
-                      </a>
+                      </button>
                     )}
                     <button
                       onClick={() => setDocToDelete(doc)}
@@ -4426,7 +4436,8 @@ const AdminFormateursView = ({
   supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab,
   modules, sessions, handleDownloadResource, handleDeleteFormateur,
   documentTemplates, handleGenerateDocx, setViewingDocId,
-  handleUploadDocxTemplate, newTemplateName, setNewTemplateName, adminSelfId
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName, adminSelfId,
+  currentOrgId
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
@@ -4447,6 +4458,7 @@ const AdminFormateursView = ({
           documents={documents}
           documentTemplates={documentTemplates}
           handleGenerateDocx={handleGenerateDocx}
+          currentOrgId={currentOrgId}
           setViewingDocId={setViewingDocId}
           isSelfAdmin={adminSelfId != null && String(formateur.id) === String(adminSelfId)}
         />
@@ -4715,7 +4727,13 @@ const IngenierieView = ({
     const overIdParts = String(over.id).split('-'); // expected 'drop-{moduleId}-{moment}'
     if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
       const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
-      const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
+      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un
+      // glisser-déposer aurait pu modifier la ressource de module d'un AUTRE organisme si l'id était deviné.
+      let dragQuery = supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
+      dragQuery = currentOrgId
+        ? dragQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : dragQuery.is('organisation_id', null);
+      const { error } = await dragQuery;
       if (!error) fetchModules();
     }
   };
@@ -5040,7 +5058,7 @@ const FormateurView = ({
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
-  handleMoveSessionItem, handleSaveCorrection
+  handleMoveSessionItem, handleSaveCorrection, currentOrgId
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -5106,6 +5124,14 @@ const FormateurView = ({
       toast.error('Veuillez renseigner un nom et choisir un fichier.');
       return;
     }
+    // Vérification d'appartenance : le client ciblé doit être un client réel visible par ce formateur
+    // (liste déjà scopée par organisme) — avant ce correctif, un clientId arbitraire aurait été accepté
+    // sans aucune vérification.
+    const targetClient = (clients || []).find(c => String(c.id) === String(clientId));
+    if (!targetClient) {
+      toast.error("Client introuvable — impossible d'ajouter le document.");
+      return;
+    }
     setIsUploadingClientDoc(true);
     const ext = clientDocFile.name.split('.').pop();
     const safeN = clientDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -5124,7 +5150,10 @@ const FormateurView = ({
       assigned_formateur_id: currentUserId,
       url: publicUrl,
       visible_client: false,
-      visible_formateur: true
+      visible_formateur: true,
+      // organisation_id manquait ici : sans lui, ce document échappait au cloisonnement par organisme
+      // appliqué partout ailleurs.
+      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
     });
     if (!dbErr) {
       toast.success('Document ajouté au dossier client !');
@@ -5487,14 +5516,12 @@ const FormateurView = ({
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                           {fileUrl && (
-                                            <a
-                                              href={fileUrl}
-                                              target="_blank"
-                                              rel="noreferrer"
+                                            <button
+                                              onClick={() => openSecureStorageFile(fileUrl)}
                                               className="inline-flex items-center gap-1.5 bg-white text-indigo-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
                                             >
                                               <Eye size={13} /> Consulter
-                                            </a>
+                                            </button>
                                           )}
                                         </td>
                                       </tr>
@@ -5544,14 +5571,12 @@ const FormateurView = ({
                                           {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                          <a
-                                            href={signedUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
+                                          <button
+                                            onClick={() => openSecureStorageFile(signedUrl)}
                                             className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                                           >
                                             <Download size={13} /> Télécharger
-                                          </a>
+                                          </button>
                                         </td>
                                       </tr>
                                     );
@@ -6760,8 +6785,21 @@ const DocumentsView = ({
     const newName = editingNameValue.trim();
     if (!newName || newName === oldName) { setEditingName(null); return; }
     try {
-      await supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName);
-      await supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null);
+      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
+      // ces deux updates matchaient par nom/titre SEUL, sans aucune restriction d'organisme — un modèle
+      // du même nom appartenant à un AUTRE organisme aurait aussi été renommé.
+      let msrRenameQuery = supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName);
+      msrRenameQuery = currentOrgId
+        ? msrRenameQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : msrRenameQuery.is('organisation_id', null);
+      await msrRenameQuery;
+
+      let docRenameQuery = supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null);
+      docRenameQuery = currentOrgId
+        ? docRenameQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : docRenameQuery.is('organisation_id', null);
+      await docRenameQuery;
+
       if (fetchDocuments) await fetchDocuments();
       toast.success(`Renommé en "${newName}"`);
     } catch(e) { toast.error('Erreur renommage : ' + e.message); }
@@ -6790,8 +6828,12 @@ const DocumentsView = ({
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
       const metadataObj = { has_visual_fields: false, classification: 'a_signer' };
+      // Scoping toujours appliqué (avant : uniquement si currentOrgId était renseigné, sinon la
+      // recherche portait silencieusement sur TOUS les organismes).
       let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
-      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+      msrQuery = currentOrgId
+        ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : msrQuery.is('organisation_id', null);
       const { data: existingMsr } = await msrQuery;
       if (existingMsr && existingMsr.length > 0) {
         await supabase.from('module_step_resources').update({
@@ -6806,7 +6848,9 @@ const DocumentsView = ({
         if (msrErr) throw msrErr;
       }
       let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
-      if (currentOrgId) docQuery = docQuery.eq('organisation_id', currentOrgId);
+      docQuery = currentOrgId
+        ? docQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+        : docQuery.is('organisation_id', null);
       const { data: existingDoc } = await docQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
@@ -7834,9 +7878,9 @@ const DocumentsView = ({
                                     <p className="text-[10px] text-violet-700 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
                                   </div>
                                 </div>
-                                <a href={s.ressource_url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
+                                <button onClick={() => openSecureStorageFile(s.ressource_url)} className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
                                   Accéder au contenu ↗
-                                </a>
+                                </button>
                               </div>
                             ))}
                           </div>
@@ -8807,7 +8851,7 @@ const SessionsView = ({
         {(() => {
           const grouped = mySessions.reduce((acc, s) => {
             const key = s.numero_seance;
-            if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+            if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
             acc[key].items.push(s);
             return acc;
           }, {});
@@ -9432,14 +9476,22 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Nécessaire car signingResource.id peut être l'id de la table `documents` (per-client)
   // alors que template_fields.template_id est l'id de module_step_resources
   const resolveVisualTemplate = React.useCallback(async (titre) => {
+    // Scopé à l'organisme du client courant (+ lignes historiques sans organisation_id) : avant ce
+    // correctif, la recherche par titre seul pouvait remonter le modèle visuel d'un AUTRE organisme
+    // partageant le même nom de document, exposant potentiellement ses champs/positions de signature.
+    const myOrgId = (clients || []).find(c => String(c.id) === String(currentUserId))?.organisation_id || null;
     // Use .limit() instead of .maybeSingle() to handle cases where
     // multiple MSR rows share the same title (standalone template + module-linked copy)
-    const { data: rows } = await supabase
+    let rowsQuery = supabase
       .from('module_step_resources')
       .select('id, metadata')
       .eq('titre', titre)
       .eq('type', 'document')
       .limit(10);
+    rowsQuery = myOrgId
+      ? rowsQuery.or(`organisation_id.eq.${myOrgId},organisation_id.is.null`)
+      : rowsQuery.is('organisation_id', null);
+    const { data: rows } = await rowsQuery;
     if (!rows || rows.length === 0) return { templateId: null, hasVisualFields: false };
     // Prefer the row that has has_visual_fields: true
     const parseMeta = (r) => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } };
@@ -9450,7 +9502,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     const vizMeta = parseMeta(visualRow);
     const realTemplateId = vizMeta.visual_template_id || visualRow.id;
     return { templateId: realTemplateId, hasVisualFields: true, embeddedFields: vizMeta.template_fields || null };
-  }, [supabase]);
+  }, [supabase, clients, currentUserId]);
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
   const handleCloseSigningModal = React.useCallback(() => {
@@ -9909,7 +9961,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     } catch (err) {
       console.error('[handleSignSave]', err);
       toast.error('Erreur lors de la préparation du document : ' + err.message, { id: toastId });
-      // On continue quand même pour au moins enregistrer la signature en base
+      // Avant ce correctif, l'exécution continuait quand même jusqu'à l'étape 4 et enregistrait
+      // signe_par_client:true avec l'URL du template NON signé (signedPdfUrl retombait sur son
+      // fallback initial) : le document apparaissait "Signé ✓" côté client/formateur alors qu'aucun
+      // PDF signé n'avait réellement été généré/enregistré. On arrête ici pour ne PAS enregistrer une
+      // fausse signature — le client peut réessayer.
+      return;
     }
 
     // ── Étape 4 : Enregistrer en base ─────────────────────────────────────
@@ -11296,8 +11353,12 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
   const fetchProcesses = React.useCallback(async () => {
     setLoading(true);
     const db = supabase;
+    // Le filtre est désormais TOUJOURS appliqué (avant : seulement si currentOrgId était renseigné,
+    // sinon la requête remontait silencieusement les shared_processes de TOUS les organismes).
     let query = db.from('shared_processes').select('*').order('created_at', { ascending: false });
-    if (currentOrgId) query = query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+    query = currentOrgId
+      ? query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+      : query.is('organisation_id', null);
     const { data, error } = await query;
     if (!error && data) setProcesses(data);
     setLoading(false);
@@ -11344,7 +11405,13 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
   const handleDelete = async () => {
     if (!processToDelete) return;
     const db = supabase;
-    await db.from('shared_processes').delete().eq('id', processToDelete.id);
+    // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
+    // la suppression ne filtrait que par id, sans aucune vérification d'appartenance à l'organisme.
+    let delQuery = db.from('shared_processes').delete().eq('id', processToDelete.id);
+    delQuery = currentOrgId
+      ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+      : delQuery.is('organisation_id', null);
+    await delQuery;
     toast.success('Ressource supprimée.');
     setProcessToDelete(null);
     fetchProcesses();
@@ -11483,9 +11550,9 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {p.url && (
-                    <a href={p.url} target="_blank" rel="noreferrer" className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded-xl transition-all" title="Ouvrir">
+                    <button onClick={() => openSecureStorageFile(p.url)} className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded-xl transition-all" title="Ouvrir">
                       <Eye size={16} />
-                    </a>
+                    </button>
                   )}
                   {isAdmin && (
                     <button onClick={() => setProcessToDelete(p)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Supprimer">
@@ -11802,9 +11869,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                           <div className={`max-w-xs rounded-2xl px-4 py-2.5 shadow-sm ${isMine ? 'bg-teal-500 text-white rounded-br-sm' : 'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
                             {m.content && <p className="text-sm leading-relaxed">{m.content}</p>}
                             {m.attachment_url && (
-                              <a href={m.attachment_url} target="_blank" rel="noreferrer" className={`flex items-center gap-1.5 text-xs font-bold mt-1 underline ${isMine ? 'text-teal-100' : 'text-indigo-600'}`}>
+                              <button onClick={() => openSecureStorageFile(m.attachment_url)} className={`flex items-center gap-1.5 text-xs font-bold mt-1 underline ${isMine ? 'text-teal-100' : 'text-indigo-600'}`}>
                                 📎 {m.attachment_name || 'Pièce jointe'}
-                              </a>
+                              </button>
                             )}
                             <p className={`text-[9px] mt-1 ${isMine ? 'text-teal-100' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                           </div>
@@ -13110,12 +13177,18 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   };
 
   const fetchLogs = async () => {
-    const { data } = await supabase
+    // automation_logs n'a pas sa propre colonne organisation_id — avant ce correctif, cette requête
+    // n'appliquait AUCUN filtre et le "Journal des envois" affichait les emails de TOUS les organismes.
+    // On passe par la relation automation_setting_id → automation_settings.organisation_id (jointure
+    // PostgREST via !inner) pour ne garder que les envois de l'organisme courant.
+    if (!currentOrgId) { setLogs([]); return; }
+    const { data, error } = await supabase
       .from('automation_logs')
-      .select('*')
+      .select('*, automation_settings!inner(organisation_id)')
+      .eq('automation_settings.organisation_id', currentOrgId)
       .order('sent_at', { ascending: false })
       .limit(50);
-    if (data) setLogs(data);
+    if (!error && data) setLogs(data);
   };
 
   useEffect(() => {
@@ -13920,24 +13993,24 @@ export default function App() {
 
   const fetchModules = async () => {
     let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
-    if (currentOrgId) mQuery = mQuery.eq('organisation_id', currentOrgId);
+    mQuery = currentOrgId ? mQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : mQuery.is('organisation_id', null);
     const { data: mData, error: mErr } = await mQuery;
     if (!mErr && mData) setModules(mData);
 
     let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
-    if (currentOrgId) mstQuery = mstQuery.eq('organisation_id', currentOrgId);
+    mstQuery = currentOrgId ? mstQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : mstQuery.is('organisation_id', null);
     const { data: mstData, error: mstErr } = await mstQuery;
     if (!mstErr && mstData) setModuleSessionTemplates(mstData);
 
     let msrQuery = supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
-    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+    msrQuery = currentOrgId ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : msrQuery.is('organisation_id', null);
     const { data: msrData, error: msrErr } = await msrQuery;
     if (!msrErr && msrData) setModuleStepResources(msrData);
   };
 
   const fetchSessions = async () => {
     let q = supabase.from('sessions').select('*');
-    if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+    q = currentOrgId ? q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : q.is('organisation_id', null);
     const { data, error } = await q;
     if (!error && data) setSessions(data);
   };
@@ -13948,12 +14021,12 @@ export default function App() {
       .from('utilisateurs')
       .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
       .eq('role', 'formateur');
-    if (currentOrgId) fQuery = fQuery.eq('organisation_id', currentOrgId);
+    fQuery = currentOrgId ? fQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : fQuery.is('organisation_id', null);
     const { data: formateursData, error: formateursError } = await fQuery;
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
     let cQuery = supabase.from('clients').select('*');
-    if (currentOrgId) cQuery = cQuery.eq('organisation_id', currentOrgId);
+    cQuery = currentOrgId ? cQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : cQuery.is('organisation_id', null);
     const { data: clientsData, error: clientsError } = await cQuery;
 
     if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
@@ -14000,13 +14073,13 @@ export default function App() {
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
     let docsQuery = supabase.from('documents').select('*');
-    if (currentOrgId) docsQuery = docsQuery.eq('organisation_id', currentOrgId);
+    docsQuery = currentOrgId ? docsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : docsQuery.is('organisation_id', null);
     const { data: docsData, error } = await docsQuery;
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
     let msrQuery = supabase.from('module_step_resources').select('*').eq('type', 'document');
-    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
+    msrQuery = currentOrgId ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : msrQuery.is('organisation_id', null);
     const { data: modsData, error: modErr } = await msrQuery;
     if (!modErr && modsData) {
       console.log(`[fetchDocuments] ${modsData.length} modèles documents récupérés.`);
@@ -14052,7 +14125,9 @@ export default function App() {
   const fetchClientSkills = async () => {
     // Filtre via la relation client → organisation (RLS + filtre explicite)
     let csQuery = supabase.from('client_skills').select('*, clients!inner(organisation_id)');
-    if (currentOrgId) csQuery = csQuery.eq('clients.organisation_id', currentOrgId);
+    csQuery = currentOrgId
+      ? csQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`, { foreignTable: 'clients' })
+      : csQuery.is('clients.organisation_id', null);
     const { data, error } = await csQuery;
     if (!error && data) setClientSkills(data);
   };
@@ -14270,11 +14345,17 @@ export default function App() {
       toast.error("Impossible de supprimer votre propre compte administrateur depuis cet écran.");
       return;
     }
+    // Garde-fou multi-tenant : on ne supprime/désassigne que dans le périmètre de l'organisation courante
+    // (cf. audit sécurité — ce endpoint acceptait n'importe quel formateurId sans vérifier son organisation_id).
+    if (!currentOrgId) {
+      toast.error("Organisation introuvable, suppression annulée.");
+      return;
+    }
     try {
-      // 1. Désassigner les clients
-      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
-      // 2. Supprimer le formateur
-      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId);
+      // 1. Désassigner les clients (uniquement ceux de l'organisation courante)
+      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId).eq('organisation_id', currentOrgId);
+      // 2. Supprimer le formateur (uniquement s'il appartient à l'organisation courante)
+      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId).eq('organisation_id', currentOrgId);
       // 3. Supprimer le compte Auth via Edge Function sécurisée
       const { data: { session } } = await supabase.auth.getSession();
       await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
@@ -15739,30 +15820,48 @@ export default function App() {
           };
 
           // Source 1 : MSR liés directement à un module (type=document, module_id non null)
-          const { data: directLinks } = await supabase
+          // Scopé à l'organisation courante (+ legacy sans organisation_id) pour éviter de traiter
+          // des ressources d'autres organismes portant le même titre.
+          let directLinksQuery = supabase
             .from('module_step_resources').select('module_id')
             .eq('titre', name).eq('type', 'document').not('module_id', 'is', null);
+          directLinksQuery = currentOrgId
+            ? directLinksQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : directLinksQuery.is('organisation_id', null);
+          const { data: directLinks } = await directLinksQuery;
           const directModuleIds = [...new Set((directLinks || []).map(m => m.module_id).filter(Boolean))];
 
           // Source 2 : document dans un document_group → remonter au module via le groupe
-          const { data: groupLinks } = await supabase
+          let groupLinksQuery = supabase
             .from('module_step_resources').select('document_group_id')
             .eq('titre', name).eq('type', 'document').not('document_group_id', 'is', null);
+          groupLinksQuery = currentOrgId
+            ? groupLinksQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : groupLinksQuery.is('organisation_id', null);
+          const { data: groupLinks } = await groupLinksQuery;
           const groupIds = [...new Set((groupLinks || []).map(d => d.document_group_id).filter(Boolean))];
           let groupModuleIds = [];
           if (groupIds.length > 0) {
-            const { data: groupParents } = await supabase
+            let groupParentsQuery = supabase
               .from('module_step_resources').select('module_id')
               .eq('type', 'document_group').in('document_group_id', groupIds).not('module_id', 'is', null);
+            groupParentsQuery = currentOrgId
+              ? groupParentsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+              : groupParentsQuery.is('organisation_id', null);
+            const { data: groupParents } = await groupParentsQuery;
             groupModuleIds = [...new Set((groupParents || []).map(m => m.module_id).filter(Boolean))];
           }
 
           const allModuleIds = [...new Set([...directModuleIds, ...groupModuleIds])];
 
           // Source 3 : clients ayant déjà un document avec ce nom (non signé) → mettre à jour leur doc
-          const { data: existingClientDocs } = await supabase
+          let existingClientDocsQuery = supabase
             .from('documents').select('user_id')
             .eq('nom', name).not('user_id', 'is', null).eq('signe_par_client', false);
+          existingClientDocsQuery = currentOrgId
+            ? existingClientDocsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : existingClientDocsQuery.is('organisation_id', null);
+          const { data: existingClientDocs } = await existingClientDocsQuery;
           const existingClientIds = new Set((existingClientDocs || []).map(d => String(d.user_id)));
 
           // Union de toutes les sources
@@ -15884,9 +15983,10 @@ export default function App() {
 
   const handleDownloadResource = async (fileName) => {
     try {
-      // Si le fileName est déjà une URL complète (modélothèque), on l'ouvre
+      // Si le fileName est déjà une URL complète (modélothèque), on tente un lien signé
+      // (utile si l'URL pointe vers notre storage Supabase) avant de se rabattre dessus telle quelle.
       if (fileName && (fileName.startsWith('http') || fileName.startsWith('https'))) {
-        window.open(fileName, '_blank');
+        await openSecureStorageFile(fileName);
         return;
       }
 
@@ -17399,6 +17499,7 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
+            currentOrgId={currentOrgId}
           />}
           {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
             supabase={supabase}
@@ -17471,6 +17572,7 @@ export default function App() {
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
             formateurs={assignableFormateurs}
+            currentOrgId={currentOrgId}
             sessions={sessions}
             generateSessions={generateSessions}
             updateSessionDate={updateSessionDate}
