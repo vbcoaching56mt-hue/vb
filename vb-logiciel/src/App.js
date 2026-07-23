@@ -14866,7 +14866,17 @@ export default function App() {
           toast.success("Module supprimé avec succès.");
         } catch (err) {
           console.error("Erreur suppression module:", err);
-          toast.error("Erreur lors de la suppression : " + err.message);
+          // Filet de sécurité générique : si la base refuse la suppression à cause d'une clé
+          // étrangère (code Postgres 23503) qu'on n'a pas anticipée dans les garde-fous ci-dessus
+          // (ex: un utilisateur avec organisation_id NULL, invisible à la vérification RLS faite
+          // plus haut, ou toute autre contrainte encore inconnue), on affiche un message clair
+          // plutôt que le texte technique brut de Postgres.
+          const isForeignKeyViolation = err?.code === '23503' || /foreign key constraint/i.test(err?.message || '');
+          if (isForeignKeyViolation) {
+            toast.error("Impossible de supprimer ce module : il est encore utilisé ailleurs dans l'application (un formateur, un admin ou un client y est probablement toujours rattaché). Vérifiez les assignations avant de réessayer.", { duration: 8000 });
+          } else {
+            toast.error("Erreur lors de la suppression : " + err.message);
+          }
         }
       }
     );
