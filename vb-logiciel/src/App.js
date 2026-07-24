@@ -641,7 +641,10 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // n'est connue qu'au moment de signer, transmise via textInputMap (une même balise texte_client/
       // texte_formateur peut être posée plusieurs fois, d'où l'indexation par fieldKey, pas par tag).
       const boxW = pageW * 0.28;
-      const boxH = 20;
+      // Hauteur alignée sur une seule ligne de texte (taille de police + petit interligne),
+      // pas une boîte arbitraire — évite un pavé disproportionné à côté du texte du document.
+      const fs = field.font_size || 10;
+      const boxH = Math.round(fs * 1.35) + 2;
       const bx = Math.max(0, cx - boxW / 2);
       const by = Math.max(0, cy - boxH / 2);
       const isClient = field.tag === 'texte_client';
@@ -651,16 +654,17 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
         if (typedValue) {
           // Valeur déjà saisie → on l'imprime, sans cadre (comme un champ rempli)
           page.drawText(String(typedValue), {
-            x: bx + 3, y: by + boxH / 2 - (field.font_size || 10) / 3,
-            size: field.font_size || 10, font, color: rgb(0.1, 0.1, 0.1),
+            x: bx + 3, y: by + boxH / 2 - fs / 3,
+            size: fs, font, color: rgb(0.1, 0.1, 0.1),
             maxWidth: boxW - 6,
           });
           page.drawLine({ start: { x: bx, y: by }, end: { x: bx + boxW, y: by }, thickness: 0.5, color: bc, opacity: 0.5 });
         } else {
-          // Pas encore rempli → cadre + libellé placeholder
+          // Pas encore rempli → cadre + libellé placeholder (police réduite pour tenir sur une ligne fine)
+          const labelSize = Math.min(7, fs - 2);
           page.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
           page.drawText(isClient ? 'Texte libre client' : 'Texte libre formateur', {
-            x: bx + 4, y: by + boxH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
+            x: bx + 3, y: by + boxH / 2 - labelSize / 2.6, size: labelSize, font, color: bc, opacity: 0.7,
           });
         }
       } catch (e) {
@@ -758,7 +762,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
   return new Blob([pdfBytes], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], requiredTextFields = [], supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -784,6 +788,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       return next;
     });
   };
+  // ── Balises "texte libre" appartenant à ce signataire : saisie directement sur le document ──
+  const [textFieldValues, setTextFieldValues] = useState({});
+  const setTextFieldValue = (fieldId, value) => {
+    setTextFieldValues(prev => ({ ...prev, [fieldId]: value }));
+  };
+  const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
   // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
   // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
   // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
@@ -793,7 +803,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   useEffect(() => {
     let cancelled = false;
     setPageImages([]);
-    if (!isOpen || mode !== 'sign' || requiredCheckboxes.length === 0 || !blobUrl) return;
+    if (!isOpen || mode !== 'sign' || (requiredCheckboxes.length === 0 && requiredTextFields.length === 0) || !blobUrl) return;
     (async () => {
       setPageImagesLoading(true);
       try {
@@ -828,7 +838,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, mode, blobUrl, requiredCheckboxes.length]);
+  }, [isOpen, mode, blobUrl, requiredCheckboxes.length, requiredTextFields.length]);
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -1107,10 +1117,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         >
           {/* PDF Zone — mode interactif (cases directement sur le document) si des cases sont
               requises ET que le rendu page-par-page a réussi ; sinon le lecteur PDF classique. */}
-          {mode === 'sign' && requiredCheckboxes.length > 0 && pageImages.length > 0 ? (
+          {mode === 'sign' && (requiredCheckboxes.length > 0 || requiredTextFields.length > 0) && pageImages.length > 0 ? (
             <div className="w-full space-y-3">
               {pageImages.map((pg, pi) => {
                 const pageChecks = requiredCheckboxes.filter(f => (f.page || 1) === pi + 1);
+                const pageTexts = requiredTextFields.filter(f => (f.page || 1) === pi + 1);
                 return (
                   <div key={pi} className="relative w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white">
                     <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
@@ -1130,16 +1141,31 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         </button>
                       );
                     })}
+                    {pageTexts.map((f, fi) => {
+                      const k = fieldKey(f);
+                      const val = textFieldValues[k] || '';
+                      return (
+                        <input
+                          key={k || `txt-${fi}`}
+                          type="text"
+                          value={val}
+                          onChange={e => setTextFieldValue(k, e.target.value)}
+                          placeholder="Cliquez pour écrire…"
+                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', width: '26%', fontSize: 12 }}
+                          className={`px-1.5 py-0.5 rounded border-2 shadow-lg outline-none bg-white/95 ${val ? 'border-green-500' : 'border-violet-500'} focus:border-violet-700`}
+                        />
+                      );
+                    })}
                   </div>
                 );
               })}
             </div>
           ) : (
             <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
-              {mode === 'sign' && requiredCheckboxes.length > 0 && pageImagesLoading ? (
+              {mode === 'sign' && (requiredCheckboxes.length > 0 || requiredTextFields.length > 0) && pageImagesLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
                   <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
-                  <p className="text-sm font-medium">Préparation des cases à cocher sur le document…</p>
+                  <p className="text-sm font-medium">Préparation des champs interactifs sur le document…</p>
                 </div>
               ) : renderPdfZone()}
             </div>
@@ -1209,6 +1235,34 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                     ))}
                     {!allRequiredChecked && (
                       <p className="text-xs text-violet-700 mt-2 italic">Au moins une case doit être cochée pour débloquer la signature.</p>
+                    )}
+                  </div>
+                )}
+                {requiredTextFields.length > 0 && pageImages.length > 0 && (
+                  // Mode interactif actif : les champs se remplissent directement sur le document ci-dessus.
+                  <div className={`mb-4 p-3 rounded-xl border text-sm font-bold ${allRequiredTextFilled ? 'bg-green-50 border-green-200 text-green-700' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+                    {allRequiredTextFilled
+                      ? `✅ ${requiredTextFields.length} champ(s) texte rempli(s) sur le document ci-dessus.`
+                      : `✏️ ${requiredTextFields.filter(f => (textFieldValues[fieldKey(f)] || '').trim()).length} / ${requiredTextFields.length} champ(s) texte rempli(s) — complétez tous les champs directement sur le document ci-dessus pour débloquer la signature.`}
+                  </div>
+                )}
+                {requiredTextFields.length > 0 && pageImages.length === 0 && (
+                  // Repli (rendu page-par-page indisponible) : liste générique, sans contexte visuel.
+                  <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                    <p className="text-sm font-bold text-blue-800 mb-3">Avant de signer, complétez le(s) champ(s) texte suivant(s) :</p>
+                    {requiredTextFields.map((f, i) => (
+                      <div key={fieldKey(f) || i} className="mb-2 last:mb-0">
+                        <input
+                          type="text"
+                          value={textFieldValues[fieldKey(f)] || ''}
+                          onChange={e => setTextFieldValue(fieldKey(f), e.target.value)}
+                          placeholder={`Champ texte ${i + 1}`}
+                          className="w-full px-3 py-2 text-sm border border-blue-300 rounded-lg focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    ))}
+                    {!allRequiredTextFilled && (
+                      <p className="text-xs text-blue-700 mt-2 italic">Tous les champs doivent être remplis pour débloquer la signature.</p>
                     )}
                   </div>
                 )}
@@ -1301,10 +1355,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds);
+                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues);
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !hasSig}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && hasSig) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !allRequiredTextFilled || !hasSig}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && allRequiredTextFilled && hasSig) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -8604,7 +8658,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
 };
 
 // ─── Accueil Formateur ─────────────────────────────────────────────────────────
-const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab, setSigningDocId, handleSaveCorrection }) => {
+const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab, setSigningDocId, setViewingSession, handleSaveCorrection }) => {
   const formateur = formateurs.find(f => f.id === currentUserId);
   const myClients = clients.filter(c => c.formateur_id === currentUserId);
   const myClientIds = myClients.map(c => c.id);
@@ -8702,7 +8756,10 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
                     <button
                       key={doc.id}
                       type="button"
-                      onClick={() => setSigningDocId && setSigningDocId(doc.id)}
+                      // Ouvre la même visionneuse riche (avec aperçu du document et balises) que
+                      // l'onglet "Documents administratifs", au lieu de l'ancienne fenêtre nue
+                      // "Émargement Électronique" (setSigningDocId) qui n'affichait aucun aperçu.
+                      onClick={() => setViewingSession && setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
                       className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-amber-50/60 transition-colors"
                     >
                       <div className="min-w-0">
@@ -9473,6 +9530,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Cases à cocher requises avant signature côté client (extraites du template en cours de signature)
   const [signingCheckboxFields, setSigningCheckboxFields] = React.useState([]);
   const isClientCheckboxField = (f) => (f.tag || '') === 'checkbox_client' || (f.field_type === 'checkbox' && (f.tag || '').includes('client'));
+  // Champs "texte libre" à remplir par le client avant signature (extraits du template en cours de signature)
+  const [signingTextFields, setSigningTextFields] = React.useState([]);
+  const isClientTextField = (f) => (f.tag || '') === 'texte_client' || (f.field_type === 'text_input' && (f.tag || '').includes('client'));
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
@@ -9635,6 +9695,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     prefilledSignBlob.current = null;
     setSigningResource(null);
     setSigningCheckboxFields([]);
+    setSigningTextFields([]);
   }, []);
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
@@ -9649,6 +9710,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
     setSigningCheckboxFields([]);
+    setSigningTextFields([]);
 
     const toastId = 'prefill-sign';
 
@@ -9682,6 +9744,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
+          setSigningTextFields((pregenMeta.signature_fields || []).filter(isClientTextField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -9699,7 +9762,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           const resp = await fetch(tplUrl);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
+          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
           }
@@ -9709,6 +9772,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.fields || []).filter(isClientCheckboxField));
+          setSigningTextFields((pregenMeta.fields || []).filter(isClientTextField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -9842,6 +9906,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setPrefilledSignUrl(blobUrl);
       toast.dismiss(toastId);
       setSigningCheckboxFields((tplFields || []).filter(isClientCheckboxField));
+      setSigningTextFields((tplFields || []).filter(isClientTextField));
       // Ouvrir la modal — le blob est déjà prêt, le client verra ses données immédiatement
       setSigningResource(resource);
     } catch(e) {
@@ -9852,9 +9917,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
   }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs]);
 
-  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null) => {
+  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => {
     if (!signingResource || !currentClient) return;
     const _checkedIdSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
+    // Valeurs tapées dans les balises "texte libre" (clé = fieldKey(field) → texte saisi)
+    const _textValueMap = {};
+    if (textValues) {
+      (textValues instanceof Map ? Array.from(textValues.entries()) : Object.entries(textValues)).forEach(([k, v]) => { if (v) _textValueMap[k] = v; });
+    }
 
     const toastId = 'pdf-sign';
     let signedPdfUrl = signingResource.file_url; // fallback ultime
@@ -9910,7 +9980,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter la signature + les cases à cocher
           pdfBlob = prefilledSignBlob.current;
           {
-            const _isSigOrChk = f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_');
+            const _isSigOrChk = f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
             // Chercher les champs signature/case à cocher : P1 = signature_fields (nouveau format pré-généré)
             //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
@@ -9933,9 +10003,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             }
             const checkedMap = {};
             sigFields.forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
-            if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0)) {
+            const textInputMap = {};
+            sigFields.forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
+            if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0 || Object.keys(textInputMap).length > 0)) {
               const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
-              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap);
+              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap, textInputMap);
               signatureEmbeddedByOverlay = true;
             }
           }
@@ -10006,7 +10078,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
             const checkedMap = {};
             (templateFields || []).forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
-            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap, checkedMap);
+            const textInputMap = {};
+            (templateFields || []).forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap, checkedMap, textInputMap);
             signatureEmbeddedByOverlay = true;
           }
         }
@@ -10555,6 +10629,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           mode="sign"
           isInteractiveConsent={false}
           requiredCheckboxes={signingCheckboxFields}
+          requiredTextFields={signingTextFields}
           onSave={handleSignSave}
         />
       )}
@@ -14653,7 +14728,11 @@ export default function App() {
         if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} pour ${templateResource.file_url}`);
         let pdfBlob = new Blob([await templateResp.arrayBuffer()], { type: 'application/pdf' });
 
-        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
+        // Les champs texte libre (texte_client/texte_formateur) sont comme les signatures/cases :
+        // remplis par le SIGNATAIRE au moment de signer, pas par l'admin à la génération — ils ne
+        // doivent donc PAS recevoir l'overlay "données" ici (sinon la boîte vide se retrouve gravée
+        // en dur, non modifiable, dans le PDF pré-généré).
+        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
         if (dataFields.length > 0) {
           pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, resolvedValues, {});
         }
@@ -14669,8 +14748,8 @@ export default function App() {
         if (uploadErr) throw uploadErr;
         const { data: { publicUrl: prefilledUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
 
-        // 5. Stocker avec URL pré-remplie + positions des champs signature pour l'étape de signature
-        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_'));
+        // 5. Stocker avec URL pré-remplie + positions des champs signature/case/texte libre pour l'étape de signature
+        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_'));
         const docMetadata = JSON.stringify({
           has_visual_fields: true,
           visual_template_id: visualTemplateId,
@@ -14778,10 +14857,33 @@ export default function App() {
 
         if (!existingFDoc) {
           // Reprendre les mêmes métadonnées enrichies (champs + valeurs résolues) si template visuel
+          // ── IMPORTANT : ce document (copie "formateur" d'un template destination=both) doit lui
+          // aussi porter signature_fields dans ses métadonnées, sinon la visionneuse de signature ne
+          // sait pas quels champs signature/case/texte-libre appartiennent au formateur → aucun champ
+          // interactif ne s'affiche (régression trouvée en test 2026-07-24 : "Texte libre formateur"
+          // non modifiable + "Texte libre client" visible alors qu'il ne devrait pas l'être).
+          let fDocSigFields = [];
+          if (hasVisualFields && visualTemplateId) {
+            try {
+              let fTplFields = (meta.template_fields && meta.template_fields.length > 0) ? meta.template_fields : null;
+              if (!fTplFields) {
+                const { data: fDbFields } = await supabase
+                  .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
+                fTplFields = fDbFields || [];
+              }
+              fDocSigFields = (fTplFields || []).filter(f =>
+                f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' ||
+                (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')
+              );
+            } catch (e) {
+              console.warn('[instantiateDocument] Impossible de résoudre les champs interactifs (doc formateur, destination=both) :', e.message);
+            }
+          }
           const fDocMetadata = (hasVisualFields && visualTemplateId) ? JSON.stringify({
             has_visual_fields: true,
             visual_template_id: visualTemplateId,
             template_url: templateResource.file_url,
+            signature_fields: fDocSigFields,
           }) : null;
 
           await supabase.from('documents').insert([{
@@ -14867,6 +14969,17 @@ export default function App() {
           .eq('user_id', clientId)
           .eq('nom', res.titre)
           .eq('signe_par_client', false);
+
+        // Destination "Les deux" : une COPIE SÉPARÉE existe aussi pour le formateur assigné
+        // (user_id NULL, assigned_formateur_id renseigné à la place — voir instantiateDocument) —
+        // sans ce nettoyage, cette copie-là restait figée avec l'ancienne métadonnée (sans
+        // signature_fields) même après une "régénération" côté client.
+        if ((res.destination || 'client') === 'both' && fullClient.formateur_id) {
+          await supabase.from('documents').delete()
+            .eq('assigned_formateur_id', fullClient.formateur_id)
+            .eq('nom', res.titre)
+            .eq('signe_par_formateur', false);
+        }
       }
 
       // Relancer la distribution (instantiateDocument régénère les PDFs visuels)
@@ -16611,9 +16724,14 @@ export default function App() {
     setIsAddingDoc(false);
   };
 
-  const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null) => {
+  const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null, textValues = null) => {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
+    // Valeurs tapées dans les balises "texte libre" appartenant à ce signataire (clé = fieldKey(field))
+    const _textValueMap = {};
+    if (textValues) {
+      (textValues instanceof Map ? Array.from(textValues.entries()) : Object.entries(textValues)).forEach(([k, v]) => { if (v) _textValueMap[k] = v; });
+    }
 
     // signerType = 'client' ou 'formateur'
     const updateColumn = signerType === 'client'
@@ -16644,13 +16762,14 @@ export default function App() {
       try {
         const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
         const checkboxTag = signerType === 'client' ? 'checkbox_client' : 'checkbox_formateur';
+        const textTag = signerType === 'client' ? 'texte_client' : 'texte_formateur';
         let sigFields = null;
 
         // Source 1 : template_id → charger depuis template_fields DB (ancien flow)
         if (doc.template_id) {
           const { data: dbFields } = await supabase
             .from('template_fields').select('*')
-            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag]);
+            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag, textTag]);
           if (dbFields && dbFields.length > 0) sigFields = dbFields;
         }
 
@@ -16658,7 +16777,7 @@ export default function App() {
         if (!sigFields) {
           const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
           const metaFields = docMeta.signature_fields || [];
-          const match = metaFields.filter(f => f.tag === sigTag || f.tag === checkboxTag);
+          const match = metaFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
           if (match.length > 0) sigFields = match;
         }
 
@@ -16677,7 +16796,12 @@ export default function App() {
                   checkedMap[k] = typeof checkedIds.has === 'function' ? checkedIds.has(k) : !!checkedIds[k];
                 });
               }
-              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap);
+              const textInputMap = {};
+              sigFields.filter(f => f.tag === textTag).forEach(f => {
+                const k = fieldKey(f);
+                if (_textValueMap[k]) textInputMap[k] = _textValueMap[k];
+              });
+              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap, textInputMap);
               const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
               const { error: upErr } = await supabase.storage.from('documents')
                 .upload(fileName, new File([updatedPdfBlob], fileName, { type: 'application/pdf' }));
@@ -17612,6 +17736,7 @@ export default function App() {
             currentUserId={currentUserId}
             setActiveTab={setActiveTab}
             setSigningDocId={setSigningDocId}
+            setViewingSession={setViewingSession}
             handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
@@ -17952,12 +18077,24 @@ export default function App() {
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
         isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
+        requiredCheckboxes={(() => {
+          const sess = viewingSession?.session;
+          if (!sess || viewingSession?.mode !== 'sign') return [];
+          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
+          return (meta.signature_fields || []).filter(f => f.tag === 'checkbox_formateur');
+        })()}
+        requiredTextFields={(() => {
+          const sess = viewingSession?.session;
+          if (!sess || viewingSession?.mode !== 'sign') return [];
+          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
+          return (meta.signature_fields || []).filter(f => f.tag === 'texte_formateur');
+        })()}
         onClose={() => setViewingSession(null)}
-        onSave={async (sigDataUrl) => {
+        onSave={async (sigDataUrl, _choice, checkedIds, textValues) => {
           const sess = viewingSession?.session;
           if (sess?.id) {
             // Signature d'un document administratif par le formateur
-            await handleSignDocument(sess.id, 'formateur', sigDataUrl);
+            await handleSignDocument(sess.id, 'formateur', sigDataUrl, checkedIds, textValues);
             toast.success('Document signé avec succès !');
           }
           setViewingSession(null);
