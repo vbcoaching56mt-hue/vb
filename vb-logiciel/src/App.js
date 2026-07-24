@@ -762,7 +762,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
   return new Blob([pdfBytes], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], requiredTextFields = [], supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], requiredTextFields = [], requiresSignature = true, supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -1175,8 +1175,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           {mode === 'sign' && (
             <div ref={signatureSectionRef} className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
               <div className="p-5 border-b border-gray-100">
-                <h4 className="font-extrabold text-gray-900 mb-1">Signature électronique</h4>
-                <p className="text-sm text-gray-500">Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".</p>
+                <h4 className="font-extrabold text-gray-900 mb-1">{requiresSignature ? 'Signature électronique' : 'Validation'}</h4>
+                <p className="text-sm text-gray-500">
+                  {requiresSignature
+                    ? 'Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".'
+                    : 'Ce document ne comporte pas de zone de signature — cliquez sur "Signer ce document" pour valider.'}
+                </p>
               </div>
               <div className="p-5">
                 {isInteractiveConsent && (
@@ -1268,9 +1272,13 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-violet-600 shrink-0" />
-                  <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
+                  <span className="text-sm text-gray-600">
+                    Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document{requiresSignature ? " et j'accepte de le valider par ma signature électronique." : '.'}
+                  </span>
                 </label>
-                {/* Canvas de signature manuscrite */}
+                {/* Canvas de signature manuscrite — uniquement si le document comporte une balise
+                    signature pour ce signataire (sinon rien à signer, on ne l'exige pas). */}
+                {requiresSignature && (
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Votre signature</span>
@@ -1335,6 +1343,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                   />
                   {!hasSig && <p className="text-xs text-gray-400 mt-1 text-center italic">Tracez votre signature ci-dessus</p>}
                 </div>
+                )}
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
                   <button
@@ -1357,8 +1366,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                       }
                       onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues);
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !allRequiredTextFilled || !hasSig}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && allRequiredTextFilled && hasSig) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !allRequiredTextFilled || (requiresSignature && !hasSig)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && allRequiredTextFilled && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -9533,6 +9542,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Champs "texte libre" à remplir par le client avant signature (extraits du template en cours de signature)
   const [signingTextFields, setSigningTextFields] = React.useState([]);
   const isClientTextField = (f) => (f.tag || '') === 'texte_client' || (f.field_type === 'text_input' && (f.tag || '').includes('client'));
+  // Le document exige-t-il une signature manuscrite du client ? Par défaut oui (comportement
+  // historique, pour les documents sans balises visuelles) — passe à false uniquement quand on a pu
+  // résoudre les champs du template ET qu'aucun d'eux n'est une balise "signature_client" (sinon on
+  // forçait une signature qui n'a ensuite nulle part où s'accrocher dans le PDF final — bug constaté
+  // 2026-07-24 : "il n'y a pas de balise signature... alors le document a demandé une signature").
+  const [signingRequiresSignature, setSigningRequiresSignature] = React.useState(true);
+  const isClientSignatureField = (f) => (f.tag || '') === 'signature_client' || (f.field_type === 'signature' && (f.tag || '').includes('client'));
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
@@ -9696,6 +9712,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     setSigningResource(null);
     setSigningCheckboxFields([]);
     setSigningTextFields([]);
+    setSigningRequiresSignature(true);
   }, []);
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
@@ -9711,6 +9728,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     prefilledSignBlob.current = null;
     setSigningCheckboxFields([]);
     setSigningTextFields([]);
+    setSigningRequiresSignature(true);
 
     const toastId = 'prefill-sign';
 
@@ -9745,6 +9763,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
           setSigningTextFields((pregenMeta.signature_fields || []).filter(isClientTextField));
+          setSigningRequiresSignature((pregenMeta.signature_fields || []).some(isClientSignatureField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -9773,6 +9792,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.fields || []).filter(isClientCheckboxField));
           setSigningTextFields((pregenMeta.fields || []).filter(isClientTextField));
+          setSigningRequiresSignature((pregenMeta.fields || []).some(isClientSignatureField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -9918,6 +9938,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       toast.dismiss(toastId);
       setSigningCheckboxFields((tplFields || []).filter(isClientCheckboxField));
       setSigningTextFields((tplFields || []).filter(isClientTextField));
+      setSigningRequiresSignature((tplFields || []).some(isClientSignatureField));
       // Ouvrir la modal — le blob est déjà prêt, le client verra ses données immédiatement
       setSigningResource(resource);
     } catch(e) {
@@ -10654,6 +10675,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           isInteractiveConsent={false}
           requiredCheckboxes={signingCheckboxFields}
           requiredTextFields={signingTextFields}
+          requiresSignature={signingRequiresSignature}
           onSave={handleSignSave}
         />
       )}
@@ -18120,6 +18142,17 @@ export default function App() {
           if (!sess || viewingSession?.mode !== 'sign') return [];
           const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
           return (meta.signature_fields || []).filter(f => f.tag === 'texte_formateur');
+        })()}
+        requiresSignature={(() => {
+          const sess = viewingSession?.session;
+          if (!sess || viewingSession?.mode !== 'sign') return true;
+          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
+          const sigFields = meta.signature_fields;
+          // Pas de métadonnées de balises du tout → document hors du nouveau système visuel,
+          // on garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige
+          // que si une balise "signature_formateur" a effectivement été posée sur ce document.
+          if (!Array.isArray(sigFields) || sigFields.length === 0) return true;
+          return sigFields.some(f => f.tag === 'signature_formateur');
         })()}
         onClose={() => setViewingSession(null)}
         onSave={async (sigDataUrl, _choice, checkedIds, textValues) => {
