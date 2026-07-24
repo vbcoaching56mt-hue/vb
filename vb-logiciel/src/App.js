@@ -606,11 +606,14 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  * @param {Object} dataValues — {nomcomplet_client: "...", ...}
  * @returns {Blob} PDF modifié
  */
-const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}) => {
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}, textInputMap = {}) => {
   // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
   // checkedMap = { [field.id]: true } — état coché des cases à cocher, par identifiant de champ
   //   (une même balise checkbox_client/checkbox_formateur peut être posée plusieurs fois : on
   //   distingue donc chaque case par son id, pas par son tag).
+  // textInputMap = { [fieldKey(field)]: 'texte saisi par le signataire' } — même principe que
+  //   checkedMap : une balise texte_client/texte_formateur peut être posée plusieurs fois, donc
+  //   on distingue chaque champ par fieldKey(field), pas par son tag.
   const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer(), { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -631,6 +634,40 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
     }
     const isSignature = field.field_type === 'signature' || (field.tag || '').startsWith('signature_');
     const isCheckbox = field.field_type === 'checkbox' || (field.tag || '').startsWith('checkbox_');
+    const isTextInput = field.field_type === 'text_input' || (field.tag || '').startsWith('texte_');
+
+    if (isTextInput) {
+      // Champ à remplir librement par le signataire (client ou formateur, façon Yousign) — la valeur
+      // n'est connue qu'au moment de signer, transmise via textInputMap (une même balise texte_client/
+      // texte_formateur peut être posée plusieurs fois, d'où l'indexation par fieldKey, pas par tag).
+      const boxW = pageW * 0.28;
+      const boxH = 20;
+      const bx = Math.max(0, cx - boxW / 2);
+      const by = Math.max(0, cy - boxH / 2);
+      const isClient = field.tag === 'texte_client';
+      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+      const typedValue = textInputMap[fieldKey(field)];
+      try {
+        if (typedValue) {
+          // Valeur déjà saisie → on l'imprime, sans cadre (comme un champ rempli)
+          page.drawText(String(typedValue), {
+            x: bx + 3, y: by + boxH / 2 - (field.font_size || 10) / 3,
+            size: field.font_size || 10, font, color: rgb(0.1, 0.1, 0.1),
+            maxWidth: boxW - 6,
+          });
+          page.drawLine({ start: { x: bx, y: by }, end: { x: bx + boxW, y: by }, thickness: 0.5, color: bc, opacity: 0.5 });
+        } else {
+          // Pas encore rempli → cadre + libellé placeholder
+          page.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
+          page.drawText(isClient ? 'Texte libre client' : 'Texte libre formateur', {
+            x: bx + 4, y: by + boxH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
+          });
+        }
+      } catch (e) {
+        console.warn('[overlayFieldsOnPdf] Erreur champ texte libre:', e.message);
+      }
+      continue;
+    }
 
     if (isCheckbox) {
       // Case à cocher sans texte : simple carré, coché = rempli + coche blanche, décoché = contour seul.
@@ -6019,6 +6056,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   ];
   const isCheckboxTag = (tag) => tag === 'checkbox_client' || tag === 'checkbox_formateur';
 
+  // ── Champs texte libre (rempli par le signataire au moment de signer, façon Yousign) ──
+  // Comme les cases à cocher : peuvent être posés plusieurs fois, et sont identifiés par fieldKey()
+  // (pas par leur tag) puisqu'un même tag peut désigner plusieurs champs distincts sur un document.
+  const TEXT_INPUT_TAGS = [
+    { tag: 'texte_client', label: 'Texte libre client', color: 'blue' },
+    { tag: 'texte_formateur', label: 'Texte libre formateur', color: 'orange' },
+  ];
+  const isTextInputTag = (tag) => tag === 'texte_client' || tag === 'texte_formateur';
+
   // Pré-chargement quand on édite un template existant (initialData fourni)
   React.useEffect(() => {
     if (!isOpen || !initialData?.url) return;
@@ -6199,7 +6245,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setIsSaving(true);
     // Classification automatique selon les balises posées
     const SIGNATURE_TAGS = ['signature_client', 'signature_formateur'];
-    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'checkbox_client', 'checkbox_formateur'];
+    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'checkbox_client', 'checkbox_formateur', 'texte_client', 'texte_formateur'];
     const hasDataFields = fields.some(f => !INTERACTIVE_TAGS.includes(f.tag));
     const hasSignature = fields.some(f => INTERACTIVE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
@@ -6238,12 +6284,20 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         org_site_web: 'www.vbcoaching56.com',
       };
       const tplFields = fields.map(f => ({
-        template_id: 0, tag: f.tag, page: f.page || 1,
+        template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
         x_percent: f.xPct, y_percent: f.yPct,
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
         font_size: 11,
       }));
-      const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {});
+      // Aperçu des champs texte libre avec une valeur d'exemple (le vrai contenu n'est saisi
+      // qu'au moment de la signature — voir handleSignSave/handleSignDocument).
+      const previewTextInputMap = {};
+      tplFields.forEach(f => {
+        if (f.field_type === 'text_input') {
+          previewTextInputMap[fieldKey(f)] = f.tag === 'texte_client' ? 'Exemple : réponse du client…' : 'Exemple : réponse du formateur…';
+        }
+      });
+      const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {}, {}, previewTextInputMap);
       const url = URL.createObjectURL(resultBlob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 120000);
@@ -6408,11 +6462,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     if (!tag) return null;
                     const isSig = isSignatureTag(tag);
                     const isChk = isCheckboxTag(tag);
+                    const isTxt = isTextInputTag(tag);
                     // Ancrage réel dans le PDF : signature/case = centré sur le point ; balise texte = le point
                     // est le coin bas-gauche de la ligne de base (comportement de drawText dans pdf-lib).
                     // On sépare donc la croix (toujours centrée sur le point exact) de l'étiquette
                     // (ancrée différemment selon le type) pour que l'aperçu corresponde au rendu réel.
-                    const labelTransform = (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
+                    const labelTransform = (isSig || isChk || isTxt) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
                     return (
                       <div
                         key="ghost"
@@ -6430,6 +6485,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               className={`rounded-sm shadow-lg ring-2 ring-white ${tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
+                          ) : isTxt ? (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'texte_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
+                              <span className="text-base">📝</span>
+                              <p className={`text-[10px] font-black ${tag === 'texte_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'texte_client' ? 'Texte libre client' : 'Texte libre formateur'}</p>
+                            </div>
                           ) : (
                             <div className="bg-violet-700 text-white text-[11px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-xl ring-2 ring-white">
                               <span className="font-mono">{tag === 'date_du_jour' ? '📅 date_du_jour' : `{${tag}}`}</span>
@@ -6449,6 +6509,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   {fieldsOnPage.map(field => {
                     const isSig = isSignatureTag(field.tag);
                     const isChk = isCheckboxTag(field.tag);
+                    const isTxt = isTextInputTag(field.tag);
                     const isBeingMoved = draggingFieldId === field.id;
                     const isSelectedForMove = clickPlaceTag?.fieldId === field.id;
                     return (
@@ -6479,9 +6540,10 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // Signature/case = centrées sur le point ; balise texte = le point est le coin
-                          // bas-gauche de la ligne de base du texte (comportement réel de drawText/pdf-lib).
-                          transform: (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)',
+                          // Signature/case/texte libre = centrées sur le point ; balise texte de fusion =
+                          // le point est le coin bas-gauche de la ligne de base (comportement réel de
+                          // drawText/pdf-lib).
+                          transform: (isSig || isChk || isTxt) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)',
                           zIndex: 10,
                           cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
@@ -6489,7 +6551,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           outline: isSelectedForMove ? '2px solid #7C3AED' : 'none',
                           borderRadius: 4,
                         }}
-                        title={(isSig || isChk) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
+                        title={(isSig || isChk || isTxt) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
                       >
                         {isSig ? (
                           <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
@@ -6518,6 +6580,24 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
+                            >
+                              <X size={8} />
+                            </button>
+                          </div>
+                        ) : isTxt ? (
+                          // Champ à remplir librement par le signataire — rectangle en pointillés, façon
+                          // "zone de saisie" (le texte réel n'est connu qu'au moment de la signature).
+                          <div className={`group/txt relative flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed shadow-lg ring-2 ring-white whitespace-nowrap select-none ${field.tag === 'texte_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
+                            <span className="text-base select-none">📝</span>
+                            <div className="flex-1 select-none">
+                              <p className={`text-[10px] font-black ${field.tag === 'texte_client' ? 'text-blue-700' : 'text-orange-700'}`}>
+                                {field.tag === 'texte_client' ? 'Texte libre client' : 'Texte libre formateur'}
+                              </p>
+                              <p className="text-[9px] text-gray-400">Rempli au moment de signer</p>
+                            </div>
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
                             >
                               <X size={8} />
                             </button>
@@ -6559,8 +6639,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     <div className="absolute inset-0 pointer-events-none bg-gray-900/5 flex items-end justify-center pb-4">
                       <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
                         draggingFieldId ? 'bg-gray-700/90' :
-                        dragTag === 'signature_client' || dragTag === 'checkbox_client' ? 'bg-blue-600/90' :
-                        dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' ? 'bg-orange-500/90' :
+                        dragTag === 'signature_client' || dragTag === 'checkbox_client' || dragTag === 'texte_client' ? 'bg-blue-600/90' :
+                        dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' || dragTag === 'texte_formateur' ? 'bg-orange-500/90' :
                         'bg-violet-700/90'
                       }`}>
                         {draggingFieldId
@@ -6569,7 +6649,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
                             : isCheckboxTag(dragTag)
                               ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
-                              : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
+                              : isTextInputTag(dragTag)
+                                ? `📝 Déposez le champ texte libre ${dragTag === 'texte_client' ? 'client' : 'formateur'}`
+                                : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
                         }
                       </div>
                     </div>
@@ -6654,6 +6736,42 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <div className="flex-1 min-w-0">
                               <p className="text-[11px] font-bold truncate">{label}</p>
                               <p className="text-[9px] opacity-60">Case à cocher · peut être posée plusieurs fois</p>
+                            </div>
+                            {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ── Champs texte libre (remplis par le signataire, façon Yousign) ── */}
+                  <div>
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Texte libre —</p>
+                    <div className="flex flex-col gap-1.5">
+                      {TEXT_INPUT_TAGS.map(({ tag, label, color }) => {
+                        const isPlaced = placedTags.has(tag);
+                        const isDraggingThis = dragTag === tag;
+                        const isClickSelected = clickPlaceTag?.tag === tag;
+                        const isBlue = color === 'blue';
+                        return (
+                          <div
+                            key={tag}
+                            draggable
+                            onDragStart={e => { setDragTag(tag); setClickPlaceTag(null); e.dataTransfer.effectAllowed = 'copy'; }}
+                            onDragEnd={() => setDragTag(null)}
+                            onClick={() => setClickPlaceTag(isClickSelected ? null : { tag })}
+                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 border-dashed select-none cursor-pointer transition-all ${
+                              isClickSelected ? 'bg-violet-600 text-white border-violet-600 scale-95 shadow-inner' :
+                              isDraggingThis ? 'opacity-40 scale-95' :
+                              isBlue
+                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-400'
+                                : 'bg-orange-50 border-orange-200 text-orange-700 hover:border-orange-400'
+                            }`}
+                          >
+                            <span className="text-base shrink-0">📝</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold truncate">{label}</p>
+                              <p className="text-[9px] opacity-60">Champ à remplir · peut être posé plusieurs fois</p>
                             </div>
                             {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
                           </div>
@@ -15808,7 +15926,7 @@ export default function App() {
         page: f.page || 1,
         x_percent: parseFloat(f.xPct.toFixed(4)),
         y_percent: parseFloat(f.yPct.toFixed(4)),
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
         font_size: 11,
       }));
       const fullMetadataObj = { ...metadataObj, visual_template_id: msrId, template_fields: embeddedFields };
@@ -15831,7 +15949,7 @@ export default function App() {
             x_percent: parseFloat(f.xPct.toFixed(4)),
             y_percent: parseFloat(f.yPct.toFixed(4)),
             font_size: 11,
-            field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
+            field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
             ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
           }));
           const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
