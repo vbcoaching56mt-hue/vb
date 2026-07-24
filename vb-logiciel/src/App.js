@@ -1152,7 +1152,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                           onChange={e => setTextFieldValue(k, e.target.value)}
                           placeholder="Cliquez pour écrire…"
                           style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', width: '26%', fontSize: 12 }}
-                          className={`px-1.5 py-0.5 rounded border-2 shadow-lg outline-none bg-white/95 ${val ? 'border-green-500' : 'border-violet-500'} focus:border-violet-700`}
+                          className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-green-500' : 'border-violet-400 border-dashed'} focus:border-violet-600`}
                         />
                       );
                     })}
@@ -9896,8 +9896,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           dataValues.rue_formateur = _fAddr.rue;
           dataValues.code_postal_formateur = _fAddr.codePostal;
           dataValues.ville_formateur = _fAddr.ville; }
-        // Overlay données uniquement — pas de signature (affichée comme placeholder)
-        pdfBlob = await overlayFieldsOnPdf(pdfBlob, tplFields, dataValues, {});
+        // Overlay données (balises de fusion) UNIQUEMENT — les champs interactifs (signature, case,
+        // texte libre) ne doivent JAMAIS recevoir de rendu ici, pas même un placeholder vide : ce
+        // pré-remplissage a lieu dès l'OUVERTURE du document (avant toute signature), donc graver un
+        // placeholder à ce stade le fige définitivement dans le PDF de base réutilisé pour la
+        // signature — y compris pour les champs qui appartiennent à l'AUTRE partie (bug constaté
+        // 2026-07-24 : champ "texte libre formateur" resté visible/figé sous la saisie du formateur).
+        const dataOnlyFields = tplFields.filter(f => {
+          const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
+          return !isInteractive;
+        });
+        if (dataOnlyFields.length > 0) {
+          pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataOnlyFields, dataValues, {});
+        }
       }
 
       prefilledSignBlob.current = pdfBlob;
@@ -9980,7 +9991,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter la signature + les cases à cocher
           pdfBlob = prefilledSignBlob.current;
           {
-            const _isSigOrChk = f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
+            // Uniquement les champs APPARTENANT AU CLIENT (suffixe _client) : un champ "texte_formateur"/
+            // "checkbox_formateur" pas encore rempli par le formateur ne doit RECEVOIR AUCUN overlay ici
+            // (ni valeur, ni case, ni placeholder vide) — sinon sa case vide se retrouve gravée en dur
+            // dans le PDF à l'instant où le CLIENT signe, et reste visible/figée sous le champ de saisie
+            // du formateur quand il complète son propre champ plus tard (bug constaté en test 2026-07-24).
+            const _isSigOrChk = f => (f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')) && (f.tag || '').endsWith('_client');
             // Chercher les champs signature/case à cocher : P1 = signature_fields (nouveau format pré-généré)
             //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
@@ -10080,7 +10096,15 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             (templateFields || []).forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
             const textInputMap = {};
             (templateFields || []).forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
-            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap, checkedMap, textInputMap);
+            // Ne jamais transmettre à overlayFieldsOnPdf les champs interactifs (signature/case/texte
+            // libre) qui appartiennent au FORMATEUR : sinon son champ pas encore rempli reçoit quand
+            // même un rendu "case vide/placeholder", gravé en dur dans le PDF au moment où le CLIENT
+            // signe — visible et figé plus tard sous la saisie du formateur (bug constaté 2026-07-24).
+            const fieldsForOverlay = (templateFields || []).filter(f => {
+              const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
+              return !isInteractive || (f.tag || '').endsWith('_client');
+            });
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, fieldsForOverlay, dataValues, sigMap, checkedMap, textInputMap);
             signatureEmbeddedByOverlay = true;
           }
         }
@@ -16516,8 +16540,16 @@ export default function App() {
         }
 
         // 4. Superposer les valeurs aux positions stockées
+        // Champs interactifs (signature/case/texte libre) exclus : cet appel ne fournit ni sigMap ni
+        // checkedMap ni textInputMap, donc les inclure graverait un placeholder vide en dur dans le
+        // PDF généré — pour le client ET pour le formateur — avant même toute signature (même classe
+        // de bug que celle corrigée dans handleOpenSigning/handleSignSave le 2026-07-24).
         toast.loading('Superposition des données…', { id: 'gen-doc' });
-        const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, templateFieldsData || [], dataToMerge);
+        const _dataOnlyFields = (templateFieldsData || []).filter(f => {
+          const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
+          return !isInteractive;
+        });
+        const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, _dataOnlyFields, dataToMerge);
 
         const finalFileName = `${type}_${safeName}_${Date.now()}.pdf`;
 
