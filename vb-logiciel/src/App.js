@@ -14820,38 +14820,36 @@ export default function App() {
     else toast.error('Erreur lors de la création du module : ' + error.message);
   };
 
-  const handleDeleteModule = async (moduleId, moduleName) => {
-    // Garde-fou : on ne supprime pas un module encore assigné à des clients, pour éviter
-    // de casser leur suivi (sessions déjà générées, documents liés, module_id orphelin).
-    const clientsAssigned = (clients || []).filter(c => String(c.module_id) === String(moduleId));
-    if (clientsAssigned.length > 0) {
-      toast.error(`Impossible de supprimer ce module : ${clientsAssigned.length} client(s) y sont encore assigné(s) (${clientsAssigned.map(c => c.nom_complet || c.nom).filter(Boolean).join(', ')}). Réassignez-les d'abord.`);
-      return;
-    }
-    // Garde-fou : la table utilisateurs a elle aussi une colonne module_id avec une contrainte
-    // de clé étrangère vers modules(id) (découvert en production le 2026-07-23 via l'erreur
-    // "utilisateurs_module_id_fkey") — un formateur/admin peut donc être rattaché à un module
-    // sans que ce soit visible dans l'état React (fetchUtilisateurs ne charge pas cette colonne).
-    // On interroge la base directement pour ne pas se fier à un état local incomplet.
-    const { data: staffAssigned, error: staffCheckErr } = await supabase
-      .from('utilisateurs')
-      .select('id, nom')
-      .eq('module_id', moduleId);
-    if (staffCheckErr) {
-      toast.error("Erreur lors de la vérification : " + staffCheckErr.message);
-      return;
-    }
-    if (staffAssigned && staffAssigned.length > 0) {
-      toast.error(`Impossible de supprimer ce module : ${staffAssigned.length} utilisateur(s) y sont encore rattaché(s) (${staffAssigned.map(u => u.nom).filter(Boolean).join(', ')}). Réassignez-les d'abord.`);
-      return;
-    }
+  const handleDeleteModule = (moduleId, moduleName) => {
+    // Décision produit (2026-07-23) : plutôt que de bloquer la suppression tant que des
+    // clients/utilisateurs sont rattachés (comportement précédent), on les désassigne
+    // automatiquement (module_id -> NULL, ils repassent "Aucun module assigné") puis on
+    // supprime le module. Couvre à la fois clients.module_id et utilisateurs.module_id
+    // (cette dernière colonne porte une contrainte de clé étrangère "utilisateurs_module_id_fkey"
+    // découverte en production, jamais utilisée ailleurs dans l'app).
     showAppConfirm(
       `Supprimer le module "${moduleName}" ?`,
-      "Ce module et tout son contenu (parcours, étapes, ressources) seront définitivement supprimés. Cette action est irréversible.",
+      "Les clients et utilisateurs encore rattachés à ce module basculeront automatiquement sur \"Aucun module assigné\". Ce module et tout son contenu (parcours, étapes, ressources) seront ensuite définitivement supprimés. Cette action est irréversible.",
       async () => {
         hideAppConfirm();
         try {
-          // Garde-fou multi-tenant : on ne supprime que dans le périmètre de l'organisation courante
+          // 1. Désassigner les clients rattachés (scope organisation + lignes historiques sans organisation_id)
+          let clientsUnassignQuery = supabase.from('clients').update({ module_id: null }).eq('module_id', moduleId);
+          clientsUnassignQuery = currentOrgId
+            ? clientsUnassignQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : clientsUnassignQuery.is('organisation_id', null);
+          const { data: unassignedClients, error: clientsUnassignErr } = await clientsUnassignQuery.select('id');
+          if (clientsUnassignErr) throw clientsUnassignErr;
+
+          // 2. Désassigner les utilisateurs (formateurs/admins) rattachés
+          let staffUnassignQuery = supabase.from('utilisateurs').update({ module_id: null }).eq('module_id', moduleId);
+          staffUnassignQuery = currentOrgId
+            ? staffUnassignQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
+            : staffUnassignQuery.is('organisation_id', null);
+          const { data: unassignedStaff, error: staffUnassignErr } = await staffUnassignQuery.select('id');
+          if (staffUnassignErr) throw staffUnassignErr;
+
+          // 3. Supprimer le contenu du module puis le module lui-même
           const { error: msrErr } = await supabase.from('module_step_resources').delete().eq('module_id', moduleId);
           if (msrErr) throw msrErr;
           const { error: mstErr } = await supabase.from('module_session_templates').delete().eq('module_id', moduleId);
@@ -14862,18 +14860,23 @@ export default function App() {
             : delQuery.is('organisation_id', null);
           const { error } = await delQuery;
           if (error) throw error;
+
           await fetchModules();
-          toast.success("Module supprimé avec succès.");
+          await fetchUtilisateurs();
+          const n1 = unassignedClients?.length || 0;
+          const n2 = unassignedStaff?.length || 0;
+          const detail = (n1 || n2) ? ` (${n1} client(s) et ${n2} utilisateur(s) repassés en "Aucun module assigné")` : '';
+          toast.success(`Module supprimé avec succès.${detail}`);
         } catch (err) {
           console.error("Erreur suppression module:", err);
-          // Filet de sécurité générique : si la base refuse la suppression à cause d'une clé
-          // étrangère (code Postgres 23503) qu'on n'a pas anticipée dans les garde-fous ci-dessus
-          // (ex: un utilisateur avec organisation_id NULL, invisible à la vérification RLS faite
-          // plus haut, ou toute autre contrainte encore inconnue), on affiche un message clair
-          // plutôt que le texte technique brut de Postgres.
+          // Filet de sécurité : la désassignation ci-dessus est elle-même soumise aux règles de
+          // sécurité (RLS) — un compte historique sans organisation_id pourrait ne pas être
+          // désassignable par cette voie (même limite que la vérification RLS précédente). Dans
+          // ce cas la suppression du module échoue encore avec une violation de clé étrangère :
+          // on l'attrape ici pour afficher un message clair plutôt que le texte brut de Postgres.
           const isForeignKeyViolation = err?.code === '23503' || /foreign key constraint/i.test(err?.message || '');
           if (isForeignKeyViolation) {
-            toast.error("Impossible de supprimer ce module : il est encore utilisé ailleurs dans l'application (un formateur, un admin ou un client y est probablement toujours rattaché). Vérifiez les assignations avant de réessayer.", { duration: 8000 });
+            toast.error("Impossible de supprimer ce module : un compte y est encore rattaché et n'a pas pu être désassigné automatiquement (probablement un compte historique sans organisation). Ce cas nécessite une correction manuelle en base — contactez le support technique.", { duration: 10000 });
           } else {
             toast.error("Erreur lors de la suppression : " + err.message);
           }
