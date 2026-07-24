@@ -668,7 +668,13 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // pas une boîte arbitraire — évite un pavé disproportionné à côté du texte du document.
       const fs = field.font_size || 10;
       const boxH = Math.round(fs * 1.35) + 2;
-      const bx = Math.max(0, cx - boxW / 2);
+      // Ancrée à GAUCHE exactement sur le point cliqué dans l'éditeur (bx = cx), plutôt que centrée
+      // autour de ce point (bx = cx - boxW/2 comme avant) : le texte tapé commence maintenant pile là
+      // où la balise a été posée, ce qui était la source persistante de confusion sur "où le texte va
+      // apparaître" (retour utilisateur du 2026-07-24, à deux reprises). Le marqueur dans l'éditeur
+      // (VisualTemplateEditor) est ancré de la même façon pour que ce que l'admin voit corresponde
+      // exactement à ce que produit ce rendu.
+      const bx = Math.max(0, cx);
       const by = Math.max(0, cy - boxH / 2);
       const isClient = field.tag === 'texte_client';
       const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
@@ -1188,7 +1194,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                           // où dedans. `size` fait suivre la largeur au nombre de caractères tapés, et le rendu
                           // final (overlayFieldsOnPdf) souligne désormais uniquement la largeur réelle du texte,
                           // en gris — cette zone d'édition adopte la même sobriété (retour utilisateur 2026-07-24).
-                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', minWidth: '10%', maxWidth: '26%', fontSize: 12 }}
+                          // Ancrée à GAUCHE (translate(0%, -50%), pas -50%/-50%) : le point posé dans
+                          // l'éditeur de modèle est désormais le coin gauche exact où le texte démarre, à
+                          // l'écran comme dans le PDF final — même correctif que overlayFieldsOnPdf.
+                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(0%, -50%)', minWidth: '10%', maxWidth: '26%', fontSize: 12 }}
                           className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
                         />
                       );
@@ -6572,11 +6581,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     const isSig = isSignatureTag(tag);
                     const isChk = isCheckboxTag(tag);
                     const isTxt = isTextInputTag(tag);
-                    // Ancrage réel dans le PDF : signature/case = centré sur le point ; balise texte = le point
-                    // est le coin bas-gauche de la ligne de base (comportement de drawText dans pdf-lib).
-                    // On sépare donc la croix (toujours centrée sur le point exact) de l'étiquette
-                    // (ancrée différemment selon le type) pour que l'aperçu corresponde au rendu réel.
-                    const labelTransform = (isSig || isChk || isTxt) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
+                    // Ancrage réel dans le PDF : signature/case = centré sur le point ; texte libre = point
+                    // cliqué = coin gauche exact où le texte commencera (corrigé le 2026-07-24, voir
+                    // overlayFieldsOnPdf) ; balise texte de fusion = le point est le coin bas-gauche de la
+                    // ligne de base (comportement de drawText dans pdf-lib). On sépare donc la croix
+                    // (toujours centrée sur le point exact) de l'étiquette (ancrée différemment selon le
+                    // type) pour que l'aperçu corresponde au rendu réel.
+                    const labelTransform = (isSig || isChk) ? 'translate(-50%, -50%)' : isTxt ? 'translate(0%, -50%)' : 'translate(0%, -100%)';
                     return (
                       <div
                         key="ghost"
@@ -6595,9 +6606,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               style={{ width: 16, height: 16 }}
                             />
                           ) : isTxt ? (
-                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'texte_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
-                              <span className="text-base">📝</span>
-                              <p className={`text-[10px] font-black ${tag === 'texte_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'texte_client' ? 'Texte libre client' : 'Texte libre formateur'}</p>
+                            <div className="flex items-center select-none">
+                              <div className={`w-0.5 self-stretch rounded-full shrink-0 ${tag === 'texte_client' ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ minHeight: 18 }} />
+                              <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-xl ring-2 ring-white whitespace-nowrap ${tag === 'texte_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`}>
+                                <span className="text-sm">📝</span>
+                                <p className={`text-[10px] font-black ${tag === 'texte_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'texte_client' ? 'Texte client' : 'Texte formateur'}</p>
+                              </div>
                             </div>
                           ) : (
                             <div className="bg-violet-700 text-white text-[11px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-xl ring-2 ring-white">
@@ -6649,10 +6663,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // Signature/case/texte libre = centrées sur le point ; balise texte de fusion =
-                          // le point est le coin bas-gauche de la ligne de base (comportement réel de
-                          // drawText/pdf-lib).
-                          transform: (isSig || isChk || isTxt) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)',
+                          // Signature/case = centrées sur le point ; texte libre = point cliqué = coin
+                          // gauche exact où le texte commencera (ancrage aligné sur overlayFieldsOnPdf,
+                          // corrigé le 2026-07-24 pour ne plus centrer la balise autour du point) ; balise
+                          // texte de fusion = le point est le coin bas-gauche de la ligne de base
+                          // (comportement réel de drawText/pdf-lib).
+                          transform: (isSig || isChk) ? 'translate(-50%, -50%)' : isTxt ? 'translate(0%, -50%)' : 'translate(0%, -100%)',
                           zIndex: 10,
                           cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
@@ -6694,22 +6710,26 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             </button>
                           </div>
                         ) : isTxt ? (
-                          // Champ à remplir librement par le signataire — rectangle en pointillés, façon
-                          // "zone de saisie" (le texte réel n'est connu qu'au moment de la signature).
-                          <div className={`group/txt relative flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed shadow-lg ring-2 ring-white whitespace-nowrap select-none ${field.tag === 'texte_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
-                            <span className="text-base select-none">📝</span>
-                            <div className="flex-1 select-none">
+                          // Champ à remplir librement par le signataire. Ancre précise : le petit repère
+                          // (trait vertical) marque le point EXACT posé — c'est là, et pas ailleurs, que
+                          // le texte du signataire commencera à s'écrire (ancrage aligné sur
+                          // overlayFieldsOnPdf, corrigé le 2026-07-24). L'étiquette est décalée à droite
+                          // du repère pour ne pas laisser croire que toute la largeur de l'étiquette est
+                          // la zone de saisie.
+                          <div className="group/txt relative flex items-center select-none">
+                            <div className={`w-0.5 self-stretch rounded-full shrink-0 ${field.tag === 'texte_client' ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ minHeight: 18 }} />
+                            <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-lg ring-2 ring-white whitespace-nowrap ${field.tag === 'texte_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`}>
+                              <span className="text-sm select-none">📝</span>
                               <p className={`text-[10px] font-black ${field.tag === 'texte_client' ? 'text-blue-700' : 'text-orange-700'}`}>
-                                {field.tag === 'texte_client' ? 'Texte libre client' : 'Texte libre formateur'}
+                                {field.tag === 'texte_client' ? 'Texte client' : 'Texte formateur'}
                               </p>
-                              <p className="text-[9px] text-gray-400">Rempli au moment de signer</p>
+                              <button
+                                onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                                className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                              >
+                                <X size={8} />
+                              </button>
                             </div>
-                            <button
-                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
-                            >
-                              <X size={8} />
-                            </button>
                           </div>
                         ) : (
                           <div className="group relative inline-flex select-none">
@@ -18154,7 +18174,7 @@ export default function App() {
             const _today = new Date().toISOString().split('T')[0];
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
-            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client).length;
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client && !isBlockedBySigningOrder(d, 'client')).length;
             return <AccueilView
               setActiveTab={setActiveTab}
               clientProgress={_progress}
