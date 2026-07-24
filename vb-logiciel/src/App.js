@@ -10008,9 +10008,28 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // ── Chemin visuel : données déjà overlayées dans handleOpenSigning → ajouter la signature ──
         toast.loading('Génération du document signé…', { id: toastId });
 
-        if (prefilledSignBlob.current) {
+        // Revérifier auprès de Supabase la toute dernière version du PDF avant de construire par-dessus :
+        // l'AUTRE partie (le formateur, pour un document destination=both) a pu signer PENDANT que ce
+        // document était ouvert dans cette fenêtre — le blob mis en cache dans prefilledSignBlob.current
+        // (capturé à l'OUVERTURE du document) serait alors périmé, et l'utiliser tel quel écraserait
+        // silencieusement sa contribution déjà enregistrée (bug constaté 2026-07-24 : le texte du
+        // formateur disparaissait du document final après que le client signe à son tour).
+        let baseBlob = prefilledSignBlob.current;
+        try {
+          if (existingGeneratedDoc?.id) {
+            const { data: freshDoc } = await supabase.from('documents').select('url').eq('id', existingGeneratedDoc.id).maybeSingle();
+            if (freshDoc?.url) {
+              const freshResp = await fetch(freshDoc.url);
+              if (freshResp.ok) baseBlob = new Blob([await freshResp.arrayBuffer()], { type: 'application/pdf' });
+            }
+          }
+        } catch (e) {
+          console.warn('[handleSignSave] Impossible de récupérer la dernière version du PDF, utilisation du cache local :', e.message);
+        }
+
+        if (baseBlob) {
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter la signature + les cases à cocher
-          pdfBlob = prefilledSignBlob.current;
+          pdfBlob = baseBlob;
           {
             // Uniquement les champs APPARTENANT AU CLIENT (suffixe _client) : un champ "texte_formateur"/
             // "checkbox_formateur" pas encore rempli par le formateur ne doit RECEVOIR AUCUN overlay ici
@@ -16811,8 +16830,13 @@ export default function App() {
 
     let signedPdfUpdate = {};
 
-    // ── Incrustation de la signature (+ cases à cocher éventuelles) à la position visuelle ──
-    if (signatureDataUrl) {
+    // ── Incrustation de la signature ET/OU des cases à cocher ET/OU du texte libre à la position
+    // visuelle — NE PAS gater ce bloc sur la seule présence d'une signature : depuis l'ajout des
+    // balises texte libre, un signataire peut valider un document SANS dessiner de signature (aucune
+    // balise signature posée pour lui) ; si on se limitait à "if (signatureDataUrl)", son texte tapé
+    // n'était alors jamais gravé du tout (bug constaté 2026-07-24 : "pas le texte du formateur").
+    const _hasCheckedIds = checkedIds && (typeof checkedIds.size === 'number' ? checkedIds.size > 0 : Object.keys(checkedIds).length > 0);
+    if (signatureDataUrl || Object.keys(_textValueMap).length > 0 || _hasCheckedIds) {
       try {
         const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
         const checkboxTag = signerType === 'client' ? 'checkbox_client' : 'checkbox_formateur';
@@ -16836,7 +16860,15 @@ export default function App() {
         }
 
         if (sigFields && sigFields.length > 0) {
-          const pdfUrl = doc.signed_pdf_url || doc.url;
+          // Revérifier la dernière version du PDF avant de construire par-dessus : l'AUTRE partie a pu
+          // signer entre-temps (même correctif que côté client dans handleSignSave, 2026-07-24).
+          let pdfUrl = doc.signed_pdf_url || doc.url;
+          try {
+            const { data: freshDoc } = await supabase.from('documents').select('url, signed_pdf_url').eq('id', docId).maybeSingle();
+            if (freshDoc) pdfUrl = freshDoc.signed_pdf_url || freshDoc.url || pdfUrl;
+          } catch (e) {
+            console.warn('[handleSignDocument] Impossible de récupérer la dernière version du PDF, utilisation de la version locale :', e.message);
+          }
           if (pdfUrl && /\.pdf$/i.test(pdfUrl.split('?')[0])) {
             const pdfResp = await fetch(pdfUrl);
             if (pdfResp.ok) {
