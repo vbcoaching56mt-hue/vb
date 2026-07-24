@@ -17052,16 +17052,24 @@ export default function App() {
     fetchClientSkills();
     fetchOrgSettings();
 
-    // Détection des liens d'invitation ou de récupération de mot de passe
-    supabase.auth.onAuthStateChange((event, session) => {
-      if (
-        event === 'PASSWORD_RECOVERY' ||
+    // Détection des liens d'invitation ou de récupération de mot de passe.
+    // IMPORTANT : PASSWORD_RECOVERY doit amener sur l'écran "Nouveau mot de passe"
+    // (isResetPassword), PAS sur "Finalisez votre accès" (isSettingPassword, réservé
+    // aux invitations). Les confondre faisait passer les liens de réinitialisation par
+    // les deux écrans à la suite (le mot de passe était déjà changé sur le premier,
+    // d'où l'erreur "déjà utilisé" en le retapant sur le second).
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsResetPassword(true);
+        setIsSettingPassword(false);
+      } else if (
         (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
         window.location.pathname === '/set-password'
       ) {
         setIsSettingPassword(true);
       }
     });
+    return () => { authListener?.subscription?.unsubscribe(); };
   }, [userRole]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
@@ -17088,23 +17096,23 @@ export default function App() {
             // Chercher le rôle dans la base de données (admin/formateur)
             const { data: userData } = await supabase
               .from('utilisateurs')
-              .select('role, id')
+              .select('role, id, organisation_id')
               .eq('email', user.email)
               .single();
 
             if (userData && userData.role) {
-              handleLogin(userData.role, userData.id);
+              handleLogin(userData.role, userData.id, userData.organisation_id);
               return;
             }
 
             // Chercher côté clients
             const { data: clientData } = await supabase
               .from('clients')
-              .select('id')
+              .select('id, organisation_id')
               .ilike('email_contact', user.email)
               .single();
             if (clientData?.id) {
-              handleLogin('client', clientData.id);
+              handleLogin('client', clientData.id, clientData.organisation_id);
               return;
             }
           }
@@ -17121,30 +17129,44 @@ export default function App() {
       <ResetPasswordPage
         supabase={supabase}
         onComplete={async () => {
-          // Auto login process
-          const { data: { user } } = await supabase.auth.getUser();
-          
-          if (user && user.email) {
-            const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
-            if (userData && userData.role) {
-              handleLogin(userData.role, userData.id);
-              setIsResetPassword(false);
-              return;
+          // Le mot de passe est déjà enregistré côté Supabase Auth à ce stade (updateUser
+          // a réussi). Tout ce qui suit n'est qu'une tentative de reconnexion automatique
+          // pour le confort — si elle échoue pour une raison quelconque (réseau, RLS, etc.),
+          // on ne doit JAMAIS laisser l'utilisateur bloqué sur cet écran en pensant que rien
+          // n'a été enregistré : on retombe toujours proprement sur l'écran de connexion.
+          const fallbackToLogin = async () => {
+            try { await supabase.auth.signOut(); } catch (e) { console.error('Erreur déconnexion après reset:', e); }
+            window.history.replaceState(null, '', '/');
+            setIsResetPassword(false);
+            setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
+          };
+
+          try {
+            // Auto login process
+            const { data: { user } } = await supabase.auth.getUser();
+
+            if (user && user.email) {
+              const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', user.email).single();
+              if (userData && userData.role) {
+                handleLogin(userData.role, userData.id, userData.organisation_id);
+                setIsResetPassword(false);
+                return;
+              }
+
+              const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', user.email).single();
+              if (clientData && clientData.id) {
+                 handleLogin('client', clientData.id, clientData.organisation_id);
+                 setIsResetPassword(false);
+                 return;
+              }
             }
-            
-            const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
-            if (clientData && clientData.id) {
-               handleLogin('client', clientData.id);
-               setIsResetPassword(false);
-               return;
-            }
+
+            // Rôle non trouvé automatiquement (compte legacy, RLS, etc.)
+            await fallbackToLogin();
+          } catch (err) {
+            console.error('Erreur pendant la reconnexion automatique après réinitialisation du mot de passe:', err);
+            await fallbackToLogin();
           }
-          
-          // Fallback if role not found
-          await supabase.auth.signOut();
-          window.history.replaceState(null, '', '/');
-          setIsResetPassword(false);
-          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
         }}
       />
     );
