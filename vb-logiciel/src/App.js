@@ -341,6 +341,29 @@ const fieldKey = (f) => {
   return `pos_${f.tag || ''}_${f.page || 1}_${Number(f.x_percent).toFixed(2)}_${Number(f.y_percent).toFixed(2)}`;
 };
 
+// ─── Signature séquentielle (Stage 3, 2026-07-24) ────────────────────────────
+// Un modèle de document peut être configuré en 'sequentiel' (metadata.signing_mode, réglé une fois
+// dans VisualTemplateEditor et copié sur chaque document instancié) : dans ce cas une partie ne peut
+// signer qu'APRÈS l'autre (metadata.signing_order = 'client_first' | 'formateur_first'). Tant que ce
+// n'est pas son tour, le document doit rester totalement invisible pour elle (masqué, pas juste
+// désactivé) — décision produit du 2026-07-24. Fonction utilitaire partagée entre l'espace client et
+// l'espace formateur pour éviter de dupliquer cette règle à chaque endroit où une liste de documents
+// à signer est construite.
+const parseDocMetadata = (doc) => {
+  const m = doc?.metadata;
+  if (m && typeof m === 'object') return m;
+  if (typeof m === 'string' && m.startsWith('{')) { try { return JSON.parse(m); } catch { return {}; } }
+  return {};
+};
+const isBlockedBySigningOrder = (doc, role) => {
+  const meta = parseDocMetadata(doc);
+  if (meta.signing_mode !== 'sequentiel') return false; // mode simultané (défaut) : jamais masqué
+  const order = meta.signing_order || 'client_first';
+  return role === 'client'
+    ? (order === 'formateur_first' && !doc.signe_par_formateur) // client attend le formateur
+    : (order === 'client_first' && !doc.signe_par_client);       // formateur attend le client
+};
+
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
   const fCanvasRef = useRef(null);
   const cCanvasRef = useRef(null);
@@ -652,13 +675,20 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       const typedValue = textInputMap[fieldKey(field)];
       try {
         if (typedValue) {
-          // Valeur déjà saisie → on l'imprime, sans cadre (comme un champ rempli)
-          page.drawText(String(typedValue), {
-            x: bx + 3, y: by + boxH / 2 - fs / 3,
+          // Valeur déjà saisie → on l'imprime avec un soulignement ajusté à la LARGEUR RÉELLE du texte
+          // tapé (pas à la largeur totale de la balise, qui est volontairement large pour laisser de la
+          // place à un texte plus long) et en gris neutre plutôt qu'en couleur — une barre colorée sur
+          // toute la largeur de la balise laissait penser que le texte pouvait apparaître n'importe où
+          // dans cette zone, ce qui était source de confusion (retour utilisateur du 2026-07-24).
+          const textStr = String(typedValue);
+          const tx = bx + 3;
+          const textW = Math.min(font.widthOfTextAtSize(textStr, fs), boxW - 6);
+          page.drawText(textStr, {
+            x: tx, y: by + boxH / 2 - fs / 3,
             size: fs, font, color: rgb(0.1, 0.1, 0.1),
             maxWidth: boxW - 6,
           });
-          page.drawLine({ start: { x: bx, y: by }, end: { x: bx + boxW, y: by }, thickness: 0.5, color: bc, opacity: 0.5 });
+          page.drawLine({ start: { x: tx, y: by }, end: { x: tx + textW, y: by }, thickness: 0.6, color: rgb(0.55, 0.55, 0.55), opacity: 0.8 });
         } else {
           // Pas encore rempli → cadre + libellé placeholder (police réduite pour tenir sur une ligne fine)
           const labelSize = Math.min(7, fs - 2);
@@ -1151,8 +1181,15 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                           value={val}
                           onChange={e => setTextFieldValue(k, e.target.value)}
                           placeholder="Cliquez pour écrire…"
-                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', width: '26%', fontSize: 12 }}
-                          className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-green-500' : 'border-violet-400 border-dashed'} focus:border-violet-600`}
+                          size={Math.max(6, val.length || 10)}
+                          // Zone d'édition volontairement plus resserrée et en gris neutre (au lieu du violet/
+                          // vert d'origine) : la balise posée dans l'éditeur de modèle est large pour laisser
+                          // de la marge, mais ça donnait l'impression que le texte pourrait apparaître n'importe
+                          // où dedans. `size` fait suivre la largeur au nombre de caractères tapés, et le rendu
+                          // final (overlayFieldsOnPdf) souligne désormais uniquement la largeur réelle du texte,
+                          // en gris — cette zone d'édition adopte la même sobriété (retour utilisateur 2026-07-24).
+                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', minWidth: '10%', maxWidth: '26%', fontSize: 12 }}
+                          className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
                         />
                       );
                     })}
@@ -5179,7 +5216,7 @@ const FormateurView = ({
   // (assigned_formateur_id = ce formateur). Le champ est posé par instantiateDocument quand
   // la destination inclut le formateur (visFormateur=true).
   const myAdminDocs = React.useMemo(() =>
-    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false),
+    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !isBlockedBySigningOrder(d, 'formateur')),
     [documents, currentUserId]
   );
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
@@ -6091,6 +6128,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
   const [templateName, setTemplateName] = React.useState('');
   const [destination, setDestination] = React.useState('client');
+  // Mode de signature (Stage 3, 2026-07-24) : réglé une fois sur le modèle, propagé à chaque document
+  // instancié (voir instantiateDocument) et lu par isBlockedBySigningOrder pour masquer un document à
+  // la partie qui doit attendre son tour, en mode 'sequentiel'.
+  const [signingMode, setSigningMode] = React.useState('simultane'); // 'simultane' | 'sequentiel'
+  const [signingOrder, setSigningOrder] = React.useState('client_first'); // 'client_first' | 'formateur_first'
   const [isSaving, setIsSaving] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const pageRef = React.useRef(null);
@@ -6133,6 +6175,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     if (!isOpen || !initialData?.url) return;
     setTemplateName(initialData.name || '');
     setDestination(initialData.destination || 'client');
+    setSigningMode(initialData.signingMode || 'simultane');
+    setSigningOrder(initialData.signingOrder || 'client_first');
     setStep('converting');
     (async () => {
       try {
@@ -6299,6 +6343,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const handleClose = () => {
     handleReset();
     setTemplateName(''); setDestination('client');
+    setSigningMode('simultane'); setSigningOrder('client_first');
     onClose();
   };
 
@@ -6312,8 +6357,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     const hasDataFields = fields.some(f => !INTERACTIVE_TAGS.includes(f.tag));
     const hasSignature = fields.some(f => INTERACTIVE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
+    const signingConfig = { mode: signingMode, order: signingMode === 'sequentiel' ? signingOrder : null };
     try {
-      await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null);
+      await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null, signingConfig);
       handleClose();
     } catch (err) {
       toast.error('Erreur : ' + err.message);
@@ -6902,6 +6948,36 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       ))}
                     </div>
                   </div>
+                  {/* Mode de signature (Stage 3, 2026-07-24) — n'a de sens que si le document concerne
+                      les deux parties : sinon il n'y a qu'un seul signataire, rien à séquencer. */}
+                  {destination === 'both' && (
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Mode de signature</label>
+                      <div className="flex gap-2 mb-2">
+                        {[['simultane', '⇄ Simultané'], ['sequentiel', '→ Séquentiel']].map(([val, label]) => (
+                          <button key={val} onClick={() => setSigningMode(val)}
+                            className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${signingMode === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-gray-400 mb-2">
+                        {signingMode === 'sequentiel'
+                          ? "L'autre partie ne verra le document qu'une fois la première signature faite."
+                          : 'Le client et le formateur peuvent signer indépendamment, dans n\'importe quel ordre.'}
+                      </p>
+                      {signingMode === 'sequentiel' && (
+                        <div className="flex gap-2">
+                          {[['client_first', 'Client d\'abord'], ['formateur_first', 'Formateur d\'abord']].map(([val, label]) => (
+                            <button key={val} onClick={() => setSigningOrder(val)}
+                              className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${signingOrder === val ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-100 hover:border-amber-300'}`}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={handlePreview}
                     disabled={isPreviewing || fields.length === 0 || !pdfBlobRef.current}
@@ -7729,7 +7805,11 @@ const DocumentsView = ({
                                 tag: f.tag, page: f.page || 1,
                                 xPct: parseFloat(f.x_percent), yPct: parseFloat(f.y_percent),
                               }));
-                              setEditingTemplate({ url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id });
+                              setEditingTemplate({
+                                url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id,
+                                signingMode: tpl?.metadata?.signing_mode || 'simultane',
+                                signingOrder: tpl?.metadata?.signing_order || 'client_first',
+                              });
                               setIsTemplateEditorOpen(true);
                             }}
                             className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors opacity-0 group-hover:opacity-100"
@@ -8391,7 +8471,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       if (weekSessions.length > 0) notifs.push({ type: 'info', message: `${weekSessions.length} séance${weekSessions.length > 1 ? 's' : ''} cette semaine`, action: 'calendrier' });
     } else if (userRole === 'formateur') {
       const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
-      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
+      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur'));
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'clients' });
       // Exercices rendus par un client, pas encore corrigés — visibilité auparavant nulle en dehors
       // d'aller ouvrir chaque client une par une pour vérifier.
@@ -8411,7 +8491,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
         const effectivelySigned = documents.some(other =>
           String(other.user_id) === String(currentUserId) && other.nom === d.nom && other.signe_par_client
         );
-        return !effectivelySigned;
+        return !effectivelySigned && !isBlockedBySigningOrder(d, 'client');
       });
       if (trulyPending.length > 0) notifs.push({ type: 'warning', message: `${trulyPending.length} document${trulyPending.length > 1 ? 's' : ''} à signer`, action: 'mes_documents' });
       const nextSess = sessions.filter(s => String(s.client_id) === String(currentUserId) && s.date >= today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
@@ -8675,7 +8755,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
-  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
+  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur'));
   // Exercices rendus par un client mais pas encore corrigés — auparavant on ne le voyait qu'en
   // ouvrant chaque client une par une dans "Mes Clients". On le remonte ici, bien visible.
   const pendingCorrections = sessions.filter(s =>
@@ -9652,6 +9732,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const extraDebutDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
+    if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
@@ -9660,6 +9741,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
+    if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     return meta.moment === 'fin';
@@ -14821,12 +14903,17 @@ export default function App() {
 
         // 5. Stocker avec URL pré-remplie + positions des champs signature/case/texte libre pour l'étape de signature
         const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_'));
+        // Mode de signature (Stage 3, 2026-07-24) : copié depuis le modèle (meta.signing_mode/signing_order,
+        // réglé une fois dans VisualTemplateEditor) sur CHAQUE document instancié — isBlockedBySigningOrder
+        // lit ces champs directement sur la ligne `documents`, sans avoir à retourner interroger le modèle.
         const docMetadata = JSON.stringify({
           has_visual_fields: true,
           visual_template_id: visualTemplateId,
           template_url: templateResource.file_url,
           prefilled: true,
           signature_fields: sigFields,
+          signing_mode: meta.signing_mode || 'simultane',
+          ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
         });
 
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
@@ -14855,6 +14942,8 @@ export default function App() {
           template_url: templateResource.file_url,
           fields: tplFields || [],
           resolved_values: resolvedValues || {},
+          signing_mode: meta.signing_mode || 'simultane',
+          ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
         });
         const { data: newDoc, error: fallbackErr } = await supabase.from('documents').insert([{
           user_id: client.id,
@@ -14955,6 +15044,8 @@ export default function App() {
             visual_template_id: visualTemplateId,
             template_url: templateResource.file_url,
             signature_fields: fDocSigFields,
+            signing_mode: meta.signing_mode || 'simultane',
+            ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
           }) : null;
 
           await supabase.from('documents').insert([{
@@ -16043,13 +16134,19 @@ export default function App() {
   };
 
   // ── VisualTemplateEditor : upload DOCX + sauvegarde des champs visuels ──
-  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg, editingTemplateId = null) => {
+  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg, editingTemplateId = null, signingConfigArg = null) => {
     try {
       const file = fileArg;
       const name = nameArg || (file ? file.name.replace(/\.[^/.]+$/, '') : 'modele');
       const destination = destinationArg || 'client';
       const fieldsToSave = fieldsArg || [];
       const classification = classificationArg || 'a_generer';
+      // Mode de signature (Stage 3, 2026-07-24) : 'simultane' (défaut, comportement historique) ou
+      // 'sequentiel' avec un ordre — réglé une fois ici sur le modèle, propagé sur chaque document
+      // instancié (instantiateDocument lit meta.signing_mode/signing_order) et sur les instances déjà
+      // envoyées à des clients (propagation ci-dessous, comme le reste des métadonnées du modèle).
+      const signingMode = signingConfigArg?.mode === 'sequentiel' ? 'sequentiel' : 'simultane';
+      const signingOrder = signingConfigArg?.order === 'formateur_first' ? 'formateur_first' : 'client_first';
 
       if (!file) throw new Error('Aucun fichier fourni.');
 
@@ -16063,7 +16160,11 @@ export default function App() {
 
       // 2. Insérer / mettre à jour le MSR maître dans module_step_resources
       // Note : visual_template_id sera ajouté juste après (auto-référence, nécessite msrId)
-      const metadataObj = { classification, has_visual_fields: true };
+      const metadataObj = {
+        classification, has_visual_fields: true,
+        signing_mode: signingMode,
+        ...(signingMode === 'sequentiel' ? { signing_order: signingOrder } : {}),
+      };
       let msrId = null;
 
       if (editingTemplateId) {
