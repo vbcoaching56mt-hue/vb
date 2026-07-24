@@ -10232,6 +10232,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     let dbError;
     const signatureData = {
       url: signedPdfUrl,
+      // Toujours refléter aussi 'signed_pdf_url' (bug racine identifié le 2026-07-24) : cette colonne sert
+      // de source pour certains écrans d'affichage (onglet "Documents Signés") ET est relue en priorité par
+      // handleSignDocument côté formateur. Si on ne la met pas à jour ici, elle reste figée sur un ancien
+      // snapshot pendant que 'url' avance — le prochain signataire (formateur) risque alors de construire
+      // par-dessus un PDF périmé et d'effacer silencieusement la contribution du client.
+      signed_pdf_url: signedPdfUrl,
       signe_par_client: true,
       date_signature_client: new Date().toISOString(),
       signature_client: signatureDataUrl,
@@ -16862,10 +16868,19 @@ export default function App() {
         if (sigFields && sigFields.length > 0) {
           // Revérifier la dernière version du PDF avant de construire par-dessus : l'AUTRE partie a pu
           // signer entre-temps (même correctif que côté client dans handleSignSave, 2026-07-24).
-          let pdfUrl = doc.signed_pdf_url || doc.url;
+          //
+          // IMPORTANT (bug racine identifié le 2026-07-24, "on ne voit plus que le texte formateur") :
+          // 'url' est la colonne mise à jour par TOUS les chemins d'écriture (signature client, régénération
+          // admin, upload manuel...), alors que 'signed_pdf_url' n'est écrite QUE par cette fonction et par
+          // l'ancien flux "sous-traitant" (handleDocumentSignatureSave). Si on préfère 'signed_pdf_url' dès
+          // qu'elle existe, un ancien snapshot y reste figé indéfiniment et masque toute mise à jour plus
+          // récente de 'url' (ex : signature du client faite APRÈS un premier essai formateur) → son contenu
+          // disparaît silencieusement au tour de signature suivant. 'url' doit donc rester la source de
+          // vérité pour construire par-dessus ; 'signed_pdf_url' n'est écrite qu'en miroir, pour l'affichage.
+          let pdfUrl = doc.url || doc.signed_pdf_url;
           try {
             const { data: freshDoc } = await supabase.from('documents').select('url, signed_pdf_url').eq('id', docId).maybeSingle();
-            if (freshDoc) pdfUrl = freshDoc.signed_pdf_url || freshDoc.url || pdfUrl;
+            if (freshDoc) pdfUrl = freshDoc.url || freshDoc.signed_pdf_url || pdfUrl;
           } catch (e) {
             console.warn('[handleSignDocument] Impossible de récupérer la dernière version du PDF, utilisation de la version locale :', e.message);
           }
