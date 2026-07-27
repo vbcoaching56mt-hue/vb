@@ -11249,10 +11249,16 @@ const GoogleCalendarCard = ({ supabase, currentUserId }) => {
         return;
       }
       if (toastId) {
-        toast.success(
-          data.total > 0 ? `${data.synced}/${data.total} séance(s) synchronisée(s) avec Google Agenda.` : 'Aucune séance à synchroniser pour le moment.',
-          { id: toastId }
-        );
+        if (data.total > 0 && data.synced < data.total) {
+          const detail = (data.errors && data.errors[0]) ? ` — ${data.errors[0]}` : '';
+          toast.error(`${data.synced}/${data.total} séance(s) synchronisée(s)${detail}`, { id: toastId, duration: 8000 });
+          if (data.errors?.length) console.error('[sync-all] erreurs :', data.errors);
+        } else {
+          toast.success(
+            data.total > 0 ? `${data.synced}/${data.total} séance(s) synchronisée(s) avec Google Agenda.` : 'Aucune séance à synchroniser pour le moment.',
+            { id: toastId }
+          );
+        }
       }
     } catch (e) {
       if (toastId) toast.error('Erreur lors de la synchronisation.', { id: toastId });

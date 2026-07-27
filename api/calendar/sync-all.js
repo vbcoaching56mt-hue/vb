@@ -68,10 +68,16 @@ function buildEventBody(seance) {
   return event;
 }
 
+// Retourne { ok: true } ou { ok: false, reason: '...' } — le "reason" est renvoyé jusqu'au
+// front (voir plus bas) pour pouvoir diagnostiquer sans avoir besoin des logs Vercel.
+function extractGoogleErrorReason(body) {
+  return body?.error?.message || body?.error_description || body?.error || JSON.stringify(body).slice(0, 200);
+}
+
 async function upsertGoogleEvent(connection, ownerId, seance) {
   const accessToken = await ensureFreshAccessToken(connection);
   const eventBody = buildEventBody(seance);
-  if (!eventBody) return false;
+  if (!eventBody) return { ok: false, reason: 'Pas de date exploitable sur cette séance' };
 
   const { data: existing } = await supabaseAdmin
     .from('calendar_synced_events')
@@ -95,28 +101,31 @@ async function upsertGoogleEvent(connection, ownerId, seance) {
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(eventBody),
       });
-      const created = await createResp.json();
+      const created = await createResp.json().catch(() => ({}));
       if (createResp.ok) {
         await supabaseAdmin.from('calendar_synced_events')
           .update({ google_event_id: created.id, updated_at: new Date().toISOString() })
           .eq('id', existing.id);
-        return true;
+        return { ok: true };
       }
+      const reason = extractGoogleErrorReason(created);
       console.error('[calendar/sync-all] recréation évènement échouée', created);
-      return false;
+      return { ok: false, reason };
     }
     if (!resp.ok) {
       const errBody = await resp.json().catch(() => ({}));
+      const reason = extractGoogleErrorReason(errBody);
       console.error('[calendar/sync-all] mise à jour évènement échouée', errBody);
+      return { ok: false, reason };
     }
-    return resp.ok;
+    return { ok: true };
   } else {
     const resp = await fetch(calendarApi, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(eventBody),
     });
-    const created = await resp.json();
+    const created = await resp.json().catch(() => ({}));
     if (resp.ok) {
       await supabaseAdmin.from('calendar_synced_events').insert({
         client_id: seance.client_id,
@@ -124,10 +133,11 @@ async function upsertGoogleEvent(connection, ownerId, seance) {
         owner_id: ownerId,
         google_event_id: created.id,
       });
-      return true;
+      return { ok: true };
     }
+    const reason = extractGoogleErrorReason(created);
     console.error('[calendar/sync-all] création évènement échouée', created);
-    return false;
+    return { ok: false, reason };
   }
 }
 
@@ -223,6 +233,7 @@ module.exports = async (req, res) => {
 
     let synced = 0;
     const total = groups.size;
+    const errors = [];
     for (const groupRows of groups.values()) {
       const first = groupRows[0];
       const withVisio = groupRows.find(r => parseMeta(r.metadata).lien_visio) || first;
@@ -238,14 +249,16 @@ module.exports = async (req, res) => {
         note_seance: parseMeta(withNote.metadata).note_seance || null,
       };
       try {
-        const ok = await upsertGoogleEvent(connection, ownerId, seance);
-        if (ok) synced++;
+        const result = await upsertGoogleEvent(connection, ownerId, seance);
+        if (result.ok) synced++;
+        else if (errors.length < 5) errors.push(`Séance ${seance.numero_seance} : ${result.reason}`);
       } catch (e) {
         console.error('[calendar/sync-all] échec synchro pour', seance.client_id, seance.numero_seance, e.message);
+        if (errors.length < 5) errors.push(`Séance ${seance.numero_seance} : ${e.message}`);
       }
     }
 
-    return res.status(200).json({ synced, total });
+    return res.status(200).json({ synced, total, errors });
   } catch (err) {
     console.error('[calendar/sync-all]', err);
     return res.status(500).json({ error: err.message });
