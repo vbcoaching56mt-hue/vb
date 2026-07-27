@@ -364,6 +364,20 @@ const isBlockedBySigningOrder = (doc, role) => {
     : (order === 'client_first' && !doc.signe_par_client);       // formateur attend le client
 };
 
+// ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
+// Déclenchée "best-effort" (non bloquante, sans afficher d'erreur) à chaque fois qu'une séance
+// est créée/modifiée (date, heure, lien visio, note...). Le serveur (api/calendar/sync-seance)
+// vérifie lui-même si le client et/ou son formateur ont connecté leur agenda Google — si
+// personne n'est connecté, l'appel ne fait rien. Voir ProfileView pour l'écran de connexion.
+const syncSeanceToCalendar = (clientId, numeroSeance) => {
+  if (!clientId || numeroSeance === undefined || numeroSeance === null) return;
+  fetch('/api/calendar/sync-seance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId, numeroSeance }),
+  }).catch(() => {});
+};
+
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
   const fCanvasRef = useRef(null);
   const cCanvasRef = useRef(null);
@@ -3178,6 +3192,10 @@ const ClientDetailView = ({
   const updateSession = async (id, payload) => {
     await supabase.from('sessions').update(payload).eq('id', id);
     if (fetchSessions) fetchSessions();
+    if (payload.date || payload.heure_debut || payload.heure_fin) {
+      const target = clientSessions.find(s => s.id === id);
+      if (target) syncSeanceToCalendar(client.id, target.numero_seance);
+    }
   };
 
   const handleAddCustomSession = async () => {
@@ -8661,9 +8679,39 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
 };
 
 // ─── Calendrier des séances ────────────────────────────────────────────────────
-const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId }) => {
+const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId, fetchSessions }) => {
   const [currentMonth, setCurrentMonth] = React.useState(new Date());
   const [selectedDay, setSelectedDay] = React.useState(null);
+  const [editingSeanceSession, setEditingSeanceSession] = React.useState(null);
+
+  const isSafeVisioUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim());
+
+  // Enregistre le lien visio / la note sur TOUTES les lignes de la séance (même client + même numero_seance),
+  // pour que l'info reste cohérente quelle que soit la vue (Calendrier, Mes Séances...).
+  const handleSaveSeanceInfo = async (session, info) => {
+    const { data: rows, error } = await supabase
+      .from('sessions')
+      .select('id, metadata')
+      .eq('client_id', session.client_id)
+      .eq('numero_seance', session.numero_seance);
+    if (error) { toast.error("Erreur lors de l'enregistrement"); return; }
+    const targets = (rows && rows.length > 0) ? rows : [{ id: session.id, metadata: session.metadata }];
+    try {
+      await Promise.all(targets.map(r => {
+        const existingMeta = (typeof r.metadata === 'string')
+          ? (() => { try { return JSON.parse(r.metadata); } catch { return {}; } })()
+          : (r.metadata || {});
+        return supabase.from('sessions').update({
+          metadata: { ...existingMeta, lien_visio: info.lien_visio || null, note_seance: info.note_seance || null }
+        }).eq('id', r.id);
+      }));
+      toast.success('Informations de séance enregistrées');
+      fetchSessions && fetchSessions();
+      syncSeanceToCalendar(session.client_id, session.numero_seance);
+    } catch (e) {
+      toast.error("Erreur lors de l'enregistrement");
+    }
+  };
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -8743,25 +8791,133 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
             {sessionsByDate[selectedDay].map(s => {
               const client = clients.find(c => c.id === s.client_id);
               const formateur = formateurs.find(f => f.id === client?.formateur_id);
+              const meta = (typeof s.metadata === 'string')
+                ? (() => { try { return JSON.parse(s.metadata); } catch { return {}; } })()
+                : (s.metadata || {});
+              const lienVisio = meta.lien_visio;
+              const noteSeance = meta.note_seance;
+              const canEdit = userRole === 'formateur' || userRole === 'admin';
               return (
-                <div key={s.id} className="px-5 py-4 flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">{s.ressource_titre || s.nom}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {client?.nom}
-                      {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
-                      {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
-                    </p>
+                <div key={s.id} className="px-5 py-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm truncate">{s.ressource_titre || s.nom}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {client?.nom}
+                        {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
+                        {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
+                      </span>
+                      {canEdit && (
+                        <button
+                          onClick={() => setEditingSeanceSession(s)}
+                          title="Ajouter un lien / une note"
+                          className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-violet-600 hover:border-violet-200 transition-colors shrink-0"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                    {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
-                  </span>
+                  {(isSafeVisioUrl(lienVisio) || noteSeance) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {isSafeVisioUrl(lienVisio) && (
+                        <a
+                          href={lienVisio}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
+                        >
+                          🎥 Rejoindre la visio
+                        </a>
+                      )}
+                      {noteSeance && <p className="text-xs text-gray-500 italic">{noteSeance}</p>}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
       )}
+
+      <SeanceInfoModal
+        isOpen={!!editingSeanceSession}
+        onClose={() => setEditingSeanceSession(null)}
+        session={editingSeanceSession}
+        onSave={handleSaveSeanceInfo}
+      />
+    </div>
+  );
+};
+
+// ─── Modale d'informations de séance (lien visio / note) ───────────────────────
+const SeanceInfoModal = ({ isOpen, onClose, session, onSave }) => {
+  const [lienVisio, setLienVisio] = React.useState('');
+  const [note, setNote] = React.useState('');
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && session) {
+      const meta = (typeof session.metadata === 'string')
+        ? (() => { try { return JSON.parse(session.metadata); } catch { return {}; } })()
+        : (session.metadata || {});
+      setLienVisio(meta.lien_visio || '');
+      setNote(meta.note_seance || '');
+      setIsSaving(false);
+    }
+  }, [isOpen, session]);
+
+  if (!isOpen || !session) return null;
+
+  const handleSubmit = async () => {
+    setIsSaving(true);
+    await onSave(session, { lien_visio: lienVisio.trim(), note_seance: note.trim() });
+    setIsSaving(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
+      <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl border border-gray-100 overflow-hidden animate-slide-up">
+        <div className="bg-violet-600 p-6 text-white relative">
+          <p className="text-violet-200 text-[10px] font-black uppercase tracking-widest mb-1">📅 Informations de séance</p>
+          <h2 className="text-lg font-black leading-tight">{session.ressource_titre || session.nom || 'Séance'}</h2>
+          <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Lien de visioconférence (optionnel)</label>
+            <input
+              type="url"
+              value={lienVisio}
+              onChange={(e) => setLienVisio(e.target.value)}
+              placeholder="https://meet.google.com/..."
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Note / information pour le client (optionnel)</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="Ex : Merci de vous connecter 5 min avant..."
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">Annuler</button>
+            <button onClick={handleSubmit} disabled={isSaving} className="flex-1 py-3 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-50">
+              {isSaving ? 'Enregistrement...' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
@@ -9006,6 +9162,13 @@ const SessionsView = ({
   const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
   const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
+  const parseSessionMeta = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
+  const isSafeVisioUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim());
+  const getGroupVisioInfo = (group) => ({
+    lienVisio: group.items.map(i => parseSessionMeta(i.metadata).lien_visio).find(isSafeVisioUrl),
+    note: group.items.map(i => parseSessionMeta(i.metadata).note_seance).find(Boolean),
+  });
+
   const calculateDuration = (start, end) => {
     if (!start || !end) return null;
     const [h1, m1] = start.split(':').map(Number);
@@ -9169,6 +9332,7 @@ const SessionsView = ({
                       // Seules les séances avec une date future sont verrouillées.
                       // Les séances passées restent toujours accessibles pour que le client puisse signer.
                       const isLocked = isFuture;
+                      const { lienVisio, note } = getGroupVisioInfo(group);
 
                       return (
                         <React.Fragment key={gIdx}>
@@ -9184,6 +9348,16 @@ const SessionsView = ({
                                   {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
                                 </div>
                               </div>
+                              {!isLocked && (lienVisio || note) && (
+                                <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
+                                  {lienVisio && (
+                                    <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+                                      🎥 Rejoindre la visio
+                                    </a>
+                                  )}
+                                  {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
+                                </div>
+                              )}
                             </td>
                           </tr>
                           {group.items.map(session => (
@@ -9220,6 +9394,7 @@ const SessionsView = ({
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
                   const isLocked = isFuture;
+                  const { lienVisio, note } = getGroupVisioInfo(group);
 
                   return (
                     <div key={gIdx} className={`rounded-2xl border overflow-hidden ${isLocked ? 'border-gray-100 opacity-50' : 'border-gray-200'}`}>
@@ -9233,6 +9408,16 @@ const SessionsView = ({
                         {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 VERROUILLÉ</span>}
                         <span>{group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}</span>
                       </div>
+                      {!isLocked && (lienVisio || note) && (
+                        <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-gray-50">
+                          {lienVisio && (
+                            <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+                              🎥 Rejoindre la visio
+                            </a>
+                          )}
+                          {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
+                        </div>
+                      )}
                       <div className={`divide-y divide-gray-100 ${isLocked ? 'pointer-events-none' : ''}`}>
                         {group.items.map(session => (
                           <div key={session.id} className={`p-4 space-y-3 ${isLocked ? 'grayscale' : ''}`}>
@@ -10902,6 +11087,107 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
   );
 };
 
+// ─── Connexion Google Agenda (2026-07-27) ────────────────────────────────────
+// Carte affichée dans "Mon Profil" (client et formateur) permettant de connecter/déconnecter
+// son Google Agenda. La connexion (tokens) est gérée côté serveur (api/calendar/google/*) ;
+// ici on ne fait que lire l'état (via RLS : chacun ne voit que sa propre ligne) et déclencher
+// la redirection OAuth ou la déconnexion.
+const GoogleCalendarCard = ({ supabase, currentUserId }) => {
+  const [status, setStatus] = useState('loading'); // 'loading' | 'connected' | 'disconnected'
+  const [connectedEmail, setConnectedEmail] = useState('');
+  const [isBusy, setIsBusy] = useState(false);
+
+  const loadStatus = React.useCallback(async () => {
+    if (!currentUserId) return;
+    const { data } = await supabase
+      .from('calendar_connections')
+      .select('connected_email')
+      .eq('owner_id', String(currentUserId))
+      .eq('provider', 'google')
+      .maybeSingle();
+    if (data) { setStatus('connected'); setConnectedEmail(data.connected_email || ''); }
+    else { setStatus('disconnected'); setConnectedEmail(''); }
+  }, [supabase, currentUserId]);
+
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  // Affiche un message une seule fois au retour du flux OAuth (?calendar=connected|error dans l'URL).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('calendar');
+    if (!result) return;
+    if (result === 'connected') { toast.success('Google Agenda connecté !'); loadStatus(); }
+    else if (result === 'error') { toast.error('La connexion à Google Agenda a échoué. Réessayez.'); }
+    params.delete('calendar');
+    const newSearch = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (newSearch ? `?${newSearch}` : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleConnect = async () => {
+    setIsBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { toast.error('Session expirée, reconnectez-vous.'); setIsBusy(false); return; }
+      const resp = await fetch('/api/calendar/google/start', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.url) {
+        toast.error(data.error || "Impossible de démarrer la connexion Google Agenda.");
+        setIsBusy(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch (e) {
+      toast.error("Erreur lors de la connexion à Google Agenda.");
+      setIsBusy(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setIsBusy(true);
+    const { error } = await supabase.from('calendar_connections').delete().eq('owner_id', String(currentUserId)).eq('provider', 'google');
+    if (error) toast.error('Erreur lors de la déconnexion.');
+    else { toast.success('Google Agenda déconnecté.'); setStatus('disconnected'); setConnectedEmail(''); }
+    setIsBusy(false);
+  };
+
+  return (
+    <div>
+      <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
+        <ExternalLink size={16} className="text-indigo-500" /> Google Agenda
+      </h3>
+      <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          {status === 'connected' ? (
+            <>
+              <p className="text-sm font-bold text-gray-800">✅ Connecté{connectedEmail ? ` — ${connectedEmail}` : ''}</p>
+              <p className="text-xs text-gray-400 mt-1">Vos séances sont ajoutées automatiquement à votre Google Agenda.</p>
+            </>
+          ) : status === 'disconnected' ? (
+            <>
+              <p className="text-sm font-bold text-gray-800">Non connecté</p>
+              <p className="text-xs text-gray-400 mt-1">Connectez votre Google Agenda pour y retrouver automatiquement vos séances.</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-400">Vérification...</p>
+          )}
+        </div>
+        {status === 'connected' ? (
+          <button onClick={handleDisconnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 shrink-0">
+            {isBusy ? '...' : 'Déconnecter'}
+          </button>
+        ) : status === 'disconnected' ? (
+          <button onClick={handleConnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 shrink-0">
+            {isBusy ? 'Redirection...' : 'Connecter mon Google Agenda'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole, orgSettings, onOrgSaved, currentOrgId }) => {
   const user = userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : (userRole === 'client' ? clients.find(c => c.id === currentUserId) : null);
 
@@ -11202,6 +11488,12 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           </button>
         </div>
       </div>
+
+      {(userRole === 'client' || userRole === 'formateur') && (
+        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+          <GoogleCalendarCard supabase={supabase} currentUserId={currentUserId} />
+        </div>
+      )}
     </div>
   );
 };
@@ -18035,6 +18327,7 @@ export default function App() {
             formateurs={assignableFormateurs}
             userRole={userRole}
             currentUserId={currentUserId}
+            fetchSessions={fetchSessions}
           />}
           {activeTab === 'accueil_formateur' && userRole === 'formateur' && <FormateurAccueilView
             formateurs={assignableFormateurs}
