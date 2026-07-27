@@ -6226,7 +6226,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   }, [destinationRoles]);
 
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
     'Divers': ['date_du_jour'],
@@ -6475,7 +6475,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setIsPreviewing(true);
     try {
       const testValues = {
-        nomcomplet_client: 'Jean DUPONT', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
+        nomcomplet_client: 'Jean DUPONT', numero_dossier_client: 'DOS-2026-001', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
         client_email: 'jean@exemple.fr', client_phone: '06 12 34 56 78',
         rue_client: '12 rue de la Paix', code_postal_client: '56000',
         adresse_client: '12 rue de la Paix, 56000 Vannes',
@@ -10283,6 +10283,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
         const dataValues = {
           nomcomplet_client:  (currentClient?.nom_complet || currentClient?.nom || '').trim(),
+          numero_dossier_client: currentClient?.numero_dossier || '',
           client_email:       currentClient?.email_contact || currentClient?.email || '',
           client_phone:       currentClient?.telephone || '',
           rue_client:         currentClient?.adresse || currentClient?.rue || '',
@@ -10499,6 +10500,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
             const dataValues = {
               nomcomplet_client:  currentClient.nom_complet || currentClient.nom || '',
+              numero_dossier_client: currentClient.numero_dossier || '',
               client_email:       currentClient.email_contact || currentClient.email || '',
               client_phone:       currentClient.telephone || '',
               rue_client:         currentClient.adresse || currentClient.rue || '',
@@ -15359,6 +15361,7 @@ export default function App() {
         const today = new Date().toLocaleDateString('fr-FR');
         resolvedValues = {
           nomcomplet_client:   (client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || '').trim(),
+          numero_dossier_client: client.numero_dossier || '',
           client_email:        client.email_contact || client.email || '',
           client_phone:        client.telephone || '',
           rue_client:          client.adresse || client.adresse_postale || client.rue || '',
