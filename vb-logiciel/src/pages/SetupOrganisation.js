@@ -103,8 +103,17 @@ const SetupOrganisationPage = () => {
           <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
           <h1 className="text-xl font-extrabold text-gray-900 mb-3">Une erreur est survenue</h1>
           <p className="text-red-500 text-sm bg-red-50 p-3 rounded-xl mb-6">{error}</p>
-          <button onClick={() => window.location.reload()} className="w-full bg-gray-900 text-white font-bold py-4 rounded-2xl">
+          <button onClick={() => window.location.reload()} className="w-full bg-gray-900 text-white font-bold py-4 rounded-2xl mb-3">
             Réessayer
+          </button>
+          <button
+            onClick={async () => {
+              try { await supabase.auth.signOut(); } catch (e) { /* session déjà invalide, on ignore */ }
+              window.location.replace('/');
+            }}
+            className="w-full text-sm font-bold text-violet-600 hover:text-violet-700 py-2"
+          >
+            Retour à la connexion
           </button>
         </div>
       </div>
