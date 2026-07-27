@@ -11234,12 +11234,39 @@ const GoogleCalendarCard = ({ supabase, currentUserId }) => {
 
   useEffect(() => { loadStatus(); }, [loadStatus]);
 
-  // Affiche un message une seule fois au retour du flux OAuth (?calendar=connected|error dans l'URL).
+  const handleSyncAll = React.useCallback(async (silent = false) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const toastId = silent ? undefined : toast.loading('Synchronisation de vos séances...');
+    try {
+      const resp = await fetch('/api/calendar/sync-all', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        if (toastId) toast.error(data.error || 'Échec de la synchronisation.', { id: toastId });
+        return;
+      }
+      if (toastId) {
+        toast.success(
+          data.total > 0 ? `${data.synced}/${data.total} séance(s) synchronisée(s) avec Google Agenda.` : 'Aucune séance à synchroniser pour le moment.',
+          { id: toastId }
+        );
+      }
+    } catch (e) {
+      if (toastId) toast.error('Erreur lors de la synchronisation.', { id: toastId });
+    }
+  }, [supabase]);
+
+  // Affiche un message une seule fois au retour du flux OAuth (?calendar=connected|error dans l'URL),
+  // et rattrape automatiquement les séances déjà créées AVANT la connexion (sync-seance.js ne pousse
+  // que ce qui est créé/modifié APRÈS coup — sans ce rattrapage, l'agenda semblerait vide).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const result = params.get('calendar');
     if (!result) return;
-    if (result === 'connected') { toast.success('Google Agenda connecté !'); loadStatus(); }
+    if (result === 'connected') { toast.success('Google Agenda connecté !'); loadStatus(); handleSyncAll(); }
     else if (result === 'error') { toast.error('La connexion à Google Agenda a échoué. Réessayez.'); }
     params.delete('calendar');
     const newSearch = params.toString();
@@ -11298,9 +11325,14 @@ const GoogleCalendarCard = ({ supabase, currentUserId }) => {
           )}
         </div>
         {status === 'connected' ? (
-          <button onClick={handleDisconnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50 shrink-0">
-            {isBusy ? '...' : 'Déconnecter'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => handleSyncAll(false)} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50">
+              Resynchroniser
+            </button>
+            <button onClick={handleDisconnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">
+              {isBusy ? '...' : 'Déconnecter'}
+            </button>
+          </div>
         ) : status === 'disconnected' ? (
           <button onClick={handleConnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 shrink-0">
             {isBusy ? 'Redirection...' : 'Connecter mon Google Agenda'}
