@@ -14191,6 +14191,41 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
   );
 }
 
+// ─── Navigation par URL (2026-07-27) ──────────────────────────────────────────
+// Fait correspondre chaque valeur du `activeTab` DE App() (état interne existant, complètement
+// inchangé — aucun des ~50 appels setActiveTab() n'est modifié) à une URL propre et unique. Objectif :
+// bouton précédent/suivant du navigateur qui fonctionne réellement, liens partageables/à rafraîchir
+// sans perdre sa place, un vrai historique. Implémenté avec l'API History native (pushState/popstate),
+// sans nouvelle dépendance (pas de react-router) : le rewrite catch-all déjà présent dans vercel.json
+// ("/(.*)" → "/index.html") garantit qu'une actualisation ou un lien direct sur n'importe laquelle de
+// ces URLs sert bien l'app React (pas de 404), donc aucun changement de config serveur nécessaire.
+// N'INCLUT PAS les tabs internes à ClientDetailView (infos/seances/docs_signes/exercices/docs/
+// questionnaires) : ce sont des sous-onglets d'une fiche client, avec leur PROPRE état local
+// `activeTab` (composant différent) — hors-scope ici, uniquement la navigation principale de l'app.
+const TAB_TO_PATH = {
+  dashboard: '/tableau-de-bord',
+  accueil: '/accueil',
+  accueil_formateur: '/espace-formateur',
+  clients: '/clients',
+  formateurs: '/formateurs',
+  modules: '/modules',
+  processus: '/processus',
+  fiches_metiers: '/fiches-metiers',
+  calendrier: '/calendrier',
+  messagerie: '/messagerie',
+  gestion_documents: '/documents',
+  mes_documents: '/mes-documents',
+  mes_seances: '/mes-seances',
+  bilan: '/mon-bilan',
+  parametres_org: '/parametres',
+  relances: '/relances',
+  profil: '/profil',
+  exercices: '/exercices',
+};
+// Réciproque URL → onglet — 1:1, sans collision (chaque chemin ci-dessus n'a qu'un seul propriétaire).
+const PATH_TO_TAB = {};
+Object.entries(TAB_TO_PATH).forEach(([tab, path]) => { PATH_TO_TAB[path] = tab; });
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -14198,7 +14233,45 @@ export default function App() {
   // true quand un compte admin visualise son espace formateur (via le bouton "Mon espace Formateur",
   // ouvert dans un nouvel onglet avec ?view=formateur dans l'URL) — voir handleLogin plus bas.
   const [isAdminActingAsFormateur, setIsAdminActingAsFormateur] = useState(false);
-  const [activeTab, setActiveTab] = useState('accueil');
+  // Restaure l'onglet depuis l'URL au chargement (F5, lien direct, favori) — voir TAB_TO_PATH/
+  // PATH_TO_TAB ci-dessus. handleLogin() ci-dessous ne réécrase PAS cette valeur lors d'une simple
+  // restauration de session silencieuse (preserveTab=true), seulement lors d'une connexion fraîche.
+  const [activeTab, setActiveTab] = useState(() => PATH_TO_TAB[window.location.pathname] || 'accueil');
+
+  // ── Synchronisation URL ↔ onglet actif (2026-07-27) ──────────────────────────
+  // 1) Chaque changement d'activeTab pousse une VRAIE entrée d'historique navigateur (pushState),
+  //    avec l'URL propre correspondante (TAB_TO_PATH). Ignore le tout premier rendu (remplace au lieu
+  //    de pousser, pour ne pas créer une entrée en double avec celle déjà présente au chargement) et
+  //    ignore tant que userRole est vide (écran de connexion / reset / invitation : ces écrans gèrent
+  //    déjà leur propre état d'URL séparément, ne pas interférer).
+  const isFirstTabSync = React.useRef(true);
+  React.useEffect(() => {
+    if (!userRole) return;
+    const path = TAB_TO_PATH[activeTab];
+    if (!path) return; // onglet inconnu de la table (ex: valeur interne à un sous-composant) → ignoré
+    if (isFirstTabSync.current) {
+      isFirstTabSync.current = false;
+      if (window.location.pathname !== path) window.history.replaceState({ tab: activeTab }, '', path + window.location.search);
+      return;
+    }
+    if (window.location.pathname !== path) {
+      window.history.pushState({ tab: activeTab }, '', path + window.location.search);
+    }
+  }, [activeTab, userRole]);
+
+  // 2) Bouton précédent/suivant du navigateur : restaure l'onglet correspondant à la nouvelle URL au
+  //    lieu de ne rien faire (comportement d'avant ce correctif, source du "ça me déconnecte" —
+  //    en réalité rien n'était déconnecté, mais sans historique le bouton retour du navigateur n'avait
+  //    littéralement aucune page interne vers laquelle revenir).
+  React.useEffect(() => {
+    const onPopState = () => {
+      const tab = PATH_TO_TAB[window.location.pathname];
+      if (tab) setActiveTab(tab);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Détection synchrone au démarrage : lien invitation (token_hash ou access_token dans le hash)
@@ -14246,11 +14319,14 @@ export default function App() {
         // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
         const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
         if (userData && userData.role) {
-          handleLogin(userData.role, userData.id, userData.organisation_id);
+          // preserveTab=true : restauration SILENCIEUSE d'une session déjà ouverte (F5, réouverture
+          // d'onglet) — ne pas écraser l'onglet déjà restauré depuis l'URL (voir useState(activeTab)
+          // plus haut), sinon un lien profond ou un simple F5 ramènerait toujours à la page d'accueil.
+          handleLogin(userData.role, userData.id, userData.organisation_id, true);
         } else {
           const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
           if (clientData) {
-            handleLogin('client', clientData.id, clientData.organisation_id);
+            handleLogin('client', clientData.id, clientData.organisation_id, true);
           } else {
             // Session active mais aucun profil DB trouvé
             const metaRole = session.user?.user_metadata?.role;
@@ -14636,7 +14712,12 @@ export default function App() {
   };
 
   // --- Actions Navigation ---
-  const handleLogin = (role, id = null, orgId = null) => {
+  // preserveTab (2026-07-27) : true UNIQUEMENT lors d'une restauration SILENCIEUSE de session déjà
+  // ouverte (F5, réouverture d'onglet — voir initSession ci-dessus) — dans ce cas on NE TOUCHE PAS à
+  // l'onglet, qui a déjà été correctement restauré depuis l'URL par le useState(activeTab) plus haut.
+  // Pour une connexion fraîche (formulaire de login, fin d'invitation/reset mot de passe), on continue
+  // de rediriger vers la page d'accueil du rôle comme avant — preserveTab reste false partout ailleurs.
+  const handleLogin = (role, id = null, orgId = null, preserveTab = false) => {
     // Un admin qui clique sur "Mon espace Formateur" ouvre un nouvel onglet vers la même URL
     // avec ?view=formateur — cette même session/compte se connecte alors normalement (role='admin'
     // renvoyé par la DB), mais on affiche l'espace formateur à la place, avec le même currentUserId.
@@ -14645,6 +14726,7 @@ export default function App() {
     setIsAdminActingAsFormateur(wantsFormateurView);
     setCurrentUserId(id);
     setCurrentOrgId(orgId);
+    if (preserveTab) return;
     if (wantsFormateurView) { setActiveTab('accueil_formateur'); return; }
     if (role === 'admin') setActiveTab('dashboard');
     if (role === 'formateur') setActiveTab('accueil_formateur');
@@ -14659,6 +14741,10 @@ export default function App() {
     setIsAdminActingAsFormateur(false);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
+    // Revenir explicitement à la racine (page de connexion) : le useEffect de synchronisation
+    // URL<->onglet ci-dessous ne s'exécute que lorsque userRole est renseigné (voir plus bas), donc il
+    // ne remettrait pas seul l'URL à '/' ici puisque userRole vient d'être mis à null.
+    window.history.replaceState(null, '', '/');
   };
 
   // --- Détection retour Stripe Checkout ---
