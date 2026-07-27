@@ -3112,9 +3112,7 @@ const ClientDetailView = ({
         .select('*')
         .eq('type', 'document')
         .in('titre', docNames);
-      msrQuery = currentOrgId
-        ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : msrQuery.is('organisation_id', null);
+      msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
       const { data: msrEntries } = await msrQuery;
       const msrByName = {};
       (msrEntries || []).forEach(m => { msrByName[m.titre] = m; });
@@ -4294,12 +4292,10 @@ const FormateurDetailView = ({
 
   const handleDeleteDoc = async () => {
     if (!docToDelete) return;
-    // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
-    // n'importe quel document portant cet id aurait pu être supprimé sans vérification d'appartenance.
-    let delQuery = supabase.from('documents').delete().eq('id', docToDelete.id);
-    delQuery = currentOrgId
-      ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-      : delQuery.is('organisation_id', null);
+    // Scopé strictement à l'organisme courant — plus aucune tolérance pour les lignes historiques
+    // sans organisation_id (elles ont été rattachées à leur organisme d'origine par migration SQL).
+    if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
+    const delQuery = supabase.from('documents').delete().eq('id', docToDelete.id).eq('organisation_id', currentOrgId);
     const { error } = await delQuery;
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); console.error('[handleDeleteDoc]', error); }
     else { toast.success('Document supprimé.'); }
@@ -4940,10 +4936,8 @@ const IngenierieView = ({
       const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
       // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un
       // glisser-déposer aurait pu modifier la ressource de module d'un AUTRE organisme si l'id était deviné.
-      let dragQuery = supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
-      dragQuery = currentOrgId
-        ? dragQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : dragQuery.is('organisation_id', null);
+      if (!currentOrgId) return;
+      const dragQuery = supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId).eq('organisation_id', currentOrgId);
       const { error } = await dragQuery;
       if (!error) fetchModules();
     }
@@ -7182,19 +7176,14 @@ const DocumentsView = ({
     const newName = editingNameValue.trim();
     if (!newName || newName === oldName) { setEditingName(null); return; }
     try {
-      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
-      // ces deux updates matchaient par nom/titre SEUL, sans aucune restriction d'organisme — un modèle
-      // du même nom appartenant à un AUTRE organisme aurait aussi été renommé.
-      let msrRenameQuery = supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName);
-      msrRenameQuery = currentOrgId
-        ? msrRenameQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : msrRenameQuery.is('organisation_id', null);
+      // Scopé strictement à l'organisme courant — un modèle du même nom appartenant à un AUTRE
+      // organisme ne doit jamais pouvoir être renommé (plus de tolérance pour organisation_id NULL,
+      // toutes les lignes historiques ont été rattachées à leur organisme d'origine par migration SQL).
+      if (!currentOrgId) { setEditingName(null); return; }
+      const msrRenameQuery = supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName).eq('organisation_id', currentOrgId);
       await msrRenameQuery;
 
-      let docRenameQuery = supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null);
-      docRenameQuery = currentOrgId
-        ? docRenameQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : docRenameQuery.is('organisation_id', null);
+      const docRenameQuery = supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null).eq('organisation_id', currentOrgId);
       await docRenameQuery;
 
       if (fetchDocuments) await fetchDocuments();
@@ -7228,9 +7217,7 @@ const DocumentsView = ({
       // Scoping toujours appliqué (avant : uniquement si currentOrgId était renseigné, sinon la
       // recherche portait silencieusement sur TOUS les organismes).
       let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
-      msrQuery = currentOrgId
-        ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : msrQuery.is('organisation_id', null);
+      msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
       const { data: existingMsr } = await msrQuery;
       if (existingMsr && existingMsr.length > 0) {
         await supabase.from('module_step_resources').update({
@@ -7245,9 +7232,7 @@ const DocumentsView = ({
         if (msrErr) throw msrErr;
       }
       let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
-      docQuery = currentOrgId
-        ? docQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-        : docQuery.is('organisation_id', null);
+      docQuery = currentOrgId ? docQuery.eq('organisation_id', currentOrgId) : docQuery.limit(0);
       const { data: existingDoc } = await docQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
@@ -10093,9 +10078,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       .eq('titre', titre)
       .eq('type', 'document')
       .limit(10);
-    rowsQuery = myOrgId
-      ? rowsQuery.or(`organisation_id.eq.${myOrgId},organisation_id.is.null`)
-      : rowsQuery.is('organisation_id', null);
+    rowsQuery = myOrgId ? rowsQuery.eq('organisation_id', myOrgId) : rowsQuery.limit(0);
     const { data: rows } = await rowsQuery;
     if (!rows || rows.length === 0) return { templateId: null, hasVisualFields: false };
     // Prefer the row that has has_visual_fields: true
@@ -12178,9 +12161,7 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
     // Le filtre est désormais TOUJOURS appliqué (avant : seulement si currentOrgId était renseigné,
     // sinon la requête remontait silencieusement les shared_processes de TOUS les organismes).
     let query = db.from('shared_processes').select('*').order('created_at', { ascending: false });
-    query = currentOrgId
-      ? query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-      : query.is('organisation_id', null);
+    query = currentOrgId ? query.eq('organisation_id', currentOrgId) : query.limit(0);
     const { data, error } = await query;
     if (!error && data) setProcesses(data);
     setLoading(false);
@@ -12229,10 +12210,8 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
     const db = supabase;
     // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
     // la suppression ne filtrait que par id, sans aucune vérification d'appartenance à l'organisme.
-    let delQuery = db.from('shared_processes').delete().eq('id', processToDelete.id);
-    delQuery = currentOrgId
-      ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-      : delQuery.is('organisation_id', null);
+    if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
+    const delQuery = db.from('shared_processes').delete().eq('id', processToDelete.id).eq('organisation_id', currentOrgId);
     await delQuery;
     toast.success('Ressource supprimée.');
     setProcessToDelete(null);
@@ -13219,7 +13198,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
   const fetchAssignedJobSheets = async () => {
     setLoadingAssigned(true);
     let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
-    if (currentOrgId) q = q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+    q = currentOrgId ? q.eq('organisation_id', currentOrgId) : q.limit(0);
     const { data } = await q;
     if (data) setAssignedJobSheets(data);
     setLoadingAssigned(false);
@@ -14891,24 +14870,24 @@ export default function App() {
 
   const fetchModules = async () => {
     let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
-    mQuery = currentOrgId ? mQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : mQuery.is('organisation_id', null);
+    mQuery = currentOrgId ? mQuery.eq('organisation_id', currentOrgId) : mQuery.limit(0);
     const { data: mData, error: mErr } = await mQuery;
     if (!mErr && mData) setModules(mData);
 
     let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
-    mstQuery = currentOrgId ? mstQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : mstQuery.is('organisation_id', null);
+    mstQuery = currentOrgId ? mstQuery.eq('organisation_id', currentOrgId) : mstQuery.limit(0);
     const { data: mstData, error: mstErr } = await mstQuery;
     if (!mstErr && mstData) setModuleSessionTemplates(mstData);
 
     let msrQuery = supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
-    msrQuery = currentOrgId ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : msrQuery.is('organisation_id', null);
+    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
     const { data: msrData, error: msrErr } = await msrQuery;
     if (!msrErr && msrData) setModuleStepResources(msrData);
   };
 
   const fetchSessions = async () => {
     let q = supabase.from('sessions').select('*');
-    q = currentOrgId ? q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : q.is('organisation_id', null);
+    q = currentOrgId ? q.eq('organisation_id', currentOrgId) : q.limit(0);
     const { data, error } = await q;
     if (!error && data) setSessions(data);
   };
@@ -14919,12 +14898,12 @@ export default function App() {
       .from('utilisateurs')
       .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
       .eq('role', 'formateur');
-    fQuery = currentOrgId ? fQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : fQuery.is('organisation_id', null);
+    fQuery = currentOrgId ? fQuery.eq('organisation_id', currentOrgId) : fQuery.limit(0);
     const { data: formateursData, error: formateursError } = await fQuery;
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
     let cQuery = supabase.from('clients').select('*');
-    cQuery = currentOrgId ? cQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : cQuery.is('organisation_id', null);
+    cQuery = currentOrgId ? cQuery.eq('organisation_id', currentOrgId) : cQuery.limit(0);
     const { data: clientsData, error: clientsError } = await cQuery;
 
     if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
@@ -14971,13 +14950,13 @@ export default function App() {
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
     let docsQuery = supabase.from('documents').select('*');
-    docsQuery = currentOrgId ? docsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : docsQuery.is('organisation_id', null);
+    docsQuery = currentOrgId ? docsQuery.eq('organisation_id', currentOrgId) : docsQuery.limit(0);
     const { data: docsData, error } = await docsQuery;
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
     let msrQuery = supabase.from('module_step_resources').select('*').eq('type', 'document');
-    msrQuery = currentOrgId ? msrQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`) : msrQuery.is('organisation_id', null);
+    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
     const { data: modsData, error: modErr } = await msrQuery;
     if (!modErr && modsData) {
       console.log(`[fetchDocuments] ${modsData.length} modèles documents récupérés.`);
@@ -15023,9 +15002,7 @@ export default function App() {
   const fetchClientSkills = async () => {
     // Filtre via la relation client → organisation (RLS + filtre explicite)
     let csQuery = supabase.from('client_skills').select('*, clients!inner(organisation_id)');
-    csQuery = currentOrgId
-      ? csQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`, { foreignTable: 'clients' })
-      : csQuery.is('clients.organisation_id', null);
+    csQuery = currentOrgId ? csQuery.eq('clients.organisation_id', currentOrgId) : csQuery.limit(0);
     const { data, error } = await csQuery;
     if (!error && data) setClientSkills(data);
   };
@@ -15792,20 +15769,15 @@ export default function App() {
       "Les clients et utilisateurs encore rattachés à ce module basculeront automatiquement sur \"Aucun module assigné\". Ce module et tout son contenu (parcours, étapes, ressources) seront ensuite définitivement supprimés. Cette action est irréversible.",
       async () => {
         hideAppConfirm();
+        if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
         try {
-          // 1. Désassigner les clients rattachés (scope organisation + lignes historiques sans organisation_id)
-          let clientsUnassignQuery = supabase.from('clients').update({ module_id: null }).eq('module_id', moduleId);
-          clientsUnassignQuery = currentOrgId
-            ? clientsUnassignQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : clientsUnassignQuery.is('organisation_id', null);
+          // 1. Désassigner les clients rattachés (scopé strictement à l'organisme courant)
+          const clientsUnassignQuery = supabase.from('clients').update({ module_id: null }).eq('module_id', moduleId).eq('organisation_id', currentOrgId);
           const { data: unassignedClients, error: clientsUnassignErr } = await clientsUnassignQuery.select('id');
           if (clientsUnassignErr) throw clientsUnassignErr;
 
           // 2. Désassigner les utilisateurs (formateurs/admins) rattachés
-          let staffUnassignQuery = supabase.from('utilisateurs').update({ module_id: null }).eq('module_id', moduleId);
-          staffUnassignQuery = currentOrgId
-            ? staffUnassignQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : staffUnassignQuery.is('organisation_id', null);
+          const staffUnassignQuery = supabase.from('utilisateurs').update({ module_id: null }).eq('module_id', moduleId).eq('organisation_id', currentOrgId);
           const { data: unassignedStaff, error: staffUnassignErr } = await staffUnassignQuery.select('id');
           if (staffUnassignErr) throw staffUnassignErr;
 
@@ -15814,10 +15786,7 @@ export default function App() {
           if (msrErr) throw msrErr;
           const { error: mstErr } = await supabase.from('module_session_templates').delete().eq('module_id', moduleId);
           if (mstErr) throw mstErr;
-          let delQuery = supabase.from('modules').delete().eq('id', moduleId);
-          delQuery = currentOrgId
-            ? delQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : delQuery.is('organisation_id', null);
+          const delQuery = supabase.from('modules').delete().eq('id', moduleId).eq('organisation_id', currentOrgId);
           const { error } = await delQuery;
           if (error) throw error;
 
@@ -16824,15 +16793,13 @@ export default function App() {
       // scopées). Le filtre organisation_id avait été totalement supprimé ici, ce qui permettait à
       // l'admin d'un organisme de modifier les modèles de documents de n'importe quel AUTRE organisme
       // partageant le même titre de modèle — un trou de cloisonnement multi-tenant critique.
-      if (msrId) {
-        let propagateQuery = supabase.from('module_step_resources')
+      if (msrId && currentOrgId) {
+        const propagateQuery = supabase.from('module_step_resources')
           .update({ metadata: JSON.stringify(fullMetadataObj) })
           .eq('titre', name)
           .eq('type', 'document')
+          .eq('organisation_id', currentOrgId)
           .neq('id', msrId);
-        propagateQuery = currentOrgId
-          ? propagateQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-          : propagateQuery.is('organisation_id', null);
         await propagateQuery;
       }
 
@@ -16868,9 +16835,7 @@ export default function App() {
           let directLinksQuery = supabase
             .from('module_step_resources').select('module_id')
             .eq('titre', name).eq('type', 'document').not('module_id', 'is', null);
-          directLinksQuery = currentOrgId
-            ? directLinksQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : directLinksQuery.is('organisation_id', null);
+          directLinksQuery = currentOrgId ? directLinksQuery.eq('organisation_id', currentOrgId) : directLinksQuery.limit(0);
           const { data: directLinks } = await directLinksQuery;
           const directModuleIds = [...new Set((directLinks || []).map(m => m.module_id).filter(Boolean))];
 
@@ -16878,9 +16843,7 @@ export default function App() {
           let groupLinksQuery = supabase
             .from('module_step_resources').select('document_group_id')
             .eq('titre', name).eq('type', 'document').not('document_group_id', 'is', null);
-          groupLinksQuery = currentOrgId
-            ? groupLinksQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : groupLinksQuery.is('organisation_id', null);
+          groupLinksQuery = currentOrgId ? groupLinksQuery.eq('organisation_id', currentOrgId) : groupLinksQuery.limit(0);
           const { data: groupLinks } = await groupLinksQuery;
           const groupIds = [...new Set((groupLinks || []).map(d => d.document_group_id).filter(Boolean))];
           let groupModuleIds = [];
@@ -16888,9 +16851,7 @@ export default function App() {
             let groupParentsQuery = supabase
               .from('module_step_resources').select('module_id')
               .eq('type', 'document_group').in('document_group_id', groupIds).not('module_id', 'is', null);
-            groupParentsQuery = currentOrgId
-              ? groupParentsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-              : groupParentsQuery.is('organisation_id', null);
+            groupParentsQuery = currentOrgId ? groupParentsQuery.eq('organisation_id', currentOrgId) : groupParentsQuery.limit(0);
             const { data: groupParents } = await groupParentsQuery;
             groupModuleIds = [...new Set((groupParents || []).map(m => m.module_id).filter(Boolean))];
           }
@@ -16901,9 +16862,7 @@ export default function App() {
           let existingClientDocsQuery = supabase
             .from('documents').select('user_id')
             .eq('nom', name).not('user_id', 'is', null).eq('signe_par_client', false);
-          existingClientDocsQuery = currentOrgId
-            ? existingClientDocsQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-            : existingClientDocsQuery.is('organisation_id', null);
+          existingClientDocsQuery = currentOrgId ? existingClientDocsQuery.eq('organisation_id', currentOrgId) : existingClientDocsQuery.limit(0);
           const { data: existingClientDocs } = await existingClientDocsQuery;
           const existingClientIds = new Set((existingClientDocs || []).map(d => String(d.user_id)));
 
@@ -16964,13 +16923,13 @@ export default function App() {
       // un modèle du même nom appartenant à un AUTRE organisme aurait aussi été supprimé.
       await supabase.from('documents').delete()
         .eq('nom', templateKey).eq('type_action', 'Modèle Référence')
-        .or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+        .eq('organisation_id', currentOrgId);
 
       // 3. Supprimer de module_step_resources — même précaution, + limité au type 'document' pour ne
       // pas toucher d'autres ressources de module qui partageraient le même titre par coïncidence.
       await supabase.from('module_step_resources').delete()
         .eq('titre', templateKey).eq('type', 'document')
-        .or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
+        .eq('organisation_id', currentOrgId);
 
       // 4. Update local state
       const newTemplates = { ...documentTemplates };
@@ -16990,11 +16949,9 @@ export default function App() {
   // Mise à jour de la destination d'un modèle existant
   const handleUpdateTemplateDestination = async (templateKey, newDest) => {
     // Même précaution multi-tenant que handleDeleteDocxTemplate/handleUploadVisualTemplate ci-dessus :
-    // limiter aux lignes de l'organisme courant (ou historiquement sans organisation_id).
-    let destQuery = supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey);
-    destQuery = currentOrgId
-      ? destQuery.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`)
-      : destQuery.is('organisation_id', null);
+    // limité strictement aux lignes de l'organisme courant.
+    if (!currentOrgId) { toast.error('Organisme introuvable — action annulée par sécurité.'); return; }
+    const destQuery = supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey).eq('organisation_id', currentOrgId);
     await destQuery;
     setDocumentTemplates(prev => ({ ...prev, [templateKey]: { ...prev[templateKey], destination: newDest } }));
     toast.success(`Destination de "${templateKey}" mise à jour.`);
