@@ -341,14 +341,58 @@ const fieldKey = (f) => {
   return `pos_${f.tag || ''}_${f.page || 1}_${Number(f.x_percent).toFixed(2)}_${Number(f.y_percent).toFixed(2)}`;
 };
 
-// ─── Signature séquentielle (Stage 3, 2026-07-24) ────────────────────────────
+// ─── Signature séquentielle (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) ────────
 // Un modèle de document peut être configuré en 'sequentiel' (metadata.signing_mode, réglé une fois
 // dans VisualTemplateEditor et copié sur chaque document instancié) : dans ce cas une partie ne peut
-// signer qu'APRÈS l'autre (metadata.signing_order = 'client_first' | 'formateur_first'). Tant que ce
-// n'est pas son tour, le document doit rester totalement invisible pour elle (masqué, pas juste
-// désactivé) — décision produit du 2026-07-24. Fonction utilitaire partagée entre l'espace client et
-// l'espace formateur pour éviter de dupliquer cette règle à chaque endroit où une liste de documents
-// à signer est construite.
+// signer qu'APRÈS celle qui la précède dans metadata.signing_order. Tant que ce n'est pas son tour,
+// le document doit rester totalement invisible pour elle (masqué, pas juste désactivé) — décision
+// produit du 2026-07-24. Fonction utilitaire partagée entre les espaces client/formateur/admin pour
+// éviter de dupliquer cette règle à chaque endroit où une liste de documents à signer est construite.
+//
+// 2026-07-27 : un document peut désormais nécessiter la signature du client, du formateur ET/OU de
+// l'organisme (n'importe quel admin de l'organisation), dans n'importe quelle combinaison. Les
+// balises posées dans l'éditeur visuel suivent la convention <type>_<rôle> (signature_client,
+// checkbox_formateur, texte_organisme...) ; ces helpers centralisent la correspondance balise/rôle
+// et la lecture de destination/ordre de signature pour éviter des ternaires binaires client/
+// formateur un peu partout (overlayFieldsOnPdf, handleSignDocument, instantiateDocument...).
+const SIGNER_ROLES = ['client', 'formateur', 'organisme'];
+const roleFromTag = (tag) => {
+  if (!tag) return null;
+  for (const r of SIGNER_ROLES) { if (tag.endsWith(`_${r}`)) return r; }
+  return null;
+};
+const SIGNED_FLAG_COLUMN = { client: 'signe_par_client', formateur: 'signe_par_formateur', organisme: 'signe_par_organisme' };
+const SIGNATURE_DATE_COLUMN = { client: 'date_signature_client', formateur: 'date_signature_formateur', organisme: 'date_signature_organisme' };
+const SIGNATURE_IMAGE_COLUMN = { client: 'signature_client', formateur: 'signature_formateur', organisme: 'signature_organisme' };
+// Couleur/libellé par rôle, utilisés à la fois dans overlayFieldsOnPdf (rendu PDF, couleurs rgb())
+// et dans VisualTemplateEditor (rendu HTML, classes Tailwind) — bleu client / orange formateur /
+// vert organisme, cohérent partout où une balise est affichée.
+const ROLE_COLOR_RGB = { client: rgb(0.18, 0.42, 0.93), formateur: rgb(0.92, 0.49, 0.06), organisme: rgb(0.06, 0.6, 0.35) };
+const ROLE_LABEL = { client: 'client', formateur: 'formateur', organisme: 'organisme' };
+// Libellé spécifique sous la signature (reprend le "bénéficiaire" déjà utilisé historiquement pour
+// le client, plutôt que de changer ce texte sur les documents existants).
+const ROLE_SIGNATURE_LABEL = { client: 'bénéficiaire', formateur: 'formateur', organisme: 'organisme' };
+
+// destination stockée en base sous forme de chaîne "client,formateur,organisme" (ordre libre, rôles
+// présents = destinataires). Valeurs héritées toujours comprises en lecture : 'client', 'formateur',
+// 'both' (= client+formateur).
+const parseDestinationRoles = (destination) => {
+  if (!destination) return ['client'];
+  if (destination === 'both') return ['client', 'formateur'];
+  if (Array.isArray(destination)) return destination.filter(r => SIGNER_ROLES.includes(r));
+  const roles = String(destination).split(',').map(s => s.trim()).filter(r => SIGNER_ROLES.includes(r));
+  return roles.length ? roles : ['client'];
+};
+const stringifyDestinationRoles = (roles) => SIGNER_ROLES.filter(r => (roles || []).includes(r)).join(',');
+
+// signing_order stocké en metadata sous forme de tableau de rôles dans l'ordre de signature (nouveau
+// format) — ou chaîne héritée 'client_first' | 'formateur_first' (Stage 3, comprise en lecture seule).
+const normalizeSigningOrder = (meta) => {
+  if (Array.isArray(meta?.signing_order) && meta.signing_order.length) return meta.signing_order;
+  if (meta?.signing_order === 'formateur_first') return ['formateur', 'client'];
+  return ['client', 'formateur']; // valeur par défaut / 'client_first' hérité
+};
+
 const parseDocMetadata = (doc) => {
   const m = doc?.metadata;
   if (m && typeof m === 'object') return m;
@@ -358,10 +402,14 @@ const parseDocMetadata = (doc) => {
 const isBlockedBySigningOrder = (doc, role) => {
   const meta = parseDocMetadata(doc);
   if (meta.signing_mode !== 'sequentiel') return false; // mode simultané (défaut) : jamais masqué
-  const order = meta.signing_order || 'client_first';
-  return role === 'client'
-    ? (order === 'formateur_first' && !doc.signe_par_formateur) // client attend le formateur
-    : (order === 'client_first' && !doc.signe_par_client);       // formateur attend le client
+  const order = normalizeSigningOrder(meta);
+  const myIndex = order.indexOf(role);
+  if (myIndex <= 0) return false; // pas concerné par l'ordre, ou premier de l'ordre : jamais masqué
+  for (let i = 0; i < myIndex; i++) {
+    const flagCol = SIGNED_FLAG_COLUMN[order[i]];
+    if (flagCol && !doc[flagCol]) return true; // une partie précédente n'a pas encore signé
+  }
+  return false;
 };
 
 // ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
@@ -690,8 +738,8 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // exactement à ce que produit ce rendu.
       const bx = Math.max(0, cx);
       const by = Math.max(0, cy - boxH / 2);
-      const isClient = field.tag === 'texte_client';
-      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+      const fieldRole = roleFromTag(field.tag) || 'client';
+      const bc = ROLE_COLOR_RGB[fieldRole];
       const typedValue = textInputMap[fieldKey(field)];
       try {
         if (typedValue) {
@@ -713,7 +761,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           // Pas encore rempli → cadre + libellé placeholder (police réduite pour tenir sur une ligne fine)
           const labelSize = Math.min(7, fs - 2);
           page.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-          page.drawText(isClient ? 'Texte libre client' : 'Texte libre formateur', {
+          page.drawText(`Texte libre ${ROLE_LABEL[fieldRole]}`, {
             x: bx + 3, y: by + boxH / 2 - labelSize / 2.6, size: labelSize, font, color: bc, opacity: 0.7,
           });
         }
@@ -728,8 +776,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       const boxSize = 12;
       const bx = cx - boxSize / 2;
       const by = cy - boxSize / 2;
-      const isClient = field.tag === 'checkbox_client';
-      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+      const bc = ROLE_COLOR_RGB[roleFromTag(field.tag) || 'client'];
       const isChecked = !!checkedMap[fieldKey(field)];
       try {
         if (isChecked) {
@@ -751,9 +798,9 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       const sigH = 44;
       const bx = Math.max(0, cx - sigW / 2);
       const by = Math.max(0, cy - sigH / 2);
-      const isClient = field.tag === 'signature_client';
-      // Couleur : bleu pour client, orange pour formateur
-      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
+      const sigFieldRole = roleFromTag(field.tag) || 'client';
+      // Couleur : bleu pour client, orange pour formateur, vert pour organisme
+      const bc = ROLE_COLOR_RGB[sigFieldRole];
 
       const sigDataUrl = signaturesMap[field.tag];
       if (sigDataUrl) {
@@ -772,7 +819,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           page.drawImage(sigImg, { x: bx, y: by + sigH - drawH, width: drawW, height: drawH });
           // Ligne de séparation + label
           page.drawLine({ start: { x: bx, y: by }, end: { x: bx + sigW, y: by }, thickness: 0.5, color: bc, opacity: 0.6 });
-          page.drawText(isClient ? 'Signature bénéficiaire' : 'Signature formateur', {
+          page.drawText(`Signature ${ROLE_SIGNATURE_LABEL[sigFieldRole]}`, {
             x: bx, y: by - 9, size: 6.5, font, color: rgb(0.4, 0.4, 0.4),
           });
         } catch (e) {
@@ -782,7 +829,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
         // Placeholder : rectangle pointillé
         try {
           page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-          const label = isClient ? 'Signature beneficiaire' : 'Signature formateur';
+          const label = `Signature ${ROLE_SIGNATURE_LABEL[sigFieldRole]}`;
           page.drawText(label, {
             x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
           });
@@ -6154,16 +6201,29 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
   const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
   const [templateName, setTemplateName] = React.useState('');
-  const [destination, setDestination] = React.useState('client');
-  // Mode de signature (Stage 3, 2026-07-24) : réglé une fois sur le modèle, propagé à chaque document
-  // instancié (voir instantiateDocument) et lu par isBlockedBySigningOrder pour masquer un document à
-  // la partie qui doit attendre son tour, en mode 'sequentiel'.
+  // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme, cochables librement
+  // (remplace l'ancien choix unique 'client' | 'formateur' | 'both'). Stocké en base sous forme de
+  // chaîne "client,formateur,organisme" via stringifyDestinationRoles/parseDestinationRoles (module-level).
+  const [destinationRoles, setDestinationRoles] = React.useState(['client']);
+  // Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) : réglé une fois sur
+  // le modèle, propagé à chaque document instancié (voir instantiateDocument) et lu par
+  // isBlockedBySigningOrder pour masquer un document à la partie qui doit attendre son tour.
   const [signingMode, setSigningMode] = React.useState('simultane'); // 'simultane' | 'sequentiel'
-  const [signingOrder, setSigningOrder] = React.useState('client_first'); // 'client_first' | 'formateur_first'
+  const [signingOrder, setSigningOrder] = React.useState(['client', 'formateur']); // tableau de rôles, dans l'ordre de signature
   const [isSaving, setIsSaving] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const pageRef = React.useRef(null);
   const pdfBlobRef = React.useRef(null); // stocke le blob PDF pour prévisualisation
+
+  // Garde signingOrder cohérent avec les destinataires cochés : retire les rôles décochés, ajoute
+  // les rôles nouvellement cochés à la fin de l'ordre existant (plutôt que de tout réinitialiser).
+  React.useEffect(() => {
+    setSigningOrder(prev => {
+      const kept = prev.filter(r => destinationRoles.includes(r));
+      const added = destinationRoles.filter(r => !kept.includes(r));
+      return [...kept, ...added];
+    });
+  }, [destinationRoles]);
 
   const ALL_TAGS = {
     'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
@@ -6174,19 +6234,26 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const SIGNATURE_TAGS = [
     { tag: 'signature_client', label: 'Signature client', color: 'blue' },
     { tag: 'signature_formateur', label: 'Signature formateur', color: 'orange' },
+    { tag: 'signature_organisme', label: 'Signature organisme', color: 'emerald' },
   ];
-  const isSignatureTag = (tag) => tag === 'signature_client' || tag === 'signature_formateur';
-  const sigTagColor = (tag) => tag === 'signature_client'
-    ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
-    : { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' };
+  const isSignatureTag = (tag) => !!roleFromTag(tag) && tag.startsWith('signature_');
+  const sigTagColor = (tag) => {
+    const role = roleFromTag(tag) || 'client';
+    return role === 'client'
+      ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
+      : role === 'formateur'
+      ? { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' }
+      : { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', badge: 'bg-emerald-600', badgeTxt: 'text-white' };
+  };
 
   // ── Cases à cocher (sans texte — le texte est déjà imprimé dans le document) ──
   // Peuvent être posées plusieurs fois, comme n'importe quelle balise, pour ajouter plusieurs cases distinctes.
   const CHECKBOX_TAGS = [
     { tag: 'checkbox_client', label: 'Case à cocher client', color: 'blue' },
     { tag: 'checkbox_formateur', label: 'Case à cocher formateur', color: 'orange' },
+    { tag: 'checkbox_organisme', label: 'Case à cocher organisme', color: 'emerald' },
   ];
-  const isCheckboxTag = (tag) => tag === 'checkbox_client' || tag === 'checkbox_formateur';
+  const isCheckboxTag = (tag) => !!roleFromTag(tag) && tag.startsWith('checkbox_');
 
   // ── Champs texte libre (rempli par le signataire au moment de signer, façon Yousign) ──
   // Comme les cases à cocher : peuvent être posés plusieurs fois, et sont identifiés par fieldKey()
@@ -6194,16 +6261,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const TEXT_INPUT_TAGS = [
     { tag: 'texte_client', label: 'Texte libre client', color: 'blue' },
     { tag: 'texte_formateur', label: 'Texte libre formateur', color: 'orange' },
+    { tag: 'texte_organisme', label: 'Texte libre organisme', color: 'emerald' },
   ];
-  const isTextInputTag = (tag) => tag === 'texte_client' || tag === 'texte_formateur';
+  const isTextInputTag = (tag) => !!roleFromTag(tag) && tag.startsWith('texte_');
 
   // Pré-chargement quand on édite un template existant (initialData fourni)
   React.useEffect(() => {
     if (!isOpen || !initialData?.url) return;
     setTemplateName(initialData.name || '');
-    setDestination(initialData.destination || 'client');
+    setDestinationRoles(parseDestinationRoles(initialData.destination));
     setSigningMode(initialData.signingMode || 'simultane');
-    setSigningOrder(initialData.signingOrder || 'client_first');
+    setSigningOrder(normalizeSigningOrder({ signing_order: initialData.signingOrder }));
     setStep('converting');
     (async () => {
       try {
@@ -6369,24 +6437,27 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
 
   const handleClose = () => {
     handleReset();
-    setTemplateName(''); setDestination('client');
-    setSigningMode('simultane'); setSigningOrder('client_first');
+    setTemplateName(''); setDestinationRoles(['client']);
+    setSigningMode('simultane'); setSigningOrder(['client', 'formateur']);
     onClose();
   };
 
   const handleSave = async () => {
     if (!file || !templateName.trim()) { toast.error('Nom requis.'); return; }
     if (fields.length === 0) { toast.error('Placez au moins une balise sur le document.'); return; }
+    if (destinationRoles.length === 0) { toast.error('Choisissez au moins un destinataire (client, formateur ou organisme).'); return; }
     setIsSaving(true);
     // Classification automatique selon les balises posées
-    const SIGNATURE_TAGS = ['signature_client', 'signature_formateur'];
-    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'checkbox_client', 'checkbox_formateur', 'texte_client', 'texte_formateur'];
+    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'signature_organisme', 'checkbox_client', 'checkbox_formateur', 'checkbox_organisme', 'texte_client', 'texte_formateur', 'texte_organisme'];
     const hasDataFields = fields.some(f => !INTERACTIVE_TAGS.includes(f.tag));
     const hasSignature = fields.some(f => INTERACTIVE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
-    const signingConfig = { mode: signingMode, order: signingMode === 'sequentiel' ? signingOrder : null };
+    // L'ordre n'a de sens qu'entre les rôles effectivement sélectionnés — on filtre pour ne jamais
+    // envoyer un rôle décoché dans signingOrder (ex: organisme décoché après avoir réglé un ordre).
+    const effectiveOrder = signingOrder.filter(r => destinationRoles.includes(r));
+    const signingConfig = { mode: signingMode, order: signingMode === 'sequentiel' && destinationRoles.length > 1 ? effectiveOrder : null };
     try {
-      await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null, signingConfig);
+      await onSave(file, templateName.trim(), stringifyDestinationRoles(destinationRoles), fields, autoClassification, initialData?.templateId || null, signingConfig);
       handleClose();
     } catch (err) {
       toast.error('Erreur : ' + err.message);
@@ -6976,19 +7047,26 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destination</label>
+                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destinataires (un ou plusieurs)</label>
                     <div className="flex gap-2">
-                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['both', '👥 Les deux']].map(([val, label]) => (
-                        <button key={val} onClick={() => setDestination(val)}
-                          className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
-                          {label}
-                        </button>
-                      ))}
+                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['organisme', '🏢 Organisme']].map(([val, label]) => {
+                        const checked = destinationRoles.includes(val);
+                        return (
+                          <button key={val} onClick={() => setDestinationRoles(prev => {
+                              const next = checked ? prev.filter(r => r !== val) : [...prev, val];
+                              return next.length ? next : prev; // au moins un destinataire doit rester coché
+                            })}
+                            className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${checked ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                  {/* Mode de signature (Stage 3, 2026-07-24) — n'a de sens que si le document concerne
-                      les deux parties : sinon il n'y a qu'un seul signataire, rien à séquencer. */}
-                  {destination === 'both' && (
+                  {/* Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) —
+                      n'a de sens que si plusieurs destinataires sont cochés : sinon il n'y a qu'un
+                      seul signataire, rien à séquencer. */}
+                  {destinationRoles.length > 1 && (
                     <div>
                       <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Mode de signature</label>
                       <div className="flex gap-2 mb-2">
@@ -7001,16 +7079,37 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       </div>
                       <p className="text-[10px] text-gray-400 mb-2">
                         {signingMode === 'sequentiel'
-                          ? "L'autre partie ne verra le document qu'une fois la première signature faite."
-                          : 'Le client et le formateur peuvent signer indépendamment, dans n\'importe quel ordre.'}
+                          ? "Chaque partie ne verra le document qu'une fois son tour arrivé, dans l'ordre ci-dessous."
+                          : 'Toutes les parties cochées peuvent signer indépendamment, dans n\'importe quel ordre.'}
                       </p>
                       {signingMode === 'sequentiel' && (
-                        <div className="flex gap-2">
-                          {[['client_first', 'Client d\'abord'], ['formateur_first', 'Formateur d\'abord']].map(([val, label]) => (
-                            <button key={val} onClick={() => setSigningOrder(val)}
-                              className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${signingOrder === val ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-100 hover:border-amber-300'}`}>
-                              {label}
-                            </button>
+                        <div className="space-y-1.5">
+                          <p className="text-[9px] text-gray-400 mb-0.5">Ordre de signature (▲▼ pour réordonner) :</p>
+                          {signingOrder.filter(r => destinationRoles.includes(r)).map((role, idx, arr) => (
+                            <div key={role} className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+                              <span className="text-[10px] font-black text-gray-400 w-4">{idx + 1}.</span>
+                              <span className="flex-1 text-[11px] font-bold text-gray-700">
+                                {role === 'client' ? '📁 Client' : role === 'formateur' ? '📋 Formateur' : '🏢 Organisme'}
+                              </span>
+                              <button type="button" disabled={idx === 0}
+                                onClick={() => setSigningOrder(prev => {
+                                  const cur = prev.filter(r => destinationRoles.includes(r));
+                                  const i = cur.indexOf(role);
+                                  if (i <= 0) return prev;
+                                  const next = [...cur]; [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                                  return next;
+                                })}
+                                className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-400 hover:text-violet-600 disabled:opacity-30">▲</button>
+                              <button type="button" disabled={idx === arr.length - 1}
+                                onClick={() => setSigningOrder(prev => {
+                                  const cur = prev.filter(r => destinationRoles.includes(r));
+                                  const i = cur.indexOf(role);
+                                  if (i === -1 || i >= cur.length - 1) return prev;
+                                  const next = [...cur]; [next[i + 1], next[i]] = [next[i], next[i + 1]];
+                                  return next;
+                                })}
+                                className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-400 hover:text-violet-600 disabled:opacity-30">▼</button>
+                            </div>
                           ))}
                         </div>
                       )}
@@ -7247,7 +7346,7 @@ const DocumentsView = ({
           type_action: 'Modèle Référence',
           metadata: tpl.metadata || {},
           extension: ext,
-          visible_formateur: tpl.destination === 'formateur',
+          visible_formateur: parseDestinationRoles(tpl.destination).includes('formateur'),
           group_ids: [],
           group_id: null,
           _fromMsrOnly: true,
@@ -7799,13 +7898,15 @@ const DocumentsView = ({
               // Lire la destination réelle depuis documentTemplates (MSR) en priorité
               const tplInfo = (documentTemplates || {})[doc.nom];
               const dest = tplInfo?.destination || (doc.visible_formateur ? 'formateur' : 'client');
+              const destRolesForBadge = parseDestinationRoles(dest);
+              const destBadgeLabel = destRolesForBadge.map(r => r === 'client' ? '📁 Client' : r === 'formateur' ? '📋 Formateur' : '🏢 Organisme').join(' + ');
               return (
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
-                      dest === 'formateur' ? 'bg-violet-100 text-violet-700' : dest === 'both' ? 'bg-teal-100 text-teal-700' : 'bg-indigo-100 text-indigo-600'
+                      destRolesForBadge.length > 1 ? 'bg-teal-100 text-teal-700' : destRolesForBadge[0] === 'formateur' ? 'bg-violet-100 text-violet-700' : destRolesForBadge[0] === 'organisme' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-600'
                     }`}>
-                      {dest === 'formateur' ? '📋 Formateur' : dest === 'both' ? '👥 Les deux' : '📁 Client'}
+                      {destBadgeLabel}
                     </span>
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
@@ -8256,10 +8357,12 @@ const DocumentsView = ({
                 const formateurAssocie = (formateurs || []).find(f => f.id === doc.assigned_formateur_id);
                 const beneficiaire = clientAssocie?.nom || formateurAssocie?.nom || null;
                 const classif = typeof doc.metadata === 'object' && doc.metadata !== null ? doc.metadata.classification : null;
-                const allSigned = doc.signe_par_client && doc.signe_par_formateur;
+                const requiresOrganisme = (parseDocMetadata(doc).destination_roles || []).includes('organisme');
+                const allSigned = doc.signe_par_client && doc.signe_par_formateur && (!requiresOrganisme || doc.signe_par_organisme);
                 const needsClientSig = doc.visible_client && !doc.signe_par_client;
                 const needsFormateurSig = doc.visible_formateur && !doc.signe_par_formateur;
-                const pendingCount = (needsClientSig ? 1 : 0) + (needsFormateurSig ? 1 : 0);
+                const needsOrganismeSig = requiresOrganisme && !doc.signe_par_organisme;
+                const pendingCount = (needsClientSig ? 1 : 0) + (needsFormateurSig ? 1 : 0) + (needsOrganismeSig ? 1 : 0);
 
                 return (
                   <div
@@ -8318,6 +8421,16 @@ const DocumentsView = ({
                             Formateur {doc.signe_par_formateur ? '✓' : '–'}
                           </span>
                         )}
+                        {requiresOrganisme && (
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                            doc.signe_par_organisme
+                              ? 'bg-teal-50 text-teal-700 border-teal-100'
+                              : 'bg-amber-50 text-amber-700 border-amber-100'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${doc.signe_par_organisme ? 'bg-teal-500' : 'bg-amber-400'}`}></span>
+                            Organisme {doc.signe_par_organisme ? '✓' : '–'}
+                          </span>
+                        )}
                         {classif === 'a_signer' && (
                           <span className="inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-purple-50 text-purple-700 border border-purple-100">
                             ✍️ À signer
@@ -8350,6 +8463,14 @@ const DocumentsView = ({
                       )}
 
                       {/* Actions */}
+                      {needsOrganismeSig && !isBlockedBySigningOrder(doc, 'organisme') && (
+                        <button
+                          onClick={() => setSigningDocId(doc.id)}
+                          className="w-full py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white transition-colors text-center"
+                        >
+                          Signer pour l'organisme
+                        </button>
+                      )}
                       <div className="flex gap-2 mt-auto pt-3 border-t border-gray-50">
                         {doc.url && (
                           <button
@@ -15190,10 +15311,13 @@ export default function App() {
     const classification = meta.classification || 'telechargeable';
     const hasVisualFields = meta.has_visual_fields === true;
     const visualTemplateId = meta.visual_template_id || null;
-    // Destination : 'client' | 'formateur' | 'les_deux' → détermine visible_client / visible_formateur
-    const dest = templateResource.destination || 'client';
-    const visClient    = dest !== 'formateur';   // true pour 'client' et 'les_deux'
-    const visFormateur = dest !== 'client';      // true pour 'formateur' et 'les_deux'
+    // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme (n'importe quel
+    // admin de l'organisation) → détermine visible_client / visible_formateur / requiresOrganisme.
+    // parseDestinationRoles comprend aussi les anciennes valeurs 'client' | 'formateur' | 'both'.
+    const destRoles = parseDestinationRoles(templateResource.destination);
+    const visClient      = destRoles.includes('client');
+    const visFormateur   = destRoles.includes('formateur');
+    const requiresOrganisme = destRoles.includes('organisme');
     // Si le formateur doit signer, on lui assigne le document explicitement via assigned_formateur_id
     const assignedFormateurId = visFormateur ? (client.formateur_id || null) : null;
 
@@ -15310,8 +15434,9 @@ export default function App() {
           template_url: templateResource.file_url,
           prefilled: true,
           signature_fields: sigFields,
+          destination_roles: destRoles,
           signing_mode: meta.signing_mode || 'simultane',
-          ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
+          ...(meta.signing_mode === 'sequentiel' ? { signing_order: normalizeSigningOrder(meta) } : {}),
         });
 
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
@@ -15323,6 +15448,7 @@ export default function App() {
           visible_client: visClient,
           visible_formateur: visFormateur,
           signe_par_client: false,
+          ...(requiresOrganisme ? { signe_par_organisme: false } : {}),
           metadata: docMetadata,
           ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
@@ -15340,8 +15466,9 @@ export default function App() {
           template_url: templateResource.file_url,
           fields: tplFields || [],
           resolved_values: resolvedValues || {},
+          destination_roles: destRoles,
           signing_mode: meta.signing_mode || 'simultane',
-          ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
+          ...(meta.signing_mode === 'sequentiel' ? { signing_order: normalizeSigningOrder(meta) } : {}),
         });
         const { data: newDoc, error: fallbackErr } = await supabase.from('documents').insert([{
           user_id: client.id,
@@ -15352,6 +15479,7 @@ export default function App() {
           visible_client: visClient,
           visible_formateur: visFormateur,
           signe_par_client: false,
+          ...(requiresOrganisme ? { signe_par_organisme: false } : {}),
           metadata: fallbackMeta,
           ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
@@ -16539,12 +16667,17 @@ export default function App() {
       const destination = destinationArg || 'client';
       const fieldsToSave = fieldsArg || [];
       const classification = classificationArg || 'a_generer';
-      // Mode de signature (Stage 3, 2026-07-24) : 'simultane' (défaut, comportement historique) ou
-      // 'sequentiel' avec un ordre — réglé une fois ici sur le modèle, propagé sur chaque document
-      // instancié (instantiateDocument lit meta.signing_mode/signing_order) et sur les instances déjà
-      // envoyées à des clients (propagation ci-dessous, comme le reste des métadonnées du modèle).
+      // Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) : 'simultane'
+      // (défaut, comportement historique) ou 'sequentiel' avec un ordre — réglé une fois ici sur le
+      // modèle, propagé sur chaque document instancié (instantiateDocument lit meta.signing_mode/
+      // signing_order) et sur les instances déjà envoyées à des clients (propagation ci-dessous).
+      // signing_order est désormais un TABLEAU de rôles ('client'|'formateur'|'organisme') dans
+      // l'ordre de signature — normalizeSigningOrder() (module-level) sait toujours lire l'ancien
+      // format 'client_first'/'formateur_first' pour les modèles créés avant ce changement.
       const signingMode = signingConfigArg?.mode === 'sequentiel' ? 'sequentiel' : 'simultane';
-      const signingOrder = signingConfigArg?.order === 'formateur_first' ? 'formateur_first' : 'client_first';
+      const signingOrderRoles = Array.isArray(signingConfigArg?.order) && signingConfigArg.order.length
+        ? signingConfigArg.order.filter(r => SIGNER_ROLES.includes(r))
+        : null;
 
       if (!file) throw new Error('Aucun fichier fourni.');
 
@@ -16561,7 +16694,7 @@ export default function App() {
       const metadataObj = {
         classification, has_visual_fields: true,
         signing_mode: signingMode,
-        ...(signingMode === 'sequentiel' ? { signing_order: signingOrder } : {}),
+        ...(signingMode === 'sequentiel' && signingOrderRoles ? { signing_order: signingOrderRoles } : {}),
       };
       let msrId = null;
 
@@ -16609,7 +16742,7 @@ export default function App() {
         page: f.page || 1,
         x_percent: parseFloat(f.xPct.toFixed(4)),
         y_percent: parseFloat(f.yPct.toFixed(4)),
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
+        field_type: (f.tag || '').startsWith('signature_') ? 'signature' : (f.tag || '').startsWith('checkbox_') ? 'checkbox' : (f.tag || '').startsWith('texte_') ? 'text_input' : 'text',
         font_size: 11,
       }));
       const fullMetadataObj = { ...metadataObj, visual_template_id: msrId, template_fields: embeddedFields };
@@ -16632,7 +16765,7 @@ export default function App() {
             x_percent: parseFloat(f.xPct.toFixed(4)),
             y_percent: parseFloat(f.yPct.toFixed(4)),
             font_size: 11,
-            field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
+            field_type: (f.tag || '').startsWith('signature_') ? 'signature' : (f.tag || '').startsWith('checkbox_') ? 'checkbox' : (f.tag || '').startsWith('texte_') ? 'text_input' : 'text',
             ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
           }));
           const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
@@ -17311,14 +17444,16 @@ export default function App() {
       (textValues instanceof Map ? Array.from(textValues.entries()) : Object.entries(textValues)).forEach(([k, v]) => { if (v) _textValueMap[k] = v; });
     }
 
-    // signerType = 'client' ou 'formateur'
-    const updateColumn = signerType === 'client'
-      ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
-      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() };
+    // signerType = 'client' | 'formateur' | 'organisme' — colonnes résolues via les tables de
+    // correspondance module-level (SIGNED_FLAG_COLUMN etc.) plutôt qu'un ternaire binaire, pour
+    // accueillir le rôle "organisme" sans dupliquer cette logique une 3e fois.
+    const updateColumn = {
+      [SIGNED_FLAG_COLUMN[signerType]]: true,
+      [SIGNATURE_DATE_COLUMN[signerType]]: new Date().toISOString(),
+    };
 
     if (signatureDataUrl) {
-      if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
-      else updateColumn.signature_formateur = signatureDataUrl;
+      updateColumn[SIGNATURE_IMAGE_COLUMN[signerType]] = signatureDataUrl;
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
@@ -17343,9 +17478,9 @@ export default function App() {
     const _hasCheckedIds = checkedIds && (typeof checkedIds.size === 'number' ? checkedIds.size > 0 : Object.keys(checkedIds).length > 0);
     if (signatureDataUrl || Object.keys(_textValueMap).length > 0 || _hasCheckedIds) {
       try {
-        const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
-        const checkboxTag = signerType === 'client' ? 'checkbox_client' : 'checkbox_formateur';
-        const textTag = signerType === 'client' ? 'texte_client' : 'texte_formateur';
+        const sigTag = `signature_${signerType}`;
+        const checkboxTag = `checkbox_${signerType}`;
+        const textTag = `texte_${signerType}`;
         let sigFields = null;
 
         // Source 1 : template_id → charger depuis template_fields DB (ancien flow)
@@ -17422,7 +17557,7 @@ export default function App() {
       .update({
         ...updateColumn,
         ...signedPdfUpdate,
-        statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur) ? 'Signé' : doc.statut,
+        statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur || updateColumn.signe_par_organisme) ? 'Signé' : doc.statut,
         visible_admin: true,
       })
       .eq('id', docId);
@@ -17615,7 +17750,10 @@ export default function App() {
 
   const handleSignatureSave = async (dataUrl, checkedIds = null) => {
     if (!signingDocId) return;
-    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl, checkedIds);
+    // 'organisme' = n'importe quel admin de l'organisation (2026-07-27) — un admin qui signe le
+    // fait toujours au titre de l'organisme, jamais au titre du formateur.
+    const signerType = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
+    await handleSignDocument(signingDocId, signerType, dataUrl, checkedIds);
     setSigningDocId(null);
   };
 
@@ -18629,7 +18767,8 @@ export default function App() {
           const signingDoc = documents.find(d => d.id === signingDocId);
           if (!signingDoc) return [];
           const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
-          const checkboxTag = userRole === 'client' ? 'checkbox_client' : 'checkbox_formateur';
+          const signerRoleForCheckbox = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
+          const checkboxTag = `checkbox_${signerRoleForCheckbox}`;
           return (meta.signature_fields || []).filter(f => f.tag === checkboxTag);
         })()}
       />
