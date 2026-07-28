@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -12878,12 +12878,13 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
         <div className="flex gap-1 mt-5 bg-gray-100 p-1 rounded-xl w-fit">
           {[
             { key: 'organisme', label: 'Organisme' },
-            { key: 'personnalisation', label: 'Personnalisation' },
+            { key: 'personnalisation', label: 'Personnalisation', proOnly: true },
             { key: 'abonnement', label: 'Abonnement' },
           ].map(tab => (
             <button key={tab.key} onClick={() => setSettingsTab(tab.key)}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
               {tab.label}
+              {tab.proOnly && !hasFeatureAccess(orgSettings, 'pro') && <span className="text-[9px] font-black bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-md">PRO</span>}
             </button>
           ))}
         </div>
@@ -13017,8 +13018,22 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       </div>
       )}
 
-      {/* ── Onglet Personnalisation ── */}
-      {settingsTab === 'personnalisation' && (
+      {/* ── Onglet Personnalisation (réservé aux plans Pro et Illimité) ── */}
+      {settingsTab === 'personnalisation' && !hasFeatureAccess(orgSettings, 'pro') && (
+        <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
+            <Lock className="w-7 h-7 text-violet-600" />
+          </div>
+          <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
+          <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
+            La personnalisation de votre portail client (logo, couleurs, message d'accueil) est disponible à partir du plan Pro.
+          </p>
+          <button onClick={() => setSettingsTab('abonnement')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
+            Voir les plans →
+          </button>
+        </div>
+      )}
+      {settingsTab === 'personnalisation' && hasFeatureAccess(orgSettings, 'pro') && (
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
         <div>
           <h3 className="text-lg font-black text-gray-900">🎨 Personnalisation du portail</h3>
@@ -14458,7 +14473,7 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
     {
       key: 'pro', name: 'Pro', monthlyPrice: 49, annualPrice: 44,
       limit: '200 dossiers clients', popular: true,
-      features: ['Tout Essentiel +', 'Relances automatiques', 'Personnalisation marque', 'Rapports avancés', 'Support prioritaire'],
+      features: ['Tout Essentiel +', 'Relances automatiques', 'Personnalisation marque', 'Support prioritaire'],
     },
     {
       key: 'illimite', name: 'Illimité', monthlyPrice: 89, annualPrice: 80,
@@ -14656,6 +14671,20 @@ const getClientLimitForOrg = (orgSettings) => {
   const planKey = (orgSettings.subscribed_plan || '').split('_')[0]; // 'pro_annual' → 'pro'
   return CLIENT_LIMIT_BY_PLAN[planKey] ?? CLIENT_LIMIT_BY_PLAN.essentiel;
 };
+
+// Verrouillage des fonctionnalités "Pro" (décision produit du 2026-07-28) : Relances Auto et
+// Personnalisation de marque sont désormais réservées aux plans Pro et Illimité, pour que la
+// page tarifs corresponde enfin à la réalité du logiciel. Pendant l'essai gratuit, on donne
+// accès à tout (comme le plan Illimité) pour que l'organisme puisse tester l'ensemble des
+// fonctionnalités avant de choisir son plan.
+const PLAN_TIER_RANK = { essentiel: 0, pro: 1, illimite: 2 };
+const getPlanTier = (orgSettings) => {
+  if (!orgSettings) return 'essentiel';
+  if (orgSettings.subscription_status === 'trialing') return 'illimite';
+  const planKey = (orgSettings.subscribed_plan || '').split('_')[0];
+  return PLAN_TIER_RANK[planKey] !== undefined ? planKey : 'essentiel';
+};
+const hasFeatureAccess = (orgSettings, minTier) => PLAN_TIER_RANK[getPlanTier(orgSettings)] >= PLAN_TIER_RANK[minTier];
 
 export default function App() {
   // --- États Session et Navigation ---
@@ -18314,6 +18343,7 @@ export default function App() {
               </button>
               <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
+                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[9px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
               </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
@@ -18616,7 +18646,21 @@ export default function App() {
             setNewTemplateName={setNewTemplateName}
             currentOrgId={currentOrgId}
           />}
-          {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
+          {activeTab === 'relances' && userRole === 'admin' && !hasFeatureAccess(orgSettings, 'pro') && (
+            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
+              <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
+                <Lock className="w-7 h-7 text-violet-600" />
+              </div>
+              <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
+                Les relances automatiques auprès de vos clients sont disponibles à partir du plan Pro.
+              </p>
+              <button onClick={() => setActiveTab('parametres_org')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
+                Voir les plans →
+              </button>
+            </div>
+          )}
+          {activeTab === 'relances' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && <AutomationSettingsView
             supabase={supabase}
             currentOrgId={currentOrgId}
           />}
