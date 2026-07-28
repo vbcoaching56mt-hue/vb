@@ -14643,6 +14643,20 @@ const TAB_TO_PATH = {
 const PATH_TO_TAB = {};
 Object.entries(TAB_TO_PATH).forEach(([tab, path]) => { PATH_TO_TAB[path] = tab; });
 
+// Plafonds de dossiers clients par plan (décision produit du 2026-07-28 — auparavant
+// affiché sur la page tarifs mais jamais réellement appliqué nulle part dans le code).
+const CLIENT_LIMIT_BY_PLAN = { essentiel: 50, pro: 200, illimite: Infinity };
+
+// Donne le plafond de dossiers clients applicable à l'organisme, selon son abonnement.
+// Pendant la période d'essai gratuit, on applique par défaut le plafond du plan le moins
+// cher (Essentiel) plutôt que de laisser un essai illimité, pour éviter les abus.
+const getClientLimitForOrg = (orgSettings) => {
+  if (!orgSettings) return CLIENT_LIMIT_BY_PLAN.essentiel;
+  if (orgSettings.subscription_status === 'trialing') return CLIENT_LIMIT_BY_PLAN.essentiel;
+  const planKey = (orgSettings.subscribed_plan || '').split('_')[0]; // 'pro_annual' → 'pro'
+  return CLIENT_LIMIT_BY_PLAN[planKey] ?? CLIENT_LIMIT_BY_PLAN.essentiel;
+};
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -15049,6 +15063,34 @@ export default function App() {
   const handleInviteUser = async (formData) => {
     const { email, nom, role } = formData;
     setIsAddingUser(true);
+
+    // 0. Plafond de dossiers clients selon le plan (décision produit du 2026-07-28) —
+    // ne s'applique qu'aux clients (les formateurs/admins ne comptent pas dans ce quota).
+    // On compte à la volée en base plutôt que de se fier à l'état local "clients", pour
+    // éviter tout contournement via une liste côté client pas encore rafraîchie.
+    if (role === 'client') {
+      const clientLimit = getClientLimitForOrg(orgSettings);
+      if (Number.isFinite(clientLimit)) {
+        const { count: currentClientCount, error: countError } = await supabase
+          .from('clients')
+          .select('id', { count: 'exact', head: true })
+          .eq('organisation_id', currentOrgId);
+        if (countError) {
+          console.error('Erreur vérification du quota de dossiers clients:', countError);
+          toast.error("Impossible de vérifier votre quota de dossiers clients pour le moment. Réessayez.");
+          setIsAddingUser(false);
+          return;
+        }
+        if ((currentClientCount || 0) >= clientLimit) {
+          toast.error(
+            `Vous avez atteint la limite de ${clientLimit} dossiers clients de votre plan actuel. Passez à un plan supérieur pour en ajouter davantage.`,
+            { duration: 8000 }
+          );
+          setIsAddingUser(false);
+          return;
+        }
+      }
+    }
 
     // 1. Inviter via Edge Function sécurisée (service_role côté serveur)
     const { data: { session: authSession } } = await supabase.auth.getSession();
