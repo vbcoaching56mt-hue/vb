@@ -47,7 +47,7 @@ const SignupPage = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Vérifiez votre email</h1>
           <p className="text-gray-500 mb-6">
             Un lien de confirmation a été envoyé à <strong>{email}</strong>.
@@ -64,7 +64,7 @@ const SignupPage = () => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100">
-        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
+        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
         <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
         <form onSubmit={handleSubmit} className="space-y-4">
