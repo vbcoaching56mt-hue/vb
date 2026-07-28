@@ -4,6 +4,26 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
+// ── Utilitaires de dates fuseau France ──────────────────────────────────────
+// Les fonctions Vercel tournent en UTC (pas à l'heure française). `new Date()` +
+// `.toISOString()` donnaient donc la date calendaire de Greenwich, pas celle de
+// Paris — avec un décalage d'un jour possible selon l'heure exacte du test/cron
+// (ex : à 23h à Paris en été, on est encore le jour précédent en UTC). Résultat :
+// plus aucune séance ne correspondait à la date cible, silencieusement.
+// On calcule maintenant la date du jour directement dans le fuseau Europe/Paris,
+// puis on additionne/soustrait les jours en travaillant sur des chaînes 'YYYY-MM-DD'
+// (ancrées à midi UTC pour l'arithmétique, afin d'éviter tout souci de changement
+// d'heure d'été/hiver lors de l'addition de jours entiers).
+function todayInParisStr() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
+}
+function addDaysToDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().split('T')[0];
+}
+
 module.exports = async (req, res) => {
   // CORS pour appels depuis le navigateur (admin "Tester maintenant")
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -43,9 +63,7 @@ module.exports = async (req, res) => {
       supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance'),
     ]);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = todayInParisStr();
 
     let sent = 0;
     const results = [];
@@ -57,9 +75,7 @@ module.exports = async (req, res) => {
       if (setting.trigger_type === 'reminder_before_session') {
         // Sessions ayant lieu dans |delay_days| jours (delay_days est négatif dans la config)
         const daysOffset = Math.abs(setting.delay_days || 1);
-        const targetDate = new Date(today);
-        targetDate.setDate(targetDate.getDate() + daysOffset);
-        const targetDateStr = targetDate.toISOString().split('T')[0];
+        const targetDateStr = addDaysToDateStr(todayStr, daysOffset);
 
         (sessions || [])
           .filter(s => s.date === targetDateStr)
@@ -68,9 +84,7 @@ module.exports = async (req, res) => {
       } else if (setting.trigger_type === 'no_signature') {
         // Sessions dont la date est passée depuis X jours et le client n'a pas signé
         const daysOffset = Math.abs(setting.delay_days || 2);
-        const targetDate = new Date(today);
-        targetDate.setDate(targetDate.getDate() - daysOffset);
-        const targetDateStr = targetDate.toISOString().split('T')[0];
+        const targetDateStr = addDaysToDateStr(todayStr, -daysOffset);
 
         (sessions || [])
           .filter(s => s.date === targetDateStr && s.statut_client !== 'Signé' && s.statut_client !== 'signé')
