@@ -53,7 +53,7 @@ module.exports = async (req, res) => {
     const { data: callerRow, error: callerErr } = await supabaseAdmin
       .from('utilisateurs')
       .select('role, organisation_id')
-      .eq('id', authData.user.id)
+      .eq('auth_uid', authData.user.id)
       .maybeSingle();
     if (callerErr || !callerRow || callerRow.role !== 'admin' || !callerRow.organisation_id) {
       return res.status(403).json({ error: 'Réservé aux administrateurs d\'un organisme.' });
