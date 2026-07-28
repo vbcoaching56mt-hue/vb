@@ -14102,6 +14102,9 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
       });
       const result = await resp.json().catch(() => ({}));
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : affiche la réponse complète du serveur
+      // (y compris le détail "debug" en cas d'erreur 403) — à retirer une fois le problème identifié.
+      console.log('[triggerManual][DEBUG] Réponse complète du serveur :', result);
       if (!resp.ok) throw new Error(result.error || `Erreur HTTP ${resp.status}`);
 
       if (result.simulated > 0) {

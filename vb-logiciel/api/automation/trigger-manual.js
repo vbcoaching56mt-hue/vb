@@ -95,7 +95,19 @@ module.exports = async (req, res) => {
     }
 
     if (callerErr || !callerRow || callerRow.role !== 'admin' || !callerRow.organisation_id) {
-      return res.status(403).json({ error: 'Réservé aux administrateurs d\'un organisme.' });
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
+      // Inclut le détail exact de ce que le serveur a vu, pour ne plus avoir à deviner.
+      return res.status(403).json({
+        error: 'Réservé aux administrateurs d\'un organisme. [DEBUG-v3-auth_uid]',
+        debug: {
+          authUserId: authData.user.id || null,
+          authUserEmail: authData.user.email || null,
+          callerErrMessage: callerErr ? callerErr.message : null,
+          callerRowFound: !!callerRow,
+          callerRowRole: callerRow ? callerRow.role : null,
+          callerRowOrgId: callerRow ? callerRow.organisation_id : null,
+        },
+      });
     }
     const organisationId = callerRow.organisation_id;
 

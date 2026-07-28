@@ -1,0 +1,237 @@
+[1mdiff --git a/vb-logiciel/api/automation/trigger-manual.js b/vb-logiciel/api/automation/trigger-manual.js[m
+[1mdeleted file mode 100644[m
+[1mindex b0f7308..0000000[m
+[1m--- a/vb-logiciel/api/automation/trigger-manual.js[m
+[1m+++ /dev/null[m
+[36m@@ -1,231 +0,0 @@[m
+[31m-// api/automation/trigger-manual.js[m
+[31m-//[m
+[31m-// Remplace l'ancienne logique 100% côté navigateur de "Tester maintenant" (bouton dans[m
+[31m-// AutomationSettingsView / triggerManual côté client) qui présentait deux failles critiques :[m
+[31m-//   1. Les requêtes automation_settings/clients/sessions n'étaient filtrées par AUCUN organisation_id[m
+[31m-//      → un admin d'un organisme pouvait déclencher l'envoi d'emails à des clients d'un AUTRE organisme.[m
+[31m-//   2. La clé API Resend était lue depuis une variable REACT_APP_RESEND_API_KEY, donc compilée en clair[m
+[31m-//      dans le bundle JS envoyé à chaque navigateur → n'importe quel utilisateur pouvait la récupérer.[m
+[31m-//[m
+[31m-// Cette fonction serverless s'exécute côté serveur (jamais exposée au navigateur), vérifie que[m
+[31m-// l'appelant est bien authentifié ET admin d'un organisme (via son token Supabase), puis ne traite[m
+[31m-// QUE les relances/clients/séances de CET organisme — jamais ceux d'un autre.[m
+[31m-//[m
+[31m-// Reprend la structure et les variables d'environnement déjà utilisées par api/automation/process.js[m
+[31m-// (le cron quotidien existant) : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, FROM_EMAIL.[m
+[31m-// Si ce cron fonctionne déjà en production, ces variables sont déjà configurées sur Vercel.[m
+[31m-//[m
+[31m-// CORRECTIF (2026-07-28) :[m
+[31m-//   - Le contrôle admin comparait utilisateurs.id (clé interne) à l'UID Supabase Auth au lieu de[m
+[31m-//     utilisateurs.auth_uid → rejetait à tort de vrais administrateurs ("Réservé aux administrateurs[m
+[31m-//     d'un organisme"). Corrigé pour comparer sur auth_uid, avec repli par email comme app_current_role().[m
+[31m-//   - L'envoi passait par le SDK npm "resend", absent de package.json → risque de crash au déploiement[m
+[31m-//     ("Cannot find module 'resend'"). Remplacé par un appel fetch direct à l'API Resend, comme process.js.[m
+[31m-//   - Le calcul de date ("aujourd'hui" / "demain") utilisait new Date() en UTC (heure du serveur Vercel),[m
+[31m-//     pas l'heure française des dates de séances saisies → aucune séance ne correspondait, selon l'heure[m
+[31m-//     du test. Corrigé pour calculer la date du jour dans le fuseau Europe/Paris (même correctif que[m
+[31m-//     process.js).[m
+[31m-[m
+[31m-const { createClient } = require('@supabase/supabase-js');[m
+[31m-[m
+[31m-const supabaseAdmin = createClient([m
+[31m-  process.env.SUPABASE_URL,[m
+[31m-  process.env.SUPABASE_SERVICE_ROLE_KEY[m
+[31m-);[m
+[31m-const resendApiKey = process.env.RESEND_API_KEY;[m
+[31m-const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';[m
+[31m-[m
+[31m-// ── Utilitaires de dates fuseau France (identiques à api/automation/process.js) ────────────[m
+[31m-function todayInParisStr() {[m
+[31m-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());[m
+[31m-}[m
+[31m-function addDaysToDateStr(dateStr, days) {[m
+[31m-  const [y, m, d] = dateStr.split('-').map(Number);[m
+[31m-  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));[m
+[31m-  dt.setUTCDate(dt.getUTCDate() + days);[m
+[31m-  return dt.toISOString().split('T')[0];[m
+[31m-}[m
+[31m-[m
+[31m-function interpolate(str, vars) {[m
+[31m-  return (str || '')[m
+[31m-    .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, vars.clientName || '')[m
+[31m-    .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, vars.sessionDate || '')[m
+[31m-    .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, vars.sessionTitle || '');[m
+[31m-}[m
+[31m-[m
+[31m-module.exports = async (req, res) => {[m
+[31m-  res.setHeader('Access-Control-Allow-Origin', '*');[m
+[31m-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');[m
+[31m-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');[m
+[31m-  if (req.method === 'OPTIONS') return res.status(200).end();[m
+[31m-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });[m
+[31m-[m
+[31m-  try {[m
+[31m-    // ── 1. Authentifier l'appelant via son token Supabase (jamais faire confiance à un id envoyé par le client) ──[m
+[31m-    const authHeader = req.headers['authorization'] || '';[m
+[31m-    const token = authHeader.replace(/^Bearer\s+/i, '');[m
+[31m-    if (!token) return res.status(401).json({ error: 'Authentification requise.' });[m
+[31m-[m
+[31m-    const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);[m
+[31m-    if (authErr || !authData?.user) return res.status(401).json({ error: 'Session invalide ou expirée.' });[m
+[31m-[m
+[31m-    // ── 2. Vérifier que l'appelant est bien admin d'un organisme — organisation_id vient de SA ligne[m
+[31m-    //         utilisateurs, jamais d'un paramètre envoyé par le navigateur ──[m
+[31m-    // IMPORTANT : utilisateurs.id est la clé interne de l'application, PAS l'UID Supabase Auth.[m
+[31m-    // authData.user.id est l'UID Auth, qui doit être comparé à utilisateurs.auth_uid (jamais à[m
+[31m-    // utilisateurs.id — c'est cette comparaison erronée qui faisait échouer ce contrôle pour de[m
+[31m-    // vrais administrateurs). On reprend le même repli par email que app_current_role() /[m
+[31m-    // app_current_org_id() (voir hotfix_backfill_auth_uid.sql / hotfix2_email_fallback_functions.sql)[m
+[31m-    // pour les comptes plus anciens dont auth_uid ne serait pas encore renseigné.[m
+[31m-    let { data: callerRow, error: callerErr } = await supabaseAdmin[m
+[31m-      .from('utilisateurs')[m
+[31m-      .select('role, organisation_id')[m
+[31m-      .eq('auth_uid', authData.user.id)[m
+[31m-      .maybeSingle();[m
+[31m-[m
+[31m-    if (!callerErr && !callerRow && authData.user.email) {[m
+[31m-      const fallback = await supabaseAdmin[m
+[31m-        .from('utilisateurs')[m
+[31m-        .select('role, organisation_id')[m
+[31m-        .is('auth_uid', null)[m
+[31m-        .eq('email', authData.user.email)[m
+[31m-        .maybeSingle();[m
+[31m-      callerRow = fallback.data;[m
+[31m-      callerErr = fallback.error;[m
+[31m-    }[m
+[31m-[m
+[31m-    if (callerErr || !callerRow || callerRow.role !== 'admin' || !callerRow.organisation_id) {[m
+[31m-      return res.status(403).json({ error: 'Réservé aux administrateurs d\'un organisme.' });[m
+[31m-    }[m
+[31m-    const organisationId = callerRow.organisation_id;[m
+[31m-[m
+[31m-    // ── 3. Lire les relances actives DE CET ORGANISME UNIQUEMENT ──[m
+[31m-    const { data: activeSettings, error: settErr } = await supabaseAdmin[m
+[31m-      .from('automation_settings')[m
+[31m-      .select('*')[m
+[31m-      .eq('is_active', true)[m
+[31m-      .eq('organisation_id', organisationId);[m
+[31m-    if (settErr) throw settErr;[m
+[31m-    if (!activeSettings?.length) {[m
+[31m-      return res.status(200).json({ sent: 0, simulated: 0, message: 'Aucune relance active configurée.' });[m
+[31m-    }[m
+[31m-[m
+[31m-    // ── 4. Lire clients + séances, SCOPÉS au même organisme ──[m
+[31m-    const [{ data: clients }, { data: sessions }] = await Promise.all([[m
+[31m-      supabaseAdmin.from('clients').select('id, nom, prenom, email_contact, formateur_id').eq('organisation_id', organisationId),[m
+[31m-      supabaseAdmin.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance').eq('organisation_id', organisationId),[m
+[31m-    ]);[m
+[31m-[m
+[31m-    const todayStr = todayInParisStr();[m
+[31m-[m
+[31m-    // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──[m
+[31m-    const emailQueue = [];[m
+[31m-    for (const setting of activeSettings) {[m
+[31m-      let targetSessions = [];[m
+[31m-[m
+[31m-      if (setting.trigger_type === 'reminder_before_session') {[m
+[31m-        const offset = Math.abs(setting.delay_days ?? 1);[m
+[31m-        const ds = addDaysToDateStr(todayStr, offset);[m
+[31m-        targetSessions = (sessions || []).filter(s => s.date === ds);[m
+[31m-      } else if (setting.trigger_type === 'no_signature') {[m
+[31m-        const offset = Math.abs(setting.delay_days ?? 2);[m
+[31m-        const ds = addDaysToDateStr(todayStr, -offset);[m
+[31m-        targetSessions = (sessions || []).filter(s =>[m
+[31m-          s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'[m
+[31m-        );[m
+[31m-      }[m
+[31m-[m
+[31m-      for (const session of targetSessions) {[m
+[31m-        const client = (clients || []).find(c => String(c.id) === String(session.client_id));[m
+[31m-        if (!client?.email_contact) continue;[m
+[31m-[m
+[31m-        const { data: existing } = await supabaseAdmin.from('automation_logs')[m
+[31m-          .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)[m
+[31m-          .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();[m
+[31m-        if (existing) continue;[m
+[31m-[m
+[31m-        const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';[m
+[31m-        const sessionDate = session.date[m
+[31m-          ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })[m
+[31m-          : '';[m
+[31m-        const sessionTitle = session.type_activite || `Séance n°${session.numero_seance ?? ''}`;[m
+[31m-        const vars = { clientName, sessionDate, sessionTitle };[m
+[31m-[m
+[31m-        emailQueue.push({[m
+[31m-          setting, client, clientName,[m
+[31m-          subject: interpolate(setting.email_subject, vars),[m
+[31m-          body: interpolate(setting.email_body, vars),[m
+[31m-        });[m
+[31m-      }[m
+[31m-    }[m
+[31m-[m
+[31m-    if (emailQueue.length === 0) {[m
+[31m-      return res.status(200).json({ sent: 0, simulated: 0, message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante)." });[m
+[31m-    }[m
+[31m-[m
+[31m-    // ── 6. Envoyer via Resend (clé jamais exposée au navigateur) — appel fetch direct, sans[m
+[31m-    //         dépendre du SDK npm "resend" (absent de package.json) ──[m
+[31m-    const resendConfigured = !!resendApiKey;[m
+[31m-    let sent = 0, simulated = 0;[m
+[31m-[m
+[31m-    for (const item of emailQueue) {[m
+[31m-      let ok = false;[m
+[31m-      let errMsg = null;[m
+[31m-[m
+[31m-      if (resendConfigured) {[m
+[31m-        try {[m
+[31m-          const resendResp = await fetch('https://api.resend.com/emails', {[m
+[31m-            method: 'POST',[m
+[31m-            headers: {[m
+[31m-              'Authorization': `Bearer ${resendApiKey}`,[m
+[31m-              'Content-Type': 'application/json',[m
+[31m-            },[m
+[31m-            body: JSON.stringify({[m
+[31m-              from: FROM_EMAIL,[m
+[31m-              to: [item.client.email_contact],[m
+[31m-              subject: item.subject,[m
+[31m-              html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">[m
+[31m-                <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>[m
+[31m-                <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">[m
+[31m-                  <p style="color:#111827;font-size:14px;line-height:1.7;">${(item.body || '').replace(/\n/g, '<br>')}</p>[m
+[31m-                  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">[m
+[31m-                  <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>[m
+[31m-                </div>[m
+[31m-              </div>`,[m
+[31m-            }),[m
+[31m-          });[m
+[31m-[m
+[31m-          if (resendResp.ok) {[m
+[31m-            ok = true;[m
+[31m-          } else {[m
+[31m-            const errBody = await resendResp.json().catch(() => ({}));[m
+[31m-            errMsg = errBody.message || `Resend erreur HTTP ${resendResp.status}`;[m
+[31m-          }[m
+[31m-        } catch (e) {[m
+[31m-          errMsg = 'Erreur réseau Resend : ' + e.message;[m
+[31m-        }[m
+[31m-        if (ok) sent++;[m
+[31m-      } else {[m
+[31m-        ok = true;[m
+[31m-        simulated++;[m
+[31m-        errMsg = 'Simulation — RESEND_API_KEY non configurée côté serveur (Vercel).';[m
+[31m-      }[m
+[31m-[m
+[31m-      await supabaseAdmin.from('automation_logs').insert([{[m
+[31m-        automation_setting_id: item.setting.id,[m
+[31m-        client_id: item.client.id,[m
+[31m-        trigger_type: item.setting.trigger_type,[m
+[31m-        sent_at: new Date().toISOString(),[m
+[31m-        email_to: item.client.email_contact,[m
+[31m-        email_subject: item.subject,[m
+[31m-        status: ok ? (resendConfigured ? 'sent' : 'simulated') : 'error',[m
+[31m-        error_message: errMsg || null,[m
+[31m-      }]);[m
+[31m-    }[m
+[31m-[m
+[31m-    return res.status(200).json({ sent, simulated });[m
+[31m-  } catch (err) {[m
+[31m-    console.error('[automation/trigger-manual]', err);[m
+[31m-    return res.status(500).json({ error: err.message });[m
+[31m-  }[m
+[31m-};[m
