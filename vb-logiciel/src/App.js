@@ -15732,11 +15732,32 @@ export default function App() {
   const handleAddModule = async (e) => {
     e.preventDefault();
     if (!newModuleName.trim()) return;
-    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances), organisation_id: currentOrgId }]);
-    if (!error) { 
-      await fetchModules(); 
-      setNewModuleName(''); 
-      setNewModuleSeances(1); 
+    const nbSeances = parseInt(newModuleSeances) || 1;
+    const { data: newModule, error } = await supabase.from('modules')
+      .insert([{ nom: newModuleName, seances_prevues: nbSeances, organisation_id: currentOrgId }])
+      .select().single();
+    if (!error) {
+      // Créer automatiquement les N dossiers de séance vides ("Séance 1", "Séance 2"...)
+      // correspondant au nombre saisi, pour éviter d'avoir à les ajouter un par un via
+      // "Modéliser Parcours" (décision produit du 2026-07-28, suite à une confusion
+      // remontée : le champ "Séances prévues" ne créait auparavant qu'une étiquette,
+      // sans générer les séances elles-mêmes).
+      if (newModule) {
+        const templatesToInsert = Array.from({ length: nbSeances }, (_, i) => ({
+          module_id: newModule.id,
+          titre: `Séance ${i + 1}`,
+          ordre: i + 1,
+          organisation_id: currentOrgId
+        }));
+        const { error: templatesError } = await supabase.from('module_session_templates').insert(templatesToInsert);
+        if (templatesError) {
+          console.error('Erreur création des séances par défaut:', templatesError);
+          toast.error("Module créé, mais la création automatique des séances a échoué : " + templatesError.message);
+        }
+      }
+      await fetchModules();
+      setNewModuleName('');
+      setNewModuleSeances(1);
       toast.success("Module créé avec succès !");
     }
     else toast.error('Erreur lors de la création du module : ' + error.message);
