@@ -14674,13 +14674,13 @@ const getClientLimitForOrg = (orgSettings) => {
 
 // Verrouillage des fonctionnalités "Pro" (décision produit du 2026-07-28) : Relances Auto et
 // Personnalisation de marque sont désormais réservées aux plans Pro et Illimité, pour que la
-// page tarifs corresponde enfin à la réalité du logiciel. Pendant l'essai gratuit, on donne
-// accès à tout (comme le plan Illimité) pour que l'organisme puisse tester l'ensemble des
-// fonctionnalités avant de choisir son plan.
+// page tarifs corresponde enfin à la réalité du logiciel. Pendant l'essai gratuit, on applique
+// les restrictions du plan Essentiel (cohérent avec le plafond de dossiers clients déjà appliqué
+// pendant l'essai) plutôt que de donner accès à tout.
 const PLAN_TIER_RANK = { essentiel: 0, pro: 1, illimite: 2 };
 const getPlanTier = (orgSettings) => {
   if (!orgSettings) return 'essentiel';
-  if (orgSettings.subscription_status === 'trialing') return 'illimite';
+  if (orgSettings.subscription_status === 'trialing') return 'essentiel';
   const planKey = (orgSettings.subscribed_plan || '').split('_')[0];
   return PLAN_TIER_RANK[planKey] !== undefined ? planKey : 'essentiel';
 };
