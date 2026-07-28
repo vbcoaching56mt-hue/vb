@@ -33,6 +33,29 @@ module.exports = async (req, res) => {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
+  // ── Garde-fou horaire France pour les invocations Cron ───────────────────
+  // Vercel Cron s'exécute toujours en UTC, jamais à l'heure française, et sur
+  // le plan Hobby une expression cron ne peut de toute façon tourner qu'une
+  // fois par jour avec une précision "à l'heure près" seulement (voir
+  // vercel.json : deux cron sont programmés, un pour l'heure d'été et un pour
+  // l'heure d'hiver, afin de viser 8h à Paris toute l'année). Chaque invocation
+  // Cron transmet l'en-tête x-vercel-cron-schedule — on ne traite réellement
+  // les relances que si l'heure de Paris actuelle est bien 8h ; l'invocation de
+  // la "mauvaise" saison se contente de ne rien faire. Les appels manuels
+  // depuis "Tester maintenant" (admin) n'ont pas cet en-tête et s'exécutent
+  // donc toujours immédiatement, sans être bloqués par ce garde-fou.
+  const cronSchedule = req.headers['x-vercel-cron-schedule'];
+  if (cronSchedule) {
+    const parisHour = Number(
+      new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: 'numeric', hour12: false })
+        .formatToParts(new Date())
+        .find(p => p.type === 'hour').value
+    );
+    if (parisHour !== 8) {
+      return res.json({ skipped: true, reason: 'not_target_hour_paris', parisHour, schedule: cronSchedule });
+    }
+  }
+
   // ── Initialisation Supabase avec la clé service (bypass RLS) ─────────────
   const supabaseUrl  = process.env.REACT_APP_SUPABASE_URL;
   const serviceKey   = process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
