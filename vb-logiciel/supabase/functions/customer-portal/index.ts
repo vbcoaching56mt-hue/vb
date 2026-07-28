@@ -46,7 +46,9 @@ Deno.serve(async (req: Request) => {
     const origin = req.headers.get('origin') || 'https://app.skorup.fr'
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: org.stripe_customer_id,
-      return_url: origin,
+      // Marqueur "billing=return" détecté côté app pour rafraîchir automatiquement
+      // l'abonnement affiché (changement/annulation de plan fait depuis le portail).
+      return_url: `${origin}?billing=return`,
     })
 
     return new Response(JSON.stringify({ url: portalSession.url }), {

@@ -12,6 +12,40 @@
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+// Correspondance Price ID Stripe → plan/facturation (doit rester synchronisée
+// avec la table PRICE_IDS de la fonction create-checkout-session).
+// Utilisée pour déterminer le plan RÉEL et ACTUEL de l'abonnement à partir de
+// son item de facturation, plutôt que de se fier aux metadata de l'abonnement
+// (voir correction du 2026-07-28 ci-dessous).
+const PRICE_ID_TO_PLAN: Record<string, { plan: string; billing: string }> = {
+  price_1Tqr7S2KdCq3v8pEmk4ffymj: { plan: 'essentiel', billing: 'monthly' },
+  price_1Tqr9B2KdCq3v8pEMeZR46Q1: { plan: 'essentiel', billing: 'annual' },
+  price_1Tqr7t2KdCq3v8pEaHqgwqEW: { plan: 'pro', billing: 'monthly' },
+  price_1TqrAn2KdCq3v8pEgdJS1rcQ: { plan: 'pro', billing: 'annual' },
+  price_1Tqr8N2KdCq3v8pEcrWd9L7A: { plan: 'illimite', billing: 'monthly' },
+  price_1TqrBG2KdCq3v8pETMG0KeOc: { plan: 'illimite', billing: 'annual' },
+}
+
+// CORRECTION (2026-07-28) : quand un client change de formule depuis le portail
+// client Stripe (self-service), Stripe met à jour l'item de facturation de
+// l'abonnement (le vrai Price ID actif) mais NE MET PAS à jour les metadata de
+// l'abonnement — celles-ci restent figées aux valeurs saisies lors de la toute
+// première souscription. L'ancien code lisait sub.metadata.plan/billing pour
+// déterminer subscribed_plan, ce qui réécrivait systématiquement l'ANCIEN plan
+// à chaque renouvellement/changement, au lieu du plan réellement actif.
+// On détermine désormais le plan à partir du Price ID réellement facturé
+// (sub.items.data[0].price.id), avec un repli sur les metadata seulement si
+// le Price ID est introuvable dans la table de correspondance.
+function resolvePlanFromSubscription(sub: Stripe.Subscription): string | null {
+  const priceId = sub.items?.data?.[0]?.price?.id
+  const match = priceId ? PRICE_ID_TO_PLAN[priceId] : undefined
+  if (match) return `${match.plan}_${match.billing}`
+
+  const plan = sub.metadata?.plan
+  const billing = sub.metadata?.billing
+  return plan && billing ? `${plan}_${billing}` : null
+}
+
 Deno.serve(async (req: Request) => {
   const signature = req.headers.get('stripe-signature')
   const body = await req.text()
@@ -71,9 +105,8 @@ Deno.serve(async (req: Request) => {
       // ── Mise à jour d'un abonnement (renouvellement, changement de plan) ──
       case 'customer.subscription.updated': {
         const sub = event.data.object as Stripe.Subscription
-        const orgId    = sub.metadata?.org_id
-        const plan     = sub.metadata?.plan
-        const billing  = sub.metadata?.billing
+        const orgId = sub.metadata?.org_id
+        const resolvedPlan = resolvePlanFromSubscription(sub)
 
         if (!orgId) {
           // Fallback : retrouver l'org via stripe_customer_id
@@ -87,6 +120,7 @@ Deno.serve(async (req: Request) => {
             await supabase.from('organisations').update({
               subscription_status: sub.status === 'active' ? 'active' : sub.status,
               stripe_subscription_id: sub.id,
+              subscribed_plan: resolvedPlan,
             }).eq('id', org.id)
           }
           break
@@ -95,10 +129,10 @@ Deno.serve(async (req: Request) => {
         await supabase.from('organisations').update({
           subscription_status: sub.status === 'active' ? 'active' : sub.status,
           stripe_subscription_id: sub.id,
-          subscribed_plan: plan && billing ? `${plan}_${billing}` : null,
+          subscribed_plan: resolvedPlan,
         }).eq('id', orgId)
 
-        console.log(`[stripe-webhook] Org ${orgId} mise à jour → ${sub.status}`)
+        console.log(`[stripe-webhook] Org ${orgId} mise à jour → ${sub.status} (${resolvedPlan})`)
         break
       }
 

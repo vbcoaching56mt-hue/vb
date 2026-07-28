@@ -15247,7 +15247,34 @@ export default function App() {
       toast('Paiement annulé. Vous pouvez réessayer depuis "Mon Abonnement".', { icon: 'ℹ️' });
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+    // Retour depuis le portail client Stripe (changement/annulation de plan en self-service).
+    if (params.get('billing') === 'return') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Rafraîchir après 3s puis à nouveau après 8s (laisser le temps au webhook Stripe de
+      // mettre à jour Supabase — un changement de plan peut prendre un peu plus de temps
+      // qu'un premier paiement à se propager).
+      setTimeout(() => fetchOrgSettings(), 3000);
+      setTimeout(() => fetchOrgSettings(), 8000);
+    }
   }, [currentOrgId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- Rafraîchit les infos d'abonnement quand l'utilisateur revient sur l'onglet ---
+  // (le portail client Stripe s'ouvre dans un nouvel onglet ; sans ceci, l'onglet d'origine
+  // resterait affiché avec l'ancien plan tant que la page n'est pas rechargée manuellement,
+  // même après que le webhook Stripe ait correctement mis à jour Supabase.)
+  useEffect(() => {
+    if (!currentOrgId) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchOrgSettings();
+    };
+    window.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrgId]);
 
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
