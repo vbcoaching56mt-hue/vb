@@ -132,20 +132,32 @@ module.exports = async (req, res) => {
 
     // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──
     const emailQueue = [];
+    const debugSettingsInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) — à retirer ensuite.
     for (const setting of activeSettings) {
       let targetSessions = [];
+      let debugDs = null;
 
       if (setting.trigger_type === 'reminder_before_session') {
         const offset = Math.abs(setting.delay_days ?? 1);
         const ds = addDaysToDateStr(todayStr, offset);
+        debugDs = ds;
         targetSessions = (sessions || []).filter(s => s.date === ds);
       } else if (setting.trigger_type === 'no_signature') {
         const offset = Math.abs(setting.delay_days ?? 2);
         const ds = addDaysToDateStr(todayStr, -offset);
+        debugDs = ds;
         targetSessions = (sessions || []).filter(s =>
           s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
         );
       }
+
+      debugSettingsInfo.push({
+        settingId: setting.id,
+        triggerType: setting.trigger_type,
+        delayDays: setting.delay_days,
+        computedTargetDate: debugDs,
+        matchedSessionsCount: targetSessions.length,
+      });
 
       for (const session of targetSessions) {
         const client = (clients || []).find(c => String(c.id) === String(session.client_id));
@@ -172,7 +184,17 @@ module.exports = async (req, res) => {
     }
 
     if (emailQueue.length === 0) {
-      return res.status(200).json({ sent: 0, simulated: 0, message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante)." });
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
+      return res.status(200).json({
+        sent: 0, simulated: 0,
+        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante). [DEBUG-v4-dates]",
+        debug: {
+          todayStr,
+          organisationId,
+          settingsInfo: debugSettingsInfo,
+          sessionsFound: (sessions || []).map(s => ({ id: s.id, date: s.date, client_id: s.client_id })),
+        },
+      });
     }
 
     // ── 6. Envoyer via Resend (clé jamais exposée au navigateur) — appel fetch direct, sans
