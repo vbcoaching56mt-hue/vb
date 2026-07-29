@@ -13939,6 +13939,16 @@ const TRIGGER_LABELS = {
 
 const getTriggerLabel = (type) => TRIGGER_LABELS[type] || type;
 
+// Traduction + style des statuts d'envoi (automation_logs.status), pour le "Journal des envois" —
+// avant ce correctif la valeur brute anglaise ("sent") s'affichait telle quelle.
+const LOG_STATUS_LABELS = {
+  sent: { label: 'Envoyé', className: 'bg-green-50 text-green-700 border-green-200' },
+  simulated: { label: 'Simulé (test)', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+  error: { label: 'Échec', className: 'bg-red-50 text-red-700 border-red-200' },
+};
+const getLogStatusInfo = (status) =>
+  LOG_STATUS_LABELS[status] || { label: status || '—', className: 'bg-gray-50 text-gray-600 border-gray-200' };
+
 // Signification de chaque balise disponible dans les emails de relance — affichée dans le
 // panneau d'aide à côté de l'éditeur, pour que l'admin sache exactement ce que chaque balise
 // va afficher dans l'email réellement envoyé (voir api/automation/trigger-manual.js et
@@ -14027,9 +14037,12 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
     // On passe par la relation automation_setting_id → automation_settings.organisation_id (jointure
     // PostgREST via !inner) pour ne garder que les envois de l'organisme courant.
     if (!currentOrgId) { setLogs([]); return; }
+    // On récupère aussi trigger_type et email_subject de la relance d'origine (jointure), pour
+    // afficher dans le journal un intitulé clair (ex: "Rappel avant séance") plutôt que le champ
+    // technique reference_type (toujours "session").
     const { data, error } = await supabase
       .from('automation_logs')
-      .select('*, automation_settings!inner(organisation_id)')
+      .select('*, automation_settings!inner(organisation_id, trigger_type, email_subject)')
       .eq('automation_settings.organisation_id', currentOrgId)
       .order('sent_at', { ascending: false })
       .limit(50);
@@ -14443,25 +14456,32 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                   <tr>
                     <th className="text-left px-4 py-2 font-semibold">Date d'envoi</th>
                     <th className="text-left px-4 py-2 font-semibold">Email destinataire</th>
-                    <th className="text-left px-4 py-2 font-semibold">Type</th>
+                    <th className="text-left px-4 py-2 font-semibold">Relance</th>
+                    <th className="text-left px-4 py-2 font-semibold">Objet du mail</th>
                     <th className="text-left px-4 py-2 font-semibold">Statut</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map(log => (
-                    <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
-                      <td className="px-4 py-2 text-gray-600">
-                        {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
-                      </td>
-                      <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
-                      <td className="px-4 py-2 text-gray-500">{log.reference_type || '—'}</td>
-                      <td className="px-4 py-2">
-                        <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-md font-medium">
-                          {log.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {logs.map(log => {
+                    const statusInfo = getLogStatusInfo(log.status);
+                    return (
+                      <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                        <td className="px-4 py-2 text-gray-600">
+                          {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                        <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
+                        <td className="px-4 py-2 text-gray-700">
+                          {getTriggerLabel(log.automation_settings?.trigger_type) || '—'}
+                        </td>
+                        <td className="px-4 py-2 text-gray-500">{log.automation_settings?.email_subject || '—'}</td>
+                        <td className="px-4 py-2">
+                          <span className={`border px-2 py-0.5 rounded-md font-medium ${statusInfo.className}`}>
+                            {statusInfo.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
