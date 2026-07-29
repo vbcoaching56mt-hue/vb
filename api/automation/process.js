@@ -81,7 +81,7 @@ module.exports = async (req, res) => {
 
     // ── 2. Récupérer clients et sessions ─────────────────────────────────────
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id, numero_dossier'),
+      supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id, numero_dossier, module_name'),
       supabase.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, organisation_id, heure_debut'),
     ]);
 
@@ -144,6 +144,7 @@ module.exports = async (req, res) => {
         const sessionTime = session.heure_debut || '';
         const sessionNumber = session.numero_seance != null ? String(session.numero_seance) : '';
         const numeroDossier = client.numero_dossier || '';
+        const moduleName = client.module_name || '';
 
         const replaceVars = (str) => (str || '')
           .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
@@ -151,7 +152,8 @@ module.exports = async (req, res) => {
           .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle)
           .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, sessionTime)
           .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, sessionNumber)
-          .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, numeroDossier);
+          .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, numeroDossier)
+          .replace(/\{module_name\}|\{\{module_name\}\}/g, moduleName);
 
         const emailSubject = replaceVars(setting.email_subject);
         const emailBodyText = replaceVars(setting.email_body);

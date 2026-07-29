@@ -53,7 +53,8 @@ function interpolate(str, vars) {
     .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, vars.sessionTitle || '')
     .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, vars.sessionTime || '')
     .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, vars.sessionNumber || '')
-    .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, vars.numeroDossier || '');
+    .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, vars.numeroDossier || '')
+    .replace(/\{module_name\}|\{\{module_name\}\}/g, vars.moduleName || '');
 }
 
 module.exports = async (req, res) => {
@@ -127,7 +128,7 @@ module.exports = async (req, res) => {
 
     // ── 4. Lire clients + séances, SCOPÉS au même organisme ──
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier').eq('organisation_id', organisationId),
+      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier, module_name').eq('organisation_id', organisationId),
       supabaseAdmin.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, heure_debut').eq('organisation_id', organisationId),
     ]);
 
@@ -206,7 +207,8 @@ module.exports = async (req, res) => {
         const sessionTime = session.heure_debut || '';
         const sessionNumber = session.numero_seance != null ? String(session.numero_seance) : '';
         const numeroDossier = client.numero_dossier || '';
-        const vars = { clientName, sessionDate, sessionTitle, sessionTime, sessionNumber, numeroDossier };
+        const moduleName = client.module_name || '';
+        const vars = { clientName, sessionDate, sessionTitle, sessionTime, sessionNumber, numeroDossier, moduleName };
 
         emailQueue.push({
           setting, client, clientName, session,

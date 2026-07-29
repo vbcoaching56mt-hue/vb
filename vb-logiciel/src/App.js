@@ -13974,12 +13974,17 @@ const TAG_DEFINITIONS = {
     example: 'D-2026-014',
     description: "Le numéro de dossier du client, si renseigné dans sa fiche.",
   },
+  '{{module_name}}': {
+    label: 'Nom du module / de la formation',
+    example: 'Bilan de compétences',
+    description: "Le nom du module ou de la formation suivie par le client, si renseigné dans sa fiche.",
+  },
 };
 
 const TRIGGER_VARS = {
-  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}'],
-  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}'],
-  welcome: ['{{client_name}}', '{{numero_dossier}}'],
+  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'],
+  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'],
+  welcome: ['{{client_name}}', '{{numero_dossier}}', '{{module_name}}'],
 };
 
 const EMPTY_FORM = {
@@ -14329,7 +14334,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
         </div>
 
         {showTagHelp && (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 w-full lg:w-80 shrink-0 lg:sticky lg:top-4">
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 w-full lg:w-80 shrink-0 lg:sticky lg:top-4 overflow-hidden">
             <div className="flex items-center gap-2 mb-1">
               <HelpCircle className="w-4 h-4 text-violet-600" />
               <h3 className="text-sm font-bold text-gray-800">Balises disponibles</h3>
@@ -14345,16 +14350,14 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                     key={v}
                     type="button"
                     onClick={() => insertVar(v)}
-                    className="w-full text-left px-3 py-2 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-colors"
+                    className="w-full text-left px-3 py-2 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-colors overflow-hidden"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-mono font-semibold text-indigo-600">{v}</span>
-                      {def.example && (
-                        <span className="text-[10px] text-gray-400 italic whitespace-nowrap">ex : {def.example}</span>
-                      )}
-                    </div>
-                    {def.label && <div className="text-xs font-medium text-gray-700 mt-0.5">{def.label}</div>}
-                    {def.description && <div className="text-[11px] text-gray-500 mt-0.5">{def.description}</div>}
+                    <span className="text-xs font-mono font-semibold text-indigo-600 break-all">{v}</span>
+                    {def.example && (
+                      <div className="text-[10px] text-gray-400 italic mt-0.5 break-words">ex : {def.example}</div>
+                    )}
+                    {def.label && <div className="text-xs font-medium text-gray-700 mt-1 break-words">{def.label}</div>}
+                    {def.description && <div className="text-[11px] text-gray-500 mt-0.5 break-words">{def.description}</div>}
                   </button>
                 );
               })}
