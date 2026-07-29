@@ -13997,12 +13997,23 @@ const TRIGGER_VARS = {
   welcome: ['{{client_name}}', '{{numero_dossier}}', '{{module_name}}'],
 };
 
+// Balises pour les types personnalisés (ajouté 2026-07-29) : depuis que ces relances sont
+// rattachées à une vraie séance (module + numéro de séance + avant/après), les mêmes balises
+// de séance que les relances prédéfinies sont désormais disponibles, plutôt que juste {{client_name}}.
+const CUSTOM_TAGS = ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'];
+
 const EMPTY_FORM = {
   trigger_type: 'no_signature',
   delay_days: 3,
   email_subject: '',
   email_body: '',
   is_active: true,
+  // Champs utilisés uniquement par les types personnalisés (__custom__) — ajoutés 2026-07-29
+  // pour permettre de cibler un module/une séance précise et un moment avant/après.
+  target_module_id: '',
+  target_numero_seance: '',
+  timing_direction: 'before',
+  require_unsigned: false,
 };
 
 function AutomationSettingsView({ supabase, currentOrgId }) {
@@ -14016,6 +14027,12 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   const [isTesting, setIsTesting] = useState(false);
   const [customTriggerName, setCustomTriggerName] = useState('');
   const [showTagHelp, setShowTagHelp] = useState(true);
+  // Modules et "dossiers de séance" (module_session_templates) de l'organisme — utilisés pour
+  // construire les sélecteurs "Module ciblé" / "Séance ciblée" des relances personnalisées
+  // (ajouté 2026-07-29). Chaque template a un "ordre" qui correspond exactement au numero_seance
+  // des vraies séances générées pour ce module (voir generateSessions).
+  const [modules, setModules] = useState([]);
+  const [moduleTemplates, setModuleTemplates] = useState([]);
   const emailBodyRef = useRef(null);
   const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
   const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
@@ -14049,8 +14066,19 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
     if (!error && data) setLogs(data);
   };
 
+  const fetchModulesAndTemplates = async () => {
+    if (!currentOrgId) return;
+    const [{ data: mData }, { data: tData }] = await Promise.all([
+      supabase.from('modules').select('id, nom').eq('organisation_id', currentOrgId).order('nom', { ascending: true }),
+      supabase.from('module_session_templates').select('id, module_id, titre, ordre').eq('organisation_id', currentOrgId).order('ordre', { ascending: true }),
+    ]);
+    if (mData) setModules(mData);
+    if (tData) setModuleTemplates(tData);
+  };
+
   useEffect(() => {
     fetchSettings();
+    fetchModulesAndTemplates();
   }, []);
 
   useEffect(() => {
@@ -14072,6 +14100,10 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
       email_subject: s.email_subject,
       email_body: s.email_body,
       is_active: s.is_active,
+      target_module_id: s.target_module_id != null ? String(s.target_module_id) : '',
+      target_numero_seance: s.target_numero_seance != null ? String(s.target_numero_seance) : '',
+      timing_direction: s.timing_direction || 'before',
+      require_unsigned: !!s.require_unsigned,
     });
     setCustomTriggerName(isCustom ? s.trigger_type : '');
     setEditingId(s.id);
@@ -14095,10 +14127,23 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
       return;
     }
     setIsSaving(true);
-    const resolvedTriggerType = form.trigger_type === '__custom__'
+    const isCustom = form.trigger_type === '__custom__';
+    const resolvedTriggerType = isCustom
       ? customTriggerName.trim().toLowerCase().replace(/\s+/g, '_')
       : form.trigger_type;
-    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString(), organisation_id: currentOrgId };
+    // Les champs target_module_id/target_numero_seance/timing_direction/require_unsigned ne
+    // s'appliquent qu'aux types personnalisés — on les vide (null) pour les types prédéfinis, et on
+    // convertit les chaînes vides du formulaire en null pour les colonnes numériques (ajouté 2026-07-29).
+    const payload = {
+      ...form,
+      trigger_type: resolvedTriggerType,
+      target_module_id: isCustom && form.target_module_id !== '' ? Number(form.target_module_id) : null,
+      target_numero_seance: isCustom && form.target_numero_seance !== '' ? Number(form.target_numero_seance) : null,
+      timing_direction: isCustom ? form.timing_direction : null,
+      require_unsigned: isCustom ? !!form.require_unsigned : false,
+      updated_at: new Date().toISOString(),
+      organisation_id: currentOrgId,
+    };
     if (editingId) {
       const { error } = await supabase
         .from('automation_settings')
@@ -14259,25 +14304,100 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                 />
               )}
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">
-                {form.trigger_type === 'no_signature'
-                  ? 'Délai après la séance (jours)'
-                  : form.trigger_type === 'reminder_before_session'
-                  ? 'Jours avant la séance'
-                  : form.trigger_type === 'welcome'
-                  ? 'Jours après la création du compte'
-                  : 'Fréquence de répétition (jours)'}
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={form.delay_days}
-                onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-              />
-            </div>
+            {form.trigger_type !== '__custom__' && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">
+                  {form.trigger_type === 'no_signature'
+                    ? 'Délai après la séance (jours)'
+                    : form.trigger_type === 'reminder_before_session'
+                    ? 'Jours avant la séance'
+                    : 'Jours après la création du compte'}
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={form.delay_days}
+                  onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                />
+              </div>
+            )}
           </div>
+
+          {form.trigger_type === '__custom__' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-4 rounded-xl bg-violet-50/50 border border-violet-100">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Module ciblé</label>
+                <select
+                  value={form.target_module_id}
+                  onChange={e => setForm(f => ({ ...f, target_module_id: e.target.value, target_numero_seance: '' }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                >
+                  <option value="">Tous les modules</option>
+                  {modules.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Séance ciblée</label>
+                {form.target_module_id ? (
+                  <select
+                    value={form.target_numero_seance}
+                    onChange={e => setForm(f => ({ ...f, target_numero_seance: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                  >
+                    <option value="">Toutes les séances du module</option>
+                    {moduleTemplates
+                      .filter(t => String(t.module_id) === String(form.target_module_id))
+                      .map(t => <option key={t.id} value={t.ordre}>{`Séance ${t.ordre} - ${t.titre}`}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="Toutes (laisser vide) ou un numéro précis"
+                    value={form.target_numero_seance}
+                    onChange={e => setForm(f => ({ ...f, target_numero_seance: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Moment de l'envoi</label>
+                <select
+                  value={form.timing_direction}
+                  onChange={e => setForm(f => ({ ...f, timing_direction: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                >
+                  <option value="before">Avant la séance</option>
+                  <option value="after">Après la séance</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">
+                  Nombre de jours {form.timing_direction === 'after' ? 'après' : 'avant'}
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={form.delay_days}
+                  onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={form.require_unsigned}
+                    onChange={e => setForm(f => ({ ...f, require_unsigned: e.target.checked }))}
+                    className="rounded border-gray-300 text-violet-600 focus:ring-violet-400"
+                  />
+                  <span className="text-xs font-medium text-gray-700">Envoyer seulement si la séance n'est pas encore émargée/signée</span>
+                </label>
+              </div>
+            </div>
+          )}
+
           <div className="mb-4">
             <label className="block text-xs font-semibold text-gray-500 mb-1">Objet du mail</label>
             <input
@@ -14301,7 +14421,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
               </button>
             </div>
             <div className="flex flex-wrap gap-1 mb-2">
-              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => (
+              {(TRIGGER_VARS[form.trigger_type] || CUSTOM_TAGS).map(v => (
                 <button
                   key={v}
                   onClick={() => insertVar(v)}
@@ -14356,7 +14476,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
               Cliquez sur une balise pour l'insérer dans le corps du mail à l'endroit du curseur.
             </p>
             <div className="space-y-2">
-              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => {
+              {(TRIGGER_VARS[form.trigger_type] || CUSTOM_TAGS).map(v => {
                 const def = TAG_DEFINITIONS[v] || {};
                 return (
                   <button
@@ -14404,7 +14524,19 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                       ? `${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} avant la séance`
                       : s.trigger_type === 'welcome'
                       ? `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`
-                      : `Envoi répété tous les ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`}
+                      : (() => {
+                          // Relance personnalisée : décrire précisément la règle configurée
+                          // (module / séance / avant-après / jours / condition signature) — ajouté 2026-07-29.
+                          const moduleLabel = s.target_module_id
+                            ? (modules.find(m => String(m.id) === String(s.target_module_id))?.nom || 'module inconnu')
+                            : 'tous modules';
+                          const seanceLabel = (s.target_numero_seance !== null && s.target_numero_seance !== undefined)
+                            ? `séance ${s.target_numero_seance}`
+                            : 'toutes séances';
+                          const dirLabel = s.timing_direction === 'after' ? 'après' : 'avant';
+                          const unsignedLabel = s.require_unsigned ? ' · seulement si non signé' : '';
+                          return `${moduleLabel} · ${seanceLabel} · ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} ${dirLabel}${unsignedLabel}`;
+                        })()}
                   </p>
                 </div>
               </div>

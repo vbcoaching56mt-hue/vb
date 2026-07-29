@@ -82,7 +82,7 @@ module.exports = async (req, res) => {
     // ── 2. Récupérer clients et sessions ─────────────────────────────────────
     const [{ data: clients }, { data: sessions }] = await Promise.all([
       supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id, numero_dossier, module_name'),
-      supabase.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, organisation_id, heure_debut'),
+      supabase.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, organisation_id, heure_debut, module_id'),
     ]);
 
     const todayStr = todayInParisStr();
@@ -111,6 +111,24 @@ module.exports = async (req, res) => {
         (sessions || [])
           .filter(s => s.date === targetDateStr && s.organisation_id === setting.organisation_id
             && s.statut_client !== 'Signé' && s.statut_client !== 'signé')
+          .forEach(s => triggerSessions.push(s));
+
+      } else if (setting.timing_direction) {
+        // Type personnalisé (ajouté 2026-07-29) : cible un module (ou tous), une séance précise
+        // (ou toutes celles du module), un moment avant/après la séance, et éventuellement une
+        // condition "seulement si pas encore signée" — configuré depuis l'interface admin.
+        // Avant ce correctif, un type personnalisé était enregistré en base mais n'envoyait
+        // jamais aucun email : aucune branche ne le traitait ici.
+        const daysOffset = Math.abs(setting.delay_days || 1);
+        const targetDateStr = setting.timing_direction === 'after'
+          ? addDaysToDateStr(todayStr, -daysOffset)
+          : addDaysToDateStr(todayStr, daysOffset);
+
+        (sessions || [])
+          .filter(s => s.date === targetDateStr && s.organisation_id === setting.organisation_id)
+          .filter(s => !setting.target_module_id || String(s.module_id) === String(setting.target_module_id))
+          .filter(s => setting.target_numero_seance == null || String(s.numero_seance) === String(setting.target_numero_seance))
+          .filter(s => !setting.require_unsigned || (s.statut_client !== 'Signé' && s.statut_client !== 'signé'))
           .forEach(s => triggerSessions.push(s));
       }
 

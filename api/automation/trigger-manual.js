@@ -129,7 +129,7 @@ module.exports = async (req, res) => {
     // ── 4. Lire clients + séances, SCOPÉS au même organisme ──
     const [{ data: clients }, { data: sessions }] = await Promise.all([
       supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier, module_name').eq('organisation_id', organisationId),
-      supabaseAdmin.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, heure_debut').eq('organisation_id', organisationId),
+      supabaseAdmin.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, heure_debut, module_id').eq('organisation_id', organisationId),
     ]);
 
     const todayStr = todayInParisStr();
@@ -154,6 +154,20 @@ module.exports = async (req, res) => {
         targetSessions = (sessions || []).filter(s =>
           s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
         );
+      } else if (setting.timing_direction) {
+        // Type personnalisé (ajouté 2026-07-29) : module ciblé (ou tous), séance ciblée (ou toutes),
+        // avant/après, et condition optionnelle "seulement si non signée". Les sessions sont déjà
+        // scopées à cet organisme par la requête plus haut, donc pas besoin de re-filtrer organisation_id ici.
+        const offset = Math.abs(setting.delay_days ?? 1);
+        const ds = setting.timing_direction === 'after'
+          ? addDaysToDateStr(todayStr, -offset)
+          : addDaysToDateStr(todayStr, offset);
+        debugDs = ds;
+        targetSessions = (sessions || [])
+          .filter(s => s.date === ds)
+          .filter(s => !setting.target_module_id || String(s.module_id) === String(setting.target_module_id))
+          .filter(s => setting.target_numero_seance == null || String(s.numero_seance) === String(setting.target_numero_seance))
+          .filter(s => !setting.require_unsigned || (s.statut_client !== 'Signé' && s.statut_client !== 'signé'));
       }
 
       debugSettingsInfo.push({
