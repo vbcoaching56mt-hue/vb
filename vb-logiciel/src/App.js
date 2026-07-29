@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -13939,10 +13939,47 @@ const TRIGGER_LABELS = {
 
 const getTriggerLabel = (type) => TRIGGER_LABELS[type] || type;
 
+// Signification de chaque balise disponible dans les emails de relance — affichée dans le
+// panneau d'aide à côté de l'éditeur, pour que l'admin sache exactement ce que chaque balise
+// va afficher dans l'email réellement envoyé (voir api/automation/trigger-manual.js et
+// api/automation/process.js pour la logique de remplissage correspondante).
+const TAG_DEFINITIONS = {
+  '{{client_name}}': {
+    label: 'Nom du client',
+    example: 'Jean Dupont',
+    description: "Le nom complet du client, tel qu'enregistré dans sa fiche.",
+  },
+  '{{session_title}}': {
+    label: 'Titre de la séance',
+    example: 'Séance 2 - Émargement de présence',
+    description: "L'intitulé de la séance concernée.",
+  },
+  '{{session_date}}': {
+    label: 'Date de la séance',
+    example: 'jeudi 30 juillet 2026',
+    description: 'La date de la séance, écrite en toutes lettres.',
+  },
+  '{{session_time}}': {
+    label: 'Heure de la séance',
+    example: '11:00',
+    description: "L'heure de début de la séance.",
+  },
+  '{{session_number}}': {
+    label: 'Numéro de la séance',
+    example: '2',
+    description: "Le numéro d'ordre de la séance (ex : la 2ème séance du parcours).",
+  },
+  '{{numero_dossier}}': {
+    label: 'Numéro de dossier',
+    example: 'D-2026-014',
+    description: "Le numéro de dossier du client, si renseigné dans sa fiche.",
+  },
+};
+
 const TRIGGER_VARS = {
-  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
-  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
-  welcome: ['{{client_name}}'],
+  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}'],
+  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}'],
+  welcome: ['{{client_name}}', '{{numero_dossier}}'],
 };
 
 const EMPTY_FORM = {
@@ -13963,6 +14000,8 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [customTriggerName, setCustomTriggerName] = useState('');
+  const [showTagHelp, setShowTagHelp] = useState(true);
+  const emailBodyRef = useRef(null);
   const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
   const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
   const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
@@ -14123,7 +14162,22 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   };
 
   const insertVar = (varName) => {
-    setForm(f => ({ ...f, email_body: f.email_body + varName }));
+    const el = emailBodyRef.current;
+    // Si le curseur est positionné dans le champ, on insère la balise à cet endroit précis
+    // (plutôt que toujours à la fin) — plus pratique pour rédiger un email déjà en cours.
+    if (el && typeof el.selectionStart === 'number') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      setForm(f => ({ ...f, email_body: f.email_body.slice(0, start) + varName + f.email_body.slice(end) }));
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.focus();
+        const pos = start + varName.length;
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
+      setForm(f => ({ ...f, email_body: f.email_body + varName }));
+    }
   };
 
   return (
@@ -14159,7 +14213,8 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
 
       {/* Formulaire Ajout / Édition */}
       {isAdding && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-violet-100">
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-violet-100 flex-1 min-w-0 w-full">
           <h2 className="text-base font-bold text-gray-800 mb-4">
             {editingId ? 'Modifier la relance' : 'Créer une relance'}
           </h2>
@@ -14216,12 +14271,23 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
             />
           </div>
           <div className="mb-2">
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Corps du mail</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-gray-500">Corps du mail</label>
+              <button
+                type="button"
+                onClick={() => setShowTagHelp(s => !s)}
+                className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 font-medium"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                {showTagHelp ? 'Masquer les balises' : 'Voir les balises disponibles'}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1 mb-2">
               {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => (
                 <button
                   key={v}
                   onClick={() => insertVar(v)}
+                  title={TAG_DEFINITIONS[v]?.description || ''}
                   className="text-xs px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-mono"
                 >
                   {v}
@@ -14229,6 +14295,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
               ))}
             </div>
             <textarea
+              ref={emailBodyRef}
               rows={6}
               placeholder="Bonjour {{client_name}},&#10;&#10;Nous n'avons pas encore reçu votre émargement pour {{session_title}} du {{session_date}}."
               value={form.email_body}
@@ -14259,6 +14326,41 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
               </button>
             </div>
           </div>
+        </div>
+
+        {showTagHelp && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 w-full lg:w-80 shrink-0 lg:sticky lg:top-4">
+            <div className="flex items-center gap-2 mb-1">
+              <HelpCircle className="w-4 h-4 text-violet-600" />
+              <h3 className="text-sm font-bold text-gray-800">Balises disponibles</h3>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              Cliquez sur une balise pour l'insérer dans le corps du mail à l'endroit du curseur.
+            </p>
+            <div className="space-y-2">
+              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => {
+                const def = TAG_DEFINITIONS[v] || {};
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => insertVar(v)}
+                    className="w-full text-left px-3 py-2 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-mono font-semibold text-indigo-600">{v}</span>
+                      {def.example && (
+                        <span className="text-[10px] text-gray-400 italic whitespace-nowrap">ex : {def.example}</span>
+                      )}
+                    </div>
+                    {def.label && <div className="text-xs font-medium text-gray-700 mt-0.5">{def.label}</div>}
+                    {def.description && <div className="text-[11px] text-gray-500 mt-0.5">{def.description}</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         </div>
       )}
 

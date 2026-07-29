@@ -81,8 +81,8 @@ module.exports = async (req, res) => {
 
     // ── 2. Récupérer clients et sessions ─────────────────────────────────────
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id'),
-      supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance, organisation_id'),
+      supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id, numero_dossier'),
+      supabase.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, organisation_id, heure_debut'),
     ]);
 
     const todayStr = todayInParisStr();
@@ -138,12 +138,20 @@ module.exports = async (req, res) => {
           ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : '';
         const clientName = client.nom_complet || '';
-        const sessionTitle = session.type_activite || `Séance n°${session.numero_seance || ''}`;
+        // session.nom est le vrai titre lisible de la séance — session.type_activite est une
+        // catégorie technique (ex : "signature"), pas un titre. Vérifié en base le 2026-07-29.
+        const sessionTitle = session.nom || session.type_activite || `Séance n°${session.numero_seance || ''}`;
+        const sessionTime = session.heure_debut || '';
+        const sessionNumber = session.numero_seance != null ? String(session.numero_seance) : '';
+        const numeroDossier = client.numero_dossier || '';
 
         const replaceVars = (str) => (str || '')
           .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
           .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
-          .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle);
+          .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle)
+          .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, sessionTime)
+          .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, sessionNumber)
+          .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, numeroDossier);
 
         const emailSubject = replaceVars(setting.email_subject);
         const emailBodyText = replaceVars(setting.email_body);

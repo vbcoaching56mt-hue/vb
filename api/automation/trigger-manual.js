@@ -50,7 +50,10 @@ function interpolate(str, vars) {
   return (str || '')
     .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, vars.clientName || '')
     .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, vars.sessionDate || '')
-    .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, vars.sessionTitle || '');
+    .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, vars.sessionTitle || '')
+    .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, vars.sessionTime || '')
+    .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, vars.sessionNumber || '')
+    .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, vars.numeroDossier || '');
 }
 
 module.exports = async (req, res) => {
@@ -124,8 +127,8 @@ module.exports = async (req, res) => {
 
     // ── 4. Lire clients + séances, SCOPÉS au même organisme ──
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id').eq('organisation_id', organisationId),
-      supabaseAdmin.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance').eq('organisation_id', organisationId),
+      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier').eq('organisation_id', organisationId),
+      supabaseAdmin.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, heure_debut').eq('organisation_id', organisationId),
     ]);
 
     const todayStr = todayInParisStr();
@@ -196,8 +199,14 @@ module.exports = async (req, res) => {
         const sessionDate = session.date
           ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : '';
-        const sessionTitle = session.type_activite || `Séance n°${session.numero_seance ?? ''}`;
-        const vars = { clientName, sessionDate, sessionTitle };
+        // session.nom est le vrai titre lisible de la séance (ex : "Séance 2 - Émargement de
+        // présence") — session.type_activite est une catégorie technique (ex : "signature"),
+        // pas un titre, donc on ne l'utilise qu'en dernier repli. Vérifié en base le 2026-07-29.
+        const sessionTitle = session.nom || session.type_activite || `Séance n°${session.numero_seance ?? ''}`;
+        const sessionTime = session.heure_debut || '';
+        const sessionNumber = session.numero_seance != null ? String(session.numero_seance) : '';
+        const numeroDossier = client.numero_dossier || '';
+        const vars = { clientName, sessionDate, sessionTitle, sessionTime, sessionNumber, numeroDossier };
 
         emailQueue.push({
           setting, client, clientName, session,
