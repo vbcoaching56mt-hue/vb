@@ -226,6 +226,7 @@ module.exports = async (req, res) => {
     //         dépendre du SDK npm "resend" (absent de package.json) ──
     const resendConfigured = !!resendApiKey;
     let sent = 0, simulated = 0;
+    const debugSendResults = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) — à retirer ensuite.
 
     for (const item of emailQueue) {
       let ok = false;
@@ -270,7 +271,12 @@ module.exports = async (req, res) => {
         errMsg = 'Simulation — RESEND_API_KEY non configurée côté serveur (Vercel).';
       }
 
-      await supabaseAdmin.from('automation_logs').insert([{
+      debugSendResults.push({
+        clientEmail: item.client.email_contact,
+        ok, errMsg, resendConfigured, fromEmail: FROM_EMAIL,
+      });
+
+      const { error: logInsertErr } = await supabaseAdmin.from('automation_logs').insert([{
         automation_setting_id: item.setting.id,
         client_id: item.client.id,
         trigger_type: item.setting.trigger_type,
@@ -280,9 +286,11 @@ module.exports = async (req, res) => {
         status: ok ? (resendConfigured ? 'sent' : 'simulated') : 'error',
         error_message: errMsg || null,
       }]);
+      if (logInsertErr) debugSendResults[debugSendResults.length - 1].logInsertError = logInsertErr.message;
     }
 
-    return res.status(200).json({ sent, simulated });
+    // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) : à retirer une fois le problème identifié.
+    return res.status(200).json({ sent, simulated, debug_v6_send: debugSendResults });
   } catch (err) {
     console.error('[automation/trigger-manual]', err);
     return res.status(500).json({ error: err.message });
