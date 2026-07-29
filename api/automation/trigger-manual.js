@@ -126,10 +126,15 @@ module.exports = async (req, res) => {
       return res.status(200).json({ sent: 0, simulated: 0, message: 'Aucune relance active configurée.' });
     }
 
-    // ── 4. Lire clients + séances, SCOPÉS au même organisme ──
-    const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier, module_name').eq('organisation_id', organisationId),
+    // ── 4. Lire clients + séances + modules, SCOPÉS au même organisme ──
+    // NB (2026-07-29) : clients.module_name est une colonne texte legacy, jamais renseignée nulle
+    // part dans l'app (ni à la création du client, ni à l'assignation d'un module) — elle contient
+    // une valeur figée/obsolète pour certains clients plutôt que le vrai nom du module actuellement
+    // assigné. Le vrai nom vient de la table modules (modules.nom), retrouvé via clients.module_id.
+    const [{ data: clients }, { data: sessions }, { data: modulesList }] = await Promise.all([
+      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id, numero_dossier, module_name, module_id').eq('organisation_id', organisationId),
       supabaseAdmin.from('sessions').select('id, date, client_id, nom, type_activite, statut_client, numero_seance, heure_debut, module_id').eq('organisation_id', organisationId),
+      supabaseAdmin.from('modules').select('id, nom').eq('organisation_id', organisationId),
     ]);
 
     const todayStr = todayInParisStr();
@@ -221,7 +226,10 @@ module.exports = async (req, res) => {
         const sessionTime = session.heure_debut || '';
         const sessionNumber = session.numero_seance != null ? String(session.numero_seance) : '';
         const numeroDossier = client.numero_dossier || '';
-        const moduleName = client.module_name || '';
+        // Priorité au vrai nom du module (table modules, via client.module_id) — client.module_name
+        // n'est utilisé qu'en dernier repli pour d'anciens clients sans module_id renseigné.
+        const moduleName = (modulesList || []).find(m => String(m.id) === String(client.module_id))?.nom
+          || client.module_name || '';
         const vars = { clientName, sessionDate, sessionTitle, sessionTime, sessionNumber, numeroDossier, moduleName };
 
         emailQueue.push({
