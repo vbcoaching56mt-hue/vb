@@ -2,12 +2,13 @@
 // Fonction Vercel : traite les relances automatiques (cron quotidien à 8h)
 // Peut aussi être déclenchée manuellement via l'admin UI.
 //
-// CORRECTIF (2026-07-28) : ce fichier remplace une ancienne version qui utilisait un
+// CORRECTIF (2026-07-28/29) : ce fichier remplace une ancienne version qui utilisait un
 // schéma de base de données obsolète (colonnes clients.nom_complet, sessions.signe_par_client,
-// sessions.ressource_titre/nom, automation_logs.reference_id/reference_type) qui ne correspond
-// plus au schéma actuel de l'application (clients.nom/prenom, sessions.type_activite/statut_client,
-// automation_logs.client_id/trigger_type/sent_at). Reprend la logique déjà utilisée et vérifiée
-// dans api/automation/trigger-manual.js (même dossier).
+// sessions.ressource_titre/nom) qui ne correspond plus au schéma actuel des tables clients/
+// sessions (clients.nom/prenom n'existent PAS non plus — la vraie colonne est clients.nom_complet ;
+// vérifié directement en base le 2026-07-29). La table automation_logs, elle, utilise réellement
+// client_email/reference_id/reference_type/organisation_id (PAS email_to/email_subject/trigger_type/
+// error_message comme on le pensait initialement — vérifié en base le 2026-07-29 aussi).
 //
 // Corrigé aussi pour calculer "aujourd'hui" dans le fuseau Europe/Paris plutôt qu'en UTC (heure
 // du serveur Vercel) — un décalage d'un jour pouvait faire qu'aucune séance ne corresponde,
@@ -58,7 +59,7 @@ module.exports = async (req, res) => {
   const supabaseUrl  = process.env.SUPABASE_URL;
   const serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const resendApiKey = process.env.RESEND_API_KEY;
-  const fromEmail    = process.env.FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
+  const fromEmail    = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
 
   if (!supabaseUrl || !serviceKey) {
     return res.status(500).json({ error: 'Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).' });
@@ -192,17 +193,19 @@ module.exports = async (req, res) => {
           }
         }
 
-        // Logger le résultat dans automation_logs
+        // Logger le résultat dans automation_logs (colonnes réelles vérifiées 2026-07-29 :
+        // pas de email_to/email_subject/trigger_type/error_message — voir en-tête du fichier)
         await supabase.from('automation_logs').insert([{
           automation_setting_id: setting.id,
           client_id: client.id,
-          trigger_type: setting.trigger_type,
+          client_email: client.email_contact,
+          reference_id: String(session.id),
+          reference_type: 'session',
           sent_at: new Date().toISOString(),
-          email_to: client.email_contact,
-          email_subject: emailSubject,
           status: emailSent ? 'sent' : 'error',
-          error_message: emailError || null,
+          organisation_id: setting.organisation_id,
         }]).select();
+        if (emailError) console.warn('[automation/process] envoi echoue pour', client.email_contact, ':', emailError);
 
         if (emailSent) {
           sent++;

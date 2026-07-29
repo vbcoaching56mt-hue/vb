@@ -33,7 +33,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 const resendApiKey = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
 
 // ── Utilitaires de dates fuseau France (identiques à api/automation/process.js) ────────────
 function todayInParisStr() {
@@ -200,7 +200,7 @@ module.exports = async (req, res) => {
         const vars = { clientName, sessionDate, sessionTitle };
 
         emailQueue.push({
-          setting, client, clientName,
+          setting, client, clientName, session,
           subject: interpolate(setting.email_subject, vars),
           body: interpolate(setting.email_body, vars),
         });
@@ -276,15 +276,17 @@ module.exports = async (req, res) => {
         ok, errMsg, resendConfigured, fromEmail: FROM_EMAIL,
       });
 
+      // NB : la table automation_logs n'a pas de colonnes email_subject/email_to/trigger_type/
+      // error_message (vérifié 2026-07-29) — elle utilise client_email/reference_id/reference_type.
       const { error: logInsertErr } = await supabaseAdmin.from('automation_logs').insert([{
         automation_setting_id: item.setting.id,
         client_id: item.client.id,
-        trigger_type: item.setting.trigger_type,
+        client_email: item.client.email_contact,
+        reference_id: String(item.session.id),
+        reference_type: 'session',
         sent_at: new Date().toISOString(),
-        email_to: item.client.email_contact,
-        email_subject: item.subject,
         status: ok ? (resendConfigured ? 'sent' : 'simulated') : 'error',
-        error_message: errMsg || null,
+        organisation_id: organisationId,
       }]);
       if (logInsertErr) debugSendResults[debugSendResults.length - 1].logInsertError = logInsertErr.message;
     }
