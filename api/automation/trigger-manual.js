@@ -124,7 +124,7 @@ module.exports = async (req, res) => {
 
     // ── 4. Lire clients + séances, SCOPÉS au même organisme ──
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabaseAdmin.from('clients').select('id, nom, prenom, email_contact, formateur_id').eq('organisation_id', organisationId),
+      supabaseAdmin.from('clients').select('id, nom_complet, email_contact, formateur_id').eq('organisation_id', organisationId),
       supabaseAdmin.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance').eq('organisation_id', organisationId),
     ]);
 
@@ -192,7 +192,7 @@ module.exports = async (req, res) => {
           skippedReason: null, willBeQueued: true,
         });
 
-        const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
+        const clientName = client.nom_complet || '';
         const sessionDate = session.date
           ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : '';

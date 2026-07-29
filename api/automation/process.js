@@ -80,7 +80,7 @@ module.exports = async (req, res) => {
 
     // ── 2. Récupérer clients et sessions ─────────────────────────────────────
     const [{ data: clients }, { data: sessions }] = await Promise.all([
-      supabase.from('clients').select('id, nom, prenom, email_contact, formateur_id, organisation_id'),
+      supabase.from('clients').select('id, nom_complet, email_contact, formateur_id, organisation_id'),
       supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance, organisation_id'),
     ]);
 
@@ -128,7 +128,7 @@ module.exports = async (req, res) => {
           .maybeSingle();
 
         if (existingLog) {
-          results.push({ skipped: true, reason: 'already_sent_today', client: client.nom, trigger: setting.trigger_type });
+          results.push({ skipped: true, reason: 'already_sent_today', client: client.nom_complet, trigger: setting.trigger_type });
           continue;
         }
 
@@ -136,7 +136,7 @@ module.exports = async (req, res) => {
         const sessionDate = session.date
           ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
           : '';
-        const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
+        const clientName = client.nom_complet || '';
         const sessionTitle = session.type_activite || `Séance n°${session.numero_seance || ''}`;
 
         const replaceVars = (str) => (str || '')
