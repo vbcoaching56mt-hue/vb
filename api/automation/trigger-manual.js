@@ -133,6 +133,7 @@ module.exports = async (req, res) => {
     // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──
     const emailQueue = [];
     const debugSettingsInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) — à retirer ensuite.
+    const debugSessionInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) — à retirer ensuite.
     for (const setting of activeSettings) {
       let targetSessions = [];
       let debugDs = null;
@@ -161,12 +162,35 @@ module.exports = async (req, res) => {
 
       for (const session of targetSessions) {
         const client = (clients || []).find(c => String(c.id) === String(session.client_id));
-        if (!client?.email_contact) continue;
 
-        const { data: existing } = await supabaseAdmin.from('automation_logs')
+        if (!client?.email_contact) {
+          debugSessionInfo.push({
+            sessionId: session.id, settingId: setting.id, clientId: session.client_id,
+            clientFound: !!client, clientEmail: client ? (client.email_contact || null) : null,
+            skippedReason: !client ? 'client_introuvable' : 'client_sans_email_contact',
+          });
+          continue;
+        }
+
+        const { data: existing, error: existingErr } = await supabaseAdmin.from('automation_logs')
           .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)
           .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();
-        if (existing) continue;
+
+        if (existing) {
+          debugSessionInfo.push({
+            sessionId: session.id, settingId: setting.id, clientId: session.client_id,
+            clientFound: true, clientEmail: client.email_contact,
+            skippedReason: 'deja_envoye_aujourdhui', existingLogId: existing.id,
+          });
+          continue;
+        }
+
+        debugSessionInfo.push({
+          sessionId: session.id, settingId: setting.id, clientId: session.client_id,
+          clientFound: true, clientEmail: client.email_contact,
+          existingLogCheckError: existingErr ? existingErr.message : null,
+          skippedReason: null, willBeQueued: true,
+        });
 
         const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
         const sessionDate = session.date
@@ -184,15 +208,16 @@ module.exports = async (req, res) => {
     }
 
     if (emailQueue.length === 0) {
-      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28/29) : à retirer une fois le problème identifié.
       return res.status(200).json({
         sent: 0, simulated: 0,
-        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante). [DEBUG-v4-dates]",
+        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante). [DEBUG-v5-sessions]",
         debug: {
           todayStr,
           organisationId,
           settingsInfo: debugSettingsInfo,
           sessionsFound: (sessions || []).map(s => ({ id: s.id, date: s.date, client_id: s.client_id })),
+          sessionSkipDetails: debugSessionInfo,
         },
       });
     }
