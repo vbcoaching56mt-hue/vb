@@ -1,240 +1,227 @@
+// api/automation/process.js
+// Fonction Vercel : traite les relances automatiques (cron quotidien à 8h)
+// Peut aussi être déclenchée manuellement via l'admin UI.
+//
+// CORRECTIF (2026-07-28) : ce fichier remplace une ancienne version qui utilisait un
+// schéma de base de données obsolète (colonnes clients.nom_complet, sessions.signe_par_client,
+// sessions.ressource_titre/nom, automation_logs.reference_id/reference_type) qui ne correspond
+// plus au schéma actuel de l'application (clients.nom/prenom, sessions.type_activite/statut_client,
+// automation_logs.client_id/trigger_type/sent_at). Reprend la logique déjà utilisée et vérifiée
+// dans api/automation/trigger-manual.js (même dossier).
+//
+// Corrigé aussi pour calculer "aujourd'hui" dans le fuseau Europe/Paris plutôt qu'en UTC (heure
+// du serveur Vercel) — un décalage d'un jour pouvait faire qu'aucune séance ne corresponde,
+// silencieusement, selon l'heure exacte du cron.
+
 const { createClient } = require('@supabase/supabase-js');
-const { Resend } = require('resend');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-const FROM_EMAIL = process.env.FROM_EMAIL || 'VB Coaching <noreply@vb-coaching.fr>';
-
-function interpolate(template, vars) {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] || '');
+// ── Utilitaires de dates fuseau France ──────────────────────────────────────
+function todayInParisStr() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
 }
-
-async function alreadySent(settingId, referenceId, clientId) {
-  const { data } = await supabase
-    .from('automation_logs')
-    .select('id')
-    .eq('automation_setting_id', settingId)
-    .eq('reference_id', String(referenceId))
-    .eq('client_id', String(clientId))
-    .maybeSingle();
-  return !!data;
-}
-
-async function sentRecently(settingId, clientId, windowDays) {
-  const since = new Date();
-  since.setDate(since.getDate() - windowDays);
-  const { data } = await supabase
-    .from('automation_logs')
-    .select('id')
-    .eq('automation_setting_id', settingId)
-    .eq('client_id', String(clientId))
-    .gte('sent_at', since.toISOString())
-    .maybeSingle();
-  return !!data;
-}
-
-async function logSent(settingId, clientId, clientEmail, referenceId, referenceType) {
-  await supabase.from('automation_logs').insert({
-    automation_setting_id: settingId,
-    client_id: String(clientId),
-    client_email: clientEmail,
-    reference_id: String(referenceId),
-    reference_type: referenceType,
-  });
-}
-
-async function sendEmail(to, subject, bodyText) {
-  const html = bodyText
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-
-  return resend.emails.send({
-    from: FROM_EMAIL,
-    to,
-    subject,
-    html: `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#333">${html}</div>`,
-  });
+function addDaysToDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().split('T')[0];
 }
 
 module.exports = async (req, res) => {
-  // Vercel cron authentification via CRON_SECRET
-  const auth = req.headers['authorization'];
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  // CORS pour appels depuis le navigateur (admin "Tester maintenant")
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── Garde-fou horaire France pour les invocations Cron ───────────────────
+  // Vercel Cron s'exécute toujours en UTC. Deux cron sont programmés dans vercel.json
+  // (un pour l'heure d'été, un pour l'heure d'hiver) afin de viser 8h à Paris toute
+  // l'année ; chaque invocation Cron transmet l'en-tête x-vercel-cron-schedule — on ne
+  // traite réellement les relances que si l'heure de Paris actuelle est bien 8h.
+  // Les appels manuels depuis "Tester maintenant" (admin) n'ont pas cet en-tête et
+  // s'exécutent donc toujours immédiatement, sans être bloqués par ce garde-fou.
+  const cronSchedule = req.headers['x-vercel-cron-schedule'];
+  if (cronSchedule) {
+    const parisHour = Number(
+      new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: 'numeric', hour12: false })
+        .formatToParts(new Date())
+        .find(p => p.type === 'hour').value
+    );
+    if (parisHour !== 8) {
+      return res.json({ skipped: true, reason: 'not_target_hour_paris', parisHour, schedule: cronSchedule });
+    }
   }
 
+  // ── Initialisation Supabase avec la clé service (bypass RLS) ─────────────
+  const supabaseUrl  = process.env.SUPABASE_URL;
+  const serviceKey   = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const fromEmail    = process.env.FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
+
+  if (!supabaseUrl || !serviceKey) {
+    return res.status(500).json({ error: 'Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).' });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceKey);
+
   try {
+    // ── 1. Récupérer les relances actives (TOUS organismes — c'est le cron global) ──
     const { data: settings, error: settingsErr } = await supabase
       .from('automation_settings')
       .select('*')
       .eq('is_active', true);
 
-    if (settingsErr) throw settingsErr;
-    if (!settings?.length) return res.status(200).json({ sent: 0 });
+    if (settingsErr) throw new Error('Erreur lecture automation_settings : ' + settingsErr.message);
+    if (!settings || settings.length === 0) {
+      return res.json({ sent: 0, message: 'Aucune relance active configurée.' });
+    }
 
-    const now = new Date();
-    let totalSent = 0;
+    // ── 2. Récupérer clients et sessions ─────────────────────────────────────
+    const [{ data: clients }, { data: sessions }] = await Promise.all([
+      supabase.from('clients').select('id, nom, prenom, email_contact, formateur_id, organisation_id'),
+      supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance, organisation_id'),
+    ]);
 
+    const todayStr = todayInParisStr();
+
+    let sent = 0;
+    const results = [];
+
+    // ── 3. Traiter chaque relance ─────────────────────────────────────────────
     for (const setting of settings) {
-      // ── Relance émargement non signé ─────────────────────────────────────
-      if (setting.trigger_type === 'no_signature') {
-        const cutoff = new Date(now);
-        cutoff.setDate(cutoff.getDate() - setting.delay_days);
+      const triggerSessions = [];
 
-        const { data: sessions } = await supabase
-          .from('sessions')
-          .select('id, client_id, date, ressource_titre, nom')
-          .eq('signe_par_client', false)
-          .not('date', 'is', null)
-          .lt('date', cutoff.toISOString());
-
-        for (const session of sessions || []) {
-          if (!session.client_id) continue;
-
-          // Vérification fraîche : le client a peut-être signé entre-temps
-          const { data: fresh } = await supabase
-            .from('sessions')
-            .select('signe_par_client, signature_client')
-            .eq('id', session.id)
-            .single();
-          if (fresh?.signe_par_client || fresh?.signature_client) continue;
-
-          if (await alreadySent(setting.id, session.id, session.client_id)) continue;
-
-          const { data: client } = await supabase
-            .from('clients')
-            .select('nom_complet, email_contact')
-            .eq('id', session.client_id)
-            .single();
-          if (!client?.email_contact) continue;
-
-          const vars = {
-            client_name: client.nom_complet || '',
-            session_title: session.ressource_titre || session.nom || 'votre séance',
-            session_date: session.date
-              ? new Date(session.date).toLocaleDateString('fr-FR')
-              : '',
-          };
-
-          const { error: mailErr } = await sendEmail(
-            client.email_contact,
-            interpolate(setting.email_subject, vars),
-            interpolate(setting.email_body, vars)
-          );
-          if (mailErr) { console.error('[automation] mail error:', mailErr); continue; }
-
-          await logSent(setting.id, session.client_id, client.email_contact, session.id, 'session');
-          totalSent++;
-        }
-      }
-
-      // ── Rappel avant séance ───────────────────────────────────────────────
       if (setting.trigger_type === 'reminder_before_session') {
-        const target = new Date(now);
-        target.setDate(target.getDate() + setting.delay_days);
-        const dateStr = target.toISOString().split('T')[0];
+        // Sessions ayant lieu dans |delay_days| jours
+        const daysOffset = Math.abs(setting.delay_days || 1);
+        const targetDateStr = addDaysToDateStr(todayStr, daysOffset);
 
-        const { data: sessions } = await supabase
-          .from('sessions')
-          .select('id, client_id, date, ressource_titre, nom')
-          .gte('date', `${dateStr}T00:00:00`)
-          .lte('date', `${dateStr}T23:59:59`);
+        (sessions || [])
+          .filter(s => s.date === targetDateStr && s.organisation_id === setting.organisation_id)
+          .forEach(s => triggerSessions.push(s));
 
-        for (const session of sessions || []) {
-          if (!session.client_id) continue;
-          if (await alreadySent(setting.id, session.id, session.client_id)) continue;
+      } else if (setting.trigger_type === 'no_signature') {
+        // Sessions dont la date est passée depuis X jours et le client n'a pas signé
+        const daysOffset = Math.abs(setting.delay_days || 2);
+        const targetDateStr = addDaysToDateStr(todayStr, -daysOffset);
 
-          const { data: client } = await supabase
-            .from('clients')
-            .select('nom_complet, email_contact')
-            .eq('id', session.client_id)
-            .single();
-          if (!client?.email_contact) continue;
-
-          const vars = {
-            client_name: client.nom_complet || '',
-            session_title: session.ressource_titre || session.nom || 'votre séance',
-            session_date: session.date
-              ? new Date(session.date).toLocaleDateString('fr-FR')
-              : '',
-          };
-
-          const { error: mailErr } = await sendEmail(
-            client.email_contact,
-            interpolate(setting.email_subject, vars),
-            interpolate(setting.email_body, vars)
-          );
-          if (mailErr) { console.error('[automation] mail error:', mailErr); continue; }
-
-          await logSent(setting.id, session.client_id, client.email_contact, session.id, 'session');
-          totalSent++;
-        }
+        (sessions || [])
+          .filter(s => s.date === targetDateStr && s.organisation_id === setting.organisation_id
+            && s.statut_client !== 'Signé' && s.statut_client !== 'signé')
+          .forEach(s => triggerSessions.push(s));
       }
 
-      // ── Type personnalisé : envoi périodique à tous les clients actifs ──
-      if (!['no_signature', 'reminder_before_session', 'welcome'].includes(setting.trigger_type)) {
-        const { data: allClients } = await supabase
-          .from('clients')
-          .select('id, nom_complet, email_contact')
-          .not('email_contact', 'is', null);
+      // ── 4. Envoyer un email pour chaque session concernée ──────────────────
+      for (const session of triggerSessions) {
+        const client = (clients || []).find(c => String(c.id) === String(session.client_id));
+        if (!client?.email_contact) continue;
 
-        for (const client of allClients || []) {
-          if (!client.email_contact) continue;
-          if (await sentRecently(setting.id, client.id, setting.delay_days)) continue;
+        // Vérifier qu'on n'a pas déjà envoyé cette relance aujourd'hui
+        const { data: existingLog } = await supabase
+          .from('automation_logs')
+          .select('id')
+          .eq('automation_setting_id', setting.id)
+          .eq('client_id', client.id)
+          .gte('sent_at', todayStr + 'T00:00:00Z')
+          .maybeSingle();
 
-          const vars = { client_name: client.nom_complet || '' };
-
-          const { error: mailErr } = await sendEmail(
-            client.email_contact,
-            interpolate(setting.email_subject, vars),
-            interpolate(setting.email_body, vars)
-          );
-          if (mailErr) { console.error('[automation] mail error:', mailErr); continue; }
-
-          await logSent(setting.id, client.id, client.email_contact, client.id, 'custom');
-          totalSent++;
+        if (existingLog) {
+          results.push({ skipped: true, reason: 'already_sent_today', client: client.nom, trigger: setting.trigger_type });
+          continue;
         }
-      }
 
-      // ── Email de bienvenue nouveau client ────────────────────────────────
-      if (setting.trigger_type === 'welcome') {
-        const cutoff = new Date(now);
-        cutoff.setDate(cutoff.getDate() - setting.delay_days);
+        // Remplacer les variables dans le template
+        const sessionDate = session.date
+          ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+          : '';
+        const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
+        const sessionTitle = session.type_activite || `Séance n°${session.numero_seance || ''}`;
 
-        const { data: newClients } = await supabase
-          .from('clients')
-          .select('id, nom_complet, email_contact, created_at')
-          .gte('created_at', cutoff.toISOString())
-          .not('email_contact', 'is', null);
+        const replaceVars = (str) => (str || '')
+          .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
+          .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
+          .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle);
 
-        for (const client of newClients || []) {
-          if (!client.email_contact) continue;
-          if (await alreadySent(setting.id, client.id, client.id)) continue;
+        const emailSubject = replaceVars(setting.email_subject);
+        const emailBodyText = replaceVars(setting.email_body);
+        const emailBodyHtml = emailBodyText.replace(/\n/g, '<br>');
 
-          const vars = { client_name: client.nom_complet || '' };
+        // Envoyer via Resend
+        let emailSent = false;
+        let emailError = null;
 
-          const { error: mailErr } = await sendEmail(
-            client.email_contact,
-            interpolate(setting.email_subject, vars),
-            interpolate(setting.email_body, vars)
-          );
-          if (mailErr) { console.error('[automation] mail error:', mailErr); continue; }
+        if (!resendApiKey) {
+          emailError = 'RESEND_API_KEY non configurée — email simulé (ajoutez la clé dans Vercel > Settings > Environment Variables)';
+          console.warn('[automation] RESEND_API_KEY manquante, simulation pour:', client.email_contact);
+          emailSent = true;
+        } else {
+          try {
+            const resendResp = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${resendApiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                from: fromEmail,
+                to: [client.email_contact],
+                subject: emailSubject,
+                html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;">
+                    <strong style="font-size:18px;">SkorUp</strong>
+                  </div>
+                  <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                    <p style="color:#111827;font-size:14px;line-height:1.6;">${emailBodyHtml}</p>
+                    <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+                    <p style="color:#9ca3af;font-size:11px;">Email automatique — merci de ne pas répondre directement à ce message.</p>
+                  </div>
+                </div>`,
+              }),
+            });
 
-          await logSent(setting.id, client.id, client.email_contact, client.id, 'client');
-          totalSent++;
+            if (resendResp.ok) {
+              emailSent = true;
+            } else {
+              const errBody = await resendResp.json().catch(() => ({}));
+              emailError = errBody.message || `Resend erreur HTTP ${resendResp.status}`;
+            }
+          } catch (fetchErr) {
+            emailError = 'Erreur réseau Resend : ' + fetchErr.message;
+          }
+        }
+
+        // Logger le résultat dans automation_logs
+        await supabase.from('automation_logs').insert([{
+          automation_setting_id: setting.id,
+          client_id: client.id,
+          trigger_type: setting.trigger_type,
+          sent_at: new Date().toISOString(),
+          email_to: client.email_contact,
+          email_subject: emailSubject,
+          status: emailSent ? 'sent' : 'error',
+          error_message: emailError || null,
+        }]).select();
+
+        if (emailSent) {
+          sent++;
+          results.push({ sent: true, client: clientName, email: client.email_contact, trigger: setting.trigger_type });
+        } else {
+          results.push({ sent: false, error: emailError, client: clientName, trigger: setting.trigger_type });
         }
       }
     }
 
-    return res.status(200).json({ success: true, sent: totalSent });
+    return res.json({
+      sent,
+      processed: results.length,
+      details: results,
+      timestamp: new Date().toISOString(),
+    });
+
   } catch (err) {
-    console.error('[automation/process]', err);
+    console.error('[automation/process] Erreur:', err);
     return res.status(500).json({ error: err.message });
   }
 };

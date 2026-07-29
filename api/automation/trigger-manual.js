@@ -14,16 +14,37 @@
 // Reprend la structure et les variables d'environnement déjà utilisées par api/automation/process.js
 // (le cron quotidien existant) : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, FROM_EMAIL.
 // Si ce cron fonctionne déjà en production, ces variables sont déjà configurées sur Vercel.
+//
+// CORRECTIF (2026-07-28) :
+//   - Le contrôle admin comparait utilisateurs.id (clé interne) à l'UID Supabase Auth au lieu de
+//     utilisateurs.auth_uid → rejetait à tort de vrais administrateurs ("Réservé aux administrateurs
+//     d'un organisme"). Corrigé pour comparer sur auth_uid, avec repli par email comme app_current_role().
+//   - L'envoi passait par le SDK npm "resend", absent de package.json → risque de crash au déploiement
+//     ("Cannot find module 'resend'"). Remplacé par un appel fetch direct à l'API Resend, comme process.js.
+//   - Le calcul de date ("aujourd'hui" / "demain") utilisait new Date() en UTC (heure du serveur Vercel),
+//     pas l'heure française des dates de séances saisies → aucune séance ne correspondait, selon l'heure
+//     du test. Corrigé pour calculer la date du jour dans le fuseau Europe/Paris (même correctif que
+//     process.js).
 
 const { createClient } = require('@supabase/supabase-js');
-const { Resend } = require('resend');
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
+
+// ── Utilitaires de dates fuseau France (identiques à api/automation/process.js) ────────────
+function todayInParisStr() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
+}
+function addDaysToDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().split('T')[0];
+}
 
 function interpolate(str, vars) {
   return (str || '')
@@ -50,13 +71,43 @@ module.exports = async (req, res) => {
 
     // ── 2. Vérifier que l'appelant est bien admin d'un organisme — organisation_id vient de SA ligne
     //         utilisateurs, jamais d'un paramètre envoyé par le navigateur ──
-    const { data: callerRow, error: callerErr } = await supabaseAdmin
+    // IMPORTANT : utilisateurs.id est la clé interne de l'application, PAS l'UID Supabase Auth.
+    // authData.user.id est l'UID Auth, qui doit être comparé à utilisateurs.auth_uid (jamais à
+    // utilisateurs.id — c'est cette comparaison erronée qui faisait échouer ce contrôle pour de
+    // vrais administrateurs). On reprend le même repli par email que app_current_role() /
+    // app_current_org_id() (voir hotfix_backfill_auth_uid.sql / hotfix2_email_fallback_functions.sql)
+    // pour les comptes plus anciens dont auth_uid ne serait pas encore renseigné.
+    let { data: callerRow, error: callerErr } = await supabaseAdmin
       .from('utilisateurs')
       .select('role, organisation_id')
       .eq('auth_uid', authData.user.id)
       .maybeSingle();
+
+    if (!callerErr && !callerRow && authData.user.email) {
+      const fallback = await supabaseAdmin
+        .from('utilisateurs')
+        .select('role, organisation_id')
+        .is('auth_uid', null)
+        .eq('email', authData.user.email)
+        .maybeSingle();
+      callerRow = fallback.data;
+      callerErr = fallback.error;
+    }
+
     if (callerErr || !callerRow || callerRow.role !== 'admin' || !callerRow.organisation_id) {
-      return res.status(403).json({ error: 'Réservé aux administrateurs d\'un organisme.' });
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
+      // Inclut le détail exact de ce que le serveur a vu, pour ne plus avoir à deviner.
+      return res.status(403).json({
+        error: 'Réservé aux administrateurs d\'un organisme. [DEBUG-v3-auth_uid]',
+        debug: {
+          authUserId: authData.user.id || null,
+          authUserEmail: authData.user.email || null,
+          callerErrMessage: callerErr ? callerErr.message : null,
+          callerRowFound: !!callerRow,
+          callerRowRole: callerRow ? callerRow.role : null,
+          callerRowOrgId: callerRow ? callerRow.organisation_id : null,
+        },
+      });
     }
     const organisationId = callerRow.organisation_id;
 
@@ -77,27 +128,36 @@ module.exports = async (req, res) => {
       supabaseAdmin.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance').eq('organisation_id', organisationId),
     ]);
 
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = todayInParisStr();
 
     // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──
     const emailQueue = [];
+    const debugSettingsInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) — à retirer ensuite.
     for (const setting of activeSettings) {
       let targetSessions = [];
+      let debugDs = null;
 
       if (setting.trigger_type === 'reminder_before_session') {
         const offset = Math.abs(setting.delay_days ?? 1);
-        const d = new Date(today); d.setDate(d.getDate() + offset);
-        const ds = d.toISOString().split('T')[0];
+        const ds = addDaysToDateStr(todayStr, offset);
+        debugDs = ds;
         targetSessions = (sessions || []).filter(s => s.date === ds);
       } else if (setting.trigger_type === 'no_signature') {
         const offset = Math.abs(setting.delay_days ?? 2);
-        const d = new Date(today); d.setDate(d.getDate() - offset);
-        const ds = d.toISOString().split('T')[0];
+        const ds = addDaysToDateStr(todayStr, -offset);
+        debugDs = ds;
         targetSessions = (sessions || []).filter(s =>
           s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
         );
       }
+
+      debugSettingsInfo.push({
+        settingId: setting.id,
+        triggerType: setting.trigger_type,
+        delayDays: setting.delay_days,
+        computedTargetDate: debugDs,
+        matchedSessionsCount: targetSessions.length,
+      });
 
       for (const session of targetSessions) {
         const client = (clients || []).find(c => String(c.id) === String(session.client_id));
@@ -124,11 +184,22 @@ module.exports = async (req, res) => {
     }
 
     if (emailQueue.length === 0) {
-      return res.status(200).json({ sent: 0, simulated: 0, message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante)." });
+      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
+      return res.status(200).json({
+        sent: 0, simulated: 0,
+        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante). [DEBUG-v4-dates]",
+        debug: {
+          todayStr,
+          organisationId,
+          settingsInfo: debugSettingsInfo,
+          sessionsFound: (sessions || []).map(s => ({ id: s.id, date: s.date, client_id: s.client_id })),
+        },
+      });
     }
 
-    // ── 6. Envoyer via Resend (clé jamais exposée au navigateur) ──
-    const resendConfigured = !!process.env.RESEND_API_KEY;
+    // ── 6. Envoyer via Resend (clé jamais exposée au navigateur) — appel fetch direct, sans
+    //         dépendre du SDK npm "resend" (absent de package.json) ──
+    const resendConfigured = !!resendApiKey;
     let sent = 0, simulated = 0;
 
     for (const item of emailQueue) {
@@ -137,23 +208,35 @@ module.exports = async (req, res) => {
 
       if (resendConfigured) {
         try {
-          const { error: mailErr } = await resend.emails.send({
-            from: FROM_EMAIL,
-            to: [item.client.email_contact],
-            subject: item.subject,
-            html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-              <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
-              <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
-                <p style="color:#111827;font-size:14px;line-height:1.7;">${(item.body || '').replace(/\n/g, '<br>')}</p>
-                <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
-              </div>
-            </div>`,
+          const resendResp = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: FROM_EMAIL,
+              to: [item.client.email_contact],
+              subject: item.subject,
+              html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+                <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+                <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                  <p style="color:#111827;font-size:14px;line-height:1.7;">${(item.body || '').replace(/\n/g, '<br>')}</p>
+                  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+                  <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
+                </div>
+              </div>`,
+            }),
           });
-          ok = !mailErr;
-          if (mailErr) errMsg = mailErr.message;
+
+          if (resendResp.ok) {
+            ok = true;
+          } else {
+            const errBody = await resendResp.json().catch(() => ({}));
+            errMsg = errBody.message || `Resend erreur HTTP ${resendResp.status}`;
+          }
         } catch (e) {
-          errMsg = e.message;
+          errMsg = 'Erreur réseau Resend : ' + e.message;
         }
         if (ok) sent++;
       } else {
