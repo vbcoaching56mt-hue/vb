@@ -15638,9 +15638,23 @@ export default function App() {
       await fetchDocuments();
     } catch (err) {
       console.error("Erreur suppression client:", err);
-      toast.error("Erreur lors de la suppression : " + err.message);
+      // CORRECTIF (2026-08-05) : la fonction Edge "delete-user" supprime d'abord la fiche client
+      // (table clients + données liées) PUIS tente de supprimer le compte Auth Supabase correspondant.
+      // Pour certains clients (invitation jamais finalisée, compte déjà retiré côté Auth par ailleurs...),
+      // cette seconde étape échoue avec "User not found" alors que la fiche, elle, a bien été supprimée —
+      // l'admin voyait donc une erreur rouge malgré une suppression réellement effectuée. On vérifie ici
+      // si la fiche existe encore vraiment avant d'afficher une erreur : si elle a disparu, la suppression
+      // a fonctionné malgré le message technique renvoyé par la fonction.
+      const { data: stillExists } = await supabase.from('clients').select('id').eq('id', clientId).maybeSingle();
       setExpandedClientId(null);
       await fetchUtilisateurs();
+      await fetchSessions();
+      await fetchDocuments();
+      if (!stillExists) {
+        toast("Client supprimé — son compte de connexion avait déjà été retiré séparément (message technique sans conséquence).", { icon: '⚠️', duration: 6000 });
+      } else {
+        toast.error("Erreur lors de la suppression : " + err.message);
+      }
     }
   };
 
