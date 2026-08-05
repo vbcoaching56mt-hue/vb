@@ -4633,6 +4633,16 @@ const AdminFormateursView = ({
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
+  // Recherche + tri alphabétique de la liste des formateurs (ajouté 2026-08-05) — la liste
+  // était auparavant affichée dans l'ordre brut renvoyé par la base (ordre de création), sans
+  // moyen de retrouver rapidement un formateur une fois qu'il y en a beaucoup.
+  const [formateurSearchQuery, setFormateurSearchQuery] = React.useState('');
+  const sortedFilteredFormateurs = React.useMemo(() => {
+    const q = formateurSearchQuery.trim().toLowerCase();
+    return [...(formateurs || [])]
+      .filter(f => !q || (f.nom || '').toLowerCase().includes(q) || (f.email || '').toLowerCase().includes(q))
+      .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' }));
+  }, [formateurs, formateurSearchQuery]);
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -4751,14 +4761,34 @@ const AdminFormateursView = ({
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span> Liste des Formateurs
+          <span className="ml-3 text-sm font-bold text-violet-600 bg-violet-50 px-2.5 py-0.5 rounded-full">
+            {formateurs.length}
+          </span>
         </h2>
         <div className="flex border-b border-gray-200 mb-6 font-sans">
           <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
           <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
         </div>
 
+        <div className="relative mb-6">
+          <Search className="w-4 h-4 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={formateurSearchQuery}
+            onChange={e => setFormateurSearchQuery(e.target.value)}
+            placeholder="Rechercher un formateur par nom ou email..."
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-violet-300 bg-white"
+          />
+        </div>
+
+        {sortedFilteredFormateurs.length === 0 && (
+          <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+            <p className="text-sm text-gray-400 italic">Aucun formateur ne correspond à "{formateurSearchQuery}".</p>
+          </div>
+        )}
+
         <ul className="space-y-6">
-          {formateurs.map(f => {
+          {sortedFilteredFormateurs.map(f => {
             const sesClients = clients.filter(c => c.formateur_id === f.id);
             const isExpanded = expandedClientId === f.id;
             return (
