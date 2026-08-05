@@ -4110,7 +4110,7 @@ const AdminClientsView = ({
   clients, formateurs, assignFormateur, handleModuleChange,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
-  activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
+  activeTab, setActiveTab, setIsInviteModalOpen, setInviteDefaultRole, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   generateSessions, handleDeleteClient, setIsSessionItemModalOpen,
   setTargetSessionForAddition, setViewingSession,
@@ -4190,15 +4190,15 @@ const AdminClientsView = ({
               <Plus size={24} />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Membre</h3>
-              <p className="text-sm text-gray-500">Invitez de nouveaux clients ou formateurs par email.</p>
+              <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Client</h3>
+              <p className="text-sm text-gray-500">Invitez un nouveau client (bénéficiaire) par email.</p>
             </div>
           </div>
           <button
-            onClick={() => setIsInviteModalOpen(true)}
+            onClick={() => { setInviteDefaultRole('client'); setIsInviteModalOpen(true); }}
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
           >
-            <Plus size={20} /> Inviter l'utilisateur
+            <Plus size={20} /> Ajouter un client
           </button>
         </div>
       </div>
@@ -4629,7 +4629,7 @@ const AdminFormateursView = ({
   modules, sessions, handleDownloadResource, handleDeleteFormateur,
   documentTemplates, handleGenerateDocx, setViewingDocId,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName, adminSelfId,
-  currentOrgId
+  currentOrgId, setIsInviteModalOpen, setInviteDefaultRole
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
@@ -4757,6 +4757,27 @@ const AdminFormateursView = ({
 
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+
+      {/* Ajouté 2026-08-05 : bouton d'invitation dédié aux formateurs, pré-sélectionnant le rôle
+          "Formateur" — auparavant, le seul bouton d'invitation ("Nouveau Membre") se trouvait sur
+          l'onglet Clients, avec un sélecteur de rôle à changer manuellement. */}
+      <div className="bg-violet-50 border border-violet-100 p-6 rounded-3xl flex items-center justify-between mb-2 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-violet-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
+            <Plus size={24} />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Formateur</h3>
+            <p className="text-sm text-gray-500">Invitez un nouveau formateur (coach) par email.</p>
+          </div>
+        </div>
+        <button
+          onClick={() => { setInviteDefaultRole('formateur'); setIsInviteModalOpen(true); }}
+          className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
+        >
+          <Plus size={20} /> Ajouter un formateur
+        </button>
+      </div>
 
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
@@ -12076,8 +12097,16 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   );
 };
 
-const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) => {
+const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole }) => {
   const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
+
+  // Pré-sélectionne le rôle correspondant à l'onglet depuis lequel le modal a été ouvert (Clients →
+  // client, Formateurs → formateur), ajouté 2026-08-05 — reste modifiable via le menu déroulant ci-dessous.
+  React.useEffect(() => {
+    if (isOpen && defaultRole) {
+      setFormData(fd => ({ ...fd, role: defaultRole }));
+    }
+  }, [isOpen, defaultRole]);
 
   if (!isOpen) return null;
 
@@ -15196,6 +15225,10 @@ export default function App() {
   const [newResourceName, setNewResourceName] = useState('');
   const [isUploadingResource, setIsUploadingResource] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  // Rôle pré-sélectionné à l'ouverture du modal d'invitation (ajouté 2026-08-05) — permet aux
+  // boutons "Nouveau Client" (onglet Clients) et "Nouveau Formateur" (onglet Formateurs) de
+  // pré-remplir le bon rôle, sans que l'admin ait à le changer manuellement à chaque fois.
+  const [inviteDefaultRole, setInviteDefaultRole] = useState('client');
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
   const [clientSkills, setClientSkills] = useState([]);
@@ -18928,6 +18961,7 @@ export default function App() {
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             setIsInviteModalOpen={setIsInviteModalOpen}
+            setInviteDefaultRole={setInviteDefaultRole}
             pedagogicalResources={pedagogicalResources}
             fetchSessions={fetchSessions}
             documents={documents}
@@ -18978,6 +19012,8 @@ export default function App() {
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
             currentOrgId={currentOrgId}
+            setIsInviteModalOpen={setIsInviteModalOpen}
+            setInviteDefaultRole={setInviteDefaultRole}
           />}
           {activeTab === 'relances' && userRole === 'admin' && !hasFeatureAccess(orgSettings, 'pro') && (
             <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
@@ -19278,6 +19314,7 @@ export default function App() {
         onInvite={handleInviteUser}
         isAddingUser={isAddingUser}
         formateurs={assignableFormateurs}
+        defaultRole={inviteDefaultRole}
       />
 
       <DeleteConfirmationModal
