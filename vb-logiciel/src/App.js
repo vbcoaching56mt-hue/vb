@@ -13288,12 +13288,28 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       }
 
       // Associer au client
+      // CORRECTIF (2026-07-29) : client_job_sheets.assigned_by_formateur_id est une colonne de
+      // type uuid (l'auth_uid Supabase Auth du formateur), alors que currentUserId est l'id interne
+      // ENTIER de la table utilisateurs (ex: 22, visible dans l'URL/le state formateur) — les confondre
+      // provoquait "invalid input syntax for type uuid: '22'" et empêchait toute assignation de fiche
+      // métier depuis l'espace formateur. On récupère donc le véritable auth_uid du formateur avant
+      // l'insertion, comme pour clients.formateur_auth_uid ailleurs dans l'app.
+      let assignedByAuthUid = null;
+      if (userRole === 'formateur' && currentUserId) {
+        const { data: formateurRow } = await supabase
+          .from('utilisateurs')
+          .select('auth_uid')
+          .eq('id', currentUserId)
+          .maybeSingle();
+        assignedByAuthUid = formateurRow?.auth_uid || null;
+      }
+
       const { error: assignErr } = await supabase
         .from('client_job_sheets')
         .insert([{
           job_sheet_id: jobSheetId,
           client_id: selectedClientId,
-          assigned_by_formateur_id: userRole === 'formateur' ? currentUserId : null,
+          assigned_by_formateur_id: assignedByAuthUid,
         }]);
 
       if (assignErr) {
