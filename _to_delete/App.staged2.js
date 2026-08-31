@@ -20,7 +20,6 @@ import {
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
 import romeData from './data/romeData.json';
 
 
@@ -2936,16 +2935,10 @@ const SessDropZone = ({ zoneId, isAdmin, hasActive, children }) => {
 
 // --- dnd-kit: élément déplaçable séance (carte) ---
 const SessDragItem = ({ itemId, activeId, children }) => {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: String(itemId) });
-  // CORRECTIF (2026-08-31) : useDraggable() calcule un "transform" mais ne déplace jamais l'élément
-  // visuellement tout seul — il faut appliquer explicitement ce transform au style de l'élément
-  // déplacé, sinon le glisser-déposer semble "ne rien faire du tout" (l'élément reste figé à l'écran)
-  // bien que la logique de dépôt (onDragEnd) fonctionne en réalité normalement en dessous.
-  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: String(itemId) });
   return (
     <div
       ref={setNodeRef}
-      style={style}
       {...listeners}
       {...attributes}
       className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${String(activeId) === String(itemId) ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
@@ -2968,15 +2961,10 @@ const FDropGroupRow = ({ groupNum, hasActive, children }) => {
 
 // --- dnd-kit: ligne déplaçable (tableau formateur) ---
 const FDragItemRow = ({ sessionId, activeId, children }) => {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: `fi-${sessionId}` });
-  // CORRECTIF (2026-08-31) : même correctif que SessDragItem — le transform calculé par dnd-kit
-  // n'était jamais appliqué, donc la ligne ne suivait pas le curseur pendant le glisser-déposer,
-  // ce qui donnait l'impression que la fonctionnalité ne marchait pas du tout côté formateur.
-  const style = transform ? { transform: CSS.Translate.toString(transform), position: 'relative', zIndex: 30 } : undefined;
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: `fi-${sessionId}` });
   return (
     <tr
       ref={setNodeRef}
-      style={style}
       {...listeners}
       {...attributes}
       className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${activeId === `fi-${sessionId}` ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
@@ -4922,13 +4910,10 @@ const DroppableMomentZone = ({ id, children, className }) => {
 };
 
 const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
-  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({ id: `drag-grp-${resourceId}` });
-  // CORRECTIF (2026-08-31) : même correctif que SessDragItem/FDragItemRow (transform jamais appliqué).
-  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `drag-grp-${resourceId}` });
   return (
     <div
       ref={setNodeRef}
-      style={style}
       {...attributes}
       className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
     >

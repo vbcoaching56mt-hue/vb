@@ -12,14 +12,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Map plan+billing → Stripe Price ID (direct, pas de lookup produit)
-const PRICE_IDS: Record<string, string> = {
-  essentiel_monthly: 'price_1Tqr7S2KdCq3v8pEmk4ffymj',
-  essentiel_annual:  'price_1Tqr9B2KdCq3v8pEMeZR46Q1',
-  pro_monthly:       'price_1Tqr7t2KdCq3v8pEaHqgwqEW',
-  pro_annual:        'price_1TqrAn2KdCq3v8pEgdJS1rcQ',
-  illimite_monthly:  'price_1Tqr8N2KdCq3v8pEcrWd9L7A',
-  illimite_annual:   'price_1TqrBG2KdCq3v8pETMG0KeOc',
+// Map plan+billing → lookup_key Stripe (identique en test et en production,
+// contrairement aux Price ID qui changent d'un environnement à l'autre).
+const PRICE_LOOKUP_KEYS: Record<string, string> = {
+  essentiel_monthly: 'essentiel_mensuel',
+  essentiel_annual:  'essentiel_annuel',
+  pro_monthly:       'pro_mensuel',
+  pro_annual:        'pro_annuel',
+  illimite_monthly:  'illimite_mensuel',
+  illimite_annual:   'illimite_annuel',
 }
 
 Deno.serve(async (req: Request) => {
@@ -35,13 +36,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const priceKey = `${plan}_${billing}`
-    const priceId = PRICE_IDS[priceKey]
-    if (!priceId) throw new Error(`Plan inconnu : ${priceKey}`)
+    const lookupKey = PRICE_LOOKUP_KEYS[priceKey]
+    if (!lookupKey) throw new Error(`Plan inconnu : ${priceKey}`)
 
     const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
       apiVersion: '2024-06-20',
       httpClient: Stripe.createFetchHttpClient(),
     })
+
+    const prices = await stripe.prices.list({ lookup_keys: [lookupKey], active: true })
+    const priceId = prices.data[0]?.id
+    if (!priceId) throw new Error(`Tarif introuvable pour la clé : ${lookupKey}`)
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,

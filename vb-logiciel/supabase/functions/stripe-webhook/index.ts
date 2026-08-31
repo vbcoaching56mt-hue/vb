@@ -17,13 +17,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // Utilisée pour déterminer le plan RÉEL et ACTUEL de l'abonnement à partir de
 // son item de facturation, plutôt que de se fier aux metadata de l'abonnement
 // (voir correction du 2026-07-28 ci-dessous).
-const PRICE_ID_TO_PLAN: Record<string, { plan: string; billing: string }> = {
-  price_1Tqr7S2KdCq3v8pEmk4ffymj: { plan: 'essentiel', billing: 'monthly' },
-  price_1Tqr9B2KdCq3v8pEMeZR46Q1: { plan: 'essentiel', billing: 'annual' },
-  price_1Tqr7t2KdCq3v8pEaHqgwqEW: { plan: 'pro', billing: 'monthly' },
-  price_1TqrAn2KdCq3v8pEgdJS1rcQ: { plan: 'pro', billing: 'annual' },
-  price_1Tqr8N2KdCq3v8pEcrWd9L7A: { plan: 'illimite', billing: 'monthly' },
-  price_1TqrBG2KdCq3v8pETMG0KeOc: { plan: 'illimite', billing: 'annual' },
+const LOOKUP_KEY_TO_PLAN: Record<string, { plan: string; billing: string }> = {
+  essentiel_mensuel: { plan: 'essentiel', billing: 'monthly' },
+  essentiel_annuel:  { plan: 'essentiel', billing: 'annual' },
+  pro_mensuel:       { plan: 'pro', billing: 'monthly' },
+  pro_annuel:        { plan: 'pro', billing: 'annual' },
+  illimite_mensuel:  { plan: 'illimite', billing: 'monthly' },
+  illimite_annuel:   { plan: 'illimite', billing: 'annual' },
 }
 
 // CORRECTION (2026-07-28) : quand un client change de formule depuis le portail
@@ -37,8 +37,8 @@ const PRICE_ID_TO_PLAN: Record<string, { plan: string; billing: string }> = {
 // (sub.items.data[0].price.id), avec un repli sur les metadata seulement si
 // le Price ID est introuvable dans la table de correspondance.
 function resolvePlanFromSubscription(sub: Stripe.Subscription): string | null {
-  const priceId = sub.items?.data?.[0]?.price?.id
-  const match = priceId ? PRICE_ID_TO_PLAN[priceId] : undefined
+  const lookupKey = sub.items?.data?.[0]?.price?.lookup_key
+  const match = lookupKey ? LOOKUP_KEY_TO_PLAN[lookupKey] : undefined
   if (match) return `${match.plan}_${match.billing}`
 
   const plan = sub.metadata?.plan
