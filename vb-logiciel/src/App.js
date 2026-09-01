@@ -117,6 +117,34 @@ const openSecureStorageFile = async (rawUrl) => {
   window.open(resolveFileUrl(rawUrl) || rawUrl, '_blank');
 };
 
+// Télécharge un fichier de stockage en forçant le nom donné par l'utilisateur (doc.nom), au lieu du nom
+// technique généré à l'upload (horodatage, dossier, etc.) — utilisé partout où un document du "dossier
+// client" (organisme + formateur) doit se télécharger sous le nom que la personne lui a donné.
+const handleDownloadNamedFile = async (doc) => {
+  if (!doc?.url) return;
+  try {
+    const extracted = extractStorageBucketAndPath(doc.url);
+    if (!extracted) throw new Error('URL de fichier invalide.');
+    const { data, error } = await supabase.storage.from(extracted.bucket).download(extracted.path);
+    if (error) throw error;
+    const ext = (extracted.path.split('.').pop() || '').toLowerCase();
+    const baseName = (doc.nom || 'document').trim() || 'document';
+    const hasExt = ext && baseName.toLowerCase().endsWith('.' + ext);
+    const fileName = hasExt ? baseName : (ext ? `${baseName}.${ext}` : baseName);
+    const blobUrl = URL.createObjectURL(data);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch (e) {
+    console.error('Erreur téléchargement document:', e);
+    toast.error('Erreur lors du téléchargement : ' + e.message);
+  }
+};
+
 const ANCHOR_KEYS = [
   { key: 'score_technique', label: 'Expertise Technique', description: "Le contenu du travail est votre motivation. Vous cherchez à être expert et reconnu par vos pairs." },
   { key: 'score_management', label: 'Compétence Managériale', description: "Vous avez un désir intense de diriger, de contrôler et de prendre des décisions stratégiques." },
@@ -3599,6 +3627,13 @@ const ClientDetailView = ({
                       Ouvrir
                     </button>
                     <button
+                      onClick={() => handleDownloadNamedFile(doc)}
+                      className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
+                      title="Télécharger sous le nom indiqué"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => showDeleteConfirm(
                         `Supprimer "${doc.nom}" ?`,
                         'Ce document sera définitivement retiré du dossier du client.',
@@ -5832,44 +5867,75 @@ const FormateurView = ({
                           </div>
                         );
 
+                        // Seuls les documents générés depuis un modèle (template_id renseigné) demandent
+                        // une signature du formateur — un document simplement déposé ici (upload manuel,
+                        // organisme ou formateur) n'en a jamais besoin : il propose juste Ouvrir/Télécharger.
+                        const formatDocDate = (d) => {
+                          if (!d) return null;
+                          const parsed = new Date(d);
+                          return isNaN(parsed) ? null : parsed.toLocaleDateString('fr-FR');
+                        };
+
                         return (
                           <div className="grid grid-cols-1 gap-3">
-                            {adminDocs.map(doc => (
-                              <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
-                                <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
-                                    <FileText size={20} />
+                            {adminDocs.map(doc => {
+                              const needsSignature = !!doc.template_id;
+                              const dateLabel = formatDocDate(doc.created_at);
+                              return (
+                                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
+                                  <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
+                                      <FileText size={20} />
+                                    </div>
+                                    <div>
+                                      <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
+                                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
+                                        {dateLabel ? `${needsSignature ? 'Généré' : 'Ajouté'} le ${dateLabel}` : (doc.type_document || 'Document')}
+                                      </p>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
-                                      Généré le {new Date(doc.created_at).toLocaleDateString()}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <button 
-                                    onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'view' })}
-                                    className="p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
-                                    title="Consulter"
-                                  >
-                                    <Eye size={20} />
-                                  </button>
-                                  {!doc.signe_par_formateur ? (
-                                    <button 
-                                      onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
-                                      className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all transform active:scale-95"
-                                    >
-                                      <PenTool size={14} /> Signer le document
-                                    </button>
+                                  {needsSignature ? (
+                                    <div className="flex items-center gap-2">
+                                      <button 
+                                        onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'view' })}
+                                        className="p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                        title="Consulter"
+                                      >
+                                        <Eye size={20} />
+                                      </button>
+                                      {!doc.signe_par_formateur ? (
+                                        <button 
+                                          onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
+                                          className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all transform active:scale-95"
+                                        >
+                                          <PenTool size={14} /> Signer le document
+                                        </button>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-xs font-black border border-green-100">
+                                          <Check size={14} strokeWidth={4} /> Signé
+                                        </div>
+                                      )}
+                                    </div>
                                   ) : (
-                                    <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-xs font-black border border-green-100">
-                                      <Check size={14} strokeWidth={4} /> Signé
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => openSecureStorageFile(doc.url)}
+                                        className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
+                                      >
+                                        Ouvrir
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadNamedFile(doc)}
+                                        className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-2 rounded-lg transition-all"
+                                        title="Télécharger sous le nom indiqué"
+                                      >
+                                        <Download size={18} />
+                                      </button>
                                     </div>
                                   )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         );
                       })()}
