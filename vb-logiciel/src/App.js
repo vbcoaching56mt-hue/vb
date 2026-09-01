@@ -3625,7 +3625,15 @@ const ClientDetailView = ({
                     <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
                     <input
                       type="file"
-                      onChange={(e) => setAdminDocFile(e.target.files[0] || null)}
+                      onChange={(e) => {
+                        const f = e.target.files[0] || null;
+                        setAdminDocFile(f);
+                        // Pré-remplit le nom avec celui du fichier (sans l'extension) — modifiable ensuite ; on ne
+                        // remplace pas un nom déjà saisi à la main.
+                        if (f && !adminDocName.trim()) {
+                          setAdminDocName(f.name.replace(/\.[^/.]+$/, ''));
+                        }
+                      }}
                       className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
                     />
                   </div>
@@ -5883,7 +5891,15 @@ const FormateurView = ({
                             />
                             <input
                               type="file"
-                              onChange={e => setClientDocFile(e.target.files[0] || null)}
+                              onChange={e => {
+                                const f = e.target.files[0] || null;
+                                setClientDocFile(f);
+                                // Pré-remplit le nom avec celui du fichier (sans l'extension) — le formateur peut
+                                // ensuite le modifier librement ; on ne remplace pas un nom déjà saisi à la main.
+                                if (f && !clientDocName.trim()) {
+                                  setClientDocName(f.name.replace(/\.[^/.]+$/, ''));
+                                }
+                              }}
                               className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
                               accept=".pdf,.doc,.docx,image/*"
                             />
