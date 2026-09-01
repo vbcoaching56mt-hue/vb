@@ -3010,6 +3010,15 @@ const ClientDetailView = ({
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
+  // Documents du dossier client (ajouté 2026-08-31, généralisé 2026-09-01) : section "Administratif"
+  // partagée avec l'espace Formateur (voir handleUploadForClient plus bas dans le fichier) — l'organisme
+  // ET le formateur peuvent tous les deux y déposer des documents pour le dossier du client (factures,
+  // pièces envoyées par le client par un autre biais, etc.), et voient exactement la même liste.
+  const [showAdminDocModal, setShowAdminDocModal] = React.useState(false);
+  const [adminDocFile, setAdminDocFile] = React.useState(null);
+  const [adminDocName, setAdminDocName] = React.useState('');
+  const [adminDocType, setAdminDocType] = React.useState('Administratif');
+  const [isUploadingAdminDoc, setIsUploadingAdminDoc] = React.useState(false);
   const [localDocGroups, setLocalDocGroups] = React.useState([]);
   const [showSendDocsModal, setShowSendDocsModal] = React.useState(false);
   const [selectedGroupId, setSelectedGroupId] = React.useState(null);
@@ -3173,6 +3182,59 @@ const ClientDetailView = ({
     setShowAddDocModal(false);
   };
 
+  // Types "dossier client" : catégorie partagée avec l'espace Formateur (handleUploadForClient) — un
+  // document affiché ici doit avoir l'un de ces types ET ne pas déjà être un document signé archivé
+  // (qui, lui, s'affiche dans l'onglet "Documents Signés").
+  const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
+  const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé' || d.signe_par_client);
+
+  const handleUploadAdminDoc = async () => {
+    if (!adminDocFile || !adminDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
+    setIsUploadingAdminDoc(true);
+    try {
+      const ext = adminDocFile.name.split('.').pop();
+      const safeN = adminDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `dossier_client/${client.id}/${Date.now()}_${safeN}.${ext}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, adminDocFile);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+      // visible_client: false — section à usage interne (organisme + formateur), jamais visible du client.
+      // visible_formateur: true — le formateur assigné à ce client doit voir tout ce que l'organisme dépose ici,
+      // exactement comme l'organisme voit ce que le formateur dépose depuis son propre espace.
+      const { error: insertError } = await supabase.from('documents').insert([{
+        nom: adminDocName.trim(),
+        type_document: adminDocType,
+        url: publicUrl,
+        user_id: client.id,
+        organisation_id: client.organisation_id || currentOrgId,
+        visible_client: false,
+        visible_formateur: true,
+        signe_par_client: false,
+        signe_par_formateur: false,
+      }]);
+      if (insertError) throw insertError;
+
+      toast.success('Document ajouté au dossier du client.');
+      setShowAdminDocModal(false);
+      setAdminDocFile(null);
+      setAdminDocName('');
+      setAdminDocType('Administratif');
+      await fetchDocuments();
+    } catch (e) {
+      console.error('Erreur upload document dossier client:', e);
+      toast.error("Erreur lors de l'ajout : " + e.message);
+    }
+    setIsUploadingAdminDoc(false);
+  };
+
+  const handleDeleteAdminDoc = async (docId) => {
+    const { error } = await supabase.from('documents').delete().eq('id', docId);
+    if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
+    toast.success('Document supprimé.');
+    await fetchDocuments();
+  };
+
   const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
   const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
@@ -3305,6 +3367,7 @@ const ClientDetailView = ({
       <div className="flex gap-4 border-b border-gray-200 overflow-x-auto">
         <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
+        <button onClick={() => setActiveTab('administratif')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'administratif' ? 'border-b-2 border-violet-700 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>📄 Administratif</button>
         <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
         <button onClick={() => setActiveTab('exercices')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'exercices' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
           📝 Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
@@ -3494,6 +3557,121 @@ const ClientDetailView = ({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'administratif' && (
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-bold text-gray-800">Documents du dossier client</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Espace partagé avec le formateur assigné : factures, justificatifs, documents envoyés par le client par un autre biais, etc. Usage interne — jamais visible par le client.</p>
+            </div>
+            <button
+              onClick={() => setShowAdminDocModal(true)}
+              className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm shrink-0"
+            >
+              <Plus className="w-4 h-4" /> Ajouter un document
+            </button>
+          </div>
+
+          {documents.filter(d => d.user_id === client.id && isDossierDoc(d)).length === 0 ? (
+            <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+              <Archive className="mx-auto mb-3 text-gray-300" size={32} />
+              <p className="text-gray-400 text-sm italic">Aucun document dans le dossier de ce client.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {documents.filter(d => d.user_id === client.id && isDossierDoc(d)).map(doc => (
+                <div key={doc.id} className="flex items-center justify-between bg-violet-50/30 rounded-2xl px-4 py-3 border border-violet-100 group">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <FileText className="w-4 h-4 text-violet-500 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => openSecureStorageFile(doc.url)}
+                      className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
+                    >
+                      Ouvrir
+                    </button>
+                    <button
+                      onClick={() => showDeleteConfirm(
+                        `Supprimer "${doc.nom}" ?`,
+                        'Ce document sera définitivement retiré du dossier du client.',
+                        async () => { hideDeleteConfirm(); await handleDeleteAdminDoc(doc.id); }
+                      )}
+                      className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                      title="Supprimer ce document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showAdminDocModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document au dossier</h4>
+                <p className="text-xs text-gray-400 mb-4">Ce fichier sera archivé dans le dossier de {client.nom_complet || client.nom || 'ce client'}, visible par vous et le formateur assigné (pas par le client).</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
+                    <input
+                      type="file"
+                      onChange={(e) => setAdminDocFile(e.target.files[0] || null)}
+                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
+                    <input
+                      type="text"
+                      value={adminDocName}
+                      onChange={(e) => setAdminDocName(e.target.value)}
+                      placeholder="Ex : Facture finale"
+                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
+                    <select
+                      value={adminDocType}
+                      onChange={(e) => setAdminDocType(e.target.value)}
+                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                    >
+                      <option value="Administratif">Administratif</option>
+                      <option value="Contrat">Contrat</option>
+                      <option value="Mission">Mission</option>
+                      <option value="Pièce justificative">Pièce justificative</option>
+                      <option value="Autre">Autre</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-5">
+                  <button
+                    onClick={() => { setShowAdminDocModal(false); setAdminDocFile(null); setAdminDocName(''); setAdminDocType('Administratif'); }}
+                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleUploadAdminDoc}
+                    disabled={isUploadingAdminDoc || !adminDocFile || !adminDocName.trim()}
+                    className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
+                  >
+                    {isUploadingAdminDoc ? 'Envoi...' : 'Ajouter au dossier'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -5625,19 +5803,24 @@ const FormateurView = ({
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 mb-4">
                         <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
-                        <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Documents Administratifs & Contrats</h4>
+                        <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Documents du dossier client</h4>
                       </div>
                       
                       {(() => {
+                        // Liste partagée avec l'onglet "Administratif" de l'espace organisme (ClientDetailView) —
+                        // les mêmes types de documents et la même exclusion des documents déjà signés par le client
+                        // (qui, eux, s'affichent dans l'onglet "Documents Signés").
+                        const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
                         const adminDocs = documents.filter(d =>
                           d.user_id === client.id &&
-                          (d.type_document === 'Administratif' || d.type_document === 'Contrat' || d.type_document === 'Mission')
+                          DOSSIER_DOC_TYPES.includes(d.type_document) &&
+                          !(d.statut === 'Signé' || d.signe_par_client)
                         );
                         
                         if (adminDocs.length === 0) return (
                           <div className="py-12 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
                             <Archive className="mx-auto mb-3 text-gray-300" size={32} />
-                            <p className="text-gray-400 text-sm italic">Aucun document administratif en attente.</p>
+                            <p className="text-gray-400 text-sm italic">Aucun document dans le dossier de ce client.</p>
                           </div>
                         );
 
