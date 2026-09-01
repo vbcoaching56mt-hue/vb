@@ -5543,6 +5543,9 @@ const FormateurView = ({
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
+  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
+  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
   const [uploadingClientId, setUploadingClientId] = React.useState(null);
@@ -5645,6 +5648,13 @@ const FormateurView = ({
       toast.error('Erreur base de données : ' + dbErr.message);
     }
     setIsUploadingClientDoc(false);
+  };
+
+  const handleDeleteDossierDoc = async (docId) => {
+    const { error } = await supabase.from('documents').delete().eq('id', docId);
+    if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
+    toast.success('Document supprimé.');
+    if (fetchDocuments) await fetchDocuments();
   };
 
   return (
@@ -5930,6 +5940,17 @@ const FormateurView = ({
                                         title="Télécharger sous le nom indiqué"
                                       >
                                         <Download size={18} />
+                                      </button>
+                                      <button
+                                        onClick={() => showDeleteConfirm(
+                                          `Supprimer "${doc.nom}" ?`,
+                                          'Ce document sera définitivement retiré du dossier du client.',
+                                          async () => { hideDeleteConfirm(); await handleDeleteDossierDoc(doc.id); }
+                                        )}
+                                        className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all"
+                                        title="Supprimer ce document"
+                                      >
+                                        <Trash2 size={18} />
                                       </button>
                                     </div>
                                   )}
@@ -6491,6 +6512,13 @@ const FormateurView = ({
         onClose={() => setCorrectionModalSession(null)}
         session={correctionModalSession}
         onSave={handleSaveCorrection}
+      />
+      <ConfirmModal
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={confirmState.onConfirm}
+        onCancel={hideDeleteConfirm}
       />
     </div>
   );
