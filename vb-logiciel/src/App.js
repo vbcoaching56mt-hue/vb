@@ -3194,6 +3194,13 @@ const ClientDetailView = ({
   };
 
   const handleAddAssignedDoc = async (titre, url) => {
+    // Avant : une erreur d'insertion était silencieusement ignorée (rien ne s'affichait, aucun message) —
+    // on l'affiche maintenant pour pouvoir diagnostiquer précisément ce qui bloque (ex : modèle sans
+    // fichier associé, conflit de doublon, règle de sécurité Supabase, etc.).
+    if (!url) {
+      toast.error(`Le modèle "${titre}" n'a pas de fichier associé dans la modélothèque — impossible de l'ajouter.`);
+      return;
+    }
     const { data, error } = await supabase
       .from('client_documents')
       .insert([{
@@ -3206,7 +3213,12 @@ const ClientDetailView = ({
       }])
       .select()
       .single();
-    if (!error && data) setAssignedDocs(prev => [...prev, data]);
+    if (error) {
+      console.error('[handleAddAssignedDoc] Erreur insertion client_documents:', error);
+      toast.error("Erreur lors de l'ajout du document : " + error.message);
+      return;
+    }
+    if (data) setAssignedDocs(prev => [...prev, data]);
     setShowAddDocModal(false);
   };
 
