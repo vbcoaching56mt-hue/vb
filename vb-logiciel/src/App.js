@@ -13,7 +13,6 @@ import SetupOrganisationPage from './pages/SetupOrganisation';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
@@ -3938,9 +3937,9 @@ const ClientDetailView = ({
                   <div className="flex items-center gap-2">
                     {needsSignatureRes && (
                       <button
-                        onClick={() => handleGenerateDocx(client, res.titre, false, null, false, 'preview')}
+                        onClick={() => { const previewWin = window.open('', '_blank'); handleGenerateDocx(client, res.titre, false, null, false, 'preview', previewWin); }}
                         className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
-                        title="Générer un aperçu à télécharger, sans l'envoyer"
+                        title="Ouvrir un aperçu dans un nouvel onglet, sans l'envoyer"
                       >
                         Consulter
                       </button>
@@ -3985,9 +3984,9 @@ const ClientDetailView = ({
                         nécessitent une signature ou non (avant : bouton "Générer" seul si le
                         document n'était pas détecté comme "à signer"). */}
                     <button
-                      onClick={() => handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview')}
+                      onClick={() => { const previewWin = window.open('', '_blank'); handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview', previewWin); }}
                       className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
-                      title="Générer un aperçu à télécharger, sans l'envoyer"
+                      title="Ouvrir un aperçu dans un nouvel onglet, sans l'envoyer"
                     >
                       Consulter
                     </button>
@@ -18043,7 +18042,7 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send') => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -18219,20 +18218,27 @@ export default function App() {
         const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
         const finalFileName = `${safeType}_${safeName}_${Date.now()}.pdf`;
 
-        // Mode "Consulter" : aperçu volatile pour vérification avant envoi — toujours téléchargé,
-        // jamais archivé ni visible du client/formateur, aucune ligne créée dans "documents"
-        // (demande du 2026-09-02 : séparer "voir le document" de "l'envoyer réellement").
+        // Mode "Consulter" : aperçu volatile pour vérification avant envoi — ouvert dans un
+        // nouvel onglet du navigateur (jamais téléchargé sur le disque), jamais archivé ni visible
+        // du client/formateur, aucune ligne créée dans "documents" (demande du 2026-09-02, affinée
+        // le 2026-09-02 : la 1ère version téléchargeait systématiquement le fichier, ce n'est plus
+        // le cas — Consulter n'est qu'une prévisualisation à l'écran).
         if (mode === 'preview') {
-          saveAs(filledPdfBlob, finalFileName);
-          toast.success("Aperçu téléchargé — ce document n'a pas été envoyé.", { id: 'gen-doc' });
+          const previewObjectUrl = URL.createObjectURL(filledPdfBlob);
+          if (previewWindow && !previewWindow.closed) {
+            previewWindow.location.href = previewObjectUrl;
+          } else {
+            window.open(previewObjectUrl, '_blank');
+          }
+          setTimeout(() => URL.revokeObjectURL(previewObjectUrl), 5 * 60 * 1000);
+          toast.success("Aperçu ouvert dans un nouvel onglet — ce document n'a pas été envoyé.", { id: 'gen-doc' });
           return;
         }
 
-        // 5. Téléchargement local si applicable
-        const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
-        if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
-          saveAs(filledPdfBlob, finalFileName);
-        }
+        // Le document n'est plus téléchargé automatiquement sur l'ordinateur de l'Admin lors d'un
+        // envoi réel, ni pour le client ni pour le formateur (demande du 2026-09-02) : "Envoyer"
+        // envoie uniquement, sans effet de bord local. Pour obtenir une copie locale, utiliser le
+        // bouton "Consulter" avant l'envoi.
 
         // 6. Upload + insert Supabase (même logique que la branche classique)
         toast.loading('Upload du document…', { id: 'gen-doc' });
@@ -18320,18 +18326,24 @@ export default function App() {
       const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
       const finalFileName = `${safeType}_${safeName}_${Date.now()}.${finalExt}`;
 
-      // Mode "Consulter" : même court-circuit que la branche visuelle ci-dessus.
+      // Mode "Consulter" : même court-circuit que la branche visuelle ci-dessus (aperçu ouvert
+      // dans un nouvel onglet, jamais téléchargé automatiquement).
       if (mode === 'preview') {
-        saveAs(finalBlob, finalFileName);
-        toast.success("Aperçu téléchargé — ce document n'a pas été envoyé.", { id: 'gen-doc' });
+        const previewObjectUrl = URL.createObjectURL(finalBlob);
+        if (previewWindow && !previewWindow.closed) {
+          previewWindow.location.href = previewObjectUrl;
+        } else {
+          window.open(previewObjectUrl, '_blank');
+        }
+        setTimeout(() => URL.revokeObjectURL(previewObjectUrl), 5 * 60 * 1000);
+        toast.success("Aperçu ouvert dans un nouvel onglet — ce document n'a pas été envoyé.", { id: 'gen-doc' });
         return;
       }
 
-      // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
-      const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
-      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
-        saveAs(finalBlob, finalFileName);
-      }
+      // Le document n'est plus téléchargé automatiquement sur l'ordinateur de l'Admin lors d'un
+      // envoi réel, ni pour la lettre de mission ni pour les autres documents, ni pour le client ni
+      // pour le formateur (demande du 2026-09-02) : "Envoyer" envoie uniquement, sans effet de bord
+      // local. Pour obtenir une copie locale, utiliser le bouton "Consulter" avant l'envoi.
 
       // Upload du fichier généré
       toast.loading('Upload du document…', { id: 'gen-doc' });
