@@ -3928,25 +3928,46 @@ const ClientDetailView = ({
               {moduleDocResources.length > 0 && (
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
               )}
-              {moduleDocResources.map(res => (
+              {moduleDocResources.map(res => {
+                // "à signer" détecté via classification/requiresClientSignature/documentType — mêmes
+                // trois signaux que needsSignature ailleurs dans le fichier (ex: renderResourceCard),
+                // avec analyse défensive du JSON (metadata peut arriver en chaîne ou déjà en objet).
+                const resMeta = typeof res.metadata === 'string' && res.metadata.startsWith('{')
+                  ? (() => { try { return JSON.parse(res.metadata); } catch { return {}; } })()
+                  : (res.metadata || {});
+                const needsSignatureRes = resMeta.classification === 'a_signer' || resMeta.requiresClientSignature === true || resMeta.documentType === 'signature';
+                return (
                 <div key={res.id} className="flex items-center justify-between bg-indigo-50/40 rounded-2xl px-4 py-3 border border-indigo-100">
                   <div className="flex items-center gap-3">
                     <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
                     <div>
                       <span className="text-sm font-bold text-gray-700">{res.titre}</span>
-                      {res.metadata?.requiresClientSignature && (
+                      {needsSignatureRes && (
                         <span className="ml-2 text-[9px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleGenerateDocx(client, res.titre)}
-                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                  >
-                    Générer
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {needsSignatureRes && (
+                      <button
+                        onClick={() => handleGenerateDocx(client, res.titre, false, null, false, 'preview')}
+                        className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
+                        title="Générer un aperçu à télécharger, sans l'envoyer"
+                      >
+                        Consulter
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleGenerateDocx(client, res.titre)}
+                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                      title={needsSignatureRes ? 'Générer et envoyer pour signature' : undefined}
+                    >
+                      {needsSignatureRes ? 'Envoyer' : 'Générer'}
+                    </button>
+                  </div>
                 </div>
-              ))}
+                );
+              })}
               {assignedDocs.length > 0 && (
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
               )}
@@ -3972,12 +3993,41 @@ const ClientDetailView = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleGenerateDocx(client, doc.template_titre)}
-                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                    >
-                      Générer
-                    </button>
+                    {(() => {
+                      // Même détection "à signer" que pour les ressources du module ci-dessus,
+                      // à partir de la bibliothèque fusionnée (module_step_resources + documents).
+                      const tpl = allTemplatesForPicker?.[doc.template_titre];
+                      const tplMeta = tpl?.metadata || {};
+                      const needsSignatureDoc = tpl?.classification === 'a_signer' || tplMeta.requiresClientSignature === true || tplMeta.documentType === 'signature';
+                      if (needsSignatureDoc) {
+                        return (
+                          <>
+                            <button
+                              onClick={() => handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview')}
+                              className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
+                              title="Générer un aperçu à télécharger, sans l'envoyer"
+                            >
+                              Consulter
+                            </button>
+                            <button
+                              onClick={() => handleGenerateDocx(client, doc.template_titre)}
+                              className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                              title="Générer et envoyer pour signature"
+                            >
+                              Envoyer
+                            </button>
+                          </>
+                        );
+                      }
+                      return (
+                        <button
+                          onClick={() => handleGenerateDocx(client, doc.template_titre)}
+                          className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                        >
+                          Générer
+                        </button>
+                      );
+                    })()}
                     <button
                       onClick={() => { setScheduleEditDoc(doc); setScheduleEditMode(doc.send_mode || 'immediate'); setScheduleEditDate(doc.scheduled_date || ''); }}
                       className="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 rounded-lg hover:bg-indigo-50"
@@ -18023,7 +18073,7 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send') => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -18190,7 +18240,23 @@ export default function App() {
         });
         const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, _dataOnlyFields, dataToMerge);
 
-        const finalFileName = `${type}_${safeName}_${Date.now()}.pdf`;
+        // Nom de fichier "clé de stockage" : le titre du modèle (`type`) peut contenir des accents,
+        // espaces ou parenthèses (ex: "Pack de démarrage BC ST 14h") — utilisés tels quels, Supabase
+        // Storage refuse la clé ("Invalid key"), ce qui faisait échouer l'upload/l'archivage du
+        // document (le téléchargement local juste au-dessus, lui, fonctionnait quand même — d'où la
+        // confusion : le fichier se téléchargeait mais un message d'erreur s'affichait). On assainit
+        // uniquement la clé de stockage ; le nom affiché dans l'UI (docToInsert.nom) garde les accents.
+        const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
+        const finalFileName = `${safeType}_${safeName}_${Date.now()}.pdf`;
+
+        // Mode "Consulter" : aperçu volatile pour vérification avant envoi — toujours téléchargé,
+        // jamais archivé ni visible du client/formateur, aucune ligne créée dans "documents"
+        // (demande du 2026-09-02 : séparer "voir le document" de "l'envoyer réellement").
+        if (mode === 'preview') {
+          saveAs(filledPdfBlob, finalFileName);
+          toast.success("Aperçu téléchargé — ce document n'a pas été envoyé.", { id: 'gen-doc' });
+          return;
+        }
 
         // 5. Téléchargement local si applicable
         const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
@@ -18279,7 +18345,17 @@ export default function App() {
         }
       }
 
-      const finalFileName = `${type}_${safeName}_${Date.now()}.${finalExt}`;
+      // Même correctif que la branche visuelle ci-dessus : clé de stockage assainie (accents/espaces
+      // interdits par Supabase Storage), nom affiché inchangé.
+      const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
+      const finalFileName = `${safeType}_${safeName}_${Date.now()}.${finalExt}`;
+
+      // Mode "Consulter" : même court-circuit que la branche visuelle ci-dessus.
+      if (mode === 'preview') {
+        saveAs(finalBlob, finalFileName);
+        toast.success("Aperçu téléchargé — ce document n'a pas été envoyé.", { id: 'gen-doc' });
+        return;
+      }
 
       // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
       const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
