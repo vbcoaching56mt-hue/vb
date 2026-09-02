@@ -3890,23 +3890,11 @@ const ClientDetailView = ({
               <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
             <div className="flex items-center gap-2">
-              {handleRegenerateVisualDocs && client.module_id && (
-                <button
-                  onClick={() => handleRegenerateVisualDocs(client.id)}
-                  className="bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all border border-violet-200"
-                  title="Regénère les PDF pré-remplis pour les documents visuels (balises)"
-                >
-                  ↺ Régénérer PDF
-                </button>
-              )}
-              {instantiateDocument && localDocGroups.length > 0 && (
-                <button
-                  onClick={() => setShowSendDocsModal(true)}
-                  className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
-                >
-                  ✉️ Envoyer pour signature
-                </button>
-              )}
+              {/* "Régénérer PDF" et "Envoyer pour signature" retirés du 02/09/2026 : ces deux
+                  boutons ne concernaient pas les "Ajouts personnalisés" (le premier régénère les
+                  documents visuels du module, le second ouvre un envoi par groupe de documents
+                  distinct) et créaient une confusion de doublon avec les boutons Envoyer/Consulter
+                  disponibles sur chaque ligne d'"Ajouts personnalisés" ci-dessous. */}
               <button
                 onClick={() => { setAddDocSendMode('immediate'); setAddDocScheduledDate(''); setShowAddDocModal(true); }}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
@@ -3993,41 +3981,23 @@ const ClientDetailView = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {(() => {
-                      // Même détection "à signer" que pour les ressources du module ci-dessus,
-                      // à partir de la bibliothèque fusionnée (module_step_resources + documents).
-                      const tpl = allTemplatesForPicker?.[doc.template_titre];
-                      const tplMeta = tpl?.metadata || {};
-                      const needsSignatureDoc = tpl?.classification === 'a_signer' || tplMeta.requiresClientSignature === true || tplMeta.documentType === 'signature';
-                      if (needsSignatureDoc) {
-                        return (
-                          <>
-                            <button
-                              onClick={() => handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview')}
-                              className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
-                              title="Générer un aperçu à télécharger, sans l'envoyer"
-                            >
-                              Consulter
-                            </button>
-                            <button
-                              onClick={() => handleGenerateDocx(client, doc.template_titre)}
-                              className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                              title="Générer et envoyer pour signature"
-                            >
-                              Envoyer
-                            </button>
-                          </>
-                        );
-                      }
-                      return (
-                        <button
-                          onClick={() => handleGenerateDocx(client, doc.template_titre)}
-                          className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                        >
-                          Générer
-                        </button>
-                      );
-                    })()}
+                    {/* Mêmes boutons pour tous les documents ajoutés depuis le 02/09/2026, qu'ils
+                        nécessitent une signature ou non (avant : bouton "Générer" seul si le
+                        document n'était pas détecté comme "à signer"). */}
+                    <button
+                      onClick={() => handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview')}
+                      className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
+                      title="Générer un aperçu à télécharger, sans l'envoyer"
+                    >
+                      Consulter
+                    </button>
+                    <button
+                      onClick={() => handleGenerateDocx(client, doc.template_titre)}
+                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                      title="Générer et envoyer"
+                    >
+                      Envoyer
+                    </button>
                     <button
                       onClick={() => { setScheduleEditDoc(doc); setScheduleEditMode(doc.send_mode || 'immediate'); setScheduleEditDate(doc.scheduled_date || ''); }}
                       className="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 rounded-lg hover:bg-indigo-50"
@@ -4558,7 +4528,7 @@ const ClientDetailView = ({
               <div className="text-center py-10 text-gray-400">
                 <p className="text-2xl mb-2">✉️</p>
                 <p className="text-sm italic">Aucun document envoyé pour signature.</p>
-                <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer pour signature" ci-dessus.</p>
+                <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer" sur un document ci-dessus (onglet "Documents de ce client").</p>
               </div>
             )}
           </div>
