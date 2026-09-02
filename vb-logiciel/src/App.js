@@ -3088,12 +3088,16 @@ const ClientDetailView = ({
   React.useEffect(() => {
     const fetchAssignedDocs = async () => {
       setIsLoadingAssigned(true);
-      const [{ data: clientDocs }, { data: moduleResources }] = await Promise.all([
+      const [{ data: clientDocs, error: clientDocsError }, { data: moduleResources }] = await Promise.all([
         supabase.from('client_documents').select('*').eq('client_id', client.id).order('ordre', { ascending: true }),
         client.module_id
           ? supabase.from('module_step_resources').select('*').eq('module_id', client.module_id).eq('type', 'document')
           : Promise.resolve({ data: [] })
       ]);
+      if (clientDocsError) {
+        console.error('[fetchAssignedDocs] Erreur lecture client_documents:', clientDocsError);
+        toast.error('Erreur lors du chargement des documents du client : ' + clientDocsError.message);
+      }
       setAssignedDocs(clientDocs || []);
       setModuleDocResources(moduleResources || []);
       setIsLoadingAssigned(false);
