@@ -560,12 +560,11 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
 /**
- * Convertit un Blob DOCX en Blob PDF via CloudConvert (LibreOffice, pixel-perfect).
- * Passe désormais par la fonction serverless /api/convert/docx-to-pdf : les clés
- * CloudConvert/ConvertAPI ne sont JAMAIS envoyées au navigateur (elles ne sont plus
- * préfixées REACT_APP_, donc plus compilées dans le bundle JS public — cf. audit sécurité,
- * l'ancienne implémentation exposait REACT_APP_CLOUDCONVERT_API_KEY / REACT_APP_CONVERT_API_SECRET
- * en clair à n'importe quel visiteur du site).
+ * Convertit un Blob DOCX en Blob PDF via la fonction serverless /api/convert/docx-to-pdf.
+ * Conversion 100% auto-hébergée côté serveur (mammoth + Chromium headless embarqué, voir
+ * api/_lib/docxToPdf.js) — aucune plateforme externe, aucune clé API tierce à gérer (l'ancienne
+ * intégration CloudConvert a été retirée le 2026-09-02, à la demande explicite de l'organisme de
+ * ne dépendre d'aucun service tiers pour ses documents).
  * Lance une erreur si l'appel échoue (le fallback local convertDocxBlobToPdfLocal prend le relais).
  */
 const convertDocxBlobToPdf = async (docxBlob) => {
@@ -3038,6 +3037,18 @@ const ClientDetailView = ({
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
+  // Envoi programmé des documents "Ajouts personnalisés" (ajouté 2026-09-02) : au lieu de rester
+  // en attente jusqu'à un clic manuel sur "Générer", un document peut être programmé pour être
+  // généré + envoyé automatiquement à une date précise (ex : le jour de démarrage de la formation)
+  // via le cron quotidien /api/automation/process-scheduled-documents.
+  const [addDocSendMode, setAddDocSendMode] = React.useState('immediate');
+  const [addDocScheduledDate, setAddDocScheduledDate] = React.useState('');
+  // État pour la programmation d'un document DÉJÀ ajouté ("Ajouts personnalisés") — permet de
+  // programmer/reprogrammer l'envoi après coup, pas seulement au moment de l'ajout (demande du
+  // 2026-09-02 : "qu'une fois qu'il à été ajouté il puisse le programmé si besoin").
+  const [scheduleEditDoc, setScheduleEditDoc] = React.useState(null); // ligne client_documents en cours d'édition
+  const [scheduleEditMode, setScheduleEditMode] = React.useState('immediate');
+  const [scheduleEditDate, setScheduleEditDate] = React.useState('');
   // Documents du dossier client (ajouté 2026-08-31, généralisé 2026-09-01) : section "Administratif"
   // partagée avec l'espace Formateur (voir handleUploadForClient plus bas dans le fichier) — l'organisme
   // ET le formateur peuvent tous les deux y déposer des documents pour le dossier du client (factures,
@@ -3197,12 +3208,16 @@ const ClientDetailView = ({
     setAssignedDocs(prev => prev.filter(d => d.id !== docId));
   };
 
-  const handleAddAssignedDoc = async (titre, url) => {
+  const handleAddAssignedDoc = async (titre, url, sendMode = 'immediate', scheduledDate = null) => {
     // Avant : une erreur d'insertion était silencieusement ignorée (rien ne s'affichait, aucun message) —
     // on l'affiche maintenant pour pouvoir diagnostiquer précisément ce qui bloque (ex : modèle sans
     // fichier associé, conflit de doublon, règle de sécurité Supabase, etc.).
     if (!url) {
       toast.error(`Le modèle "${titre}" n'a pas de fichier associé dans la modélothèque — impossible de l'ajouter.`);
+      return;
+    }
+    if (sendMode === 'scheduled' && !scheduledDate) {
+      toast.error('Choisissez une date pour programmer l\'envoi de ce document.');
       return;
     }
     const { data, error } = await supabase
@@ -3213,7 +3228,9 @@ const ClientDetailView = ({
         template_url: url,
         destination: 'client',
         ordre: assignedDocs.length,
-        organisation_id: client.organisation_id
+        organisation_id: client.organisation_id,
+        send_mode: sendMode,
+        scheduled_date: sendMode === 'scheduled' ? scheduledDate : null,
       }])
       .select()
       .single();
@@ -3225,6 +3242,62 @@ const ClientDetailView = ({
     if (data) setAssignedDocs(prev => [...prev, data]);
     setShowAddDocModal(false);
   };
+
+  // Programmer/reprogrammer l'envoi d'un document déjà présent dans "Ajouts personnalisés" — sans
+  // repasser par le modal d'ajout. sendMode 'immediate' annule toute programmation (le document
+  // reste dans la liste, à générer manuellement comme avant).
+  const handleUpdateAssignedDocSchedule = async (docId, sendMode, scheduledDate) => {
+    if (sendMode === 'scheduled' && !scheduledDate) {
+      toast.error("Choisissez une date pour programmer l'envoi de ce document.");
+      return;
+    }
+    const { data, error } = await supabase
+      .from('client_documents')
+      .update({
+        send_mode: sendMode,
+        scheduled_date: sendMode === 'scheduled' ? scheduledDate : null,
+        send_error: null,
+      })
+      .eq('id', docId)
+      .select()
+      .single();
+    if (error) {
+      console.error('[handleUpdateAssignedDocSchedule] Erreur mise à jour client_documents:', error);
+      toast.error('Erreur lors de la programmation : ' + error.message);
+      return;
+    }
+    if (data) setAssignedDocs(prev => prev.map(d => d.id === docId ? data : d));
+    toast.success(sendMode === 'scheduled' ? 'Envoi programmé mis à jour.' : 'Le document sera envoyé manuellement.');
+    setScheduleEditDoc(null);
+  };
+
+  // Bibliothèque complète pour le sélecteur "Ajouter un document" — fusionne documentTemplates
+  // (issu de module_step_resources, la source habituelle) avec tous les documents de la table
+  // "documents" qui ne sont pas déjà couverts (user_id null = modèle de bibliothèque, qu'il soit
+  // rangé dans un groupe ou non — mêmes lignes que "Gestion des documents" > Bibliothèque de
+  // modèles / Groupes de documents). Garantit que tout document ajouté par l'administrateur dans
+  // la partie "Documents" apparaisse ici, groupé ou non (demande du 2026-09-02), y compris les cas
+  // historiques jamais synchronisés vers module_step_resources.
+  const allTemplatesForPicker = React.useMemo(() => {
+    const merged = { ...(documentTemplates || {}) };
+    (documents || [])
+      .filter(d => !d.user_id && !d.assigned_formateur_id && d.nom && d.url)
+      .forEach(d => {
+        if (merged[d.nom]) return; // déjà présent via module_step_resources (métadonnées plus complètes)
+        let parsedMeta = {};
+        try { parsedMeta = typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { parsedMeta = {}; }
+        merged[d.nom] = {
+          id: d.id,
+          url: d.url,
+          name: d.nom,
+          destination: (d.visible_formateur && !d.visible_client) ? 'formateur' : 'client',
+          classification: parsedMeta.classification || 'telechargeable',
+          document_group_id: d.group_id || null,
+          metadata: parsedMeta,
+        };
+      });
+    return merged;
+  }, [documentTemplates, documents]);
 
   // Types "dossier client" : catégorie partagée avec l'espace Formateur (handleUploadForClient) — un
   // document affiché ici doit avoir l'un de ces types ET ne pas déjà être un document signé archivé
@@ -3835,7 +3908,7 @@ const ClientDetailView = ({
                 </button>
               )}
               <button
-                onClick={() => setShowAddDocModal(true)}
+                onClick={() => { setAddDocSendMode('immediate'); setAddDocScheduledDate(''); setShowAddDocModal(true); }}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
               >
                 <Plus className="w-4 h-4" /> Ajouter
@@ -3881,7 +3954,22 @@ const ClientDetailView = ({
                 <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
                   <div className="flex items-center gap-3">
                     <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
-                    <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
+                    <div>
+                      <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
+                      {doc.send_mode === 'scheduled' && !doc.sent_at && (
+                        <span
+                          className={`ml-2 text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${doc.send_error ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}
+                          title={doc.send_error ? `Erreur lors du dernier essai : ${doc.send_error}` : "Ce document sera généré et envoyé automatiquement à la date indiquée."}
+                        >
+                          {doc.send_error ? '⚠ Erreur — nouvel essai auto.' : `📅 Programmé le ${doc.scheduled_date ? new Date(doc.scheduled_date + 'T00:00:00').toLocaleDateString('fr-FR') : ''}`}
+                        </span>
+                      )}
+                      {doc.send_mode === 'scheduled' && doc.sent_at && (
+                        <span className="ml-2 text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase" title={`Envoyé automatiquement le ${new Date(doc.sent_at).toLocaleDateString('fr-FR')}`}>
+                          ✓ Envoyé auto.
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -3889,6 +3977,13 @@ const ClientDetailView = ({
                       className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
                     >
                       Générer
+                    </button>
+                    <button
+                      onClick={() => { setScheduleEditDoc(doc); setScheduleEditMode(doc.send_mode || 'immediate'); setScheduleEditDate(doc.scheduled_date || ''); }}
+                      className="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 rounded-lg hover:bg-indigo-50"
+                      title="Programmer l'envoi de ce document"
+                    >
+                      📅
                     </button>
                     <button
                       onClick={() => showDeleteConfirm(
@@ -3911,9 +4006,42 @@ const ClientDetailView = ({
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
                 <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document</h4>
-                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle de la modélothèque à ajouter.</p>
+                <p className="text-xs text-gray-400 mb-3">Choisissez un modèle de la modélothèque à ajouter.</p>
+
+                <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-3 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Envoi</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddDocSendMode('immediate')}
+                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${addDocSendMode === 'immediate' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                    >
+                      Maintenant
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddDocSendMode('scheduled')}
+                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${addDocSendMode === 'scheduled' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                    >
+                      📅 Programmer
+                    </button>
+                  </div>
+                  {addDocSendMode === 'scheduled' && (
+                    <div>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Date d'envoi automatique</label>
+                      <input
+                        type="date"
+                        value={addDocScheduledDate}
+                        onChange={(e) => setAddDocScheduledDate(e.target.value)}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là (ex : jour de démarrage de la formation), sans action de votre part.</p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                  {Object.entries(documentTemplates || {})
+                  {Object.entries(allTemplatesForPicker || {})
                     .filter(([titre]) =>
                       !assignedDocs.some(d => d.template_titre === titre) &&
                       !moduleDocResources.some(r => r.titre === titre)
@@ -3921,7 +4049,7 @@ const ClientDetailView = ({
                     .map(([titre, tpl]) => (
                       <button
                         key={titre}
-                        onClick={() => handleAddAssignedDoc(titre, tpl.url)}
+                        onClick={() => handleAddAssignedDoc(titre, tpl.url, addDocSendMode, addDocScheduledDate)}
                         className="w-full flex items-center gap-3 text-left bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 text-gray-700 font-bold text-sm px-4 py-3 rounded-xl border border-gray-100 hover:border-indigo-200 transition-all"
                       >
                         <FileText className="w-4 h-4 shrink-0 text-indigo-300" />
@@ -3929,7 +4057,7 @@ const ClientDetailView = ({
                       </button>
                     ))
                   }
-                  {Object.entries(documentTemplates || {}).filter(([titre]) =>
+                  {Object.entries(allTemplatesForPicker || {}).filter(([titre]) =>
                     !assignedDocs.some(d => d.template_titre === titre) &&
                     !moduleDocResources.some(r => r.titre === titre)
                   ).length === 0 && (
@@ -3942,6 +4070,59 @@ const ClientDetailView = ({
                 >
                   Annuler
                 </button>
+              </div>
+            </div>
+          )}
+
+          {scheduleEditDoc && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                <h4 className="text-base font-black text-gray-900 mb-1">Programmer l'envoi</h4>
+                <p className="text-xs text-gray-400 mb-3">« {scheduleEditDoc.template_titre} »</p>
+                <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-3 space-y-2">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleEditMode('immediate')}
+                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${scheduleEditMode === 'immediate' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                    >
+                      Manuel (comme avant)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleEditMode('scheduled')}
+                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${scheduleEditMode === 'scheduled' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                    >
+                      📅 Programmer
+                    </button>
+                  </div>
+                  {scheduleEditMode === 'scheduled' && (
+                    <div>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Date d'envoi automatique</label>
+                      <input
+                        type="date"
+                        value={scheduleEditDate}
+                        onChange={(e) => setScheduleEditDate(e.target.value)}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là, sans action de votre part.</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setScheduleEditDoc(null)}
+                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={() => handleUpdateAssignedDocSchedule(scheduleEditDoc.id, scheduleEditMode, scheduleEditDate)}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
+                  >
+                    Enregistrer
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -18032,6 +18213,9 @@ export default function App() {
           signe_par_formateur: false,
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
+          // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
+          // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
+          organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
         };
         if (effectiveIsForFormateur || formateurId) {
           docToInsert.assigned_formateur_id = targetId;
@@ -18118,6 +18302,9 @@ export default function App() {
         signe_par_client: false,
         signe_par_formateur: false,
         visible_admin: true,
+        // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
+        // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
+        organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
       };
 
       if (effectiveIsForFormateur || formateurId) {

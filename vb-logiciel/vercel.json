@@ -1,6 +1,14 @@
 {
   "version": 2,
   "framework": "create-react-app",
+  "functions": {
+    "api/convert/docx-to-pdf.js": {
+      "maxDuration": 60
+    },
+    "api/automation/process-scheduled-documents.js": {
+      "maxDuration": 60
+    }
+  },
   "crons": [
     {
       "path": "/api/automation/process",
@@ -8,6 +16,14 @@
     },
     {
       "path": "/api/automation/process",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/automation/process-scheduled-documents",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/automation/process-scheduled-documents",
       "schedule": "0 7 * * *"
     }
   ]
