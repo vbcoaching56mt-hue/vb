@@ -18274,14 +18274,22 @@ export default function App() {
         if (upErr) throw upErr;
         const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
+        // Le document généré hérite de la classification du modèle source (même détection
+        // "à signer" que partout ailleurs dans ce fichier) — sans ça, type_document restait
+        // toujours "Administratif" et le bouton "Signer" ne s'affichait jamais côté client, quel
+        // que soit l'ordre de signature configuré sur le modèle (bug remonté le 2026-09-02).
+        const _tplMetaForInsert = templateInfo.metadata || {};
+        const needsSignatureForInsert = templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
         const docToInsert = {
           nom: `${type} - ${targetName}`,
-          type_document: 'Administratif',
+          type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
           url: publicUrl,
           signe_par_client: false,
           signe_par_formateur: false,
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
+          metadata: templateInfo.metadata || null,
+          requiresTrainerSignature: _tplMetaForInsert.requiresTrainerSignature === true,
           // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
           // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
           organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
@@ -18380,13 +18388,18 @@ export default function App() {
 
       const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
+      // Même correctif que la branche visuelle ci-dessus.
+      const _tplMetaForInsert = templateInfo.metadata || {};
+      const needsSignatureForInsert = templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
       const docToInsert = {
         nom: `${type} - ${targetName}`,
-        type_document: 'Administratif',
+        type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
         url: publicUrl,
         signe_par_client: false,
         signe_par_formateur: false,
         visible_admin: true,
+        metadata: templateInfo.metadata || null,
+        requiresTrainerSignature: _tplMetaForInsert.requiresTrainerSignature === true,
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
         organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
