@@ -7,6 +7,8 @@
   },
   "dependencies": {
     "pizzip": "^3.2.0",
+    "docxtemplater": "^3.47.2",
+    "pdf-lib": "^1.17.1",
     "resend": "^3.2.0",
     "@supabase/supabase-js": "^2.39.0"
   }

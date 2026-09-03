@@ -7,8 +7,15 @@
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
+  "functions": {
+    "api/automation/process-scheduled-documents.js": {
+      "maxDuration": 280
+    }
+  },
   "crons": [
     { "path": "/api/automation/process", "schedule": "0 6 * * *" },
-    { "path": "/api/automation/process", "schedule": "0 7 * * *" }
+    { "path": "/api/automation/process", "schedule": "0 7 * * *" },
+    { "path": "/api/automation/process-scheduled-documents", "schedule": "0 6 * * *" },
+    { "path": "/api/automation/process-scheduled-documents", "schedule": "0 7 * * *" }
   ]
 }
