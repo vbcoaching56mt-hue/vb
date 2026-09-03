@@ -18566,10 +18566,16 @@ export default function App() {
         }
 
         // Source 2 : metadata.signature_fields (nouveau flow instantiateDocument)
+        // Source 3 (FIX 2026-09-03) : metadata.template_fields / metadata.fields — c'est la clé
+        // réellement alimentée par le bouton "Envoyer" (handleGenerateDocx) et l'envoi programmé ;
+        // sans ce repli, le texte tapé par le formateur n'était jamais gravé dans le PDF transmis
+        // au client ensuite (le client voyait toujours l'emplacement du champ vide, comme au
+        // moment de la génération initiale du document).
         if (!sigFields) {
           const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
-          const metaFields = docMeta.signature_fields || [];
-          const match = metaFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
+          const _candidateFields = (Array.isArray(docMeta.signature_fields) && docMeta.signature_fields.length > 0) ? docMeta.signature_fields
+            : (Array.isArray(docMeta.template_fields) ? docMeta.template_fields : (Array.isArray(docMeta.fields) ? docMeta.fields : []));
+          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
           if (match.length > 0) sigFields = match;
         }
 
