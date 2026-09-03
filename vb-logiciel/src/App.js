@@ -19914,19 +19914,34 @@ export default function App() {
           const sess = viewingSession?.session;
           if (!sess || viewingSession?.mode !== 'sign') return [];
           const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          return (meta.signature_fields || []).filter(f => f.tag === 'checkbox_formateur');
+          // FIX (2026-09-03) : repli sur template_fields/fields quand signature_fields est vide —
+          // voir commentaire détaillé plus bas sur requiresSignature.
+          const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
+          return sessFields.filter(f => f.tag === 'checkbox_formateur');
         })()}
         requiredTextFields={(() => {
           const sess = viewingSession?.session;
           if (!sess || viewingSession?.mode !== 'sign') return [];
           const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          return (meta.signature_fields || []).filter(f => f.tag === 'texte_formateur');
+          const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
+          return sessFields.filter(f => f.tag === 'texte_formateur');
         })()}
         requiresSignature={(() => {
           const sess = viewingSession?.session;
           if (!sess || viewingSession?.mode !== 'sign') return true;
           const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          const sigFields = meta.signature_fields;
+          // BUG URGENT (2026-09-03) : cette visionneuse (accueil formateur → "Documents à signer")
+          // ne lisait QUE metadata.signature_fields — une clé propre à l'ancien flux
+          // instantiateDocument ("Schema B"), jamais alimentée par les documents créés via le
+          // bouton "Envoyer" (handleGenerateDocx) ni par l'envoi programmé, qui stockent leurs
+          // balises dans metadata.template_fields à la place. Résultat : un document avec un champ
+          // "texte formateur"/"case à cocher formateur" bien posé sur le modèle n'affichait ce
+          // champ NULLE PART pour le formateur — seulement le PDF statique + la signature. Repli
+          // ajouté sur template_fields puis fields, même logique que côté client (handleSignSave).
+          const sigFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
           // Pas de métadonnées de balises du tout → document hors du nouveau système visuel,
           // on garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige
           // que si une balise "signature_formateur" a effectivement été posée sur ce document.

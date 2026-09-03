@@ -314,6 +314,13 @@ async function generateAndSendOne(supabase, row) {
     visible_client: true,
     visible_formateur: true,
     organisation_id: client.organisation_id || row.organisation_id,
+    // FIX (2026-09-03) : sans ce champ, la visionneuse de signature (espace formateur ET client)
+    // ne trouve aucune balise (signature/case à cocher/texte libre) sur le document généré — elle
+    // retombe alors sur le PDF statique sans aucun champ interactif à remplir, y compris pour les
+    // signatures. `meta` est déjà le metadata du modèle source (avec son template_fields complet,
+    // balises client ET formateur) — on le recopie tel quel sur le document généré, exactement
+    // comme le fait le bouton "Envoyer" côté client (handleGenerateDocx : metadata: templateInfo.metadata).
+    metadata: JSON.stringify(meta || {}),
   };
   if (client.formateur_id) docToInsert.assigned_formateur_id = client.formateur_id;
   if (templateIdForInsert) docToInsert.template_id = templateIdForInsert;
