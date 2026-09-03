@@ -4496,7 +4496,9 @@ const ClientDetailView = ({
               const clientSigned = doc.signe_par_client;
               const formateurSigned = doc.signe_par_formateur;
               const needsClientSign = doc.requiresClientSignature !== false;
-              const needsFormateurSign = doc.requiresTrainerSignature === true;
+              const _docMetaForBadge = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
+              const _docFieldsForBadge = Array.isArray(_docMetaForBadge.template_fields) ? _docMetaForBadge.template_fields : [];
+              const needsFormateurSign = _docFieldsForBadge.some(f => ['signature_formateur', 'checkbox_formateur', 'texte_formateur'].includes(f.tag)) || doc.requiresTrainerSignature === true;
               const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned);
               return (
               <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
