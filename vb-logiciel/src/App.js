@@ -18289,7 +18289,10 @@ export default function App() {
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
           metadata: templateInfo.metadata || null,
-          requiresTrainerSignature: _tplMetaForInsert.requiresTrainerSignature === true,
+          // requiresTrainerSignature retiré (2026-09-03) : ce n'est pas une colonne de la table
+          // `documents`, seulement un champ du JSONB metadata des templates — l'insérer en top-level
+          // faisait échouer TOUT `handleGenerateDocx` avec "Could not find the 'requiresTrainerSignature'
+          // column of 'documents' in the schema cache". L'info reste disponible via `metadata` ci-dessus.
           // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
           // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
           organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
@@ -18399,7 +18402,7 @@ export default function App() {
         signe_par_formateur: false,
         visible_admin: true,
         metadata: templateInfo.metadata || null,
-        requiresTrainerSignature: _tplMetaForInsert.requiresTrainerSignature === true,
+        // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
         organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
