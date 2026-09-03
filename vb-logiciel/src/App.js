@@ -18557,27 +18557,34 @@ export default function App() {
         const textTag = `texte_${signerType}`;
         let sigFields = null;
 
-        // Source 1 : template_id → charger depuis template_fields DB (ancien flow)
-        if (doc.template_id) {
+        // FIX (2026-09-03, round 2) : priorité désormais metadata AVANT la table technique DB —
+        // voir commentaire détaillé plus haut dans le fichier. Les 3 sources ci-dessous (signature_fields,
+        // template_fields, fields) sont EXACTEMENT celles utilisées par DocumentViewerModal côté formateur
+        // pour construire requiredTextFields/textValues : garder le même ordre garantit que fieldKey(f)
+        // calcule les MÊMES clés ici et là-bas, condition indispensable pour que le texte tapé par le
+        // formateur (indexé par ces clés) soit effectivement retrouvé et gravé dans le PDF.
+        const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
+        const _candidateFields = (Array.isArray(docMeta.signature_fields) && docMeta.signature_fields.length > 0) ? docMeta.signature_fields
+          : (Array.isArray(docMeta.template_fields) && docMeta.template_fields.length > 0) ? docMeta.template_fields
+          : (Array.isArray(docMeta.fields) ? docMeta.fields : []);
+        {
+          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
+          if (match.length > 0) sigFields = match;
+        }
+
+        // Dernier recours : ancien flow instantiateDocument, qui ne portait ses balises que dans la
+        // table technique `template_fields` (pas de copie embarquée en metadata). On ne l'utilise QUE
+        // si aucune des 3 sources metadata ci-dessus n'a rien donné, pour ne jamais mélanger deux jeux
+        // de clés incompatibles au sein d'un même sigFields.
+        if (!sigFields && doc.template_id) {
           const { data: dbFields } = await supabase
             .from('template_fields').select('*')
             .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag, textTag]);
           if (dbFields && dbFields.length > 0) sigFields = dbFields;
         }
 
-        // Source 2 : metadata.signature_fields (nouveau flow instantiateDocument)
-        // Source 3 (FIX 2026-09-03) : metadata.template_fields / metadata.fields — c'est la clé
-        // réellement alimentée par le bouton "Envoyer" (handleGenerateDocx) et l'envoi programmé ;
-        // sans ce repli, le texte tapé par le formateur n'était jamais gravé dans le PDF transmis
-        // au client ensuite (le client voyait toujours l'emplacement du champ vide, comme au
-        // moment de la génération initiale du document).
-        if (!sigFields) {
-          const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
-          const _candidateFields = (Array.isArray(docMeta.signature_fields) && docMeta.signature_fields.length > 0) ? docMeta.signature_fields
-            : (Array.isArray(docMeta.template_fields) ? docMeta.template_fields : (Array.isArray(docMeta.fields) ? docMeta.fields : []));
-          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
-          if (match.length > 0) sigFields = match;
-        }
+        console.debug('[handleSignDocument]', signerType, 'sigFields:', sigFields ? sigFields.length : 0,
+          'textValues keys:', Object.keys(_textValueMap));
 
         if (sigFields && sigFields.length > 0) {
           // Revérifier la dernière version du PDF avant de construire par-dessus : l'AUTRE partie a pu
@@ -18616,6 +18623,7 @@ export default function App() {
                 const k = fieldKey(f);
                 if (_textValueMap[k]) textInputMap[k] = _textValueMap[k];
               });
+              console.debug('[handleSignDocument]', signerType, 'textInputMap filled:', Object.keys(textInputMap).length, '/', sigFields.filter(f => f.tag === textTag).length);
               const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap, textInputMap);
               const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
               const { error: upErr } = await supabase.storage.from('documents')
