@@ -4508,11 +4508,11 @@ const ClientDetailView = ({
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                        {clientSigned ? '✓ Signé' : '⏳ En attente de signature'}
+                        {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
                       </span>
                       {(needsFormateurSign || formateurSigned) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          Formateur: {formateurSigned ? 'Signé ✓' : 'En attente'}
+                          {formateurSigned ? '✓ Signature formateur reçue' : '⏳ En attente de signature formateur'}
                         </span>
                       )}
                     </div>
