@@ -10618,6 +10618,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     return meta.moment === 'fin';
   }), [clientVisibleDocs, allKnownTitles]);
 
+  // Filet de sécurité (ajouté le 2026-09-02) : tout document visible du client qui n'est ni dans
+  // extraDebutDocs ni dans extraFinDocs (ex: envoyé via "Ajouts personnalisés" → "Envoyer", qui ne
+  // renseigne ni metadata.moment ni un type_document reconnu) — sans ce filet, ces documents
+  // comptaient dans le badge "X documents à signer" de la page d'accueil (qui ne filtre que sur
+  // visible_client/signe_par_client) mais n'apparaissaient nulle part sur "Mes Documents".
+  const extraOtherDocs = React.useMemo(() => {
+    const shownIds = new Set([...extraDebutDocs, ...extraFinDocs].map(d => d.id));
+    return clientVisibleDocs.filter(d => {
+      if (shownIds.has(d.id)) return false;
+      if (allKnownTitles.has(d.nom)) return false;
+      if (isBlockedBySigningOrder(d, 'client')) return false;
+      return true;
+    });
+  }, [clientVisibleDocs, extraDebutDocs, extraFinDocs, allKnownTitles]);
+
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
     (documents || []).some(d => String(d.user_id) === String(currentUserId) && d.nom === resource.titre && d.signe_par_client);
@@ -11573,7 +11588,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const debutResources = moduleResources.filter(r => r.moment === 'debut');
   const finResources = moduleResources.filter(r => r.moment === 'fin');
-  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || extraFinDocs.length > 0;
+  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || extraFinDocs.length > 0 || extraOtherDocs.length > 0;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
@@ -11624,6 +11639,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="space-y-3">
             {finResources.map(renderResourceCard)}
             {extraFinDocs.map(renderDocumentCard)}
+          </div>
+        </div>
+      )}
+
+      {extraOtherDocs.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-2 h-6 bg-gray-400 rounded-full"></div>
+            <h2 className="font-bold text-gray-900 text-lg">Documents supplémentaires</h2>
+          </div>
+          <div className="space-y-3">
+            {extraOtherDocs.map(renderDocumentCard)}
           </div>
         </div>
       )}
