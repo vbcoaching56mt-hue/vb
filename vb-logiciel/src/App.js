@@ -15665,14 +15665,16 @@ export default function App() {
       if (session?.user?.email) {
     
         // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
-        const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
+        const { data: userData, error: userDataErr } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
+        if (userDataErr) console.error('[initSession] Erreur lecture profil utilisateur (rôle) :', userDataErr);
         if (userData && userData.role) {
           // preserveTab=true : restauration SILENCIEUSE d'une session déjà ouverte (F5, réouverture
           // d'onglet) — ne pas écraser l'onglet déjà restauré depuis l'URL (voir useState(activeTab)
           // plus haut), sinon un lien profond ou un simple F5 ramènerait toujours à la page d'accueil.
           handleLogin(userData.role, userData.id, userData.organisation_id, true);
         } else {
-          const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
+          const { data: clientData, error: clientDataErr } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
+          if (clientDataErr) console.error('[initSession] Erreur lecture profil client :', clientDataErr);
           if (clientData) {
             handleLogin('client', clientData.id, clientData.organisation_id, true);
           } else {
@@ -19123,7 +19125,10 @@ export default function App() {
       }
     });
     return () => { authListener?.subscription?.unsubscribe(); };
-  }, [userRole]);
+  // FIX (2026-09-03, voir incident "clients/formateurs disparus") : currentOrgId ajouté aux
+  // dépendances en filet de sécurité — si sa valeur se stabilise après userRole, les données sont
+  // rechargées automatiquement au lieu de rester bloquées sur des listes vides (limit(0)).
+  }, [userRole, currentOrgId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
   // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
