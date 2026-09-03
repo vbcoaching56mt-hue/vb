@@ -1378,16 +1378,18 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 )}
                 {requiredTextFields.length > 0 && pageImages.length > 0 && (
                   // Mode interactif actif : les champs se remplissent directement sur le document ci-dessus.
+                  // Purement informatif depuis le 2026-09-03 : ces champs ne bloquent plus la signature,
+                  // il est normal que certains restent vides selon le document.
                   <div className={`mb-4 p-3 rounded-xl border text-sm font-bold ${allRequiredTextFilled ? 'bg-green-50 border-green-200 text-green-700' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
                     {allRequiredTextFilled
                       ? `✅ ${requiredTextFields.length} champ(s) texte rempli(s) sur le document ci-dessus.`
-                      : `✏️ ${requiredTextFields.filter(f => (textFieldValues[fieldKey(f)] || '').trim()).length} / ${requiredTextFields.length} champ(s) texte rempli(s) — complétez tous les champs directement sur le document ci-dessus pour débloquer la signature.`}
+                      : `✏️ ${requiredTextFields.filter(f => (textFieldValues[fieldKey(f)] || '').trim()).length} / ${requiredTextFields.length} champ(s) texte rempli(s) sur le document ci-dessus (facultatif — vous pouvez signer avec des champs vides).`}
                   </div>
                 )}
                 {requiredTextFields.length > 0 && pageImages.length === 0 && (
                   // Repli (rendu page-par-page indisponible) : liste générique, sans contexte visuel.
                   <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                    <p className="text-sm font-bold text-blue-800 mb-3">Avant de signer, complétez le(s) champ(s) texte suivant(s) :</p>
+                    <p className="text-sm font-bold text-blue-800 mb-3">Champ(s) texte du document (facultatif) :</p>
                     {requiredTextFields.map((f, i) => (
                       <div key={fieldKey(f) || i} className="mb-2 last:mb-0">
                         <input
@@ -1399,9 +1401,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         />
                       </div>
                     ))}
-                    {!allRequiredTextFilled && (
-                      <p className="text-xs text-blue-700 mt-2 italic">Tous les champs doivent être remplis pour débloquer la signature.</p>
-                    )}
                   </div>
                 )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
@@ -1500,8 +1499,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                       }
                       onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues);
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || !allRequiredTextFilled || (requiresSignature && !hasSig)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && allRequiredTextFilled && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || (requiresSignature && !hasSig)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
