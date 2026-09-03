@@ -18279,7 +18279,9 @@ export default function App() {
         // toujours "Administratif" et le bouton "Signer" ne s'affichait jamais côté client, quel
         // que soit l'ordre de signature configuré sur le modèle (bug remonté le 2026-09-02).
         const _tplMetaForInsert = templateInfo.metadata || {};
-        const needsSignatureForInsert = templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+        const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
+        const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
+        const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
         const docToInsert = {
           nom: `${type} - ${targetName}`,
           type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
@@ -18393,7 +18395,9 @@ export default function App() {
 
       // Même correctif que la branche visuelle ci-dessus.
       const _tplMetaForInsert = templateInfo.metadata || {};
-      const needsSignatureForInsert = templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+      const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
+      const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
+      const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
       const docToInsert = {
         nom: `${type} - ${targetName}`,
         type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
