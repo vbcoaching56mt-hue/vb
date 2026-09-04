@@ -440,6 +440,32 @@ const isBlockedBySigningOrder = (doc, role) => {
   return false;
 };
 
+// FIX (2026-09-04) : détermine les rôles dont la signature est réellement requise sur CE document —
+// d'après les balises signature_<rôle> posées dessus (même repli que handleSignDocument : metadata
+// .signature_fields → metadata.template_fields → metadata.fields → table technique template_fields
+// en tout dernier recours). Sert à savoir quand un document peut légitimement passer au statut
+// "Signé" (= tous les rôles requis ont signé), plutôt que dès la toute première signature reçue.
+const getRequiredSignerRoles = async (docLike, supabaseClient) => {
+  const meta = parseDocMetadata(docLike);
+  let candidateFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+    : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
+    : (Array.isArray(meta.fields) ? meta.fields : []);
+  if (candidateFields.length === 0 && docLike?.template_id && supabaseClient) {
+    try {
+      const { data: dbFields } = await supabaseClient.from('template_fields').select('*').eq('template_id', docLike.template_id);
+      if (dbFields && dbFields.length > 0) candidateFields = dbFields;
+    } catch (e) { /* non-bloquant */ }
+  }
+  const roles = new Set();
+  candidateFields.forEach(f => { if ((f.tag || '').startsWith('signature_')) { const r = roleFromTag(f.tag); if (r) roles.add(r); } });
+  // Aucune balise signature du tout → document hors du système de balises visuelles (ancien format) :
+  // comportement historique, une seule signature client attendue.
+  if (roles.size === 0) roles.add('client');
+  return Array.from(roles);
+};
+// mergedDoc = document avec les colonnes signe_par_* déjà mises à jour (état APRÈS la signature en cours).
+const isDocFullySigned = (mergedDoc, requiredRoles) => (requiredRoles || []).every(r => !!mergedDoc[SIGNED_FLAG_COLUMN[r]]);
+
 // ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
 // Déclenchée "best-effort" (non bloquante, sans afficher d'erreur) à chaque fois qu'une séance
 // est créée/modifiée (date, heure, lien visio, note...). Le serveur (api/calendar/sync-seance)
@@ -752,11 +778,13 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // Champ à remplir librement par le signataire (client ou formateur, façon Yousign) — la valeur
       // n'est connue qu'au moment de signer, transmise via textInputMap (une même balise texte_client/
       // texte_formateur peut être posée plusieurs fois, d'où l'indexation par fieldKey, pas par tag).
-      const boxW = pageW * 0.28;
-      // Hauteur alignée sur une seule ligne de texte (taille de police + petit interligne),
-      // pas une boîte arbitraire — évite un pavé disproportionné à côté du texte du document.
+      // FIX (2026-09-04) : largeur/hauteur réglables depuis l'éditeur visuel (poignée de
+      // redimensionnable) — repli sur les valeurs historiques (28% de la page / une ligne de texte)
+      // quand le champ n'a pas encore été redimensionné (modèles existants, ou balise placée avant
+      // ce correctif).
+      const boxW = typeof field.width_percent === 'number' ? (field.width_percent / 100) * pageW : pageW * 0.28;
       const fs = field.font_size || 10;
-      const boxH = Math.round(fs * 1.35) + 2;
+      const boxH = typeof field.height_percent === 'number' ? (field.height_percent / 100) * pageH : Math.round(fs * 1.35) + 2;
       // Ancrée à GAUCHE exactement sur le point cliqué dans l'éditeur (bx = cx), plutôt que centrée
       // autour de ce point (bx = cx - boxW/2 comme avant) : le texte tapé commence maintenant pile là
       // où la balise a été posée, ce qui était la source persistante de confusion sur "où le texte va
@@ -765,8 +793,6 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // exactement à ce que produit ce rendu.
       const bx = Math.max(0, cx);
       const by = Math.max(0, cy - boxH / 2);
-      const fieldRole = roleFromTag(field.tag) || 'client';
-      const bc = ROLE_COLOR_RGB[fieldRole];
       const typedValue = textInputMap[fieldKey(field)];
       try {
         if (typedValue) {
@@ -784,14 +810,10 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
             maxWidth: boxW - 6,
           });
           page.drawLine({ start: { x: tx, y: by }, end: { x: tx + textW, y: by }, thickness: 0.6, color: rgb(0.55, 0.55, 0.55), opacity: 0.8 });
-        } else {
-          // Pas encore rempli → cadre + libellé placeholder (police réduite pour tenir sur une ligne fine)
-          const labelSize = Math.min(7, fs - 2);
-          page.drawRectangle({ x: bx, y: by, width: boxW, height: boxH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-          page.drawText(`Texte libre ${ROLE_LABEL[fieldRole]}`, {
-            x: bx + 3, y: by + boxH / 2 - labelSize / 2.6, size: labelSize, font, color: bc, opacity: 0.7,
-          });
         }
+        // Pas encore rempli (2026-09-03, suite) : on ne dessine plus rien du tout — plus de cadre ni de
+        // libellé "Texte libre ..." gravé dans le PDF final. Champ optionnel non rempli = totalement
+        // invisible pour le lecteur du document (retour utilisateur explicite).
       } catch (e) {
         console.warn('[overlayFieldsOnPdf] Erreur champ texte libre:', e.message);
       }
@@ -927,7 +949,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   useEffect(() => {
     let cancelled = false;
     setPageImages([]);
-    if (!isOpen || mode !== 'sign' || (requiredCheckboxes.length === 0 && requiredTextFields.length === 0) || !blobUrl) return;
+    // FIX (2026-09-03, suite — bug mobile "une seule page visible en signature") : on ne restreint
+    // plus ce rendu aux documents ayant des cases/textes interactifs requis — voir commentaire
+    // détaillé au-dessus de ce useEffect.
+    if (!isOpen || mode !== 'sign' || !blobUrl) return;
     (async () => {
       setPageImagesLoading(true);
       try {
@@ -1241,7 +1266,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         >
           {/* PDF Zone — mode interactif (cases directement sur le document) si des cases sont
               requises ET que le rendu page-par-page a réussi ; sinon le lecteur PDF classique. */}
-          {mode === 'sign' && (requiredCheckboxes.length > 0 || requiredTextFields.length > 0) && pageImages.length > 0 ? (
+          {mode === 'sign' && pageImages.length > 0 ? (
             <div className="w-full space-y-3">
               {pageImages.map((pg, pi) => {
                 const pageChecks = requiredCheckboxes.filter(f => (f.page || 1) === pi + 1);
@@ -1285,7 +1310,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                           // Ancrée à GAUCHE (translate(0%, -50%), pas -50%/-50%) : le point posé dans
                           // l'éditeur de modèle est désormais le coin gauche exact où le texte démarre, à
                           // l'écran comme dans le PDF final — même correctif que overlayFieldsOnPdf.
-                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(0%, -50%)', minWidth: '10%', maxWidth: '26%', fontSize: 12 }}
+                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(0%, -50%)', ...(typeof f.width_percent === 'number' ? { width: `${f.width_percent}%` } : { minWidth: '10%', maxWidth: '26%' }), fontSize: 12 }}
                           className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
                         />
                       );
@@ -1296,7 +1321,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             </div>
           ) : (
             <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
-              {mode === 'sign' && (requiredCheckboxes.length > 0 || requiredTextFields.length > 0) && pageImagesLoading ? (
+              {mode === 'sign' && pageImagesLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
                   <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
                   <p className="text-sm font-medium">Préparation des champs interactifs sur le document…</p>
@@ -3301,7 +3326,7 @@ const ClientDetailView = ({
   // document affiché ici doit avoir l'un de ces types ET ne pas déjà être un document signé archivé
   // (qui, lui, s'affiche dans l'onglet "Documents Signés").
   const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
-  const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé' || d.signe_par_client);
+  const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
 
   const handleUploadAdminDoc = async () => {
     if (!adminDocFile || !adminDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
@@ -3634,7 +3659,7 @@ const ClientDetailView = ({
 
             {/* Documents administratifs signés */}
             {documents
-              .filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client))
+              .filter(d => d.user_id === client.id && (d.statut === 'Signé'))
               .map(doc => (
                 <div key={doc.id} className="flex items-center justify-between p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100 hover:border-emerald-300 transition-all group">
                   <div className="flex items-center gap-4">
@@ -3666,7 +3691,7 @@ const ClientDetailView = ({
               ))}
 
             {(sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 &&
-              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client)).length === 0) && (
+              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé')).length === 0) && (
               <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                 <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
               </div>
@@ -6084,7 +6109,7 @@ const FormateurView = ({
                         const adminDocs = documents.filter(d =>
                           d.user_id === client.id &&
                           DOSSIER_DOC_TYPES.includes(d.type_document) &&
-                          !(d.statut === 'Signé' || d.signe_par_client)
+                          !(d.statut === 'Signé')
                         );
                         
                         if (adminDocs.length === 0) return (
@@ -6753,6 +6778,10 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [fields, setFields] = React.useState([]); // [{id, tag, page, xPct, yPct}]
   const [dragTag, setDragTag] = React.useState(null);
   const [draggingFieldId, setDraggingFieldId] = React.useState(null); // repositionnement d'un champ existant
+  // FIX (2026-09-04) : redimensionnement d'une case "texte libre" (largeur/hauteur, en % de la page,
+  // comme x/y) via une poignée glissable — voir le rendu isTxt plus bas et l'effet ci-dessous.
+  const [resizingFieldId, setResizingFieldId] = React.useState(null);
+  const resizeStartRef = React.useRef(null);
   const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
   const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
   const [templateName, setTemplateName] = React.useState('');
@@ -6926,6 +6955,26 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     }
   };
 
+  // FIX (2026-09-04) : suit la souris pendant le glissement de la poignée de redimensionnement
+  // (mousedown posé directement sur la poignée, voir le rendu isTxt plus bas) et met à jour
+  // width_percent/height_percent du champ en cours de redimensionnement en temps réel.
+  React.useEffect(() => {
+    if (!resizingFieldId) return;
+    const onMove = (e) => {
+      const st = resizeStartRef.current;
+      if (!st || st.fieldId !== resizingFieldId) return;
+      const dxPct = ((e.clientX - st.startClientX) / st.rectWidth) * 100;
+      const dyPct = ((e.clientY - st.startClientY) / st.rectHeight) * 100;
+      const newWidth = Math.max(6, Math.min(90, st.startWidthPct + dxPct));
+      const newHeight = Math.max(1.5, Math.min(40, st.startHeightPct + dyPct));
+      setFields(prev => prev.map(f => f.id === st.fieldId ? { ...f, width_percent: newWidth, height_percent: newHeight } : f));
+    };
+    const onUp = () => { setResizingFieldId(null); resizeStartRef.current = null; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [resizingFieldId]);
+
   const handlePageDrop = (e) => {
     e.preventDefault();
     if (!pageRef.current) return;
@@ -6938,13 +6987,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct } : f));
       setDraggingFieldId(null);
     } else if (dragTag) {
-      // Nouveau champ depuis la sidebar
+      // Nouveau champ depuis la sidebar — taille par défaut posée sur les champs texte libre
+      // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas).
       setFields(prev => [...prev, {
         id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         tag: dragTag,
         page: currentPage + 1,
         xPct,
         yPct,
+        ...(isTextInputTag(dragTag) ? { width_percent: 28, height_percent: 3.5 } : {}),
       }]);
       setDragTag(null);
     }
@@ -6978,6 +7029,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         tag: clickPlaceTag.tag,
         page: currentPage + 1,
         xPct, yPct,
+        ...(isTextInputTag(clickPlaceTag.tag) ? { width_percent: 28, height_percent: 3.5 } : {}),
       }]);
     }
     setClickPlaceTag(null);
@@ -7048,6 +7100,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       const tplFields = fields.map(f => ({
         template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
         x_percent: f.xPct, y_percent: f.yPct,
+        width_percent: f.width_percent, height_percent: f.height_percent,
         field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
         font_size: 11,
       }));
@@ -7307,6 +7360,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
+                          // FIX (2026-09-04) : la case "texte libre" occupe désormais sa taille réelle
+                          // (width_percent/height_percent, redimensionnable via la poignée) au lieu d'un
+                          // petit repère à taille fixe — les autres types de balises gardent leur taille
+                          // intrinsèque (pas de width/height forcée).
+                          ...(isTxt ? { width: `${field.width_percent || 28}%`, height: `${field.height_percent || 3.5}%` } : {}),
                           // Signature/case = centrées sur le point ; texte libre = point cliqué = coin
                           // gauche exact où le texte commencera (ancrage aligné sur overlayFieldsOnPdf,
                           // corrigé le 2026-07-24 pour ne plus centrer la balise autour du point) ; balise
@@ -7354,26 +7412,53 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             </button>
                           </div>
                         ) : isTxt ? (
-                          // Champ à remplir librement par le signataire. Ancre précise : le petit repère
-                          // (trait vertical) marque le point EXACT posé — c'est là, et pas ailleurs, que
-                          // le texte du signataire commencera à s'écrire (ancrage aligné sur
-                          // overlayFieldsOnPdf, corrigé le 2026-07-24). L'étiquette est décalée à droite
-                          // du repère pour ne pas laisser croire que toute la largeur de l'étiquette est
-                          // la zone de saisie.
-                          <div className="group/txt relative flex items-center select-none">
-                            <div className={`w-0.5 self-stretch rounded-full shrink-0 ${field.tag === 'texte_client' ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ minHeight: 18 }} />
-                            <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-lg ring-2 ring-white whitespace-nowrap ${field.tag === 'texte_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`}>
-                              <span className="text-sm select-none">📝</span>
-                              <p className={`text-[10px] font-black ${field.tag === 'texte_client' ? 'text-blue-700' : 'text-orange-700'}`}>
-                                {field.tag === 'texte_client' ? 'Texte client' : 'Texte formateur'}
-                              </p>
-                              <button
-                                onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                                className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
-                              >
-                                <X size={8} />
-                              </button>
-                            </div>
+                          // FIX (2026-09-04) : la case est désormais affichée à sa taille RÉELLE
+                          // (width_percent/height_percent du champ, en % de la page — comme x/y) et
+                          // peut être étirée directement depuis la poignée en bas à droite, au lieu
+                          // d'un petit repère à taille fixe. Le point posé reste le coin haut-gauche
+                          // de la case (ancrage identique à overlayFieldsOnPdf).
+                          <div
+                            className={`relative w-full h-full min-w-[60px] min-h-[20px] rounded-lg border-2 shadow-lg ring-2 ring-white flex items-start gap-1 px-1.5 py-1 select-none overflow-hidden ${
+                              roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50/90 border-emerald-400' : field.tag === 'texte_formateur' ? 'bg-orange-50/90 border-orange-400' : 'bg-blue-50/90 border-blue-400'
+                            }`}
+                          >
+                            <span className="text-xs select-none shrink-0">📝</span>
+                            <p className={`text-[9px] font-black leading-tight truncate ${
+                              roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : field.tag === 'texte_formateur' ? 'text-orange-700' : 'text-blue-700'
+                            }`}>
+                              Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
+                            </p>
+                            <button
+                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
+                              className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                            >
+                              <X size={8} />
+                            </button>
+                            {/* Poignée de redimensionnement — glisser pour étirer largeur/hauteur */}
+                            <div
+                              draggable={false}
+                              onDragStart={e => e.preventDefault()}
+                              onClick={e => e.stopPropagation()}
+                              onMouseDown={e => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                if (!pageRef.current) return;
+                                const rect = pageRef.current.getBoundingClientRect();
+                                resizeStartRef.current = {
+                                  fieldId: field.id,
+                                  startClientX: e.clientX,
+                                  startClientY: e.clientY,
+                                  startWidthPct: field.width_percent || 28,
+                                  startHeightPct: field.height_percent || 3.5,
+                                  rectWidth: rect.width,
+                                  rectHeight: rect.height,
+                                };
+                                setResizingFieldId(field.id);
+                              }}
+                              title="Glisser pour redimensionner la case"
+                              className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-sm bg-white border-2 border-gray-400 hover:border-violet-600 hover:bg-violet-50 cursor-nwse-resize shadow-sm"
+                              style={{ zIndex: 20 }}
+                            />
                           </div>
                         ) : (
                           <div className="group relative inline-flex select-none">
@@ -11199,6 +11284,20 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
     // ── Étape 4 : Enregistrer en base ─────────────────────────────────────
     let dbError;
+    // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis (pas seulement le
+    // client) ont signé — voir getRequiredSignerRoles/isDocFullySigned. Repli sur les balises du
+    // template source (_rMeta.template_fields, déjà résolu plus haut) si le document généré n'a pas
+    // encore lui-même de balises exploitables.
+    const _metaForRoles = parseDocMetadata(existingGeneratedDoc);
+    const _hasOwnFields = (Array.isArray(_metaForRoles.signature_fields) && _metaForRoles.signature_fields.length > 0)
+      || (Array.isArray(_metaForRoles.template_fields) && _metaForRoles.template_fields.length > 0)
+      || (Array.isArray(_metaForRoles.fields) && _metaForRoles.fields.length > 0);
+    const _docForRoles = _hasOwnFields
+      ? { metadata: _metaForRoles, template_id: existingGeneratedDoc?.template_id || visualTemplateId }
+      : { metadata: { template_fields: _rMeta.template_fields || [] }, template_id: existingGeneratedDoc?.template_id || visualTemplateId };
+    const _requiredRoles = await getRequiredSignerRoles(_docForRoles, supabase);
+    const _statutAfterClientSign = isDocFullySigned({ ...(existingGeneratedDoc || {}), signe_par_client: true }, _requiredRoles)
+      ? 'Signé' : (existingGeneratedDoc?.statut || 'En attente de signature');
     const signatureData = {
       url: signedPdfUrl,
       // Toujours refléter aussi 'signed_pdf_url' (bug racine identifié le 2026-07-24) : cette colonne sert
@@ -11210,7 +11309,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       signe_par_client: true,
       date_signature_client: new Date().toISOString(),
       signature_client: signatureDataUrl,
-      statut: 'Signé',
+      statut: _statutAfterClientSign,
       visible_formateur: true,
       visible_admin: true,
     };
@@ -17763,6 +17862,10 @@ export default function App() {
         page: f.page || 1,
         x_percent: parseFloat(f.xPct.toFixed(4)),
         y_percent: parseFloat(f.yPct.toFixed(4)),
+        // FIX (2026-09-04) : largeur/hauteur de la case "texte libre" (en % de la page), réglées par
+        // l'admin via la poignée de redimensionnement — undefined pour les autres types de balise.
+        ...(typeof f.width_percent === 'number' ? { width_percent: parseFloat(f.width_percent.toFixed(4)) } : {}),
+        ...(typeof f.height_percent === 'number' ? { height_percent: parseFloat(f.height_percent.toFixed(4)) } : {}),
         field_type: (f.tag || '').startsWith('signature_') ? 'signature' : (f.tag || '').startsWith('checkbox_') ? 'checkbox' : (f.tag || '').startsWith('texte_') ? 'text_input' : 'text',
         font_size: 11,
       }));
@@ -18640,12 +18743,18 @@ export default function App() {
       }
     }
 
+    // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis ont signé (pas
+    // seulement CE signataire) — voir getRequiredSignerRoles/isDocFullySigned.
+    const _requiredRolesForDoc = await getRequiredSignerRoles(doc, supabase);
+    const _mergedDocState = { ...doc, ...updateColumn };
+    const _finalStatut = isDocFullySigned(_mergedDocState, _requiredRolesForDoc) ? 'Signé' : doc.statut;
+
     const { error } = await supabase
       .from('documents')
       .update({
         ...updateColumn,
         ...signedPdfUpdate,
-        statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur || updateColumn.signe_par_organisme) ? 'Signé' : doc.statut,
+        statut: _finalStatut,
         visible_admin: true,
       })
       .eq('id', docId);
@@ -18804,10 +18913,14 @@ export default function App() {
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
+      // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis ont signé.
+      const _requiredRolesLegacy = await getRequiredSignerRoles(doc, supabase);
+      const _statutAfterFormateurSign = isDocFullySigned({ ...doc, signe_par_formateur: true }, _requiredRolesLegacy)
+        ? 'Signé' : (doc.statut || 'En attente de signature');
       const updateData = {
         signe_par_formateur: true,
         date_signature_formateur: now.toISOString(),
-        statut: 'Signé',
+        statut: _statutAfterFormateurSign,
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
         ...(documentChoice ? { document_choice: documentChoice } : {}),
