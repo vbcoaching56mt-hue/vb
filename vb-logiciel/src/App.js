@@ -3110,6 +3110,10 @@ const ClientDetailView = ({
     montant_prestation: client.montant_prestation || ''
   });
 
+  // FIX (2026-09-04) : remonte en haut de page à l'ouverture de la fiche client — sans ça, la
+  // page s'ouvrait à la position de défilement laissée par la liste précédente.
+  React.useEffect(() => { window.scrollTo(0, 0); }, []);
+
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
       const { data, error } = await supabase.from('clients').select('*').eq('id', client.id).single();
@@ -4759,6 +4763,9 @@ const FormateurDetailView = ({
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [docToDelete, setDocToDelete] = React.useState(null);
 
+  // FIX (2026-09-04) : remonte en haut de page à l'ouverture de la fiche formateur — même correctif
+  // que ClientDetailView (voir commentaire là-bas).
+  React.useEffect(() => { window.scrollTo(0, 0); }, []);
   React.useEffect(() => { fetchDocuments(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteDoc = async () => {
@@ -4788,7 +4795,10 @@ const FormateurDetailView = ({
     !formateur.adresse_session || formateur.adresse_session === (formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '')
   );
 
-  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id) : [];
+  // FIX (2026-09-04) : exclut les documents des CLIENTS de ce formateur (ils ont un user_id, jamais
+  // les documents personnels du formateur — voir handleGenerateDocx) — cette section est réservée à
+  // ses propres documents administratifs (contrat, NDA...), pas à ceux de ses clients.
+  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id) : [];
 
   const handleSave = async () => {
     setIsSaving(true);
