@@ -803,11 +803,22 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           // dans cette zone, ce qui était source de confusion (retour utilisateur du 2026-07-24).
           const textStr = String(typedValue);
           const tx = bx + 3;
-          const textW = Math.min(font.widthOfTextAtSize(textStr, fs), boxW - 6);
-          page.drawText(textStr, {
+          const maxTextW = Math.max(4, boxW - 6);
+          // Tronque caractère par caractère (avec ellipse) tant que le texte dépasse la largeur
+          // disponible — garantit qu'il ne déborde jamais de la case, y compris pour un texte sans
+          // le moindre espace (aucun point de coupure possible pour un retour à la ligne classique).
+          let displayStr = textStr;
+          if (font.widthOfTextAtSize(displayStr, fs) > maxTextW) {
+            let truncated = displayStr;
+            while (truncated.length > 0 && font.widthOfTextAtSize(truncated + '…', fs) > maxTextW) {
+              truncated = truncated.slice(0, -1);
+            }
+            displayStr = truncated.length > 0 ? truncated + '…' : '…';
+          }
+          const textW = font.widthOfTextAtSize(displayStr, fs);
+          page.drawText(displayStr, {
             x: tx, y: by + boxH / 2 - fs / 3,
             size: fs, font, color: rgb(0.1, 0.1, 0.1),
-            maxWidth: boxW - 6,
           });
           page.drawLine({ start: { x: tx, y: by }, end: { x: tx + textW, y: by }, thickness: 0.6, color: rgb(0.55, 0.55, 0.55), opacity: 0.8 });
         }
