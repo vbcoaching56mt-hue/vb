@@ -3110,9 +3110,15 @@ const ClientDetailView = ({
     montant_prestation: client.montant_prestation || ''
   });
 
-  // FIX (2026-09-04) : remonte en haut de page à l'ouverture de la fiche client — sans ça, la
-  // page s'ouvrait à la position de défilement laissée par la liste précédente.
-  React.useEffect(() => { window.scrollTo(0, 0); }, []);
+  // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche client. Le vrai
+  // conteneur défilant de l'appli est le <main overflow-y-auto> qui enveloppe tout le contenu des
+  // onglets (la <nav> latérale, elle, est fixe) — window.scrollTo() était donc un no-op. On cible
+  // directement ce <main> (repli sur window par sécurité s'il n'est pas trouvé).
+  React.useEffect(() => {
+    const mainEl = document.querySelector('main');
+    if (mainEl) mainEl.scrollTo(0, 0);
+    window.scrollTo(0, 0);
+  }, []);
 
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
@@ -4763,9 +4769,14 @@ const FormateurDetailView = ({
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [docToDelete, setDocToDelete] = React.useState(null);
 
-  // FIX (2026-09-04) : remonte en haut de page à l'ouverture de la fiche formateur — même correctif
-  // que ClientDetailView (voir commentaire là-bas).
-  React.useEffect(() => { window.scrollTo(0, 0); }, []);
+  // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche formateur — même
+  // correctif que ClientDetailView (voir commentaire là-bas) : on cible le vrai conteneur défilant
+  // (<main overflow-y-auto>), pas window.
+  React.useEffect(() => {
+    const mainEl = document.querySelector('main');
+    if (mainEl) mainEl.scrollTo(0, 0);
+    window.scrollTo(0, 0);
+  }, []);
   React.useEffect(() => { fetchDocuments(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteDoc = async () => {
