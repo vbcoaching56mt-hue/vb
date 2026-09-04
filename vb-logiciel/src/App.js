@@ -466,6 +466,13 @@ const getRequiredSignerRoles = async (docLike, supabaseClient) => {
 // mergedDoc = document avec les colonnes signe_par_* déjà mises à jour (état APRÈS la signature en cours).
 const isDocFullySigned = (mergedDoc, requiredRoles) => (requiredRoles || []).every(r => !!mergedDoc[SIGNED_FLAG_COLUMN[r]]);
 
+// Types "dossier" (documents administratifs simples, ajoutés librement, SANS signature) — catégorie
+// PARTAGÉE entre le dossier d'un client (ClientDetailView) et celui d'un formateur (FormateurDetailView
+// côté admin / FormateurView côté formateur) : un document affiché dans un "dossier" doit avoir l'un de
+// ces types ET ne pas déjà être un document signé archivé (qui, lui, s'affiche dans "Documents Signés").
+const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
+const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
+
 // ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
 // Déclenchée "best-effort" (non bloquante, sans afficher d'erreur) à chaque fois qu'une séance
 // est créée/modifiée (date, heure, lien visio, note...). Le serveur (api/calendar/sync-seance)
@@ -3343,11 +3350,8 @@ const ClientDetailView = ({
     return merged;
   }, [documentTemplates, documents]);
 
-  // Types "dossier client" : catégorie partagée avec l'espace Formateur (handleUploadForClient) — un
-  // document affiché ici doit avoir l'un de ces types ET ne pas déjà être un document signé archivé
-  // (qui, lui, s'affiche dans l'onglet "Documents Signés").
-  const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
-  const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
+  // DOSSIER_DOC_TYPES / isDossierDoc sont désormais définis au niveau module (voir plus haut dans le
+  // fichier) — partagés avec FormateurDetailView et FormateurView.
 
   const handleUploadAdminDoc = async () => {
     if (!adminDocFile || !adminDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
@@ -4768,6 +4772,13 @@ const FormateurDetailView = ({
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [docToDelete, setDocToDelete] = React.useState(null);
+  // NOUVEAU (2026-09-04) : "Documents du dossier formateur" — ajout libre d'un document par l'admin,
+  // sans passer par un modèle de signature (ex: carte d'identité, diplôme scanné, attestation...).
+  const [showFormateurDocModal, setShowFormateurDocModal] = React.useState(false);
+  const [formateurDocFile, setFormateurDocFile] = React.useState(null);
+  const [formateurDocName, setFormateurDocName] = React.useState('');
+  const [formateurDocType, setFormateurDocType] = React.useState('Administratif');
+  const [isUploadingFormateurDoc, setIsUploadingFormateurDoc] = React.useState(false);
 
   // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche formateur — même
   // correctif que ClientDetailView (voir commentaire là-bas) : on cible le vrai conteneur défilant
@@ -4791,6 +4802,47 @@ const FormateurDetailView = ({
     await fetchDocuments();
     setDocToDelete(null);
   };
+
+  // NOUVEAU (2026-09-04) : ajoute un document librement au dossier de CE formateur, sans signature —
+  // même logique que handleUploadAdminDoc (ClientDetailView), adaptée à assigned_formateur_id.
+  const handleUploadFormateurDoc = async () => {
+    if (!formateurDocFile || !formateurDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
+    setIsUploadingFormateurDoc(true);
+    try {
+      const ext = formateurDocFile.name.split('.').pop();
+      const safeN = formateurDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const fileName = `dossier_formateur/${formateur.id}/${Date.now()}_${safeN}.${ext}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, formateurDocFile);
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+
+      // user_id volontairement absent : ce document n'est lié à aucun client, seulement au formateur
+      // lui-même (assigned_formateur_id) — c'est ce qui le distingue des documents de dossier client.
+      const { error: insertError } = await supabase.from('documents').insert([{
+        nom: formateurDocName.trim(),
+        type_document: formateurDocType,
+        url: publicUrl,
+        assigned_formateur_id: formateur.id,
+        organisation_id: formateur.organisation_id || currentOrgId,
+        visible_client: false,
+        visible_formateur: true,
+        signe_par_client: false,
+        signe_par_formateur: false,
+      }]);
+      if (insertError) throw insertError;
+
+      toast.success('Document ajouté au dossier du formateur.');
+      setShowFormateurDocModal(false);
+      setFormateurDocFile(null);
+      setFormateurDocName('');
+      setFormateurDocType('Administratif');
+      await fetchDocuments();
+    } catch (e) {
+      console.error('Erreur upload document dossier formateur:', e);
+      toast.error("Erreur lors de l'ajout : " + e.message);
+    }
+    setIsUploadingFormateurDoc(false);
+  };
   const [legalInfo, setLegalInfo] = React.useState({
     nom: formateur.nom || '',
     formateur_siret: formateur.formateur_siret || formateur.siret || '',
@@ -4809,7 +4861,7 @@ const FormateurDetailView = ({
   // FIX (2026-09-04) : exclut les documents des CLIENTS de ce formateur (ils ont un user_id, jamais
   // les documents personnels du formateur — voir handleGenerateDocx) — cette section est réservée à
   // ses propres documents administratifs (contrat, NDA...), pas à ceux de ses clients.
-  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id) : [];
+  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && !isDossierDoc(d)) : [];
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -4988,7 +5040,16 @@ const FormateurDetailView = ({
             {/* ── Bibliothèque de modèles disponibles ── */}
             {(() => {
               // Filtre : seuls les modèles avec destination='formateur' apparaissent dans la fiche formateur
-              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
+              // FIX (2026-09-04) : la destination est stockée en chaîne "role1,role2..." dès qu'il y a
+              // plusieurs destinataires (ex: "formateur,organisme" pour un contrat signé par les deux) —
+              // une égalité stricte avec 'formateur' ratait donc tout modèle combinant formateur +
+              // organisme. On vérifie maintenant l'appartenance du rôle 'formateur', en excluant les
+              // modèles qui concernent aussi le client (ceux-là relèvent du dossier client, pas de
+              // cette section réservée aux documents formateur ↔ organisme).
+              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => {
+                const tplRoles = parseDestinationRoles(tpl.destination);
+                return tplRoles.includes('formateur') && !tplRoles.includes('client');
+              });
               return (
                 <div>
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Envoyer un document pour signature</h4>
@@ -5089,6 +5150,125 @@ const FormateurDetailView = ({
                 itemName={docToDelete?.nom || 'ce document'}
                 title="Supprimer ce document ?"
               />
+            </div>
+
+            {/* ── NOUVEAU (2026-09-04) : Documents du dossier formateur (ajout libre, sans signature) ── */}
+            <div className="space-y-3 pt-2 border-t border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Documents du dossier formateur</h4>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Pièces administratives archivées sans demande de signature (assurance, diplôme...).</p>
+                </div>
+                <button
+                  onClick={() => setShowFormateurDocModal(true)}
+                  className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Ajouter un document
+                </button>
+              </div>
+              {documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && isDossierDoc(d)).length === 0 ? (
+                <p className="text-sm text-gray-400 italic">Aucun document dans le dossier de ce formateur.</p>
+              ) : (
+                <div className="space-y-2">
+                  {documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && isDossierDoc(d)).map(doc => (
+                    <div key={doc.id} className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100 group">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-4 h-4 text-violet-500 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => openSecureStorageFile(doc.url)}
+                          className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
+                        >
+                          Ouvrir
+                        </button>
+                        <button
+                          onClick={() => handleDownloadNamedFile(doc)}
+                          className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
+                          title="Télécharger sous le nom indiqué"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDocToDelete(doc)}
+                          className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                          title="Supprimer ce document"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {showFormateurDocModal && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                    <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document au dossier</h4>
+                    <p className="text-xs text-gray-400 mb-4">Ce fichier sera archivé dans le dossier administratif de {formateur.nom || 'ce formateur'}, sans demande de signature.</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
+                        <input
+                          type="file"
+                          onChange={(e) => {
+                            const f = e.target.files[0] || null;
+                            setFormateurDocFile(f);
+                            if (f && !formateurDocName.trim()) {
+                              setFormateurDocName(f.name.replace(/\.[^/.]+$/, ''));
+                            }
+                          }}
+                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
+                        <input
+                          type="text"
+                          value={formateurDocName}
+                          onChange={(e) => setFormateurDocName(e.target.value)}
+                          placeholder="Ex : Attestation d'assurance RCP"
+                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
+                        <select
+                          value={formateurDocType}
+                          onChange={(e) => setFormateurDocType(e.target.value)}
+                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                        >
+                          <option value="Administratif">Administratif</option>
+                          <option value="Contrat">Contrat</option>
+                          <option value="Mission">Mission</option>
+                          <option value="Pièce justificative">Pièce justificative</option>
+                          <option value="Autre">Autre</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-5">
+                      <button
+                        onClick={() => { setShowFormateurDocModal(false); setFormateurDocFile(null); setFormateurDocName(''); setFormateurDocType('Administratif'); }}
+                        className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        onClick={handleUploadFormateurDoc}
+                        disabled={isUploadingFormateurDoc || !formateurDocFile || !formateurDocName.trim()}
+                        className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
+                      >
+                        {isUploadingFormateurDoc ? 'Envoi...' : 'Ajouter au dossier'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -5826,6 +6006,14 @@ const FormateurView = ({
   const [clientDocFile, setClientDocFile] = React.useState(null);
   const [clientDocName, setClientDocName] = React.useState('');
   const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
+  // NOUVEAU (2026-09-04) : "Mon dossier administratif" — le formateur ajoute lui-même un document qui
+  // le concerne personnellement (assurance, diplôme...), en lien avec l'organisme, sans passer par le
+  // dossier d'un client (jusqu'ici il ne pouvait ajouter un document QUE dans le dossier d'un client).
+  const [showOwnDocModal, setShowOwnDocModal] = React.useState(false);
+  const [ownDocFile, setOwnDocFile] = React.useState(null);
+  const [ownDocName, setOwnDocName] = React.useState('');
+  const [ownDocType, setOwnDocType] = React.useState('Administratif');
+  const [isUploadingOwnDoc, setIsUploadingOwnDoc] = React.useState(false);
   const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
@@ -5833,7 +6021,7 @@ const FormateurView = ({
   // (assigned_formateur_id = ce formateur). Le champ est posé par instantiateDocument quand
   // la destination inclut le formateur (visFormateur=true).
   const myAdminDocs = React.useMemo(() =>
-    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !isBlockedBySigningOrder(d, 'formateur')),
+    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d)),
     [documents, currentUserId]
   );
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
@@ -5931,6 +6119,45 @@ const FormateurView = ({
     if (fetchDocuments) await fetchDocuments();
   };
 
+  // NOUVEAU (2026-09-04) : ajoute un document à SON PROPRE dossier administratif — pas de client visé
+  // (assigned_formateur_id = soi-même, user_id absent), visible uniquement par l'organisme.
+  const handleUploadOwnAdminDoc = async () => {
+    if (!ownDocFile || !ownDocName.trim()) {
+      toast.error('Veuillez renseigner un nom et choisir un fichier.');
+      return;
+    }
+    setIsUploadingOwnDoc(true);
+    const ext = ownDocFile.name.split('.').pop();
+    const safeN = ownDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const fileName = `formateur_${currentUserId}/dossier/${Date.now()}_${safeN}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(fileName, ownDocFile);
+    if (upErr) {
+      toast.error('Erreur upload : ' + upErr.message);
+      setIsUploadingOwnDoc(false);
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+    const { error: dbErr } = await supabase.from('documents').insert({
+      nom: ownDocName.trim(),
+      type_document: ownDocType,
+      assigned_formateur_id: currentUserId,
+      url: publicUrl,
+      visible_client: false,
+      visible_formateur: true,
+      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+    });
+    if (!dbErr) {
+      toast.success('Document ajouté à votre dossier administratif !');
+      setOwnDocFile(null);
+      setOwnDocName('');
+      setShowOwnDocModal(false);
+      if (fetchDocuments) fetchDocuments();
+    } else {
+      toast.error('Erreur base de données : ' + dbErr.message);
+    }
+    setIsUploadingOwnDoc(false);
+  };
+
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
       {/* Navigation principale du formateur */}
@@ -6024,8 +6251,122 @@ const FormateurView = ({
           );
         };
 
+        const myDossierDocs = (documents || []).filter(d => d.assigned_formateur_id === currentUserId && !d.user_id && isDossierDoc(d));
+
         return (
           <div className="space-y-4">
+            {/* ── NOUVEAU (2026-09-04) : Mon dossier administratif — documents personnels, sans client, sans signature ── */}
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3 gap-3">
+                <div>
+                  <h3 className="font-black text-gray-900 text-sm">Mon dossier administratif</h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Vos propres documents partagés avec l'organisme (assurance, diplôme...) — sans lien avec un client.</p>
+                </div>
+                <button
+                  onClick={() => setShowOwnDocModal(true)}
+                  className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Ajouter un document
+                </button>
+              </div>
+              {myDossierDocs.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">Aucun document dans votre dossier.</p>
+              ) : (
+                <div className="space-y-2">
+                  {myDossierDocs.map(doc => (
+                    <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-4 h-4 text-violet-500 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => openSecureStorageFile(doc.url)}
+                          className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
+                        >
+                          Ouvrir
+                        </button>
+                        <button
+                          onClick={() => handleDeleteDossierDoc(doc.id)}
+                          className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                          title="Supprimer ce document"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {showOwnDocModal && (
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+                  <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document à mon dossier</h4>
+                  <p className="text-xs text-gray-400 mb-4">Ce fichier sera visible par l'organisme, sans lien avec un client précis.</p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
+                      <input
+                        type="file"
+                        onChange={(e) => {
+                          const f = e.target.files[0] || null;
+                          setOwnDocFile(f);
+                          if (f && !ownDocName.trim()) {
+                            setOwnDocName(f.name.replace(/\.[^/.]+$/, ''));
+                          }
+                        }}
+                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
+                      <input
+                        type="text"
+                        value={ownDocName}
+                        onChange={(e) => setOwnDocName(e.target.value)}
+                        placeholder="Ex : Attestation d'assurance RCP"
+                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
+                      <select
+                        value={ownDocType}
+                        onChange={(e) => setOwnDocType(e.target.value)}
+                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
+                      >
+                        <option value="Administratif">Administratif</option>
+                        <option value="Contrat">Contrat</option>
+                        <option value="Mission">Mission</option>
+                        <option value="Pièce justificative">Pièce justificative</option>
+                        <option value="Autre">Autre</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-5">
+                    <button
+                      onClick={() => { setShowOwnDocModal(false); setOwnDocFile(null); setOwnDocName(''); setOwnDocType('Administratif'); }}
+                      className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      onClick={handleUploadOwnAdminDoc}
+                      disabled={isUploadingOwnDoc || !ownDocFile || !ownDocName.trim()}
+                      className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
+                    >
+                      {isUploadingOwnDoc ? 'Envoi...' : 'Ajouter au dossier'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {myAdminDocs.length === 0 ? (
               <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
                 <Archive className="mx-auto mb-4 text-gray-300" size={40} />
