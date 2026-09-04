@@ -7803,9 +7803,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             </p>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                              className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                              title="Supprimer cette balise"
+                              className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-white border-2 border-red-300 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
+                              style={{ zIndex: 30 }}
                             >
-                              <X size={8} />
+                              <X size={13} strokeWidth={3} />
                             </button>
                             {/* Poignée de redimensionnement — glisser pour étirer largeur/hauteur */}
                             <div
@@ -8943,11 +8945,26 @@ const DocumentsView = ({
                               // Charger les champs existants depuis la DB
                               const { data: existingFields } = await supabase
                                 .from('template_fields').select('*').eq('template_id', tpl.id).order('page');
-                              const mappedFields = (existingFields || []).map(f => ({
-                                id: `f_${f.id || Date.now()}_${Math.random().toString(36).slice(2)}`,
-                                tag: f.tag, page: f.page || 1,
-                                xPct: parseFloat(f.x_percent), yPct: parseFloat(f.y_percent),
-                              }));
+                              // FIX (2026-09-04) : width_percent/height_percent (taille des cases "texte libre"
+                              // redimensionnées) ne sont PAS stockées dans la table SQL template_fields — seulement
+                              // dans la copie embarquée tpl.metadata.template_fields. On les retrouve ici par
+                              // correspondance balise + page + position (x/y), les id étant régénérés à chaque
+                              // ouverture de l'éditeur et donc non réutilisables comme clé de correspondance.
+                              const embeddedFieldsMeta = tpl?.metadata?.template_fields || [];
+                              const mappedFields = (existingFields || []).map(f => {
+                                const xP = parseFloat(f.x_percent), yP = parseFloat(f.y_percent);
+                                const sizeMatch = embeddedFieldsMeta.find(e =>
+                                  e.tag === f.tag && (e.page || 1) === (f.page || 1) &&
+                                  Math.abs(parseFloat(e.x_percent) - xP) < 0.05 && Math.abs(parseFloat(e.y_percent) - yP) < 0.05
+                                );
+                                return {
+                                  id: `f_${f.id || Date.now()}_${Math.random().toString(36).slice(2)}`,
+                                  tag: f.tag, page: f.page || 1,
+                                  xPct: xP, yPct: yP,
+                                  ...(sizeMatch && typeof sizeMatch.width_percent === 'number' ? { width_percent: sizeMatch.width_percent } : {}),
+                                  ...(sizeMatch && typeof sizeMatch.height_percent === 'number' ? { height_percent: sizeMatch.height_percent } : {}),
+                                };
+                              });
                               setEditingTemplate({
                                 url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id,
                                 signingMode: tpl?.metadata?.signing_mode || 'simultane',
