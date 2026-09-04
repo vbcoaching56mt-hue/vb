@@ -11285,17 +11285,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     // ── Étape 4 : Enregistrer en base ─────────────────────────────────────
     let dbError;
     // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis (pas seulement le
-    // client) ont signé — voir getRequiredSignerRoles/isDocFullySigned. Repli sur les balises du
-    // template source (_rMeta.template_fields, déjà résolu plus haut) si le document généré n'a pas
-    // encore lui-même de balises exploitables.
-    const _metaForRoles = parseDocMetadata(existingGeneratedDoc);
-    const _hasOwnFields = (Array.isArray(_metaForRoles.signature_fields) && _metaForRoles.signature_fields.length > 0)
-      || (Array.isArray(_metaForRoles.template_fields) && _metaForRoles.template_fields.length > 0)
-      || (Array.isArray(_metaForRoles.fields) && _metaForRoles.fields.length > 0);
-    const _docForRoles = _hasOwnFields
-      ? { metadata: _metaForRoles, template_id: existingGeneratedDoc?.template_id || visualTemplateId }
-      : { metadata: { template_fields: _rMeta.template_fields || [] }, template_id: existingGeneratedDoc?.template_id || visualTemplateId };
-    const _requiredRoles = await getRequiredSignerRoles(_docForRoles, supabase);
+    // client) ont signé — voir getRequiredSignerRoles/isDocFullySigned. existingGeneratedDoc suffit :
+    // getRequiredSignerRoles lit d'abord ses balises embarquées en metadata, puis se rabat sur la
+    // table technique template_fields via son propre template_id si besoin.
+    const _requiredRoles = await getRequiredSignerRoles(existingGeneratedDoc || {}, supabase);
     const _statutAfterClientSign = isDocFullySigned({ ...(existingGeneratedDoc || {}), signe_par_client: true }, _requiredRoles)
       ? 'Signé' : (existingGeneratedDoc?.statut || 'En attente de signature');
     const signatureData = {
