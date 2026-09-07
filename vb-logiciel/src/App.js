@@ -18896,7 +18896,7 @@ export default function App() {
           // column of 'documents' in the schema cache". L'info reste disponible via `metadata` ci-dessus.
           // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
           // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
-          organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
+          organisation_id: ((effectiveIsForFormateur || formateurId) && !clientRow) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
         };
         if (_visClientForInsert) {
           // Le client EST destinataire → document rattaché à son dossier (comportement inchangé),
@@ -18905,7 +18905,14 @@ export default function App() {
           docToInsert.visible_client = true;
           docToInsert.visible_formateur = _visFormateurForInsert;
           if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
-        } else if (effectiveIsForFormateur || formateurId) {
+        } else if ((effectiveIsForFormateur || formateurId) && !clientRow) {
+          // FIX (2026-09-07) : `targetId` ne vaut l'ID du formateur QUE dans le cas "envoi direct
+          // depuis la fiche Formateur" (pas de clientRow — voir le garde-fou !clientRow ajouté plus
+          // haut dans cette fonction). Dès qu'un clientRow est présent, targetId vaut l'ID DU CLIENT
+          // (uuid) et ne doit jamais atterrir dans documents.assigned_formateur_id (bigint) — cela
+          // provoquait "invalid input syntax for type bigint" pour tout document destination=
+          // formateur envoyé depuis une fiche client (bug remonté le 2026-09-07). Ce cas retombe
+          // maintenant sur la branche finale ci-dessous, qui utilise finalClient.formateur_id (bigint).
           docToInsert.assigned_formateur_id = targetId;
           docToInsert.visible_formateur = true;
           docToInsert.visible_client = false;
@@ -19023,7 +19030,7 @@ export default function App() {
         // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
-        organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
+        organisation_id: ((effectiveIsForFormateur || formateurId) && !clientRow) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
       };
 
       if (_visClientForInsert) {
@@ -19033,7 +19040,8 @@ export default function App() {
         if (finalClient && finalClient.formateur_id) {
           docToInsert.assigned_formateur_id = finalClient.formateur_id;
         }
-      } else if (effectiveIsForFormateur || formateurId) {
+      } else if ((effectiveIsForFormateur || formateurId) && !clientRow) {
+        // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
         docToInsert.assigned_formateur_id = targetId;
         docToInsert.visible_formateur = true;
         docToInsert.visible_client = false;
