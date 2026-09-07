@@ -325,6 +325,11 @@ const AddressInput = ({ value, onChange }) => {
     return { rue: addr, codePostal: '', ville: '' };
   };
   const [parts, setParts] = React.useState(() => parseAddress(value));
+  // FIX (2026-09-07) : l'initialiseur paresseux de useState ne s'exécute qu'AU MONTAGE — si
+  // `value` change ensuite depuis l'extérieur (ex: AddressAutocomplete qui met à jour la
+  // valeur combinée du parent après sélection d'une suggestion), `parts` ne se resynchronisait
+  // jamais. Round-trip sûr : onChange(combined) plus bas repasse par le même parse/combine.
+  React.useEffect(() => { setParts(parseAddress(value)); }, [value]);
   const updatePart = (field, val) => {
     const np = { ...parts, [field]: val };
     setParts(np);
@@ -375,6 +380,105 @@ const parseAddressString = (addr) => {
   const m = addr.match(/^(.*?),?\s*(\d{5})\s+(.+)$/);
   if (m) return { rue: m[1].trim().replace(/,$/, ''), codePostal: m[2], ville: m[3].trim() };
   return { rue: addr, codePostal: '', ville: '' };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RÉGION (2026-09-07) : liste officielle des 18 régions administratives françaises
+// (13 métropole + 5 outre-mer), utilisée comme <datalist> pour un champ « Région » à
+// autocomplétion native sur les fiches Client / Formateur / Organisme (taper « Bre » →
+// suggère « Bretagne »).
+// ═══════════════════════════════════════════════════════════════════════════
+const FRENCH_REGIONS = [
+  'Auvergne-Rhône-Alpes', 'Bourgogne-Franche-Comté', 'Bretagne', 'Centre-Val de Loire',
+  'Corse', 'Grand Est', 'Guadeloupe', 'Guyane', 'Hauts-de-France', 'Île-de-France',
+  'La Réunion', 'Martinique', 'Mayotte', 'Normandie', 'Nouvelle-Aquitaine', 'Occitanie',
+  'Pays de la Loire', "Provence-Alpes-Côte d'Azur",
+];
+
+// Autocomplétion d'adresse française (API Adresse — api-adresse.data.gouv.fr — gratuite,
+// sans clé, données BAN officielles). Au clic sur une suggestion, remonte via onSelect
+// rue/codePostal/ville ET la région administrative correspondante (dernier segment de
+// `properties.context`, ex: "75, Paris, Île-de-France"), pour pré-remplir automatiquement
+// le champ Région à côté.
+const AddressAutocomplete = ({ value, onChange, onSelect, placeholder, className }) => {
+  const [query, setQuery] = React.useState(value || '');
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [isOpen, setIsOpen] = React.useState(false);
+  const wrapRef = React.useRef(null);
+  const debounceRef = React.useRef(null);
+
+  React.useEffect(() => { setQuery(value || ''); }, [value]);
+
+  React.useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleChange = (val) => {
+    setQuery(val);
+    onChange(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!val || val.trim().length < 3) { setSuggestions([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const resp = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(val)}&limit=5`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        setSuggestions(data.features || []);
+        setIsOpen(true);
+      } catch (_) { /* best-effort : ne bloque jamais la saisie manuelle en cas d'échec réseau */ }
+    }, 300);
+  };
+
+  const pick = (feature) => {
+    const p = feature.properties || {};
+    const label = p.label || '';
+    setQuery(label);
+    onChange(label);
+    setIsOpen(false);
+    setSuggestions([]);
+    // properties.context est de la forme "<code dépt>, <nom dépt>, <nom région>" → la région
+    // est toujours le DERNIER segment.
+    const contextParts = (p.context || '').split(',').map(s => s.trim());
+    const region = contextParts.length > 0 ? contextParts[contextParts.length - 1] : '';
+    if (onSelect) onSelect({
+      label,
+      rue: [p.housenumber, p.street].filter(Boolean).join(' ') || p.name || '',
+      codePostal: p.postcode || '',
+      ville: p.city || '',
+      region,
+    });
+  };
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <input
+        className={className || "w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 transition-all text-sm"}
+        value={query}
+        onChange={e => handleChange(e.target.value)}
+        onFocus={() => { if (suggestions.length > 0) setIsOpen(true); }}
+        placeholder={placeholder || 'Ex : 12 Rue de la Paix, 75001 Paris'}
+        autoComplete="off"
+      />
+      {isOpen && suggestions.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+          {suggestions.map((f, i) => (
+            <button
+              type="button"
+              key={f.properties?.id || i}
+              onClick={() => pick(f)}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors border-b border-gray-50 last:border-b-0"
+            >
+              {f.properties?.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };
 
 // Identifiant stable d'un champ de balise (signature/case à cocher), utilisé pour savoir QUELLE
@@ -3140,6 +3244,7 @@ const ClientDetailView = ({
     rue_client: '',
     code_postal_client: '',
     ville_client: '',
+    region: '',
     numero_dossier: client.numero_dossier || '',
     modalite_formation: client.modalite_formation || 'Mixte',
     montant_prestation: client.montant_prestation || ''
@@ -3166,6 +3271,7 @@ const ClientDetailView = ({
           rue_client: data.rue || '',
           code_postal_client: data.code_postal || '',
           ville_client: data.ville || '',
+          region: data.region || '',
           numero_dossier: data.numero_dossier || '',
           modalite_formation: data.modalite_formation || 'Mixte',
           montant_prestation: data.montant_prestation || ''
@@ -3471,6 +3577,7 @@ const ClientDetailView = ({
       code_postal: clientInfo.code_postal_client,
       ville: clientInfo.ville_client,
       adresse_postale: fullAddress,
+      region: clientInfo.region,
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
@@ -3611,7 +3718,13 @@ const ClientDetailView = ({
             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-3">
                 <label className="block text-xs font-bold text-gray-400 mb-1">Rue / N° de voie</label>
-                <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.rue_client} onChange={e => setClientInfo({ ...clientInfo, rue_client: e.target.value })} placeholder="Ex : 245 rue Jeanine" />
+                <AddressAutocomplete
+                  value={clientInfo.rue_client}
+                  onChange={val => setClientInfo({ ...clientInfo, rue_client: val })}
+                  onSelect={({ rue, codePostal, ville, region }) => setClientInfo(prev => ({ ...prev, rue_client: rue, code_postal_client: codePostal || prev.code_postal_client, ville_client: ville || prev.ville_client, region: region || prev.region }))}
+                  placeholder="Ex : 245 rue Jeanine"
+                  className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors"
+                />
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-400 mb-1">Code Postal</label>
@@ -3620,6 +3733,11 @@ const ClientDetailView = ({
               <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-gray-400 mb-1">Ville</label>
                 <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.ville_client} onChange={e => setClientInfo({ ...clientInfo, ville_client: e.target.value })} placeholder="Ex : Paris" />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-bold text-gray-400 mb-1">Région</label>
+                <input list="region-list-client" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.region} onChange={e => setClientInfo({ ...clientInfo, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
+                <datalist id="region-list-client">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
               </div>
             </div>
             <div>
@@ -4896,6 +5014,7 @@ const FormateurDetailView = ({
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     adresse_session: formateur.adresse_session || '',
+    region: formateur.region || '',
     email: formateur.email || '',
     telephone: formateur.telephone || '',
     compagnie_assurance: formateur.compagnie_assurance || '',
@@ -4920,6 +5039,7 @@ const FormateurDetailView = ({
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
         adresse_session: sameAddress ? legalInfo.adresse_formateur : legalInfo.adresse_session,
+        region: legalInfo.region,
         email: legalInfo.email,
         telephone: legalInfo.telephone,
         compagnie_assurance: legalInfo.compagnie_assurance,
@@ -4996,9 +5116,12 @@ const FormateurDetailView = ({
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Siège Social</label>
-                <AddressInput
+                <AddressAutocomplete
                   value={legalInfo.adresse_formateur}
                   onChange={val => setLegalInfo({ ...legalInfo, adresse_formateur: val })}
+                  onSelect={({ label, region }) => setLegalInfo(prev => ({ ...prev, adresse_formateur: label, region: region || prev.region }))}
+                  placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
+                  className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -5016,12 +5139,19 @@ const FormateurDetailView = ({
               {!sameAddress && (
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse de Pratique</label>
-                  <AddressInput
+                  <AddressAutocomplete
                     value={legalInfo.adresse_session}
                     onChange={val => setLegalInfo({ ...legalInfo, adresse_session: val })}
+                    placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
+                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                   />
                 </div>
               )}
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Région</label>
+                <input list="region-list-formateur" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" value={legalInfo.region} onChange={e => setLegalInfo({ ...legalInfo, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
+                <datalist id="region-list-formateur">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
@@ -7230,9 +7360,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   }, [destinationRoles]);
 
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
-    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
-    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
+    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
+    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
@@ -11478,6 +11608,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           rue_client:         currentClient?.adresse || currentClient?.rue || '',
           code_postal_client: currentClient?.code_postal || '',
           ville_client:       currentClient?.ville || '',
+          region_client:      currentClient?.region || '',
           adresse_session:    currentClient?.adresse || currentClient?.rue || '',
           prix_prestation:    currentClient?.prix_prestation || currentClient?.montant_prestation || '',
           formation_nom:      '',
@@ -11499,6 +11630,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           tel_formateur:         formateur?.telephone || '',
           telephone_formateur:   formateur?.telephone || '',
           adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
+          region_formateur:      formateur?.region || '',
           formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
           formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance:   formateur?.compagnie_assurance || '',
@@ -11695,6 +11827,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               rue_client:         currentClient.adresse || currentClient.rue || '',
               code_postal_client: currentClient.code_postal || '',
               ville_client:       currentClient.ville || '',
+              region_client:      currentClient.region || '',
               adresse_session:    currentClient.adresse || currentClient.rue || '',
               prix_prestation:    currentClient.prix_prestation || currentClient.montant_prestation || '',
               formation_nom:      '',
@@ -11715,6 +11848,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               tel_formateur:         formateur?.telephone || '',
               telephone_formateur:   formateur?.telephone || '',
               adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
+              region_formateur:      formateur?.region || '',
               formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
               formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
               compagnie_assurance:   formateur?.compagnie_assurance || '',
@@ -12568,9 +12702,11 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
+    region: user?.region || '',
     adresse_org: orgSettings?.adresse || '',
     code_postal_org: orgSettings?.code_postal || '',
     ville_org: orgSettings?.ville || '',
+    region_org: orgSettings?.region || '',
     siret: user?.formateur_siret || orgSettings?.siret || '',
     nda: user?.formateur_nda || orgSettings?.nda || '',
     email: user?.email || '',
@@ -12598,6 +12734,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
               telephone: data.telephone || '',
               adresse_formateur: data.adresse_formateur || '',
               adresse_session: data.adresse_session || '',
+              region: data.region || '',
               siret: data.formateur_siret || '',
               nda: data.formateur_nda || '',
               compagnie_assurance: data.compagnie_assurance || '',
@@ -12619,7 +12756,8 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         site_web: orgSettings.site_web || '',
         adresse_org: orgSettings.adresse || '',
         code_postal_org: orgSettings.code_postal || '',
-        ville_org: orgSettings.ville || ''
+        ville_org: orgSettings.ville || '',
+        region_org: orgSettings.region || ''
       }));
       setLogoUrl(orgSettings.logo_url || '');
     }
@@ -12661,6 +12799,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         telephone: profileData.telephone,
         adresse_formateur: profileData.adresse_formateur,
         adresse_session: sameAddress ? profileData.adresse_formateur : profileData.adresse_session,
+        region: profileData.region,
         formateur_siret: profileData.siret,
         formateur_nda: profileData.nda,
         compagnie_assurance: profileData.compagnie_assurance,
@@ -12675,7 +12814,8 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           site_web: profileData.site_web,
           adresse: profileData.adresse_org,
           code_postal: profileData.code_postal_org,
-          ville: profileData.ville_org
+          ville: profileData.ville_org,
+          region: profileData.region_org
         }).eq('id', orgSettings.id);
         if (orgResult.error) error = orgResult.error;
         else if (onOrgSaved) onOrgSaved({
@@ -12685,7 +12825,8 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           site_web: profileData.site_web,
           adresse: profileData.adresse_org,
           code_postal: profileData.code_postal_org,
-          ville: profileData.ville_org
+          ville: profileData.ville_org,
+          region: profileData.region_org
         });
       }
     }
@@ -12811,7 +12952,13 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                   <>
                     <div>
                       <label className={labelCls}>Adresse Siège Social</label>
-                      <input className={inputCls} value={profileData.adresse_org} onChange={e => setProfileData({ ...profileData, adresse_org: e.target.value })} placeholder="N° et nom de rue" />
+                      <AddressAutocomplete
+                        value={profileData.adresse_org}
+                        onChange={val => setProfileData({ ...profileData, adresse_org: val })}
+                        onSelect={({ rue, codePostal, ville, region }) => setProfileData(prev => ({ ...prev, adresse_org: rue, code_postal_org: codePostal || prev.code_postal_org, ville_org: ville || prev.ville_org, region_org: region || prev.region_org }))}
+                        placeholder="N° et nom de rue"
+                        className={inputCls}
+                      />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -12823,12 +12970,23 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                         <input className={inputCls} value={profileData.ville_org} onChange={e => setProfileData({ ...profileData, ville_org: e.target.value })} placeholder="Paris" />
                       </div>
                     </div>
+                    <div>
+                      <label className={labelCls}>Région</label>
+                      <input list="region-list-profile-org" className={inputCls} value={profileData.region_org} onChange={e => setProfileData({ ...profileData, region_org: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
+                      <datalist id="region-list-profile-org">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
+                    </div>
                   </>
                 ) : (
                   <>
                     <div>
                       <label className={labelCls}>Adresse Siège Social</label>
-                      <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
+                      <AddressAutocomplete
+                        value={profileData.adresse_formateur}
+                        onChange={val => setProfileData({ ...profileData, adresse_formateur: val })}
+                        onSelect={({ label, region }) => setProfileData(prev => ({ ...prev, adresse_formateur: label, region: region || prev.region }))}
+                        placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
+                        className={inputCls}
+                      />
                     </div>
                     <div className="flex items-center gap-2">
                       <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
@@ -12837,9 +12995,19 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                     {!sameAddress && (
                       <div>
                         <label className={labelCls}>Adresse de Pratique</label>
-                        <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
+                        <AddressAutocomplete
+                          value={profileData.adresse_session}
+                          onChange={val => setProfileData({ ...profileData, adresse_session: val })}
+                          placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
+                          className={inputCls}
+                        />
                       </div>
                     )}
+                    <div>
+                      <label className={labelCls}>Région</label>
+                      <input list="region-list-profile-formateur" className={inputCls} value={profileData.region} onChange={e => setProfileData({ ...profileData, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
+                      <datalist id="region-list-profile-formateur">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
+                    </div>
                   </>
                 )}
               </div>
@@ -13967,6 +14135,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const [siteWeb, setSiteWeb] = useState(orgSettings?.site_web || '');
   const [codePostal, setCodePostal] = useState(orgSettings?.code_postal || '');
   const [ville, setVille] = useState(orgSettings?.ville || '');
+  const [region, setRegion] = useState(orgSettings?.region || '');
   const [emailContact, setEmailContact] = useState('');
   const [telephoneContact, setTelephoneContact] = useState('');
   const [compagnieAssurance, setCompagnieAssurance] = useState('');
@@ -13999,6 +14168,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       setSiteWeb(orgSettings.site_web || '');
       setCodePostal(orgSettings.code_postal || '');
       setVille(orgSettings.ville || '');
+      setRegion(orgSettings.region || '');
     }
   }, [orgSettings]);
 
@@ -14095,7 +14265,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
     // 1. Mise à jour de la table organisations
     const { error } = await supabase.from('organisations').update({
       nom, siret, adresse, logo_url: logoUrl,
-      nda, site_web: siteWeb, code_postal: codePostal, ville
+      nda, site_web: siteWeb, code_postal: codePostal, ville, region
     }).eq('id', currentOrgId);
     if (error) {
       toast.error("Erreur : " + error.message);
@@ -14113,7 +14283,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       }).eq('email', authUser.email);
     }
     toast.success("Paramètres sauvegardés !");
-    onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville });
+    onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville, region });
     setIsSaving(false);
   };
 
@@ -14238,8 +14408,13 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
           {/* Adresse siège */}
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse Siège Social</label>
-            <input type="text" value={adresse} onChange={e => setAdresse(e.target.value)} placeholder="N° et nom de rue"
-              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            <AddressAutocomplete
+              value={adresse}
+              onChange={setAdresse}
+              onSelect={({ rue, codePostal: cp, ville: v, region: r }) => { setAdresse(rue); if (cp) setCodePostal(cp); if (v) setVille(v); if (r) setRegion(r); }}
+              placeholder="N° et nom de rue"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
+            />
           </div>
 
           {/* Code postal + Ville */}
@@ -14254,6 +14429,14 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
               <input type="text" value={ville} onChange={e => setVille(e.target.value)} placeholder="Paris"
                 className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
             </div>
+          </div>
+
+          {/* Région */}
+          <div>
+            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Région</label>
+            <input list="region-list-org" type="text" value={region} onChange={e => setRegion(e.target.value)} placeholder="Ex : Bretagne" autoComplete="off"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
+            <datalist id="region-list-org">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
           </div>
         </div>
 
@@ -16567,7 +16750,7 @@ export default function App() {
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web, subscription_status, trial_ends_at, stripe_customer_id, subscribed_plan').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, region, nda, site_web, subscription_status, trial_ends_at, stripe_customer_id, subscribed_plan').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
@@ -17009,6 +17192,7 @@ export default function App() {
           rue_client:          client.adresse || client.adresse_postale || client.rue || '',
           code_postal_client:  client.code_postal || '',
           ville_client:        client.ville || '',
+          region_client:       client.region || '',
           adresse_session:     client.adresse || client.adresse_postale || client.rue || '',
           prix_prestation:     client.prix_prestation || client.montant_prestation || '',
           modalite_formation:  client.modalite_formation || '',
@@ -17028,6 +17212,7 @@ export default function App() {
           tel_formateur:       formateur?.telephone || '',
           telephone_formateur: formateur?.telephone || '',
           adresse_formateur:   formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
+          region_formateur:    formateur?.region || '',
           formateur_siret:     formateur?.formateur_siret || formateur?.siret || '',
           formateur_nda:       formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance: formateur?.compagnie_assurance || '',
@@ -18753,6 +18938,7 @@ export default function App() {
           raison_sociale: theFormateur.nom || '',
           adresse_formateur: theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse_client || theFormateur.adresse || '',
           adresse_session: theFormateur.adresse_session || theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse || '',
+          region_formateur: theFormateur.region || '',
           formateur_nda: theFormateur.formateur_nda || theFormateur.nda || '',
           formateur_siret: theFormateur.formateur_siret || theFormateur.siret || '',
           email_formateur: theFormateur.email || '',
@@ -18768,6 +18954,7 @@ export default function App() {
           org_adresse: orgSettings?.adresse || '',
           org_code_postal: orgSettings?.code_postal || '',
           org_ville: orgSettings?.ville || '',
+          org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
         targetId = fId;
@@ -18809,6 +18996,7 @@ export default function App() {
           formateur_nom_complet: theCoach.nom || '',
           raison_sociale: theCoach.nom || 'Coach',
           adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
+          region_formateur: theCoach.region || '',
           formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
           formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
           email_formateur: theCoach.email || '',
@@ -18828,6 +19016,7 @@ export default function App() {
           rue_client: finalClient.rue || '',
           code_postal_client: finalClient.code_postal || '',
           ville_client: finalClient.ville || '',
+          region_client: finalClient.region || '',
           adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
           modalite_formation: finalClient.modalite_formation || 'Mixte',
           date_debut: dateDebut,
@@ -18842,6 +19031,7 @@ export default function App() {
           org_adresse: orgSettings?.adresse || '',
           org_code_postal: orgSettings?.code_postal || '',
           org_ville: orgSettings?.ville || '',
+          org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
         targetId = clientRow.id;
