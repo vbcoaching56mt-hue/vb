@@ -4544,24 +4544,43 @@ const ClientDetailView = ({
             {clientDocs.length > 0 ? clientDocs.map(doc => {
               const clientSigned = doc.signe_par_client;
               const formateurSigned = doc.signe_par_formateur;
-              const needsClientSign = doc.requiresClientSignature !== false;
+              const organismeSigned = doc.signe_par_organisme;
               const _docMetaForBadge = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
               const _docFieldsForBadge = Array.isArray(_docMetaForBadge.template_fields) ? _docMetaForBadge.template_fields : [];
-              const needsFormateurSign = _docFieldsForBadge.some(f => ['signature_formateur', 'checkbox_formateur', 'texte_formateur'].includes(f.tag)) || doc.requiresTrainerSignature === true;
-              const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned);
+              // FIX (2026-09-07) : quand le document porte des destination_roles (écrits à la
+              // génération — voir instantiateDocument / handleGenerateDocx), ce sont EUX qui
+              // déterminent les signatures réellement attendues. Avant ce correctif, needsClientSign
+              // valait "vrai" par défaut pour TOUT document de cette liste — le badge "en attente de
+              // signature client" s'affichait donc même pour un document formateur+administrateur
+              // uniquement, où le client n'est jamais destinataire (bug remonté le 2026-09-07). Sans
+              // destination_roles (anciens documents), on garde l'ancien comportement (client par défaut).
+              const _destRolesForBadge = Array.isArray(_docMetaForBadge.destination_roles) && _docMetaForBadge.destination_roles.length > 0 ? _docMetaForBadge.destination_roles : null;
+              const needsClientSign = _destRolesForBadge ? _destRolesForBadge.includes('client') : (doc.requiresClientSignature !== false);
+              const needsFormateurSign = _destRolesForBadge
+                ? _destRolesForBadge.includes('formateur')
+                : (_docFieldsForBadge.some(f => ['signature_formateur', 'checkbox_formateur', 'texte_formateur'].includes(f.tag)) || doc.requiresTrainerSignature === true);
+              const needsOrganismeSign = !!(_destRolesForBadge && _destRolesForBadge.includes('organisme'));
+              const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned) && (!needsOrganismeSign || organismeSigned);
               return (
               <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${fullySignedByAll ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}><FileText size={20} /></div>
                   <div>
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                        {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
-                      </span>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {needsClientSign && (
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
+                        </span>
+                      )}
                       {(needsFormateurSign || formateurSigned) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {formateurSigned ? '✓ Signature formateur reçue' : '⏳ En attente de signature formateur'}
+                        </span>
+                      )}
+                      {(needsOrganismeSign || organismeSigned) && (
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${organismeSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {organismeSigned ? '✓ Signature administrateur reçue' : '⏳ En attente de signature administrateur'}
                         </span>
                       )}
                     </div>
@@ -8643,7 +8662,43 @@ const DocumentsView = ({
       </div>
 
 
+      {/* NOUVEAU (2026-09-07) : bannière "Mes documents à signer" déplacée tout en haut de la
+          page (au-dessus de "Gestion des documents"), à la demande explicite de l'utilisateur —
+          l'ancien bouton "À signer par moi", noyé dans la barre d'onglets de "Documents émis" plus
+          bas sur la page, passait inaperçu. C'est désormais le seul point d'entrée vers le mode
+          dédié docAudienceTab === 'a_signer' (la barre d'onglets normale, plus bas, devient dans ce
+          mode un en-tête dédié avec bouton "Retour" — voir plus bas dans ce fichier). */}
       {isAdmin && (
+        <button
+          onClick={() => setDocAudienceTab('a_signer')}
+          className={`w-full flex items-center justify-between gap-4 px-6 py-4 rounded-3xl border-2 transition-all text-left ${
+            organismeToSignDocs.length > 0
+              ? 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm'
+              : 'bg-gray-50 border-gray-100 hover:border-gray-200'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <span className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${organismeToSignDocs.length > 0 ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+              <PenTool size={20} />
+            </span>
+            <div>
+              <p className="font-black text-gray-900 text-sm">Mes documents à signer</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {organismeToSignDocs.length > 0
+                  ? `${organismeToSignDocs.length} document${organismeToSignDocs.length > 1 ? 's' : ''} en attente de votre signature (administrateur)`
+                  : 'Vous êtes à jour — aucun document en attente de votre signature'}
+              </p>
+            </div>
+          </div>
+          {organismeToSignDocs.length > 0 && (
+            <span className="shrink-0 min-w-[28px] h-7 px-2 bg-red-600 text-white text-xs font-black rounded-full flex items-center justify-center shadow-md">
+              {organismeToSignDocs.length}
+            </span>
+          )}
+        </button>
+      )}
+
+      {isAdmin && docAudienceTab !== 'a_signer' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
             <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
@@ -9356,8 +9411,24 @@ const DocumentsView = ({
 
         ) : (
           <div className="space-y-5">
-            {/* ── Sélecteur d'onglets ────────────────────────────────────── */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
+            {/* ── Sélecteur d'onglets (ou en-tête dédiée quand "Mes documents à signer" est actif) ── */}
+            {docAudienceTab === 'a_signer' ? (
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  onClick={() => setDocAudienceTab('client')}
+                  className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl transition-all shrink-0"
+                >
+                  ← Retour
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0"><PenTool size={16} /></span>
+                  <div>
+                    <h2 className="text-base font-black text-gray-900">Mes documents à signer</h2>
+                    <p className="text-xs text-gray-400">{organismeToSignDocs.length} document{organismeToSignDocs.length > 1 ? 's' : ''} en attente de votre signature (administrateur)</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
               <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
                 {[
                   { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
@@ -9378,24 +9449,7 @@ const DocumentsView = ({
                   </button>
                 ))}
               </div>
-              {/* NOUVEAU (2026-09-07) : onglet dédié aux documents que L'ADMINISTRATEUR doit lui-même
-                  signer — volontairement séparé à droite, avec un badge "notification" (coin haut-droit,
-                  même style que la cloche) qui n'apparaît que s'il y a au moins un document en attente. */}
-              <button
-                onClick={() => setDocAudienceTab('a_signer')}
-                className={`relative flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-bold transition-all border-2 shrink-0 ${
-                  docAudienceTab === 'a_signer' ? 'bg-red-600 border-red-600 text-white shadow-lg' : 'bg-white border-red-200 text-red-600 hover:border-red-400'
-                }`}
-              >
-                <PenTool size={14} />
-                À signer par moi
-                {organismeToSignDocs.length > 0 && (
-                  <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-md ring-2 ring-white">
-                    {organismeToSignDocs.length}
-                  </span>
-                )}
-              </button>
-            </div>
+            )}
 
             {/* ── Grille de cartes ───────────────────────────────────────── */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -18804,15 +18858,29 @@ export default function App() {
         const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
         const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
         const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+        // FIX (2026-09-07) : destinataires réels du document — remplace la détection binaire
+        // effectiveIsForFormateur (égalité stricte à 'formateur', qui ratait toute destination
+        // combinée type "formateur,organisme") par la même lecture que partout ailleurs dans le
+        // fichier (parseDestinationRoles). Sans ça : (a) destination_roles n'était jamais écrit
+        // dans les métadonnées du document généré → l'onglet admin "Mes documents à signer" ne
+        // pouvait jamais le trouver ; (b) le document était systématiquement rattaché au CLIENT
+        // (user_id + visible_client forcé) même quand celui-ci n'était pas destinataire → il
+        // apparaissait à tort dans "Documents envoyés pour signature" du client, avec des badges
+        // "en attente de signature client/formateur" non pertinents.
+        const _destRolesForInsert = parseDestinationRoles(templateDestination);
+        const _visClientForInsert = _destRolesForInsert.includes('client');
+        const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
+        const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
         const docToInsert = {
           nom: `${type} - ${targetName}`,
           type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
           url: publicUrl,
-          signe_par_client: false,
-          signe_par_formateur: false,
+          ...(_visClientForInsert ? { signe_par_client: false } : {}),
+          ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
+          ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
-          metadata: templateInfo.metadata || null,
+          metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
           // requiresTrainerSignature retiré (2026-09-03) : ce n'est pas une colonne de la table
           // `documents`, seulement un champ du JSONB metadata des templates — l'insérer en top-level
           // faisait échouer TOUT `handleGenerateDocx` avec "Could not find the 'requiresTrainerSignature'
@@ -18821,14 +18889,24 @@ export default function App() {
           // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
           organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
         };
-        if (effectiveIsForFormateur || formateurId) {
+        if (_visClientForInsert) {
+          // Le client EST destinataire → document rattaché à son dossier (comportement inchangé),
+          // qu'il y ait ou non aussi un formateur/organisme destinataire.
+          docToInsert.user_id = targetId;
+          docToInsert.visible_client = true;
+          docToInsert.visible_formateur = _visFormateurForInsert;
+          if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
+        } else if (effectiveIsForFormateur || formateurId) {
           docToInsert.assigned_formateur_id = targetId;
           docToInsert.visible_formateur = true;
           docToInsert.visible_client = false;
         } else {
-          docToInsert.user_id = targetId;
-          docToInsert.visible_client = true;
-          docToInsert.visible_formateur = true;
+          // Le client n'est PAS destinataire (ex: "formateur,organisme" uniquement) même si ce
+          // document a été généré depuis SA fiche — on le rattache au formateur de ce client (pour
+          // qu'il reste visible dans son dossier), SANS jamais poser user_id : c'est ce qui évitait
+          // avant ce correctif qu'il pollue la liste "Documents envoyés pour signature" du client.
+          docToInsert.visible_client = false;
+          docToInsert.visible_formateur = _visFormateurForInsert;
           if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
         }
         const { error: insertErr } = await supabase.from('documents').insert([docToInsert]);
@@ -18915,33 +18993,44 @@ export default function App() {
 
       const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
-      // Même correctif que la branche visuelle ci-dessus.
+      // Même correctif que la branche visuelle ci-dessus (voir commentaire détaillé là-bas, 2026-09-07).
       const _tplMetaForInsert = templateInfo.metadata || {};
       const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
       const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
       const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+      const _destRolesForInsert = parseDestinationRoles(templateDestination);
+      const _visClientForInsert = _destRolesForInsert.includes('client');
+      const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
+      const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
       const docToInsert = {
         nom: `${type} - ${targetName}`,
         type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
         url: publicUrl,
-        signe_par_client: false,
-        signe_par_formateur: false,
+        ...(_visClientForInsert ? { signe_par_client: false } : {}),
+        ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
+        ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
         visible_admin: true,
-        metadata: templateInfo.metadata || null,
+        metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
         // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
         organisation_id: (effectiveIsForFormateur || formateurId) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
       };
 
-      if (effectiveIsForFormateur || formateurId) {
+      if (_visClientForInsert) {
+        docToInsert.user_id = targetId;
+        docToInsert.visible_client = true;
+        docToInsert.visible_formateur = _visFormateurForInsert;
+        if (finalClient && finalClient.formateur_id) {
+          docToInsert.assigned_formateur_id = finalClient.formateur_id;
+        }
+      } else if (effectiveIsForFormateur || formateurId) {
         docToInsert.assigned_formateur_id = targetId;
         docToInsert.visible_formateur = true;
         docToInsert.visible_client = false;
       } else {
-        docToInsert.user_id = targetId;
-        docToInsert.visible_client = true;
-        docToInsert.visible_formateur = true;
+        docToInsert.visible_client = false;
+        docToInsert.visible_formateur = _visFormateurForInsert;
         if (finalClient && finalClient.formateur_id) {
           docToInsert.assigned_formateur_id = finalClient.formateur_id;
         }
