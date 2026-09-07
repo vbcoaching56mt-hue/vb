@@ -18663,8 +18663,17 @@ export default function App() {
       let uploadBucket = 'documents';
       let finalClient = null;
 
-      if (effectiveIsForFormateur || formateurId) {
-        const fId = formateurId || (clientRow ? clientRow.id : null);
+      // FIX (2026-09-07) : cette branche ("formateur seul", sans aucune donnée client) ne doit
+      // s'appliquer que lorsqu'il n'y a PAS de client en contexte (appel direct depuis la fiche
+      // Formateur). Dès qu'un clientRow est fourni (appel depuis une fiche client — bouton
+      // "Envoyer" sur un document rattaché à ce client), on passe par la branche "else" ci-dessous
+      // qui résout correctement le formateur DE CE CLIENT (finalClient.formateur_id) et merge en
+      // plus ses données à lui — avant ce correctif, `fId` retombait par erreur sur clientRow.id
+      // (l'ID du CLIENT, pas de son formateur), et la recherche dans `utilisateurs` échouait
+      // systématiquement ("Formateur non trouvé") pour tout document destination=formateur envoyé
+      // depuis une fiche client.
+      if ((effectiveIsForFormateur || formateurId) && !clientRow) {
+        const fId = formateurId;
         const { data: theFormateur } = await supabase.from('utilisateurs').select('*').eq('id', fId).single();
         if (!theFormateur) throw new Error("Formateur non trouvé");
 
