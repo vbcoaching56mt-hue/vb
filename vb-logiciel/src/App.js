@@ -18957,6 +18957,14 @@ export default function App() {
           org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
+        // FIX (2026-09-07) : {ville_formateur} / {code_postal_formateur} / {rue_formateur}
+        // ressortaient toujours vides — balises listées dans ALL_TAGS mais jamais dérivées
+        // ici depuis adresse_formateur (chaîne combinée), contrairement aux autres points
+        // de génération de documents.
+        { const _fAddr = parseAddressString(dataToMerge.adresse_formateur);
+          dataToMerge.rue_formateur = _fAddr.rue;
+          dataToMerge.code_postal_formateur = _fAddr.codePostal;
+          dataToMerge.ville_formateur = _fAddr.ville; }
         targetId = fId;
         targetName = theFormateur.nom || "Formateur";
       } else {
@@ -19034,6 +19042,14 @@ export default function App() {
           org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
+        // FIX (2026-09-07) : {ville_formateur} / {code_postal_formateur} / {rue_formateur}
+        // ressortaient toujours vides — balises listées dans ALL_TAGS mais jamais dérivées
+        // ici depuis adresse_formateur (chaîne combinée), contrairement aux autres points
+        // de génération de documents.
+        { const _fAddr = parseAddressString(dataToMerge.adresse_formateur);
+          dataToMerge.rue_formateur = _fAddr.rue;
+          dataToMerge.code_postal_formateur = _fAddr.codePostal;
+          dataToMerge.ville_formateur = _fAddr.ville; }
         targetId = clientRow.id;
         targetName = finalClient.nom_complet || clientRow.nom || "Client";
       }
