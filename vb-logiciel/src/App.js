@@ -18812,7 +18812,11 @@ export default function App() {
       const isVisualTemplate = templateInfo?.metadata?.has_visual_fields === true;
       if (isVisualTemplate && templateInfo.id) {
         toast.loading('Génération du document visuel…', { id: 'gen-doc' });
-        const safeName = targetName.replace(/\s+/g, '_');
+        // FIX (2026-09-07) : `targetName` (nom du client/formateur) peut contenir des accents
+        // (ex: "Stéphane Subra") — un simple remplacement des espaces ne suffit pas à produire
+        // une clé de stockage valide pour Supabase ("Invalid key"), même correctif que safeType
+        // plus bas.
+        const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
 
         // 1. Charger les champs visuels depuis Supabase
         const { data: templateFieldsData, error: tfErr } = await supabase
@@ -18998,7 +19002,8 @@ export default function App() {
 
       // Étape 1 : Conversion DOCX → PDF (via ConvertAPI si disponible, sinon DOCX direct)
       toast.loading('Génération du document…', { id: 'gen-doc' });
-      const safeName = targetName.replace(/\s+/g, '_');
+      // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
+      const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
 
       let finalBlob = docxBlob;
       let finalExt = 'docx';
