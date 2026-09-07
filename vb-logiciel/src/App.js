@@ -18777,6 +18777,11 @@ export default function App() {
           numero_assurance_rcp: theCoach.numero_assurance_rcp || '',
           // ── Client / Bénéficiaire ──
           nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
+          // FIX (2026-09-07) : balise {numero_dossier_client} ("Dossier n° : ...") ressortait
+          // toujours vide sur le PDF généré — clé absente de dataToMerge alors qu'elle fait
+          // partie des balises officiellement disponibles pour un destinataire Client (voir
+          // AVAILABLE_TAGS['Client'] plus haut) et que clients.numero_dossier est bien renseigné.
+          numero_dossier_client: finalClient.numero_dossier || '',
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
           prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
