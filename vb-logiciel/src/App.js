@@ -396,7 +396,7 @@ const SIGNATURE_IMAGE_COLUMN = { client: 'signature_client', formateur: 'signatu
 // et dans VisualTemplateEditor (rendu HTML, classes Tailwind) — bleu client / orange formateur /
 // vert organisme, cohérent partout où une balise est affichée.
 const ROLE_COLOR_RGB = { client: rgb(0.18, 0.42, 0.93), formateur: rgb(0.92, 0.49, 0.06), organisme: rgb(0.06, 0.6, 0.35) };
-const ROLE_LABEL = { client: 'client', formateur: 'formateur', organisme: 'organisme' };
+const ROLE_LABEL = { client: 'client', formateur: 'formateur', organisme: 'administrateur' };
 // Libellé spécifique sous la signature (reprend le "bénéficiaire" déjà utilisé historiquement pour
 // le client, plutôt que de changer ce texte sur les documents existants).
 const ROLE_SIGNATURE_LABEL = { client: 'bénéficiaire', formateur: 'formateur', organisme: 'organisme' };
@@ -7191,7 +7191,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const SIGNATURE_TAGS = [
     { tag: 'signature_client', label: 'Signature client', color: 'blue' },
     { tag: 'signature_formateur', label: 'Signature formateur', color: 'orange' },
-    { tag: 'signature_organisme', label: 'Signature organisme', color: 'emerald' },
+    { tag: 'signature_organisme', label: 'Signature administrateur', color: 'emerald' },
   ];
   const isSignatureTag = (tag) => !!roleFromTag(tag) && tag.startsWith('signature_');
   const sigTagColor = (tag) => {
@@ -7208,7 +7208,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const CHECKBOX_TAGS = [
     { tag: 'checkbox_client', label: 'Case à cocher client', color: 'blue' },
     { tag: 'checkbox_formateur', label: 'Case à cocher formateur', color: 'orange' },
-    { tag: 'checkbox_organisme', label: 'Case à cocher organisme', color: 'emerald' },
+    { tag: 'checkbox_organisme', label: 'Case à cocher administrateur', color: 'emerald' },
   ];
   const isCheckboxTag = (tag) => !!roleFromTag(tag) && tag.startsWith('checkbox_');
 
@@ -7218,7 +7218,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const TEXT_INPUT_TAGS = [
     { tag: 'texte_client', label: 'Texte libre client', color: 'blue' },
     { tag: 'texte_formateur', label: 'Texte libre formateur', color: 'orange' },
-    { tag: 'texte_organisme', label: 'Texte libre organisme', color: 'emerald' },
+    { tag: 'texte_organisme', label: 'Texte libre administrateur', color: 'emerald' },
   ];
   const isTextInputTag = (tag) => !!roleFromTag(tag) && tag.startsWith('texte_');
 
@@ -7665,22 +7665,22 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       >
                         <div style={{ position: 'absolute', top: 0, left: 0, transform: labelTransform }}>
                           {isSig ? (
-                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'signature_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`} style={{ minWidth: 140 }}>
                               <span className="text-base">✍️</span>
-                              <p className={`text-[10px] font-black ${tag === 'signature_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}</p>
+                              <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Signature {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
                             </div>
                           ) : isChk ? (
                             // Carré compact — même taille que le rendu final (~12pt) pour un cadrage précis
                             <div
-                              className={`rounded-sm shadow-lg ring-2 ring-white ${tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${roleFromTag(tag) === 'organisme' ? 'border-2 border-emerald-500 bg-emerald-500/20' : roleFromTag(tag) === 'formateur' ? 'border-2 border-orange-500 bg-orange-500/20' : 'border-2 border-blue-500 bg-blue-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
                           ) : isTxt ? (
                             <div className="flex items-center select-none">
-                              <div className={`w-0.5 self-stretch rounded-full shrink-0 ${tag === 'texte_client' ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ minHeight: 18 }} />
-                              <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-xl ring-2 ring-white whitespace-nowrap ${tag === 'texte_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`}>
+                              <div className={`w-0.5 self-stretch rounded-full shrink-0 ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-500' : 'bg-blue-500'}`} style={{ minHeight: 18 }} />
+                              <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-xl ring-2 ring-white whitespace-nowrap ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`}>
                                 <span className="text-sm">📝</span>
-                                <p className={`text-[10px] font-black ${tag === 'texte_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'texte_client' ? 'Texte client' : 'Texte formateur'}</p>
+                                <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Texte {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
                               </div>
                             </div>
                           ) : (
@@ -7754,11 +7754,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                         title={(isSig || isChk || isTxt) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
                       >
                         {isSig ? (
-                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
+                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50 border-emerald-400' : roleFromTag(field.tag) === 'formateur' ? 'bg-orange-50 border-orange-400' : 'bg-blue-50 border-blue-400'}`} style={{ minWidth: 140 }}>
                             <span className="text-base select-none">✍️</span>
                             <div className="flex-1 select-none">
-                              <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
-                                {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
+                              <p className={`text-[10px] font-black ${roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : roleFromTag(field.tag) === 'formateur' ? 'text-orange-700' : 'text-blue-700'}`}>
+                                Signature {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
                               </p>
                               <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
                             </div>
@@ -7774,7 +7774,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           // Le bouton de suppression n'apparaît qu'au survol pour ne pas gêner l'alignement.
                           <div className="group/chk relative select-none" style={{ width: 16, height: 16 }}>
                             <div
-                              className={`rounded-sm shadow-lg ring-2 ring-white ${field.tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${roleFromTag(field.tag) === 'organisme' ? 'border-2 border-emerald-500 bg-emerald-500/20' : roleFromTag(field.tag) === 'formateur' ? 'border-2 border-orange-500 bg-orange-500/20' : 'border-2 border-blue-500 bg-blue-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
                             <button
@@ -8064,7 +8064,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   <div>
                     <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destinataires (un ou plusieurs)</label>
                     <div className="flex gap-2">
-                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['organisme', '🏢 Organisme']].map(([val, label]) => {
+                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['organisme', '🏢 Administrateur']].map(([val, label]) => {
                         const checked = destinationRoles.includes(val);
                         return (
                           <button key={val} onClick={() => setDestinationRoles(prev => {
@@ -8104,7 +8104,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <div key={role} className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
                               <span className="text-[10px] font-black text-gray-400 w-4">{idx + 1}.</span>
                               <span className="flex-1 text-[11px] font-bold text-gray-700">
-                                {role === 'client' ? '📁 Client' : role === 'formateur' ? '📋 Formateur' : '🏢 Organisme'}
+                                {role === 'client' ? '📁 Client' : role === 'formateur' ? '📋 Formateur' : '🏢 Administrateur'}
                               </span>
                               <button type="button" disabled={idx === 0}
                                 onClick={() => setSigningOrder(prev => {
@@ -8606,9 +8606,16 @@ const DocumentsView = ({
   const issuedClientDocs = displayedDocs.filter(d => !!d.user_id && !d.assigned_formateur_id);
   const issuedFormateurDocs = displayedDocs.filter(d => !!d.assigned_formateur_id);
   const sharedTemplateDocs = displayedDocs.filter(d => !d.user_id && !d.assigned_formateur_id);
+  // NOUVEAU (2026-09-07) : documents en attente de la signature de l'ADMINISTRATEUR (rôle "organisme")
+  // — l'action de signer existait déjà (bouton "Signer pour l'organisme" sur chaque carte) mais n'était
+  // visible qu'en parcourant les 3 onglets un par un. On l'isole ici dans son propre onglet.
+  const organismeToSignDocs = isAdmin
+    ? documents.filter(d => (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && !isBlockedBySigningOrder(d, 'organisme'))
+    : [];
   const currentAudienceDocs =
     docAudienceTab === 'client' ? issuedClientDocs :
     docAudienceTab === 'formateur' ? issuedFormateurDocs :
+    docAudienceTab === 'a_signer' ? organismeToSignDocs :
     sharedTemplateDocs;
 
 
@@ -8905,7 +8912,7 @@ const DocumentsView = ({
               const tplInfo = (documentTemplates || {})[doc.nom];
               const dest = tplInfo?.destination || (doc.visible_formateur ? 'formateur' : 'client');
               const destRolesForBadge = parseDestinationRoles(dest);
-              const destBadgeLabel = destRolesForBadge.map(r => r === 'client' ? '📁 Client' : r === 'formateur' ? '📋 Formateur' : '🏢 Organisme').join(' + ');
+              const destBadgeLabel = destRolesForBadge.map(r => r === 'client' ? '📁 Client' : r === 'formateur' ? '📋 Formateur' : '🏢 Administrateur').join(' + ');
               return (
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -9350,25 +9357,44 @@ const DocumentsView = ({
         ) : (
           <div className="space-y-5">
             {/* ── Sélecteur d'onglets ────────────────────────────────────── */}
-            <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
-              {[
-                { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
-                { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-violet-700 bg-violet-100' },
-                { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
-              ].map(tab => (
-                <button
-                  key={tab.key}
-                  onClick={() => setDocAudienceTab(tab.key)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                    docAudienceTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {tab.label}
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-black ${
-                    docAudienceTab === tab.key ? tab.activeColor : 'bg-gray-200 text-gray-500'
-                  }`}>{tab.count}</span>
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
+                {[
+                  { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
+                  { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-violet-700 bg-violet-100' },
+                  { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setDocAudienceTab(tab.key)}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                      docAudienceTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {tab.label}
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-black ${
+                      docAudienceTab === tab.key ? tab.activeColor : 'bg-gray-200 text-gray-500'
+                    }`}>{tab.count}</span>
+                  </button>
+                ))}
+              </div>
+              {/* NOUVEAU (2026-09-07) : onglet dédié aux documents que L'ADMINISTRATEUR doit lui-même
+                  signer — volontairement séparé à droite, avec un badge "notification" (coin haut-droit,
+                  même style que la cloche) qui n'apparaît que s'il y a au moins un document en attente. */}
+              <button
+                onClick={() => setDocAudienceTab('a_signer')}
+                className={`relative flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-bold transition-all border-2 shrink-0 ${
+                  docAudienceTab === 'a_signer' ? 'bg-red-600 border-red-600 text-white shadow-lg' : 'bg-white border-red-200 text-red-600 hover:border-red-400'
+                }`}
+              >
+                <PenTool size={14} />
+                À signer par moi
+                {organismeToSignDocs.length > 0 && (
+                  <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-md ring-2 ring-white">
+                    {organismeToSignDocs.length}
+                  </span>
+                )}
+              </button>
             </div>
 
             {/* ── Grille de cartes ───────────────────────────────────────── */}
@@ -9449,7 +9475,7 @@ const DocumentsView = ({
                               : 'bg-amber-50 text-amber-700 border-amber-100'
                           }`}>
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${doc.signe_par_organisme ? 'bg-teal-500' : 'bg-amber-400'}`}></span>
-                            Organisme {doc.signe_par_organisme ? '✓' : '–'}
+                            Administrateur {doc.signe_par_organisme ? '✓' : '–'}
                           </span>
                         )}
                         {classif === 'a_signer' && (
@@ -9528,11 +9554,13 @@ const DocumentsView = ({
                   <p className="text-gray-400 text-sm font-semibold">
                     {docAudienceTab === 'client' ? 'Aucun document émis pour des clients.' :
                      docAudienceTab === 'formateur' ? 'Aucun document émis pour des formateurs.' :
+                     docAudienceTab === 'a_signer' ? 'Aucun document en attente de votre signature.' :
                      'Aucun modèle partagé enregistré.'}
                   </p>
                   <p className="text-gray-300 text-xs mt-1">
                     {docAudienceTab === 'client' ? 'Générez des documents depuis les fiches clients.' :
                      docAudienceTab === 'formateur' ? 'Générez des documents depuis les fiches formateurs.' :
+                     docAudienceTab === 'a_signer' ? 'Vous êtes à jour 🎉' :
                      'Uploadez des modèles depuis la bibliothèque.'}
                   </p>
                 </div>
@@ -9647,6 +9675,11 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     if (userRole === 'admin') {
       const pendingDocs = documents.filter(d => (d.user_id || d.assigned_formateur_id) && (!d.signe_par_client || !d.signe_par_formateur));
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} en attente de signature`, action: 'gestion_documents' });
+      // NOUVEAU (2026-09-07) : documents en attente de la signature de L'ADMINISTRATEUR lui-même
+      // (rôle "organisme") — jusqu'ici absents de la cloche, alors que l'action existe bel et bien
+      // (voir le nouvel onglet "À signer par moi" dans Gestion des documents).
+      const pendingOrganismeDocs = documents.filter(d => (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && !isBlockedBySigningOrder(d, 'organisme'));
+      if (pendingOrganismeDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingOrganismeDocs.length} document${pendingOrganismeDocs.length > 1 ? 's' : ''} à signer par vous`, action: 'gestion_documents' });
       const weekSessions = sessions.filter(s => s.date >= today && s.date <= in7Days);
       if (weekSessions.length > 0) notifs.push({ type: 'info', message: `${weekSessions.length} séance${weekSessions.length > 1 ? 's' : ''} cette semaine`, action: 'calendrier' });
     } else if (userRole === 'formateur') {
