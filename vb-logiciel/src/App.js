@@ -159,7 +159,7 @@ const ANCHOR_KEYS = [
 // ==========================================
 // MODALS
 // ==========================================
-const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) => {
+const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requiredTextFields = [] }) => {
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [checkedIds, setCheckedIds] = useState(() => new Set());
@@ -171,7 +171,7 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) =>
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     }
-    if (isOpen) setCheckedIds(new Set());
+    if (isOpen) { setCheckedIds(new Set()); setTextFieldValues({}); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -184,6 +184,15 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) =>
       return next;
     });
   };
+
+  // FIX (2026-09-07) : balises "texte libre" (ex: texte_organisme) exigées pour ce signataire —
+  // même pattern que DocumentViewerModal (requiredTextFields / textFieldValues / blocage tant
+  // que non rempli), absent jusqu'ici de cette modale générique de signature.
+  const [textFieldValues, setTextFieldValues] = useState({});
+  const setTextFieldValue = (fieldId, value) => {
+    setTextFieldValues(prev => ({ ...prev, [fieldId]: value }));
+  };
+  const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
 
   const getCoordinates = (e) => {
     const canvas = canvasRef.current;
@@ -224,9 +233,9 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) =>
   };
 
   const handleSave = () => {
-    if (!canvasRef.current || !allCheckboxesChecked) return;
+    if (!canvasRef.current || !allCheckboxesChecked || !allRequiredTextFilled) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
-    onSave(dataUrl, checkedIds);
+    onSave(dataUrl, checkedIds, textFieldValues);
   };
 
   if (!isOpen) return null;
@@ -255,6 +264,25 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) =>
             )}
           </div>
         )}
+        {requiredTextFields.length > 0 && (
+          <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <p className="text-sm font-bold text-emerald-800 mb-3">Avant de signer, complétez le(s) champ(s) suivant(s) :</p>
+            {requiredTextFields.map((f, i) => (
+              <div key={fieldKey(f) || i} className="mb-2">
+                <textarea
+                  value={textFieldValues[fieldKey(f)] || ''}
+                  onChange={e => setTextFieldValue(fieldKey(f), e.target.value)}
+                  placeholder={`Texte ${i + 1}`}
+                  rows={2}
+                  className="w-full p-2.5 text-sm bg-white border border-emerald-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
+                />
+              </div>
+            ))}
+            {!allRequiredTextFilled && (
+              <p className="text-xs text-emerald-700 mt-2 italic">Merci de compléter ce(s) champ(s) avant de signer.</p>
+            )}
+          </div>
+        )}
         <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none mb-6 relative">
           <canvas
             ref={canvasRef}
@@ -277,7 +305,7 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) =>
             <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors w-full sm:w-auto">Annuler</button>
             <button
               onClick={handleSave}
-              disabled={!allCheckboxesChecked}
+              disabled={!allCheckboxesChecked || !allRequiredTextFilled}
               className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg w-full sm:w-auto disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Valider
@@ -7493,7 +7521,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
         x_percent: f.xPct, y_percent: f.yPct,
         width_percent: f.width_percent, height_percent: f.height_percent,
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur') ? 'text_input' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur' || f.tag === 'signature_organisme') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur' || f.tag === 'checkbox_organisme') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur' || f.tag === 'texte_organisme') ? 'text_input' : 'text',
         font_size: 11,
       }));
       // Aperçu des champs texte libre avec une valeur d'exemple (le vrai contenu n'est saisi
@@ -7501,7 +7529,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
       const previewTextInputMap = {};
       tplFields.forEach(f => {
         if (f.field_type === 'text_input') {
-          previewTextInputMap[fieldKey(f)] = f.tag === 'texte_client' ? 'Exemple : réponse du client…' : 'Exemple : réponse du formateur…';
+          previewTextInputMap[fieldKey(f)] = f.tag === 'texte_client' ? 'Exemple : réponse du client…' : f.tag === 'texte_organisme' ? 'Exemple : réponse de l\'administrateur…' : 'Exemple : réponse du formateur…';
         }
       });
       const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {}, {}, previewTextInputMap);
@@ -19485,12 +19513,15 @@ export default function App() {
     }
   };
 
-  const handleSignatureSave = async (dataUrl, checkedIds = null) => {
+  const handleSignatureSave = async (dataUrl, checkedIds = null, textValues = null) => {
     if (!signingDocId) return;
     // 'organisme' = n'importe quel admin de l'organisation (2026-07-27) — un admin qui signe le
     // fait toujours au titre de l'organisme, jamais au titre du formateur.
     const signerType = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
-    await handleSignDocument(signingDocId, signerType, dataUrl, checkedIds);
+    // FIX (2026-09-07) : textValues (balises texte_<rôle> saisies dans SignatureModal) n'était
+    // jusqu'ici jamais transmis à handleSignDocument, qui pourtant sait déjà les graver dans le
+    // PDF (paramètre présent depuis longtemps mais jamais alimenté par ce flux de signature).
+    await handleSignDocument(signingDocId, signerType, dataUrl, checkedIds, textValues);
     setSigningDocId(null);
   };
 
@@ -20522,9 +20553,27 @@ export default function App() {
           const signingDoc = documents.find(d => d.id === signingDocId);
           if (!signingDoc) return [];
           const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
+          // FIX (2026-09-07) : repli sur template_fields puis fields quand signature_fields est
+          // vide — les documents envoyés via "Envoyer" (handleGenerateDocx) stockent leurs
+          // balises dans metadata.template_fields, pas metadata.signature_fields (même repli
+          // déjà utilisé par handleSignDocument pour graver la signature dans le PDF).
+          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
+            : (Array.isArray(meta.fields) ? meta.fields : []);
           const signerRoleForCheckbox = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
           const checkboxTag = `checkbox_${signerRoleForCheckbox}`;
-          return (meta.signature_fields || []).filter(f => f.tag === checkboxTag);
+          return fieldsForSigning.filter(f => f.tag === checkboxTag);
+        })()}
+        requiredTextFields={(() => {
+          const signingDoc = documents.find(d => d.id === signingDocId);
+          if (!signingDoc) return [];
+          const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
+          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
+            : (Array.isArray(meta.fields) ? meta.fields : []);
+          const signerRoleForText = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
+          const textTag = `texte_${signerRoleForText}`;
+          return fieldsForSigning.filter(f => f.tag === textTag);
         })()}
       />
 
