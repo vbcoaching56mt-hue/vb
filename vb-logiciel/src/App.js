@@ -8232,7 +8232,13 @@ const DocumentsView = ({
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [clientDocTab, setClientDocTab] = React.useState('avant');
-  const [docAudienceTab, setDocAudienceTab] = React.useState('client');
+  // FIX (2026-09-07) : "historique" remplace les anciens onglets séparés "client"/"formateur" —
+  // un seul onglet listant tous les documents envoyés, quel que soit le destinataire.
+  const [docAudienceTab, setDocAudienceTab] = React.useState('historique');
+  // FIX (2026-09-07) : pagination de la grille de documents émis (15 par page), pour que
+  // l'historique reste lisible même avec beaucoup de documents.
+  const [docsPage, setDocsPage] = React.useState(1);
+  const DOCS_PER_PAGE = 15;
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
@@ -8653,6 +8659,19 @@ const DocumentsView = ({
   const issuedClientDocs = displayedDocs.filter(d => !!d.user_id && !d.assigned_formateur_id);
   const issuedFormateurDocs = displayedDocs.filter(d => !!d.assigned_formateur_id);
   const sharedTemplateDocs = displayedDocs.filter(d => !d.user_id && !d.assigned_formateur_id);
+  // FIX (2026-09-07) : "Historique" unifié — union dédupliquée de issuedClientDocs et
+  // issuedFormateurDocs (un même document ne peut être compté qu'une fois même s'il porte à la
+  // fois user_id et assigned_formateur_id), triée du plus récent au plus ancien (id décroissant —
+  // la table `documents` n'a pas de colonne created_at, l'id auto-incrémenté sert de proxy fiable).
+  const issuedAllDocs = React.useMemo(() => {
+    const byId = new Map();
+    [...issuedClientDocs, ...issuedFormateurDocs].forEach(d => byId.set(d.id, d));
+    return Array.from(byId.values()).sort((a, b) => {
+      const an = Number(a.id), bn = Number(b.id);
+      if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
+      return String(b.id).localeCompare(String(a.id));
+    });
+  }, [issuedClientDocs, issuedFormateurDocs]);
   // NOUVEAU (2026-09-07) : documents en attente de la signature de l'ADMINISTRATEUR (rôle "organisme")
   // — l'action de signer existait déjà (bouton "Signer pour l'organisme" sur chaque carte) mais n'était
   // visible qu'en parcourant les 3 onglets un par un. On l'isole ici dans son propre onglet.
@@ -8660,10 +8679,13 @@ const DocumentsView = ({
     ? documents.filter(d => (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && !isBlockedBySigningOrder(d, 'organisme'))
     : [];
   const currentAudienceDocs =
-    docAudienceTab === 'client' ? issuedClientDocs :
-    docAudienceTab === 'formateur' ? issuedFormateurDocs :
+    docAudienceTab === 'historique' ? issuedAllDocs :
     docAudienceTab === 'a_signer' ? organismeToSignDocs :
     sharedTemplateDocs;
+  // FIX (2026-09-07) : pagination — 15 documents par page, quel que soit l'onglet actif.
+  const totalDocsPages = Math.max(1, Math.ceil(currentAudienceDocs.length / DOCS_PER_PAGE));
+  const safeDocsPage = Math.min(docsPage, totalDocsPages);
+  const pagedAudienceDocs = currentAudienceDocs.slice((safeDocsPage - 1) * DOCS_PER_PAGE, safeDocsPage * DOCS_PER_PAGE);
 
 
   return (
@@ -8698,7 +8720,7 @@ const DocumentsView = ({
           mode un en-tête dédié avec bouton "Retour" — voir plus bas dans ce fichier). */}
       {isAdmin && (
         <button
-          onClick={() => setDocAudienceTab('a_signer')}
+          onClick={() => { setDocAudienceTab('a_signer'); setDocsPage(1); }}
           className={`w-full flex items-center justify-between gap-4 px-6 py-4 rounded-3xl border-2 transition-all text-left ${
             organismeToSignDocs.length > 0
               ? 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm'
@@ -9443,7 +9465,7 @@ const DocumentsView = ({
             {docAudienceTab === 'a_signer' ? (
               <div className="flex items-center gap-3 flex-wrap">
                 <button
-                  onClick={() => setDocAudienceTab('client')}
+                  onClick={() => { setDocAudienceTab('historique'); setDocsPage(1); }}
                   className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl transition-all shrink-0"
                 >
                   ← Retour
@@ -9459,13 +9481,12 @@ const DocumentsView = ({
             ) : (
               <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
                 {[
-                  { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
-                  { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-violet-700 bg-violet-100' },
+                  { key: 'historique', label: 'Historique', count: issuedAllDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
                   { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
                 ].map(tab => (
                   <button
                     key={tab.key}
-                    onClick={() => setDocAudienceTab(tab.key)}
+                    onClick={() => { setDocAudienceTab(tab.key); setDocsPage(1); }}
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
                       docAudienceTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
                     }`}
@@ -9481,7 +9502,7 @@ const DocumentsView = ({
 
             {/* ── Grille de cartes ───────────────────────────────────────── */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {currentAudienceDocs.map(doc => {
+              {pagedAudienceDocs.map(doc => {
                 const clientAssocie = clients.find(c => c.id === doc.user_id);
                 const formateurAssocie = (formateurs || []).find(f => f.id === doc.assigned_formateur_id);
                 const beneficiaire = clientAssocie?.nom || formateurAssocie?.nom || null;
@@ -9634,20 +9655,39 @@ const DocumentsView = ({
                     <FileText size={26} className="text-gray-200" />
                   </div>
                   <p className="text-gray-400 text-sm font-semibold">
-                    {docAudienceTab === 'client' ? 'Aucun document émis pour des clients.' :
-                     docAudienceTab === 'formateur' ? 'Aucun document émis pour des formateurs.' :
+                    {docAudienceTab === 'historique' ? 'Aucun document envoyé pour le moment.' :
                      docAudienceTab === 'a_signer' ? 'Aucun document en attente de votre signature.' :
                      'Aucun modèle partagé enregistré.'}
                   </p>
                   <p className="text-gray-300 text-xs mt-1">
-                    {docAudienceTab === 'client' ? 'Générez des documents depuis les fiches clients.' :
-                     docAudienceTab === 'formateur' ? 'Générez des documents depuis les fiches formateurs.' :
+                    {docAudienceTab === 'historique' ? 'Générez des documents depuis les fiches clients ou formateurs.' :
                      docAudienceTab === 'a_signer' ? 'Vous êtes à jour 🎉' :
                      'Uploadez des modèles depuis la bibliothèque.'}
                   </p>
                 </div>
               )}
             </div>
+
+            {/* FIX (2026-09-07) : pagination — 15 documents par page, sur l'onglet actif. */}
+            {currentAudienceDocs.length > DOCS_PER_PAGE && (
+              <div className="flex items-center justify-center gap-3 pt-1">
+                <button
+                  onClick={() => setDocsPage(p => Math.max(1, p - 1))}
+                  disabled={safeDocsPage <= 1}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Précédent
+                </button>
+                <span className="text-xs font-bold text-gray-400">Page {safeDocsPage} / {totalDocsPages}</span>
+                <button
+                  onClick={() => setDocsPage(p => Math.min(totalDocsPages, p + 1))}
+                  disabled={safeDocsPage >= totalDocsPages}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Suivant →
+                </button>
+              </div>
+            )}
 
             <DeleteConfirmationModal
               isOpen={!!issuedDocToDelete}
