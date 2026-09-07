@@ -18865,8 +18865,17 @@ export default function App() {
         // que soit l'ordre de signature configuré sur le modèle (bug remonté le 2026-09-02).
         const _tplMetaForInsert = templateInfo.metadata || {};
         const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
-        const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
-        const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+        // FIX (2026-09-07) : détecte une balise de signature de N'IMPORTE QUEL rôle (client,
+        // formateur OU organisme) — avant ce correctif, seules les balises CLIENT étaient
+        // regardées, donc un modèle destiné uniquement au formateur et/ou à l'organisme (sans
+        // client) ne recevait jamais le statut "À signer", même avec une vraie balise de
+        // signature posée dessus.
+        const _hasAnySignTag = _tplFieldsForInsert.some(f => [
+          'signature_client', 'checkbox_client', 'texte_client',
+          'signature_formateur', 'checkbox_formateur', 'texte_formateur',
+          'signature_organisme', 'checkbox_organisme', 'texte_organisme',
+        ].includes(f.tag));
+        const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
         // FIX (2026-09-07) : destinataires réels du document — remplace la détection binaire
         // effectiveIsForFormateur (égalité stricte à 'formateur', qui ratait toute destination
         // combinée type "formateur,organisme") par la même lecture que partout ailleurs dans le
@@ -19012,8 +19021,13 @@ export default function App() {
       // Même correctif que la branche visuelle ci-dessus (voir commentaire détaillé là-bas, 2026-09-07).
       const _tplMetaForInsert = templateInfo.metadata || {};
       const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
-      const _hasClientSignTag = _tplFieldsForInsert.some(f => ['signature_client', 'checkbox_client', 'texte_client'].includes(f.tag));
-      const needsSignatureForInsert = _hasClientSignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+      // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
+      const _hasAnySignTag = _tplFieldsForInsert.some(f => [
+        'signature_client', 'checkbox_client', 'texte_client',
+        'signature_formateur', 'checkbox_formateur', 'texte_formateur',
+        'signature_organisme', 'checkbox_organisme', 'texte_organisme',
+      ].includes(f.tag));
+      const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
       const _destRolesForInsert = parseDestinationRoles(templateDestination);
       const _visClientForInsert = _destRolesForInsert.includes('client');
       const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
