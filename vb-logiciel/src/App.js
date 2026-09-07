@@ -18955,9 +18955,16 @@ export default function App() {
           docToInsert.visible_client = false;
         } else {
           // Le client n'est PAS destinataire (ex: "formateur,organisme" uniquement) même si ce
-          // document a été généré depuis SA fiche — on le rattache au formateur de ce client (pour
-          // qu'il reste visible dans son dossier), SANS jamais poser user_id : c'est ce qui évitait
-          // avant ce correctif qu'il pollue la liste "Documents envoyés pour signature" du client.
+          // document a été généré depuis SA fiche. `visible_client` reste false (le client ne le
+          // voit jamais sur son propre portail — tous les points de lecture côté client filtrent
+          // sur visible_client, jamais sur user_id seul), MAIS on pose quand même user_id = targetId
+          // (le client, quand un clientRow existe) pour que ce document reste traçable depuis la
+          // fiche de CE client (section "Documents envoyés pour signature" de ClientDetailView,
+          // qui filtre justement sur user_id) — corrigé le 2026-09-07 : un précédent correctif
+          // avait au contraire arrêté de poser user_id ici pour éviter un badge "en attente de
+          // signature client" non pertinent, mais ce badge est déjà neutralisé par needsClientSign
+          // (dérivé de destination_roles) depuis un correctif encore antérieur.
+          if (clientRow) docToInsert.user_id = targetId;
           docToInsert.visible_client = false;
           docToInsert.visible_formateur = _visFormateurForInsert;
           if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
@@ -19088,6 +19095,10 @@ export default function App() {
         docToInsert.visible_formateur = true;
         docToInsert.visible_client = false;
       } else {
+        // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus : traçabilité côté
+        // fiche client, sans jamais impacter la visibilité réelle côté portail client (gouvernée
+        // exclusivement par visible_client, laissé à false ici).
+        if (clientRow) docToInsert.user_id = targetId;
         docToInsert.visible_client = false;
         docToInsert.visible_formateur = _visFormateurForInsert;
         if (finalClient && finalClient.formateur_id) {
@@ -20545,18 +20556,26 @@ export default function App() {
       </div>
 
       {/* Modals Qualiopi */}
-      <SignatureModal
+      {/* FIX (2026-09-07) : remplace la modale générique <SignatureModal> par le même
+          <DocumentViewerModal mode="sign"> déjà utilisé côté "Documents à signer" du formateur
+          (viewingSession, plus bas) — la saisie des champs texte (et le cochage des cases) se
+          fait ainsi DIRECTEMENT sur le document affiché, à la position exacte de la balise,
+          identique partout dans l'app plutôt qu'une liste générique séparée. */}
+      <DocumentViewerModal
         isOpen={signingDocId !== null}
+        url={(() => { const d = documents.find(d => d.id === signingDocId); return d?.signed_pdf_url || d?.url || null; })()}
+        title={documents.find(d => d.id === signingDocId)?.nom}
         onClose={() => setSigningDocId(null)}
-        onSave={handleSignatureSave}
+        supabase={supabase}
+        mode="sign"
         requiredCheckboxes={(() => {
           const signingDoc = documents.find(d => d.id === signingDocId);
           if (!signingDoc) return [];
           const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
-          // FIX (2026-09-07) : repli sur template_fields puis fields quand signature_fields est
-          // vide — les documents envoyés via "Envoyer" (handleGenerateDocx) stockent leurs
-          // balises dans metadata.template_fields, pas metadata.signature_fields (même repli
-          // déjà utilisé par handleSignDocument pour graver la signature dans le PDF).
+          // Repli sur template_fields puis fields quand signature_fields est vide — les documents
+          // envoyés via "Envoyer" (handleGenerateDocx) stockent leurs balises dans
+          // metadata.template_fields, pas metadata.signature_fields (même repli déjà utilisé par
+          // handleSignDocument pour graver la signature dans le PDF).
           const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
             : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
             : (Array.isArray(meta.fields) ? meta.fields : []);
@@ -20575,6 +20594,21 @@ export default function App() {
           const textTag = `texte_${signerRoleForText}`;
           return fieldsForSigning.filter(f => f.tag === textTag);
         })()}
+        requiresSignature={(() => {
+          const signingDoc = documents.find(d => d.id === signingDocId);
+          if (!signingDoc) return true;
+          const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
+          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
+            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
+            : (Array.isArray(meta.fields) ? meta.fields : []);
+          const signerRoleForSig = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
+          // Pas de métadonnées de balises du tout → document hors du nouveau système visuel, on
+          // garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige que
+          // si une balise signature_<rôle> a effectivement été posée pour CE signataire.
+          if (!Array.isArray(fieldsForSigning) || fieldsForSigning.length === 0) return true;
+          return fieldsForSigning.some(f => f.tag === `signature_${signerRoleForSig}`);
+        })()}
+        onSave={(sigDataUrl, _choice, checkedIds, textValues) => handleSignatureSave(sigDataUrl, checkedIds, textValues)}
       />
 
       <EmargementModal
