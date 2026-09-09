@@ -16546,14 +16546,32 @@ export default function App() {
       setAdminSelfProfile(null);
     }
   }, [userRole, isAdminActingAsFormateur, currentUserId]);
+  // Cas symétrique côté CLIENT : si le formateur_id du client connecté correspond en
+  // réalité à un compte admin (coach = l'admin elle-même), il est absent du tableau
+  // `formateurs` (qui ne contient que role='formateur'). On va chercher ce profil pour
+  // que le client voie bien son coach (messagerie + "Votre coach" sur l'Accueil).
+  const [clientCoachFallback, setClientCoachFallback] = useState(null); // { id, nom }
+  useEffect(() => {
+    if (userRole !== 'client' || !currentUserId) { setClientCoachFallback(null); return; }
+    const me = (clients || []).find(c => String(c.id) === String(currentUserId));
+    const already = me?.formateur_id && (formateurs || []).find(f => String(f.id) === String(me.formateur_id));
+    if (!me?.formateur_id || already) { setClientCoachFallback(null); return; }
+    supabase.from('utilisateurs').select('id, nom').eq('id', me.formateur_id).maybeSingle()
+      .then(({ data }) => setClientCoachFallback(data || null));
+  }, [userRole, currentUserId, clients, formateurs]);
   // Liste des formateurs "assignables" : les vrais formateurs + l'admin lui-même (pour qu'un client
   // puisse lui être assigné comme coach, et pour que son propre espace formateur affiche son nom).
   // Volontairement PAS utilisée pour AdminFormateursView (page de gestion avec suppression) afin
   // d'éviter tout risque de suppression accidentelle du compte admin lui-même.
   const assignableFormateurs = React.useMemo(() => {
-    if (!adminSelfProfile) return formateurs;
-    return [{ ...adminSelfProfile, role: 'formateur' }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
-  }, [formateurs, adminSelfProfile]);
+    if (adminSelfProfile) {
+      return [{ ...adminSelfProfile, role: 'formateur' }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
+    }
+    if (clientCoachFallback) {
+      return [{ ...clientCoachFallback, role: 'formateur' }, ...formateurs.filter(f => f.id !== clientCoachFallback.id)];
+    }
+    return formateurs;
+  }, [formateurs, adminSelfProfile, clientCoachFallback]);
 
   // États Modules Supabase
   const [modules, setModules] = useState([]);
