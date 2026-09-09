@@ -9936,7 +9936,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       if (weekSessions.length > 0) notifs.push({ type: 'info', message: `${weekSessions.length} séance${weekSessions.length > 1 ? 's' : ''} cette semaine`, action: 'calendrier' });
     } else if (userRole === 'formateur') {
       const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
-      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur'));
+      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d));
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'clients' });
       // Exercices rendus par un client, pas encore corrigés — visibilité auparavant nulle en dehors
       // d'aller ouvrir chaque client une par une pour vérifier.
@@ -10358,7 +10358,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
-  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur'));
+  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d));
   // Exercices rendus par un client mais pas encore corrigés — auparavant on ne le voyait qu'en
   // ouvrant chaque client une par une dans "Mes Clients". On le remonte ici, bien visible.
   const pendingCorrections = sessions.filter(s =>
