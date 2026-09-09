@@ -2727,7 +2727,7 @@ const SignupView = ({ supabase, onComplete }) => {
 
   if (needsConfirmation) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
@@ -2739,7 +2739,7 @@ const SignupView = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in">
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
@@ -2981,7 +2981,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
 
   if (showForgotPassword) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
@@ -3032,7 +3032,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à SkorUp</h1>
@@ -13250,7 +13250,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
 
   if (isVerifying) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
@@ -13261,7 +13261,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
 
   if (verifyError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">!</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
@@ -13273,7 +13273,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
         <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
@@ -13370,7 +13370,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 
   if (isVerifying) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
@@ -13381,7 +13381,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 
   if (verifyError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6">!</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
@@ -13393,7 +13393,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
         <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Nouveau mot de passe</h2>
@@ -20287,7 +20287,7 @@ export default function App() {
 
   if (isLoadingSession) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
+      <div className="h-dvh w-full flex flex-col items-center justify-center bg-gray-50">
         <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
         <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
       </div>
@@ -20311,7 +20311,7 @@ export default function App() {
   })();
 
   return (
-    <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
+    <div className="flex h-dvh bg-gray-50 font-sans overflow-hidden">
       {/* Sidebar Mobile Overlay */}
       <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
 
