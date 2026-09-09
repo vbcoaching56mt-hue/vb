@@ -16439,6 +16439,25 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
+  // 3) Filet de sécurité "page blanche" : un onglet restauré depuis l'URL (F5, ancien onglet de
+  //    navigateur resté ouvert, lien direct) peut ne correspondre à aucun rendu pour le rôle
+  //    réellement connecté (ex: /tableau-de-bord → 'dashboard', réservé aux admins). Dans ce cas,
+  //    aucune des conditions activeTab === 'xxx' && userRole === 'yyy' du rendu principal ne
+  //    matche : rien ne s'affiche. On revient alors sur l'onglet d'accueil du rôle concerné.
+  React.useEffect(() => {
+    if (!userRole) return;
+    const ROLE_TABS = {
+      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
+      client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
+    };
+    const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
+    const allowed = ROLE_TABS[userRole];
+    if (allowed && !allowed.includes(activeTab)) {
+      setActiveTab(ROLE_DEFAULT_TAB[userRole] || 'accueil');
+    }
+  }, [userRole, activeTab]);
+
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Détection synchrone au démarrage : lien invitation (token_hash ou access_token dans le hash)
