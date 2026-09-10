@@ -1444,24 +1444,45 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                       const k = fieldKey(f);
                       const val = textFieldValues[k] || '';
                       return (
-                        <input
+                        <textarea
                           key={k || `txt-${fi}`}
-                          type="text"
                           value={val}
                           onChange={e => setTextFieldValue(k, e.target.value)}
                           placeholder="Cliquez pour écrire…"
-                          size={Math.max(6, val.length || 10)}
+                          rows={1}
+                          // FIX (2026-09-10) : remplace le <input type="text"> mono-ligne par une <textarea> —
+                          // sur une case large, on ne pouvait écrire que sur une seule ligne et le texte trop
+                          // long était coupé/débordait sans jamais revenir à la ligne. La <textarea> gère
+                          // nativement "Entrée" (saut de ligne) et enroule le texte (whiteSpace/overflowWrap
+                          // ci-dessous) sans jamais dépasser les contours de la case (overflow hidden + hauteur
+                          // fixée sur field.height_percent, ignoré par l'ancien <input> qui ne lisait que
+                          // width_percent — d'où le fait qu'agrandir la case dans l'éditeur de balises n'avait
+                          // aucun effet ici). `resize: none` empêche l'utilisateur de re-déformer la case
+                          // pendant la signature : la taille reste celle définie dans l'éditeur de modèle.
                           // Zone d'édition volontairement plus resserrée et en gris neutre (au lieu du violet/
                           // vert d'origine) : la balise posée dans l'éditeur de modèle est large pour laisser
-                          // de la marge, mais ça donnait l'impression que le texte pourrait apparaître n'importe
-                          // où dedans. `size` fait suivre la largeur au nombre de caractères tapés, et le rendu
-                          // final (overlayFieldsOnPdf) souligne désormais uniquement la largeur réelle du texte,
-                          // en gris — cette zone d'édition adopte la même sobriété (retour utilisateur 2026-07-24).
+                          // de la marge. Le rendu final (overlayFieldsOnPdf) souligne désormais uniquement la
+                          // largeur réelle du texte, en gris — cette zone d'édition adopte la même sobriété
+                          // (retour utilisateur 2026-07-24).
                           // Ancrée à GAUCHE (translate(0%, -50%), pas -50%/-50%) : le point posé dans
                           // l'éditeur de modèle est désormais le coin gauche exact où le texte démarre, à
                           // l'écran comme dans le PDF final — même correctif que overlayFieldsOnPdf.
-                          style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(0%, -50%)', ...(typeof f.width_percent === 'number' ? { width: `${f.width_percent}%` } : { minWidth: '10%', maxWidth: '26%' }), fontSize: 12 }}
-                          className={`px-0.5 bg-transparent outline-none text-gray-900 border-0 border-b-2 ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
+                          style={{
+                            position: 'absolute',
+                            left: `${f.x_percent}%`,
+                            top: `${f.y_percent}%`,
+                            transform: 'translate(0%, -50%)',
+                            ...(typeof f.width_percent === 'number' ? { width: `${f.width_percent}%` } : { minWidth: '10%', maxWidth: '26%' }),
+                            height: `${typeof f.height_percent === 'number' ? f.height_percent : 3.5}%`,
+                            minHeight: 20,
+                            fontSize: 12,
+                            resize: 'none',
+                            overflow: 'hidden',
+                            whiteSpace: 'pre-wrap',
+                            overflowWrap: 'break-word',
+                            lineHeight: 1.25,
+                          }}
+                          className={`px-0.5 bg-transparent outline-none text-gray-900 border rounded ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
                         />
                       );
                     })}
@@ -7967,17 +7988,29 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           // peut être étirée directement depuis la poignée en bas à droite, au lieu
                           // d'un petit repère à taille fixe. Le point posé reste le coin haut-gauche
                           // de la case (ancrage identique à overlayFieldsOnPdf).
-                          <div
-                            className={`relative w-full h-full min-w-[60px] min-h-[20px] rounded-lg border-2 shadow-lg ring-2 ring-white flex items-start gap-1 px-1.5 py-1 select-none overflow-hidden ${
-                              roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50/90 border-emerald-400' : field.tag === 'texte_formateur' ? 'bg-orange-50/90 border-orange-400' : 'bg-blue-50/90 border-blue-400'
-                            }`}
-                          >
-                            <span className="text-xs select-none shrink-0">📝</span>
-                            <p className={`text-[9px] font-black leading-tight truncate ${
-                              roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : field.tag === 'texte_formateur' ? 'text-orange-700' : 'text-blue-700'
-                            }`}>
-                              Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
-                            </p>
+                          //
+                          // FIX (2026-09-10) : la croix de suppression et la poignée de redimensionnement
+                          // étaient auparavant DANS la div `overflow-hidden` (nécessaire pour tronquer le
+                          // texte qui dépasserait de la case) — or elles sont volontairement positionnées
+                          // À CHEVAL sur le bord (-top-2.5/-right-2.5, -bottom-1.5/-right-1.5), donc
+                          // `overflow-hidden` les rognait aux 3/4. On sort maintenant ces deux éléments de
+                          // la div tronquée pour en faire des frères positionnés par rapport au conteneur
+                          // extérieur (celui avec `position: 'absolute'`, sans overflow-hidden) : la case
+                          // continue de tronquer son propre contenu, mais la croix et la poignée restent
+                          // entièrement visibles.
+                          <>
+                            <div
+                              className={`w-full h-full min-w-[60px] min-h-[20px] rounded-lg border-2 shadow-lg ring-2 ring-white flex items-start gap-1 px-1.5 py-1 select-none overflow-hidden ${
+                                roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50/90 border-emerald-400' : field.tag === 'texte_formateur' ? 'bg-orange-50/90 border-orange-400' : 'bg-blue-50/90 border-blue-400'
+                              }`}
+                            >
+                              <span className="text-xs select-none shrink-0">📝</span>
+                              <p className={`text-[9px] font-black leading-tight truncate ${
+                                roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : field.tag === 'texte_formateur' ? 'text-orange-700' : 'text-blue-700'
+                              }`}>
+                                Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
+                              </p>
+                            </div>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               title="Supprimer cette balise"
@@ -8011,7 +8044,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-sm bg-white border-2 border-gray-400 hover:border-violet-600 hover:bg-violet-50 cursor-nwse-resize shadow-sm"
                               style={{ zIndex: 20 }}
                             />
-                          </div>
+                          </>
                         ) : (
                           <div className="group relative inline-flex select-none">
                             <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
