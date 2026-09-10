@@ -922,8 +922,13 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       // quand le champ n'a pas encore été redimensionné (modèles existants, ou balise placée avant
       // ce correctif).
       const boxW = typeof field.width_percent === 'number' ? (field.width_percent / 100) * pageW : pageW * 0.28;
-      const fs = field.font_size || 10;
-      const boxH = typeof field.height_percent === 'number' ? (field.height_percent / 100) * pageH : Math.round(fs * 1.35) + 2;
+      // FIX (2026-09-10, round 2) : 12pt par défaut (au lieu de 10pt) pour correspondre exactement à
+      // la taille utilisée par la zone de saisie à l'écran (pageTexts, fontSize: 12) — un texte tapé
+      // ne doit pas apparaître "beaucoup plus petit" une fois gravé dans le PDF final (retour
+      // utilisateur). `nominalFs` sert aussi de point de départ au "rétrécissement automatique"
+      // ci-dessous quand le texte est trop long pour la case à cette taille.
+      const nominalFs = field.font_size || 12;
+      const boxH = typeof field.height_percent === 'number' ? (field.height_percent / 100) * pageH : Math.round(nominalFs * 1.35) + 2;
       // Ancrée à GAUCHE exactement sur le point cliqué dans l'éditeur (bx = cx), plutôt que centrée
       // autour de ce point (bx = cx - boxW/2 comme avant) : le texte tapé commence maintenant pile là
       // où la balise a été posée, ce qui était la source persistante de confusion sur "où le texte va
@@ -946,34 +951,55 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           // allons centrer notre travail sur" (larges, redimensionnées pour plusieurs lignes) invisibles
           // dans le document final, alors que les petites cases à une ligne (ex. le calendrier
           // prévisionnel, jamais redimensionnées) continuaient de fonctionner.
-          // On découpe maintenant explicitement sur les "\n" (retours à la ligne tapés), on enroule
-          // chaque ligne aux limites RÉELLES de la case (comme à l'écran), et on dessine chaque ligne
-          // avec son propre page.drawText() — le texte ne dépasse jamais la case (lignes en trop
-          // tronquées avec une ellipse, comme la hauteur limitée le fait déjà à l'écran).
           const textStr = String(typedValue);
           const tx = bx + 3;
           const maxTextW = Math.max(4, boxW - 6);
-          const lineHeight = fs * 1.25;
-          const rawLines = textStr.split('\n');
-          const wrappedLines = [];
-          for (const rawLine of rawLines) {
-            if (rawLine === '') { wrappedLines.push(''); continue; }
-            const words = rawLine.split(' ');
-            let current = '';
-            for (const word of words) {
-              const candidate = current ? `${current} ${word}` : word;
-              if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
-                wrappedLines.push(current);
-                current = word;
-              } else {
-                current = candidate;
+          // Découpe le texte (sur les "\n" tapés, puis mot par mot pour enrouler chaque ligne aux
+          // limites réelles de la case) à une taille de police donnée — utilisé ci-dessous à
+          // plusieurs tailles successives (voir le rétrécissement automatique).
+          const wrapAt = (size) => {
+            const rawLines = textStr.split('\n');
+            const out = [];
+            for (const rawLine of rawLines) {
+              if (rawLine === '') { out.push(''); continue; }
+              const words = rawLine.split(' ');
+              let current = '';
+              for (const word of words) {
+                const candidate = current ? `${current} ${word}` : word;
+                if (current && font.widthOfTextAtSize(candidate, size) > maxTextW) {
+                  out.push(current);
+                  current = word;
+                } else {
+                  current = candidate;
+                }
               }
+              out.push(current);
             }
-            wrappedLines.push(current);
+            return out;
+          };
+          // FIX (2026-09-10, round 2) : plutôt que de tronquer avec "…" dès que le texte dépasse la
+          // hauteur de la case à la taille de police par défaut, on réduit progressivement cette
+          // taille (comme un champ de signature électronique classique) jusqu'à ce que TOUT le texte
+          // tienne. Un utilisateur qui remplit une case jusqu'à son bord visible à l'écran (12pt)
+          // s'attend à retrouver tout son texte dans le PDF final, pas une coupure — l'ancienne
+          // version comparait la hauteur de case à un nombre de lignes calculé à 10pt par défaut
+          // (au lieu des 12pt affichés à l'écran), ce qui sous-estimait la place réellement
+          // disponible et coupait du texte qui pourtant tenait très bien à l'écran.
+          const minFs = 7;
+          let fs = nominalFs;
+          let lineHeight = fs * 1.25;
+          let lines = wrapAt(fs);
+          let maxLines = Math.max(1, Math.floor(boxH / lineHeight));
+          while (lines.length > maxLines && fs > minFs) {
+            fs -= 0.5;
+            lineHeight = fs * 1.25;
+            lines = wrapAt(fs);
+            maxLines = Math.max(1, Math.floor(boxH / lineHeight));
           }
-          const maxLines = Math.max(1, Math.floor(boxH / lineHeight));
-          const visibleLines = wrappedLines.slice(0, maxLines);
-          if (wrappedLines.length > maxLines) {
+          const visibleLines = lines.slice(0, maxLines);
+          if (lines.length > maxLines) {
+            // Cas extrême : même à la taille minimale, le texte ne tient pas — dernier recours,
+            // on tronque la dernière ligne visible avec une ellipse plutôt que de déborder de la case.
             let last = visibleLines[visibleLines.length - 1];
             while (last.length > 0 && font.widthOfTextAtSize(last + '…', fs) > maxTextW) {
               last = last.slice(0, -1);
