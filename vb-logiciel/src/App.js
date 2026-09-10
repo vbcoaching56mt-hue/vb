@@ -501,6 +501,68 @@ const fieldKey = (f) => {
   return `pos_${f.tag || ''}_${f.page || 1}_${Number(f.x_percent).toFixed(2)}_${Number(f.y_percent).toFixed(2)}`;
 };
 
+// ─── Retour à la ligne des balises "texte libre" (2026-09-10) ──────────────────────────────────
+// Découpe un texte pour tenir dans une case de largeur/hauteur données, à une taille de police
+// donnée : sur "\n" (retours à la ligne tapés), puis mot par mot pour enrouler chaque ligne aux
+// limites réelles de la case (avec découpage caractère par caractère d'un mot lui-même trop large,
+// ex. texte tapé sans espaces). `widthOfTextAtSize` est injecté en paramètre plutôt que codé en dur
+// (police pdf-lib Helvetica) : cette MÊME fonction sert à la fois PENDANT la saisie côté client
+// (DocumentViewerModal, pour empêcher physiquement de taper plus que ce qui tiendra — avec une
+// police Helvetica embarquée côté navigateur, voir measureFontRef) ET à la GRAVURE finale dans le
+// PDF (overlayFieldsOnPdf). Avant ce correctif, ces deux endroits avaient chacun leur propre calcul
+// de capacité (l'un une estimation par largeur moyenne de caractère, l'autre la vraie mesure
+// pdf-lib) qui pouvaient diverger légèrement — d'où des coupures imprévisibles malgré un texte qui
+// semblait tenir à l'écran. En partageant EXACTEMENT le même algorithme des deux côtés, un texte
+// accepté à la saisie est GARANTI de tenir, sans coupure, dans le PDF final.
+const wrapTextForBox = (text, widthOfTextAtSize, fs, maxTextW, maxLines) => {
+  const breakLongWord = (word) => {
+    if (widthOfTextAtSize(word, fs) <= maxTextW) return [word];
+    const chunks = [];
+    let cur = '';
+    for (const ch of word) {
+      const cand = cur + ch;
+      if (cur && widthOfTextAtSize(cand, fs) > maxTextW) {
+        chunks.push(cur);
+        cur = ch;
+      } else {
+        cur = cand;
+      }
+    }
+    if (cur) chunks.push(cur);
+    return chunks.length > 0 ? chunks : [word];
+  };
+  const rawLines = String(text).split('\n');
+  const wrappedLines = [];
+  for (const rawLine of rawLines) {
+    if (rawLine === '') { wrappedLines.push(''); continue; }
+    const words = rawLine.split(' ');
+    let current = '';
+    for (const word of words) {
+      const pieces = breakLongWord(word);
+      pieces.forEach((piece, idx) => {
+        const candidate = current ? (idx === 0 ? `${current} ${piece}` : `${current}${piece}`) : piece;
+        if (current && widthOfTextAtSize(candidate, fs) > maxTextW) {
+          wrappedLines.push(current);
+          current = piece;
+        } else {
+          current = candidate;
+        }
+      });
+    }
+    wrappedLines.push(current);
+  }
+  const fits = wrappedLines.length <= maxLines;
+  const visibleLines = wrappedLines.slice(0, maxLines);
+  if (!fits) {
+    let last = visibleLines[visibleLines.length - 1];
+    while (last.length > 0 && widthOfTextAtSize(last + '…', fs) > maxTextW) {
+      last = last.slice(0, -1);
+    }
+    visibleLines[visibleLines.length - 1] = (last || '') + '…';
+  }
+  return { lines: visibleLines, fits, totalLines: wrappedLines.length };
+};
+
 // ─── Signature séquentielle (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) ────────
 // Un modèle de document peut être configuré en 'sequentiel' (metadata.signing_mode, réglé une fois
 // dans VisualTemplateEditor et copié sur chaque document instancié) : dans ce cas une partie ne peut
@@ -956,75 +1018,16 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           const maxTextW = Math.max(4, boxW - 6);
           const fs = nominalFs;
           const lineHeight = fs * 1.25;
-          // Découpe le texte sur les "\n" tapés, puis mot par mot pour enrouler chaque ligne aux
-          // limites réelles de la case.
-          // FIX (2026-09-10, round 3) : un "mot" (sans espace) plus large à lui seul que la case —
-          // ex. du texte tapé sans espaces pendant un test — n'avait aucun point de coupure et
-          // débordait donc largement de la case, jusque dans la marge de la page. On le découpe
-          // maintenant caractère par caractère quand il ne tient pas seul sur une ligne, exactement
-          // comme le fait `overflow-wrap: break-word` sur la zone de saisie à l'écran.
-          // Par ailleurs (suite au retour utilisateur), on abandonne le rétrécissement automatique de
-          // la police : la case de saisie à l'écran empêche désormais physiquement de taper plus que
-          // ce qui tient (voir maxLength sur la <textarea> de pageTexts), donc dans l'immense majorité
-          // des cas tout le texte tient déjà à cette taille nominale (12pt, identique à l'écran) — une
-          // police qui changerait de taille selon la longueur du texte serait de toute façon source de
-          // confusion. S'il reste malgré tout un dépassement (cas limite), la dernière ligne visible
-          // est proprement tronquée avec une ellipse plutôt que de déborder de la case.
-          const breakLongWord = (word) => {
-            if (font.widthOfTextAtSize(word, fs) <= maxTextW) return [word];
-            const chunks = [];
-            let current = '';
-            for (const ch of word) {
-              const candidate = current + ch;
-              if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
-                chunks.push(current);
-                current = ch;
-              } else {
-                current = candidate;
-              }
-            }
-            if (current) chunks.push(current);
-            return chunks;
-          };
-          const rawLines = textStr.split('\n');
-          const wrappedLines = [];
-          for (const rawLine of rawLines) {
-            if (rawLine === '') { wrappedLines.push(''); continue; }
-            const words = rawLine.split(' ');
-            let current = '';
-            for (const word of words) {
-              // Découpe D'ABORD le mot lui-même s'il est trop large pour tenir sur une ligne entière
-              // (ex. texte tapé sans espaces) — sinon, quand ce mot est le PREMIER de sa ligne,
-              // `current` est encore vide et le test ci-dessous ne se déclenche jamais (rien à quoi
-              // le comparer), donc rien ne le découpait : bug constaté (texte débordant largement
-              // dans la marge de la page). En pré-découpant en morceaux qui tiennent chacun toujours
-              // sur une ligne, le même test marche uniformément, que le mot soit en début de ligne
-              // ou non.
-              const pieces = breakLongWord(word);
-              pieces.forEach((piece, idx) => {
-                // Seul le premier morceau d'un mot est précédé d'un espace (s'il y a déjà du contenu
-                // sur la ligne) ; les morceaux suivants d'un même mot forcé sont collés entre eux,
-                // il n'y avait pas d'espace à cet endroit dans le texte d'origine.
-                const candidate = current ? (idx === 0 ? `${current} ${piece}` : `${current}${piece}`) : piece;
-                if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
-                  wrappedLines.push(current);
-                  current = piece;
-                } else {
-                  current = candidate;
-                }
-              });
-            }
-            wrappedLines.push(current);
-          }
+          // FIX (2026-09-10, round 4) : utilise désormais EXACTEMENT la même fonction de découpage
+          // (wrapTextForBox, définie une seule fois en haut du fichier) que la zone de saisie côté
+          // client — voir DocumentViewerModal/handleTextFieldChange. Les deux côtés utilisaient
+          // auparavant des calculs de capacité légèrement différents (l'un une estimation par
+          // largeur moyenne de caractère, l'autre la vraie mesure pdf-lib), ce qui provoquait des
+          // coupures imprévisibles ici malgré un texte qui semblait tenir à l'écran. En partageant
+          // le même algorithme ET la même police (Helvetica) des deux côtés, un texte accepté à la
+          // saisie est garanti de tenir, sans coupure, dans ce rendu final.
           const maxLines = Math.max(1, Math.floor(boxH / lineHeight));
-          const visibleLines = wrappedLines.slice(0, maxLines);
-          if (wrappedLines.length > maxLines) {
-            let last = visibleLines[visibleLines.length - 1];
-            while (last.length > 0 && font.widthOfTextAtSize(last + '…', fs) > maxTextW) {
-              last = last.slice(0, -1);
-            }
-            visibleLines[visibleLines.length - 1] = (last || '') + '…';
-          }
+          const { lines: visibleLines } = wrapTextForBox(textStr, (s, sz) => font.widthOfTextAtSize(s, sz), fs, maxTextW, maxLines);
           const topY = by + boxH - fs;
           visibleLines.forEach((line, i) => {
             if (!line) return;
@@ -1163,6 +1166,46 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     setTextFieldValues(prev => ({ ...prev, [fieldId]: value }));
   };
   const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
+  // FIX (2026-09-10, round 4) : police Helvetica embarquée côté navigateur (pdf-lib fonctionne aussi
+  // en client, cette app l'utilise déjà pour bâtir le PDF final) — sert UNIQUEMENT à mesurer la
+  // largeur du texte tapé (widthOfTextAtSize), avec la MÊME fonction wrapTextForBox que la gravure
+  // finale (overlayFieldsOnPdf), pour savoir EXACTEMENT ce qui tiendra dans la case, sans estimation
+  // approximative. Chargée une seule fois à l'ouverture en mode signature.
+  const measureFontRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (mode !== 'sign') return;
+    (async () => {
+      try {
+        const measureDoc = await PDFDocument.create();
+        const f = await measureDoc.embedFont(StandardFonts.Helvetica);
+        if (!cancelled) measureFontRef.current = f;
+      } catch (e) {
+        console.warn('[DocumentViewerModal] Police de mesure indisponible pour la saisie texte libre :', e.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mode]);
+  // Calcule, pour un champ texte libre donné (sur une page dont on connaît les dimensions RÉELLES
+  // en points), si une nouvelle valeur tiendrait dans la case sans être tronquée dans le PDF final —
+  // et si oui seulement, met à jour l'état. Une frappe qui ferait déborder la case est ignorée
+  // plutôt qu'acceptée puis silencieusement coupée plus tard à la signature (retour utilisateur :
+  // "il faut que ce soit exactement pareil quand le client reçoit le document").
+  const handleTextFieldChange = (f, pg, newValue) => {
+    const k = fieldKey(f);
+    const font = measureFontRef.current;
+    if (!font) { setTextFieldValue(k, newValue); return; }
+    const pageWidthPt = pg.pageWidthPt || 595;
+    const pageHeightPt = pg.pageHeightPt || 842;
+    const fs = 12;
+    const boxWpt = typeof f.width_percent === 'number' ? (f.width_percent / 100) * pageWidthPt : pageWidthPt * 0.28;
+    const boxHpt = typeof f.height_percent === 'number' ? (f.height_percent / 100) * pageHeightPt : Math.round(fs * 1.35) + 2;
+    const maxTextWpt = Math.max(4, boxWpt - 6);
+    const maxLines = Math.max(1, Math.floor(boxHpt / (fs * 1.25)));
+    const { fits } = wrapTextForBox(newValue, (s, sz) => font.widthOfTextAtSize(s, sz), fs, maxTextWpt, maxLines);
+    if (!fits) return; // la case est pleine : on ignore cette frappe (rien à couper plus tard)
+    setTextFieldValue(k, newValue);
+  };
   // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
   // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
   // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
@@ -1525,29 +1568,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         <textarea
                           key={k || `txt-${fi}`}
                           value={val}
-                          onChange={e => setTextFieldValue(k, e.target.value)}
+                          onChange={e => handleTextFieldChange(f, pg, e.target.value)}
                           placeholder="Cliquez pour écrire…"
                           rows={1}
-                          // FIX (2026-09-10, round 3) : empêche physiquement de taper plus que ce que
-                          // la case peut réellement contenir dans le PDF final, au lieu de le découvrir
-                          // après coup à la signature (texte coupé). Estimation prudente basée sur les
-                          // dimensions RÉELLES de la page PDF (pg.pageWidthPt/pageHeightPt) et la même
-                          // police par défaut (12pt) qu'utilise overlayFieldsOnPdf pour graver ce champ
-                          // — largeur moyenne de caractère volontairement large (0.55 × la taille de
-                          // police) pour rester du côté sûr même avec du texte en MAJUSCULES.
-                          maxLength={(() => {
-                            const pageWidthPt = pg.pageWidthPt || 595;
-                            const pageHeightPt = pg.pageHeightPt || 842;
-                            const fs = 12;
-                            const boxWpt = typeof f.width_percent === 'number' ? (f.width_percent / 100) * pageWidthPt : pageWidthPt * 0.28;
-                            const boxHpt = typeof f.height_percent === 'number' ? (f.height_percent / 100) * pageHeightPt : Math.round(fs * 1.35) + 2;
-                            const maxTextWpt = Math.max(4, boxWpt - 6);
-                            const lineHeightPt = fs * 1.25;
-                            const maxLines = Math.max(1, Math.floor(boxHpt / lineHeightPt));
-                            const avgCharWidthPt = fs * 0.55;
-                            const charsPerLine = Math.max(1, Math.floor(maxTextWpt / avgCharWidthPt));
-                            return Math.max(20, charsPerLine * maxLines);
-                          })()}
+                          // FIX (2026-09-10, round 4) : remplace l'ancienne limite de caractères — une
+                          // ESTIMATION (largeur moyenne de caractère) qui pouvait diverger de la
+                          // capacité RÉELLE du PDF final et laissait encore passer des textes ensuite
+                          // tronqués — par handleTextFieldChange, qui utilise la MÊME fonction de
+                          // découpage ET la même police (Helvetica, mesurée par pdf-lib) que la
+                          // gravure finale : une frappe qui ferait déborder la case dans le PDF est
+                          // refusée ici, en temps réel, plutôt que découverte à la signature.
                           // FIX (2026-09-10) : remplace le <input type="text"> mono-ligne par une <textarea> —
                           // sur une case large, on ne pouvait écrire que sur une seule ligne et le texte trop
                           // long était coupé/débordait sans jamais revenir à la ligne. La <textarea> gère
@@ -1574,6 +1604,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                             height: `${typeof f.height_percent === 'number' ? f.height_percent : 3.5}%`,
                             minHeight: 20,
                             fontSize: 12,
+                            // Arial/Helvetica : la police la plus proche, en métriques de largeur, de
+                            // l'Helvetica standard utilisée par pdf-lib pour graver le PDF final — pour
+                            // que le texte affiché ici ressemble d'aussi près que possible à ce qui sera
+                            // effectivement imprimé (retour utilisateur du 2026-09-10 : la police à
+                            // l'écran devait "être exactement pareille" une fois le document reçu).
+                            fontFamily: 'Arial, Helvetica, sans-serif',
                             resize: 'none',
                             overflow: 'hidden',
                             whiteSpace: 'pre-wrap',
