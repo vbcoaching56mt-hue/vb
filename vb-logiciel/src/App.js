@@ -954,52 +954,71 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           const textStr = String(typedValue);
           const tx = bx + 3;
           const maxTextW = Math.max(4, boxW - 6);
-          // Découpe le texte (sur les "\n" tapés, puis mot par mot pour enrouler chaque ligne aux
-          // limites réelles de la case) à une taille de police donnée — utilisé ci-dessous à
-          // plusieurs tailles successives (voir le rétrécissement automatique).
-          const wrapAt = (size) => {
-            const rawLines = textStr.split('\n');
-            const out = [];
-            for (const rawLine of rawLines) {
-              if (rawLine === '') { out.push(''); continue; }
-              const words = rawLine.split(' ');
-              let current = '';
-              for (const word of words) {
-                const candidate = current ? `${current} ${word}` : word;
-                if (current && font.widthOfTextAtSize(candidate, size) > maxTextW) {
-                  out.push(current);
-                  current = word;
+          const fs = nominalFs;
+          const lineHeight = fs * 1.25;
+          // Découpe le texte sur les "\n" tapés, puis mot par mot pour enrouler chaque ligne aux
+          // limites réelles de la case.
+          // FIX (2026-09-10, round 3) : un "mot" (sans espace) plus large à lui seul que la case —
+          // ex. du texte tapé sans espaces pendant un test — n'avait aucun point de coupure et
+          // débordait donc largement de la case, jusque dans la marge de la page. On le découpe
+          // maintenant caractère par caractère quand il ne tient pas seul sur une ligne, exactement
+          // comme le fait `overflow-wrap: break-word` sur la zone de saisie à l'écran.
+          // Par ailleurs (suite au retour utilisateur), on abandonne le rétrécissement automatique de
+          // la police : la case de saisie à l'écran empêche désormais physiquement de taper plus que
+          // ce qui tient (voir maxLength sur la <textarea> de pageTexts), donc dans l'immense majorité
+          // des cas tout le texte tient déjà à cette taille nominale (12pt, identique à l'écran) — une
+          // police qui changerait de taille selon la longueur du texte serait de toute façon source de
+          // confusion. S'il reste malgré tout un dépassement (cas limite), la dernière ligne visible
+          // est proprement tronquée avec une ellipse plutôt que de déborder de la case.
+          const breakLongWord = (word) => {
+            if (font.widthOfTextAtSize(word, fs) <= maxTextW) return [word];
+            const chunks = [];
+            let current = '';
+            for (const ch of word) {
+              const candidate = current + ch;
+              if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
+                chunks.push(current);
+                current = ch;
+              } else {
+                current = candidate;
+              }
+            }
+            if (current) chunks.push(current);
+            return chunks;
+          };
+          const rawLines = textStr.split('\n');
+          const wrappedLines = [];
+          for (const rawLine of rawLines) {
+            if (rawLine === '') { wrappedLines.push(''); continue; }
+            const words = rawLine.split(' ');
+            let current = '';
+            for (const word of words) {
+              // Découpe D'ABORD le mot lui-même s'il est trop large pour tenir sur une ligne entière
+              // (ex. texte tapé sans espaces) — sinon, quand ce mot est le PREMIER de sa ligne,
+              // `current` est encore vide et le test ci-dessous ne se déclenche jamais (rien à quoi
+              // le comparer), donc rien ne le découpait : bug constaté (texte débordant largement
+              // dans la marge de la page). En pré-découpant en morceaux qui tiennent chacun toujours
+              // sur une ligne, le même test marche uniformément, que le mot soit en début de ligne
+              // ou non.
+              const pieces = breakLongWord(word);
+              pieces.forEach((piece, idx) => {
+                // Seul le premier morceau d'un mot est précédé d'un espace (s'il y a déjà du contenu
+                // sur la ligne) ; les morceaux suivants d'un même mot forcé sont collés entre eux,
+                // il n'y avait pas d'espace à cet endroit dans le texte d'origine.
+                const candidate = current ? (idx === 0 ? `${current} ${piece}` : `${current}${piece}`) : piece;
+                if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
+                  wrappedLines.push(current);
+                  current = piece;
                 } else {
                   current = candidate;
                 }
-              }
-              out.push(current);
+              });
             }
-            return out;
-          };
-          // FIX (2026-09-10, round 2) : plutôt que de tronquer avec "…" dès que le texte dépasse la
-          // hauteur de la case à la taille de police par défaut, on réduit progressivement cette
-          // taille (comme un champ de signature électronique classique) jusqu'à ce que TOUT le texte
-          // tienne. Un utilisateur qui remplit une case jusqu'à son bord visible à l'écran (12pt)
-          // s'attend à retrouver tout son texte dans le PDF final, pas une coupure — l'ancienne
-          // version comparait la hauteur de case à un nombre de lignes calculé à 10pt par défaut
-          // (au lieu des 12pt affichés à l'écran), ce qui sous-estimait la place réellement
-          // disponible et coupait du texte qui pourtant tenait très bien à l'écran.
-          const minFs = 7;
-          let fs = nominalFs;
-          let lineHeight = fs * 1.25;
-          let lines = wrapAt(fs);
-          let maxLines = Math.max(1, Math.floor(boxH / lineHeight));
-          while (lines.length > maxLines && fs > minFs) {
-            fs -= 0.5;
-            lineHeight = fs * 1.25;
-            lines = wrapAt(fs);
-            maxLines = Math.max(1, Math.floor(boxH / lineHeight));
+            wrappedLines.push(current);
           }
-          const visibleLines = lines.slice(0, maxLines);
-          if (lines.length > maxLines) {
-            // Cas extrême : même à la taille minimale, le texte ne tient pas — dernier recours,
-            // on tronque la dernière ligne visible avec une ellipse plutôt que de déborder de la case.
+          const maxLines = Math.max(1, Math.floor(boxH / lineHeight));
+          const visibleLines = wrappedLines.slice(0, maxLines);
+          if (wrappedLines.length > maxLines) {
             let last = visibleLines[visibleLines.length - 1];
             while (last.length > 0 && font.widthOfTextAtSize(last + '…', fs) > maxTextW) {
               last = last.slice(0, -1);
@@ -1179,7 +1198,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           const canvas = window.document.createElement('canvas');
           canvas.width = vp.width; canvas.height = vp.height;
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-          pages.push({ dataUrl: canvas.toDataURL() });
+          // FIX (2026-09-10, round 3) : on garde aussi les dimensions RÉELLES de la page PDF (en
+          // points, indépendamment du zoom "scale: 1.5" utilisé ci-dessus juste pour la netteté de
+          // l'image) — nécessaire pour calculer, au caractère près, combien de texte une case peut
+          // réellement contenir dans le PDF final (voir pageTexts plus bas) et empêcher de taper plus
+          // que ce qui tiendra, plutôt que de le découvrir après coup lors de la signature.
+          pages.push({ dataUrl: canvas.toDataURL(), pageWidthPt: vp.width / 1.5, pageHeightPt: vp.height / 1.5 });
         }
         if (!cancelled) setPageImages(pages);
       } catch (e) {
@@ -1504,6 +1528,26 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                           onChange={e => setTextFieldValue(k, e.target.value)}
                           placeholder="Cliquez pour écrire…"
                           rows={1}
+                          // FIX (2026-09-10, round 3) : empêche physiquement de taper plus que ce que
+                          // la case peut réellement contenir dans le PDF final, au lieu de le découvrir
+                          // après coup à la signature (texte coupé). Estimation prudente basée sur les
+                          // dimensions RÉELLES de la page PDF (pg.pageWidthPt/pageHeightPt) et la même
+                          // police par défaut (12pt) qu'utilise overlayFieldsOnPdf pour graver ce champ
+                          // — largeur moyenne de caractère volontairement large (0.55 × la taille de
+                          // police) pour rester du côté sûr même avec du texte en MAJUSCULES.
+                          maxLength={(() => {
+                            const pageWidthPt = pg.pageWidthPt || 595;
+                            const pageHeightPt = pg.pageHeightPt || 842;
+                            const fs = 12;
+                            const boxWpt = typeof f.width_percent === 'number' ? (f.width_percent / 100) * pageWidthPt : pageWidthPt * 0.28;
+                            const boxHpt = typeof f.height_percent === 'number' ? (f.height_percent / 100) * pageHeightPt : Math.round(fs * 1.35) + 2;
+                            const maxTextWpt = Math.max(4, boxWpt - 6);
+                            const lineHeightPt = fs * 1.25;
+                            const maxLines = Math.max(1, Math.floor(boxHpt / lineHeightPt));
+                            const avgCharWidthPt = fs * 0.55;
+                            const charsPerLine = Math.max(1, Math.floor(maxTextWpt / avgCharWidthPt));
+                            return Math.max(20, charsPerLine * maxLines);
+                          })()}
                           // FIX (2026-09-10) : remplace le <input type="text"> mono-ligne par une <textarea> —
                           // sur une case large, on ne pouvait écrire que sur une seule ligne et le texte trop
                           // long était coupé/débordait sans jamais revenir à la ligne. La <textarea> gère
