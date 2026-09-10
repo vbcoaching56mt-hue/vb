@@ -220,7 +220,12 @@ async function generateAndSendOne(supabase, row) {
     org_site_web: orgSettings?.site_web || '',
   };
 
-  const safeName = String(targetName).replace(/\s+/g, '_');
+  // Même normalisation que côté client (handleGenerateDocx, App.js) depuis le fix "Invalid key"
+  // pour un client au nom accentué : sans elle, un nom comme "Stéphanie" produit une clé de storage
+  // Supabase invalide ("Invalid key") et l'envoi programmé échoue systématiquement. Cette route
+  // serveur avait sa propre construction de safeName, jamais alignée sur ce correctif — c'est la
+  // cause du badge "Erreur — nouvel essai auto." observé sur les documents programmés.
+  const safeName = String(targetName).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
   let finalBuffer, finalExt, finalMime;
   let templateIdForInsert = null;
 
