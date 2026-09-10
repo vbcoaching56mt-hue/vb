@@ -1206,6 +1206,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     if (!fits) return; // la case est pleine : on ignore cette frappe (rien à couper plus tard)
     setTextFieldValue(k, newValue);
   };
+  // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
+  // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
+  // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
+  // enregistrée — le texte imprimé autour donne le contexte, pas besoin de libellé inventé.
+  const [pageImages, setPageImages] = useState([]);
+  const [pageImagesLoading, setPageImagesLoading] = useState(false);
   // FIX (2026-09-10, round 5) : corrige l'écart visuel signalé — "on voit bien la différence
   // d'écriture" entre l'écran du formateur qui tape et le PDF final reçu par le client. Cause
   // racine : la case (width/height en %) est bien proportionnelle à la page, mais la TAILLE DE
@@ -1221,6 +1227,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   // par rapport à la largeur de page en points du PDF (pg.pageWidthPt). Résultat : le texte
   // occupe, visuellement, exactement la même proportion de la case à l'écran (n'importe quel
   // appareil) que dans le document final — formateur et client voient la même chose.
+  // NOTE (bugfix immédiat) : ce bloc DOIT rester après la déclaration de pageImages ci-dessus —
+  // l'effet ci-dessous lit pageImages.length dans son tableau de dépendances, et le placer AVANT
+  // (comme dans la toute première version de ce correctif) provoquait un plantage total de l'appli
+  // ("Cannot access 'pageImages' before initialization", page blanche) car ce const est en TDZ tant
+  // que sa ligne de déclaration n'a pas encore été exécutée dans le corps de la fonction.
   const pagesContainerRef = useRef(null);
   const [pagesContainerWidthPx, setPagesContainerWidthPx] = useState(0);
   useEffect(() => {
@@ -1238,12 +1249,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     if (!pageWidthPt || !pagesContainerWidthPx) return 12; // repli avant première mesure
     return Math.max(8, (12 / pageWidthPt) * pagesContainerWidthPx);
   };
-  // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
-  // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
-  // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
-  // enregistrée — le texte imprimé autour donne le contexte, pas besoin de libellé inventé.
-  const [pageImages, setPageImages] = useState([]);
-  const [pageImagesLoading, setPageImagesLoading] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setPageImages([]);
