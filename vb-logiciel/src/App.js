@@ -935,31 +935,59 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       const typedValue = textInputMap[fieldKey(field)];
       try {
         if (typedValue) {
-          // Valeur déjà saisie → on l'imprime avec un soulignement ajusté à la LARGEUR RÉELLE du texte
-          // tapé (pas à la largeur totale de la balise, qui est volontairement large pour laisser de la
-          // place à un texte plus long) et en gris neutre plutôt qu'en couleur — une barre colorée sur
-          // toute la largeur de la balise laissait penser que le texte pouvait apparaître n'importe où
-          // dans cette zone, ce qui était source de confusion (retour utilisateur du 2026-07-24).
+          // FIX (2026-09-10) : la case de saisie à l'écran (pageTexts) accepte désormais plusieurs
+          // lignes (touche Entrée) et enroule automatiquement le texte trop long — mais cette gravure
+          // finale dans le PDF ne dessinait encore qu'UNE seule ligne, en mesurant la chaîne ENTIÈRE
+          // (retours à la ligne "\n" compris) avec font.widthOfTextAtSize puis un unique page.drawText().
+          // pdf-lib ne sait pas interpréter "\n" à l'intérieur d'une chaîne : dès que le texte tapé en
+          // contenait un (donc dès qu'on écrivait plus d'une ligne), ça faisait échouer le calcul/dessin
+          // — erreur silencieusement avalée par le catch ci-dessous, et le champ entier disparaissait du
+          // PDF final. C'est exactement ce qui rendait les cases "Votre demande s'énonce ainsi"/"Nous
+          // allons centrer notre travail sur" (larges, redimensionnées pour plusieurs lignes) invisibles
+          // dans le document final, alors que les petites cases à une ligne (ex. le calendrier
+          // prévisionnel, jamais redimensionnées) continuaient de fonctionner.
+          // On découpe maintenant explicitement sur les "\n" (retours à la ligne tapés), on enroule
+          // chaque ligne aux limites RÉELLES de la case (comme à l'écran), et on dessine chaque ligne
+          // avec son propre page.drawText() — le texte ne dépasse jamais la case (lignes en trop
+          // tronquées avec une ellipse, comme la hauteur limitée le fait déjà à l'écran).
           const textStr = String(typedValue);
           const tx = bx + 3;
           const maxTextW = Math.max(4, boxW - 6);
-          // Tronque caractère par caractère (avec ellipse) tant que le texte dépasse la largeur
-          // disponible — garantit qu'il ne déborde jamais de la case, y compris pour un texte sans
-          // le moindre espace (aucun point de coupure possible pour un retour à la ligne classique).
-          let displayStr = textStr;
-          if (font.widthOfTextAtSize(displayStr, fs) > maxTextW) {
-            let truncated = displayStr;
-            while (truncated.length > 0 && font.widthOfTextAtSize(truncated + '…', fs) > maxTextW) {
-              truncated = truncated.slice(0, -1);
+          const lineHeight = fs * 1.25;
+          const rawLines = textStr.split('\n');
+          const wrappedLines = [];
+          for (const rawLine of rawLines) {
+            if (rawLine === '') { wrappedLines.push(''); continue; }
+            const words = rawLine.split(' ');
+            let current = '';
+            for (const word of words) {
+              const candidate = current ? `${current} ${word}` : word;
+              if (current && font.widthOfTextAtSize(candidate, fs) > maxTextW) {
+                wrappedLines.push(current);
+                current = word;
+              } else {
+                current = candidate;
+              }
             }
-            displayStr = truncated.length > 0 ? truncated + '…' : '…';
+            wrappedLines.push(current);
           }
-          const textW = font.widthOfTextAtSize(displayStr, fs);
-          page.drawText(displayStr, {
-            x: tx, y: by + boxH / 2 - fs / 3,
-            size: fs, font, color: rgb(0.1, 0.1, 0.1),
+          const maxLines = Math.max(1, Math.floor(boxH / lineHeight));
+          const visibleLines = wrappedLines.slice(0, maxLines);
+          if (wrappedLines.length > maxLines) {
+            let last = visibleLines[visibleLines.length - 1];
+            while (last.length > 0 && font.widthOfTextAtSize(last + '…', fs) > maxTextW) {
+              last = last.slice(0, -1);
+            }
+            visibleLines[visibleLines.length - 1] = (last || '') + '…';
+          }
+          const topY = by + boxH - fs;
+          visibleLines.forEach((line, i) => {
+            if (!line) return;
+            page.drawText(line, {
+              x: tx, y: topY - i * lineHeight,
+              size: fs, font, color: rgb(0.1, 0.1, 0.1),
+            });
           });
-          page.drawLine({ start: { x: tx, y: by }, end: { x: tx + textW, y: by }, thickness: 0.6, color: rgb(0.55, 0.55, 0.55), opacity: 0.8 });
         }
         // Pas encore rempli (2026-09-03, suite) : on ne dessine plus rien du tout — plus de cadre ni de
         // libellé "Texte libre ..." gravé dans le PDF final. Champ optionnel non rempli = totalement
