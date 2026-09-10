@@ -1206,6 +1206,38 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     if (!fits) return; // la case est pleine : on ignore cette frappe (rien à couper plus tard)
     setTextFieldValue(k, newValue);
   };
+  // FIX (2026-09-10, round 5) : corrige l'écart visuel signalé — "on voit bien la différence
+  // d'écriture" entre l'écran du formateur qui tape et le PDF final reçu par le client. Cause
+  // racine : la case (width/height en %) est bien proportionnelle à la page, mais la TAILLE DE
+  // POLICE affichée pendant la saisie était fixée en dur à 12px CSS, quelle que soit la largeur
+  // RÉELLE à l'écran de l'image de page (large sur un écran d'ordinateur, étroite sur mobile) —
+  // alors que dans le PDF final, la police (12pt Helvetica) est TOUJOURS proportionnelle à la
+  // largeur de la page (595pt pour une A4), quel que soit l'appareil qui l'affiche ensuite. Donc
+  // plus la fenêtre du formateur est large, plus la case paraissait "vide" (police relativement
+  // petite) par rapport à ce que ce même texte donnera, proportionnellement, dans le PDF.
+  // Correctif : on mesure la largeur RÉELLE en pixels du conteneur de page (pagesContainerRef,
+  // via ResizeObserver — se met à jour si la fenêtre/modale est redimensionnée), puis on calcule
+  // une taille de police à l'écran proportionnelle à cette largeur, dans le MÊME ratio que 12pt
+  // par rapport à la largeur de page en points du PDF (pg.pageWidthPt). Résultat : le texte
+  // occupe, visuellement, exactement la même proportion de la case à l'écran (n'importe quel
+  // appareil) que dans le document final — formateur et client voient la même chose.
+  const pagesContainerRef = useRef(null);
+  const [pagesContainerWidthPx, setPagesContainerWidthPx] = useState(0);
+  useEffect(() => {
+    if (mode !== 'sign') return;
+    const el = pagesContainerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const update = () => setPagesContainerWidthPx(el.getBoundingClientRect().width);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode, pageImages.length]);
+  const scaledFontSizePx = (pg) => {
+    const pageWidthPt = pg && pg.pageWidthPt;
+    if (!pageWidthPt || !pagesContainerWidthPx) return 12; // repli avant première mesure
+    return Math.max(8, (12 / pageWidthPt) * pagesContainerWidthPx);
+  };
   // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
   // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
   // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
@@ -1538,7 +1570,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           {/* PDF Zone — mode interactif (cases directement sur le document) si des cases sont
               requises ET que le rendu page-par-page a réussi ; sinon le lecteur PDF classique. */}
           {mode === 'sign' && pageImages.length > 0 ? (
-            <div className="w-full space-y-3">
+            <div className="w-full space-y-3" ref={pagesContainerRef}>
               {pageImages.map((pg, pi) => {
                 const pageChecks = requiredCheckboxes.filter(f => (f.page || 1) === pi + 1);
                 const pageTexts = requiredTextFields.filter(f => (f.page || 1) === pi + 1);
@@ -1603,7 +1635,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                             ...(typeof f.width_percent === 'number' ? { width: `${f.width_percent}%` } : { minWidth: '10%', maxWidth: '26%' }),
                             height: `${typeof f.height_percent === 'number' ? f.height_percent : 3.5}%`,
                             minHeight: 20,
-                            fontSize: 12,
+                            // FIX (round 5) : taille de police PROPORTIONNELLE à la largeur réelle à
+                            // l'écran de la page (voir scaledFontSizePx ci-dessus) — plus fixée à 12px —
+                            // pour que le texte occupe visuellement la même part de la case sur tous les
+                            // écrans (ordinateur large ou mobile étroit), comme dans le PDF final.
+                            fontSize: scaledFontSizePx(pg),
                             // Arial/Helvetica : la police la plus proche, en métriques de largeur, de
                             // l'Helvetica standard utilisée par pdf-lib pour graver le PDF final — pour
                             // que le texte affiché ici ressemble d'aussi près que possible à ce qui sera
