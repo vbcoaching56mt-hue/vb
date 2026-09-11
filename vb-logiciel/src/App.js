@@ -17197,6 +17197,17 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname + (wantsFormateurView ? '?view=formateur' : ''));
       return;
     }
+    // FIX (nouvelle fonctionnalité, 2026-09-11) : lien direct "?tab=mes_documents" envoyé par email
+    // au CLIENT lors de l'envoi d'un document (voir notifyClientNewDocument /
+    // api/client/notify-new-document.js) — ouvre directement son onglet "Mes Documents" plutôt que
+    // sa page d'accueil habituelle. Réservé au rôle client (seul rôle où cet onglet existe — voir
+    // ROLE_TABS plus haut dans le fichier).
+    const deepLinkTab = new URLSearchParams(window.location.search).get('tab');
+    if (deepLinkTab === 'mes_documents' && role === 'client') {
+      setActiveTab('mes_documents');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
     if (preserveTab) return;
     if (wantsFormateurView) { setActiveTab('accueil_formateur'); return; }
     if (role === 'admin') setActiveTab('dashboard');
@@ -19228,6 +19239,30 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
+  // FIX (nouvelle fonctionnalité, 2026-09-11) : prévient le client par email dès qu'un document lui
+  // est envoyé (bouton "Envoyer" sur sa fiche, ou envoi automatique) — voir
+  // api/client/notify-new-document.js. Même principe "fire-and-forget" que notifyFormateurAssignment
+  // (voir assignFormateur) : un souci d'envoi n'annule jamais l'envoi du document lui-même, qui a
+  // déjà réussi en base à ce stade — juste logué en console pour diagnostic.
+  const notifyClientNewDocument = (clientId, documentName) => {
+    supabase.auth.getSession().then(({ data: sessionData }) => {
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) return;
+      fetch('/api/client/notify-new-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body: JSON.stringify({ clientId, documentName, origin: window.location.origin }),
+      }).then(async (resp) => {
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          console.warn('[notifyClientNewDocument] Notification client non envoyée :', result.error || resp.status);
+        } else if (result.simulated) {
+          console.warn('[notifyClientNewDocument] Notification client simulée (RESEND_API_KEY non configurée côté serveur).');
+        }
+      }).catch(e => console.warn('[notifyClientNewDocument] Erreur réseau notification client :', e.message));
+    }).catch(e => console.warn('[notifyClientNewDocument] Erreur session notification client :', e.message));
+  };
+
   const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null) => {
     try {
       const templateInfo = documentTemplates[type];
@@ -19558,6 +19593,7 @@ export default function App() {
         if (insertErr) throw new Error('Erreur Supabase : ' + insertErr.message);
         await fetchDocuments();
         toast.success(`Document "${type}" généré.`, { id: 'gen-doc' });
+        if (_visClientForInsert && targetId) notifyClientNewDocument(targetId, type);
         return;
       }
       // ── Fin branche visuelle ──
@@ -19706,6 +19742,7 @@ export default function App() {
       } else {
         toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
       }
+      if (_visClientForInsert && targetId) notifyClientNewDocument(targetId, type);
       return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
