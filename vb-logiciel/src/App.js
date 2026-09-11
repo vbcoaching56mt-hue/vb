@@ -17182,6 +17182,21 @@ export default function App() {
     setIsAdminActingAsFormateur(wantsFormateurView);
     setCurrentUserId(id);
     setCurrentOrgId(orgId);
+    // FIX (nouvelle fonctionnalité, 2026-09-11) : lien direct "?client=<id>" envoyé par email au
+    // formateur lors d'une assignation (voir assignFormateur / api/formateur/notify-assignment.js)
+    // — ouvre directement la fiche du client concerné (onglet "Mes clients", client déplié) plutôt
+    // que la page d'accueil habituelle. S'applique qu'il s'agisse d'un vrai compte formateur (role
+    // === 'formateur') ou de l'admin agissant comme son propre coach (wantsFormateurView) — mais
+    // jamais pour un client, qui n'a pas accès à cet onglet. Prioritaire même sur une restauration
+    // silencieuse de session (preserveTab) : un F5 sur ce lien doit rouvrir la même fiche.
+    const deepLinkClientId = new URLSearchParams(window.location.search).get('client');
+    if (deepLinkClientId && (role === 'formateur' || wantsFormateurView)) {
+      const parsedId = Number(deepLinkClientId);
+      setExpandedClientId(Number.isNaN(parsedId) ? deepLinkClientId : parsedId);
+      setActiveTab('clients');
+      window.history.replaceState({}, document.title, window.location.pathname + (wantsFormateurView ? '?view=formateur' : ''));
+      return;
+    }
     if (preserveTab) return;
     if (wantsFormateurView) { setActiveTab('accueil_formateur'); return; }
     if (role === 'admin') setActiveTab('dashboard');
@@ -18705,9 +18720,37 @@ export default function App() {
   };
 
   const assignFormateur = async (userId, formateurId) => {
+    // Capturé AVANT la mise à jour : sert à ne pas ré-envoyer un email de notification si on
+    // ré-enregistre le même formateur sans changement réel (voir plus bas).
+    const previousFormateurId = clients.find(c => c.id === userId)?.formateur_id || null;
     const { error } = await supabase.from('clients').update({ formateur_id: formateurId || null }).eq('id', userId);
     if (!error) {
       setClients(clients.map(c => c.id === userId ? { ...c, formateur_id: formateurId } : c));
+      // FIX (nouvelle fonctionnalité, 2026-09-11) : prévient le formateur par email dès qu'un
+      // client lui est assigné ou réassigné (voir api/formateur/notify-assignment.js), pour qu'il
+      // ne le découvre pas par hasard en allant vérifier sa liste de clients — demande utilisateur.
+      // Volontairement PAS envoyé si on retire le formateur (formateurId vide) ni si c'est le même
+      // formateur qu'avant (pas de vrai changement). "Fire-and-forget" : un souci d'envoi (clé
+      // Resend absente, formateur sans email...) ne doit jamais remettre en cause l'assignation
+      // elle-même, déjà enregistrée en base à ce stade — juste logué en console pour diagnostic.
+      if (formateurId && String(formateurId) !== String(previousFormateurId)) {
+        supabase.auth.getSession().then(({ data: sessionData }) => {
+          const accessToken = sessionData?.session?.access_token;
+          if (!accessToken) return;
+          fetch('/api/formateur/notify-assignment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+            body: JSON.stringify({ clientId: userId, formateurId, origin: window.location.origin }),
+          }).then(async (resp) => {
+            const result = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+              console.warn('[assignFormateur] Notification formateur non envoyée :', result.error || resp.status);
+            } else if (result.simulated) {
+              console.warn('[assignFormateur] Notification formateur simulée (RESEND_API_KEY non configurée côté serveur).');
+            }
+          }).catch(e => console.warn('[assignFormateur] Erreur réseau notification formateur :', e.message));
+        }).catch(e => console.warn('[assignFormateur] Erreur session notification formateur :', e.message));
+      }
     } else {
       toast.error("Erreur assignation: " + error.message);
     }
