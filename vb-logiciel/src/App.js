@@ -19263,6 +19263,47 @@ export default function App() {
     }).catch(e => console.warn('[notifyClientNewDocument] Erreur session notification client :', e.message));
   };
 
+  // FIX (nouvelle fonctionnalité, 2026-09-11) : symétrique de notifyClientNewDocument ci-dessus,
+  // pour le FORMATEUR — utilisée à la fois par handleGenerateDocx (document simultané, ou
+  // séquentiel où le formateur est premier dans l'ordre) et par handleSignDocument (document
+  // séquentiel où une signature précédente vient de débloquer le tour du formateur).
+  const notifyFormateurNewDocument = (formateurId, documentName) => {
+    supabase.auth.getSession().then(({ data: sessionData }) => {
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) return;
+      fetch('/api/formateur/notify-new-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+        body: JSON.stringify({ formateurId, documentName, origin: window.location.origin }),
+      }).then(async (resp) => {
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          console.warn('[notifyFormateurNewDocument] Notification formateur non envoyée :', result.error || resp.status);
+        } else if (result.simulated) {
+          console.warn('[notifyFormateurNewDocument] Notification formateur simulée (RESEND_API_KEY non configurée côté serveur).');
+        }
+      }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur réseau notification formateur :', e.message));
+    }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur session notification formateur :', e.message));
+  };
+
+  // FIX (nouvelle fonctionnalité, 2026-09-11) : décide QUI notifier juste après qu'un document
+  // devienne disponible pour signature — respecte la signature séquentielle (metadata.signing_mode/
+  // signing_order, voir isBlockedBySigningOrder plus haut dans le fichier) : en mode séquentiel,
+  // seul le rôle dont c'est VRAIMENT le tour (pas bloqué par un signataire précédent qui n'a pas
+  // encore signé) est notifié maintenant ; l'autre le sera plus tard, quand son tour viendra (voir
+  // le bloc ajouté dans handleSignDocument). En mode simultané (par défaut), tout le monde de requis
+  // est notifié immédiatement, comme avant ce correctif. Appelée juste après un insert réussi dans
+  // `documents`, avec l'objet tel qu'inséré (docToInsert) qui porte déjà metadata + les colonnes
+  // signe_par_* à false.
+  const notifyDocumentRecipients = (insertedDoc, documentName) => {
+    if (insertedDoc.visible_client && insertedDoc.user_id && !isBlockedBySigningOrder(insertedDoc, 'client')) {
+      notifyClientNewDocument(insertedDoc.user_id, documentName);
+    }
+    if (insertedDoc.visible_formateur && insertedDoc.assigned_formateur_id && !isBlockedBySigningOrder(insertedDoc, 'formateur')) {
+      notifyFormateurNewDocument(insertedDoc.assigned_formateur_id, documentName);
+    }
+  };
+
   const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null) => {
     try {
       const templateInfo = documentTemplates[type];
@@ -19593,7 +19634,7 @@ export default function App() {
         if (insertErr) throw new Error('Erreur Supabase : ' + insertErr.message);
         await fetchDocuments();
         toast.success(`Document "${type}" généré.`, { id: 'gen-doc' });
-        if (_visClientForInsert && targetId) notifyClientNewDocument(targetId, type);
+        notifyDocumentRecipients(docToInsert, type);
         return;
       }
       // ── Fin branche visuelle ──
@@ -19742,7 +19783,7 @@ export default function App() {
       } else {
         toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
       }
-      if (_visClientForInsert && targetId) notifyClientNewDocument(targetId, type);
+      notifyDocumentRecipients(docToInsert, type);
       return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
@@ -19960,6 +20001,29 @@ export default function App() {
     if (error) {
       toast.error("Erreur signature: " + error.message);
       await fetchDocuments();
+    } else {
+      // FIX (nouvelle fonctionnalité, 2026-09-11) : document séquentiel — cette signature vient
+      // peut-être de débloquer le TOUR d'un autre rôle requis (ex : ordre formateur → client, le
+      // formateur vient de signer → c'est maintenant au client, qui doit être notifié MAINTENANT,
+      // pas à l'envoi initial du document où il était encore bloqué). En mode simultané (par
+      // défaut), tout le monde de requis a déjà été notifié dès l'envoi initial (voir
+      // notifyDocumentRecipients dans handleGenerateDocx) : rien à refaire ici.
+      const docMetaForNotif = parseDocMetadata(doc);
+      if (docMetaForNotif.signing_mode === 'sequentiel') {
+        const docLabel = doc.nom || 'un document';
+        for (const otherRole of _requiredRolesForDoc) {
+          if (otherRole === signerType) continue; // celui qui vient de signer, pas concerné
+          const flagCol = SIGNED_FLAG_COLUMN[otherRole];
+          if (_mergedDocState[flagCol]) continue; // a déjà signé plus tôt, déjà notifié en son temps
+          if (isBlockedBySigningOrder(_mergedDocState, otherRole)) continue; // toujours pas son tour
+          // Vient de passer de "bloqué" à "débloqué" grâce à cette signature : c'est son tour.
+          if (otherRole === 'client' && _mergedDocState.user_id) {
+            notifyClientNewDocument(_mergedDocState.user_id, docLabel);
+          } else if (otherRole === 'formateur' && _mergedDocState.assigned_formateur_id) {
+            notifyFormateurNewDocument(_mergedDocState.assigned_formateur_id, docLabel);
+          }
+        }
+      }
     }
   };
 
