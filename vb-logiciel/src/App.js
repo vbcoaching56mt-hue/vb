@@ -194,16 +194,22 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
   };
   const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
 
+  // FIX (2026-09-14) : même correctif que EmargementModal (getCoords) — voir le commentaire détaillé
+  // là-bas. Ce composant n'est actuellement rendu nulle part dans l'app (remplacé le 2026-09-07 par
+  // <DocumentViewerModal mode="sign">), mais corrigé quand même pour éviter de réintroduire ce bug
+  // s'il est un jour réutilisé.
   const getCoordinates = (e) => {
     const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
     if (e.touches && e.touches.length > 0) {
-      const rect = canvas.getBoundingClientRect();
       return {
-        offsetX: e.touches[0].clientX - rect.left,
-        offsetY: e.touches[0].clientY - rect.top
+        offsetX: (e.touches[0].clientX - rect.left) * sx,
+        offsetY: (e.touches[0].clientY - rect.top) * sy
       };
     }
-    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
+    return { offsetX: (e.clientX - rect.left) * sx, offsetY: (e.clientY - rect.top) * sy };
   };
 
   const startDrawing = (e) => {
@@ -701,10 +707,24 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
     setup(cCanvasRef.current);
   }, [isOpen, isClient]);
 
+  // FIX (2026-09-14) : signature décalée par rapport à la souris, signalée par une formatrice —
+  // le canvas a une résolution interne fixe (width={280} height={150}, attribut HTML) mais s'affiche
+  // en CSS à la largeur de son conteneur (`w-full`), qui varie selon la taille d'écran/fenêtre — sur
+  // un grand écran, le canvas peut s'afficher bien plus large que ses 280px internes. L'ancien code
+  // utilisait `e.nativeEvent.offsetX/offsetY` (position de la souris en pixels CSS RÉELS, donc
+  // jusqu'à 2x plus grands que la résolution interne du canvas) directement comme coordonnée sur le
+  // canvas, sans aucune conversion — d'où un trait qui "fuit" de plus en plus loin du curseur au fur
+  // et à mesure qu'on s'éloigne du coin haut-gauche. Corrigé en convertissant la position souris
+  // (pixels CSS, via clientX/clientY - rect.left/top, comme pour le tactile juste en dessous, qui
+  // lui était déjà correct côté X/Y de base mais pas mis à l'échelle non plus) par le ratio résolution
+  // interne / taille CSS réelle du canvas — même technique déjà utilisée correctement ailleurs dans
+  // l'app pour la signature de document (voir sigCanvasRef dans DocumentViewerModal).
   const getCoords = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
-    if (e.touches?.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-    return { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
+    if (e.touches?.length > 0) return { x: (e.touches[0].clientX - rect.left) * sx, y: (e.touches[0].clientY - rect.top) * sy };
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
   };
 
   const fStart = (e) => { if (e.touches) e.preventDefault(); setFDrawing(true); const ctx = fCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, fCanvasRef.current); ctx.beginPath(); ctx.moveTo(x, y); };
