@@ -694,37 +694,46 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
   const [cDrawing, setCDrawing] = useState(false);
   const isClient = signerRole === 'client';
 
+  // FIX (2026-09-14, v2) : la 1ère correction (ratio canvas.width/rect.width appliqué aux coordonnées
+  // souris) n'a pas suffi — une formatrice a de nouveau signalé un décalage net et constant ("ma
+  // souris était bien à 5 cm sur la gauche"). Le calcul du ratio était correct en théorie, mais cette
+  // approche reste fragile (elle dépend de rect.width étant lu au bon moment, jamais 0, etc.).
+  // Remplacé par la technique standard des pads de signature (ex. lib signature_pad) : on fait
+  // correspondre la RÉSOLUTION INTERNE du canvas à sa taille RÉELLEMENT affichée à l'écran, en
+  // pixels PHYSIQUES (× devicePixelRatio, pour un tracé net sur écran HiDPI/Retina — bonus : la
+  // signature enregistrée est aussi en meilleure résolution qu'avant, qui était figée à 280×150),
+  // puis on applique ctx.scale(dpr, dpr) sur le contexte. À partir de là, 1 unité de dessin = 1 pixel
+  // CSS exactement : getCoords utilise directement (clientX/clientY - rect.left/top), sans AUCUN
+  // calcul de ratio qui pourrait se tromper. On recalcule aussi si la fenêtre est redimensionnée
+  // pendant que la modale est ouverte (le tracé en cours est alors effacé — cas rare, préférable à
+  // un décalage silencieux).
   useEffect(() => {
     if (!isOpen) return;
     const setup = (canvas) => {
       if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
       const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     };
-    if (!isClient) setup(fCanvasRef.current);
-    setup(cCanvasRef.current);
+    const setupAll = () => {
+      if (!isClient) setup(fCanvasRef.current);
+      setup(cCanvasRef.current);
+    };
+    setupAll();
+    window.addEventListener('resize', setupAll);
+    return () => window.removeEventListener('resize', setupAll);
   }, [isOpen, isClient]);
 
-  // FIX (2026-09-14) : signature décalée par rapport à la souris, signalée par une formatrice —
-  // le canvas a une résolution interne fixe (width={280} height={150}, attribut HTML) mais s'affiche
-  // en CSS à la largeur de son conteneur (`w-full`), qui varie selon la taille d'écran/fenêtre — sur
-  // un grand écran, le canvas peut s'afficher bien plus large que ses 280px internes. L'ancien code
-  // utilisait `e.nativeEvent.offsetX/offsetY` (position de la souris en pixels CSS RÉELS, donc
-  // jusqu'à 2x plus grands que la résolution interne du canvas) directement comme coordonnée sur le
-  // canvas, sans aucune conversion — d'où un trait qui "fuit" de plus en plus loin du curseur au fur
-  // et à mesure qu'on s'éloigne du coin haut-gauche. Corrigé en convertissant la position souris
-  // (pixels CSS, via clientX/clientY - rect.left/top, comme pour le tactile juste en dessous, qui
-  // lui était déjà correct côté X/Y de base mais pas mis à l'échelle non plus) par le ratio résolution
-  // interne / taille CSS réelle du canvas — même technique déjà utilisée correctement ailleurs dans
-  // l'app pour la signature de document (voir sigCanvasRef dans DocumentViewerModal).
   const getCoords = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width;
-    const sy = canvas.height / rect.height;
-    if (e.touches?.length > 0) return { x: (e.touches[0].clientX - rect.left) * sx, y: (e.touches[0].clientY - rect.top) * sy };
-    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+    if (e.touches?.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
   const fStart = (e) => { if (e.touches) e.preventDefault(); setFDrawing(true); const ctx = fCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, fCanvasRef.current); ctx.beginPath(); ctx.moveTo(x, y); };
