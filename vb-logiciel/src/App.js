@@ -7584,10 +7584,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     });
   }, [destinationRoles]);
 
+  // AJOUT (2026-09-15) : 'date_signature' existait déjà pour le Client, mais pas d'équivalent pour
+  // le Formateur ni l'Organisme (Administrateur) — demandé par l'utilisateur le 15/09/2026. On ajoute
+  // 'date_signature_formateur' et 'date_signature_organisme' (même valeur : la date du jour où le
+  // document est généré, exactement comme 'date_signature' pour le client — voir dataValues/
+  // resolvedValues/dataToMerge plus bas, tous mis à jour en conséquence). On NE renomme PAS
+  // 'date_signature' en 'date_signature_client' pour ne pas casser les modèles déjà créés qui
+  // utilisent cette balise.
   const ALL_TAGS = {
     'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
-    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
-    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur'],
+    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
@@ -7868,9 +7875,11 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         adresse_formateur: '5 av. Victor Hugo, 75008 Paris', rue_formateur: '5 av. Victor Hugo', code_postal_formateur: '75008', ville_formateur: 'Paris',
         formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
         compagnie_assurance: 'AXA', numero_assurance_rcp: 'RCP-2026-001',
+        date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
         org_nom: 'VB Coaching', org_siret: '399 146 067 00034', org_nda: '53560969356',
         org_adresse: '2 rue du Général Baron Fabre', org_code_postal: '56000', org_ville: 'Vannes',
         org_site_web: 'www.vbcoaching56.com',
+        date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
       };
       const tplFields = fields.map(f => ({
         template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
@@ -11872,6 +11881,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance:   formateur?.compagnie_assurance || '',
           numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
+          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme —
+          // même valeur (date du jour de génération), demandé par l'utilisateur.
+          date_signature_formateur: today,
+          date_signature_organisme: today,
           // Alias consultant (même données)
           nom_consultant:        formateur?.nom || '',
           email_consultant:      formateur?.email || '',
@@ -12090,6 +12103,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
               compagnie_assurance:   formateur?.compagnie_assurance || '',
               numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
+              // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
+              date_signature_formateur: today,
+              date_signature_organisme: today,
               nom_consultant:        formateur?.nom || '',
               email_consultant:      formateur?.email || '',
               tel_consultant:        formateur?.telephone || '',
@@ -13694,11 +13710,18 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole }) => {
   const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
 
-  // Pré-sélectionne le rôle correspondant à l'onglet depuis lequel le modal a été ouvert (Clients →
-  // client, Formateurs → formateur), ajouté 2026-08-05 — reste modifiable via le menu déroulant ci-dessous.
+  // FIX (2026-09-15) : le formulaire gardait le nom/email/formateur du DERNIER utilisateur créé
+  // quand on rouvrait la modale pour en créer un autre — car ce composant reste monté en permanence
+  // (il retourne juste `null` quand isOpen est faux, voir plus bas) donc son state React n'était
+  // jamais réinitialisé entre deux ouvertures. Signalé par l'utilisateur le 15/09/2026. On réinitialise
+  // maintenant TOUT le formulaire (pas seulement le rôle) à chaque ouverture — tout en gardant la
+  // pré-sélection du rôle depuis l'onglet d'origine (Clients → client, Formateurs → formateur, ajouté
+  // le 2026-08-05). En cas d'erreur d'envoi, la modale reste ouverte SANS se refermer (voir handleInvite
+  // plus bas) donc les données saisies ne sont pas perdues — seule une réouverture après un succès
+  // (fermeture automatique) repart bien de zéro.
   React.useEffect(() => {
-    if (isOpen && defaultRole) {
-      setFormData(fd => ({ ...fd, role: defaultRole }));
+    if (isOpen) {
+      setFormData({ nom: '', email: '', role: defaultRole || 'client', formateur_id: '' });
     }
   }, [isOpen, defaultRole]);
 
@@ -17559,6 +17582,9 @@ export default function App() {
           formateur_nda:       formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance: formateur?.compagnie_assurance || '',
           numero_assurance_rcp: formateur?.numero_assurance_rcp || '',
+          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
+          date_signature_formateur: today,
+          date_signature_organisme: today,
           nom_consultant:      formateur?.nom || '',
           email_consultant:    formateur?.email || '',
           tel_consultant:      formateur?.telephone || '',
@@ -19382,6 +19408,9 @@ export default function App() {
           numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
           date_signature: new Date().toLocaleDateString('fr-FR'),
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
+          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
+          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
+          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
           org_siret: orgSettings?.siret || '',
@@ -19466,6 +19495,9 @@ export default function App() {
           date_fin: dateFin,
           date_signature: new Date().toLocaleDateString('fr-FR'),
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
+          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
+          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
+          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
           formation_nom: module?.nom || 'Formation',
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
