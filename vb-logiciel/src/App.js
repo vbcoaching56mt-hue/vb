@@ -388,6 +388,20 @@ const parseAddressString = (addr) => {
   return { rue: addr, codePostal: '', ville: '' };
 };
 
+// AJOUT (2026-09-16) : balises "initiales" (client, formateur, organisme), demandé par l'utilisateur.
+// Prend la première lettre du PREMIER et du DERNIER mot d'un nom — plutôt que de dépendre de colonnes
+// nom/prénom séparées, qui existent en base mais ne sont quasiment jamais renseignées en pratique
+// (le formulaire de création ne demande qu'un seul champ "Nom Complet", ex. "Jean Dupont" ou
+// "Marie LEROY" — voir InviteModal). Fonctionne donc quel que soit l'ordre (Nom Prénom ou Prénom Nom)
+// et même sur un nom à un seul mot (ex. "Dupont" → "D"). Toujours en majuscules.
+const computeInitials = (fullName) => {
+  const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '';
+  const first = words[0].charAt(0);
+  const last = words.length > 1 ? words[words.length - 1].charAt(0) : '';
+  return (first + last).toUpperCase();
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // RÉGION (2026-09-07) : liste officielle des 18 régions administratives françaises
 // (13 métropole + 5 outre-mer), utilisée comme <datalist> pour un champ « Région » à
@@ -7591,10 +7605,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   // resolvedValues/dataToMerge plus bas, tous mis à jour en conséquence). On NE renomme PAS
   // 'date_signature' en 'date_signature_client' pour ne pas casser les modèles déjà créés qui
   // utilisent cette balise.
+  // AJOUT (2026-09-16) : balises "initiales" (client, formateur, organisme), demandé par l'utilisateur
+  // — voir computeInitials() en haut du fichier. Pour 'initiales_organisme', confirmé avec
+  // l'utilisateur (16/09/2026) : basé sur le NOM DE L'ORGANISME (org_nom, ex. "VB Coaching" → "VC"),
+  // pas sur une personne admin précise — cohérent avec les autres balises Organisme (toutes au niveau
+  // société), et fonctionne pour tout organisme sans configuration supplémentaire.
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
-    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur'],
-    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme'],
+    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature', 'initiales_client'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur', 'initiales_formateur'],
+    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme', 'initiales_organisme'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
@@ -7871,15 +7890,18 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
         formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
         date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
+        initiales_client: computeInitials('Jean DUPONT'),
         nom_formateur: 'Marie LEROY', email_formateur: 'marie@formateur.fr', tel_formateur: '06 00 00 00 00',
         adresse_formateur: '5 av. Victor Hugo, 75008 Paris', rue_formateur: '5 av. Victor Hugo', code_postal_formateur: '75008', ville_formateur: 'Paris',
         formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
         compagnie_assurance: 'AXA', numero_assurance_rcp: 'RCP-2026-001',
         date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
+        initiales_formateur: computeInitials('Marie LEROY'),
         org_nom: 'VB Coaching', org_siret: '399 146 067 00034', org_nda: '53560969356',
         org_adresse: '2 rue du Général Baron Fabre', org_code_postal: '56000', org_ville: 'Vannes',
         org_site_web: 'www.vbcoaching56.com',
         date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
+        initiales_organisme: computeInitials('VB Coaching'),
       };
       const tplFields = fields.map(f => ({
         template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
@@ -11482,7 +11504,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
   );
 };
 
-const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs }) => {
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
@@ -11885,6 +11907,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           // même valeur (date du jour de génération), demandé par l'utilisateur.
           date_signature_formateur: today,
           date_signature_organisme: today,
+          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
+          initiales_client:      computeInitials(currentClient?.nom_complet || currentClient?.nom || ''),
+          initiales_formateur:   computeInitials(formateur?.nom || ''),
+          initiales_organisme:   computeInitials(orgSettings?.nom || ''),
           // Alias consultant (même données)
           nom_consultant:        formateur?.nom || '',
           email_consultant:      formateur?.email || '',
@@ -11927,7 +11953,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // Fallback : ouvrir avec template brut
       setSigningResource(resource);
     }
-  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs]);
+  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings]);
 
   const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => {
     if (!signingResource || !currentClient) return;
@@ -12106,6 +12132,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
               date_signature_formateur: today,
               date_signature_organisme: today,
+              // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
+              initiales_client:      computeInitials(currentClient.nom_complet || currentClient.nom || ''),
+              initiales_formateur:   computeInitials(formateur?.nom || ''),
+              initiales_organisme:   computeInitials(orgSettings?.nom || ''),
               nom_consultant:        formateur?.nom || '',
               email_consultant:      formateur?.email || '',
               tel_consultant:        formateur?.telephone || '',
@@ -17585,6 +17615,10 @@ export default function App() {
           // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
           date_signature_formateur: today,
           date_signature_organisme: today,
+          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
+          initiales_client:    computeInitials(client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || ''),
+          initiales_formateur: computeInitials(formateur?.nom || ''),
+          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           nom_consultant:      formateur?.nom || '',
           email_consultant:    formateur?.email || '',
           tel_consultant:      formateur?.telephone || '',
@@ -19411,6 +19445,10 @@ export default function App() {
           // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
           date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
           date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
+          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
+          // (Pas de client dans cette branche — initiales_client reste vide.)
+          initiales_formateur: computeInitials(theFormateur.nom || ''),
+          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
           org_siret: orgSettings?.siret || '',
@@ -19498,6 +19536,10 @@ export default function App() {
           // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
           date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
           date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
+          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
+          initiales_client: computeInitials(finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim()),
+          initiales_formateur: computeInitials(theCoach.nom || ''),
+          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           formation_nom: module?.nom || 'Formation',
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
@@ -21266,7 +21308,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
