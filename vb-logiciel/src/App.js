@@ -7612,7 +7612,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [rubberBandActive, setRubberBandActive] = React.useState(false);
   const [rubberBandRect, setRubberBandRect] = React.useState(null); // {minX, maxX, minY, maxY} en % — pour le rectangle affiché
   const rubberBandStartRef = React.useRef(null); // {xPct, yPct} figé au mousedown
-  const groupDragAnchorRef = React.useRef(null); // {fieldId, xPct, yPct} position de départ du champ "meneur" d'un déplacement groupé
+  // FIX (2026-09-18) : remplace l'ancien glissement natif du navigateur (draggable/onDragStart/onDrop)
+  // pour repositionner une balise déjà posée — ce dernier ne montrait AUCUN aperçu pendant le geste (la
+  // balise "sautait" à sa nouvelle position seulement au relâchement), ce qui était gênant pour juger où
+  // atterrirait un déplacement, surtout en groupe. On suit désormais la souris nous-mêmes (mousedown +
+  // mousemove + mouseup, comme la poignée de redimensionnement ou le lasso) et on met à jour la position
+  // réelle de la ou des balises à CHAQUE mouvement, aimantation comprise — déplacement 100% visible en
+  // direct. Ne concerne que le déplacement d'une balise déjà posée (seule ou en groupe sélectionné) ;
+  // le dépôt d'une NOUVELLE balise depuis le panneau de droite reste en glissement natif (dragTag).
+  const moveDragRef = React.useRef(null); // { fieldId, origins: Map<id,{xPct,yPct}>, startClientX, startClientY }
+  const [isMoveDragging, setIsMoveDragging] = React.useState(false);
+  const justDraggedRef = React.useRef(false); // évite qu'un vrai glissement ne déclenche aussi le clic (mode clic-pour-placer) au relâchement
   const [templateName, setTemplateName] = React.useState('');
   // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme, cochables librement
   // (remplace l'ancien choix unique 'client' | 'formateur' | 'both'). Stocké en base sous forme de
@@ -7819,56 +7829,30 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
   }, [resizingFieldId]);
 
+  // FIX (2026-09-18) : ne gère plus QUE le dépôt d'une NOUVELLE balise depuis le panneau de droite
+  // (dragTag, toujours en glissement natif du navigateur) — le repositionnement d'une balise déjà
+  // posée (seule ou en groupe) est désormais géré en direct par le glissement "maison" (voir
+  // moveDragRef / handleFieldMouseDown plus bas), qui affiche la balise bouger en temps réel au lieu
+  // d'attendre le dépôt pour la faire apparaître à sa nouvelle position.
   const handlePageDrop = (e) => {
     e.preventDefault();
-    if (!pageRef.current) return;
+    if (!pageRef.current || !dragTag) return;
     const rect = pageRef.current.getBoundingClientRect();
     const xPct = Math.max(2, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
     const yPct = Math.max(2, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
-
-    if (draggingFieldId) {
-      const anchor = groupDragAnchorRef.current;
-      if (anchor && anchor.fieldId === draggingFieldId && selectedFieldIds.size > 1 && selectedFieldIds.has(draggingFieldId)) {
-        // AJOUT (2026-09-18) : déplacement groupé — toutes les balises sélectionnées bougent ensemble,
-        // en conservant leur position relative. On calcule le déplacement du champ "meneur" (celui
-        // réellement glissé), on cherche un alignement magnétique pour SA nouvelle position (en excluant
-        // les autres balises du groupe pour ne pas s'accrocher à elles-mêmes), puis on applique le même
-        // décalage (+ la correction d'alignement) à tout le groupe.
-        const rawDeltaX = xPct - anchor.xPct;
-        const rawDeltaY = yPct - anchor.yPct;
-        const anchorField = fields.find(f => f.id === draggingFieldId);
-        const anchorNewY = anchor.yPct + rawDeltaY;
-        const snappedAnchorY = anchorField
-          ? findSnappedY(anchorNewY, anchorField.page, Array.from(selectedFieldIds))
-          : anchorNewY;
-        const snapCorrection = snappedAnchorY - anchorNewY;
-        setFields(prev => prev.map(f => selectedFieldIds.has(f.id)
-          ? { ...f, xPct: Math.max(2, Math.min(95, f.xPct + rawDeltaX)), yPct: Math.max(2, Math.min(97, f.yPct + rawDeltaY + snapCorrection)) }
-          : f
-        ));
-      } else {
-        // Repositionnement d'un champ déjà posé, seul — alignement magnétique (2026-09-18).
-        const movedField = fields.find(f => f.id === draggingFieldId);
-        const snappedY = movedField ? findSnappedY(yPct, movedField.page, [draggingFieldId]) : yPct;
-        setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct: snappedY } : f));
-      }
-      setDraggingFieldId(null);
-      groupDragAnchorRef.current = null;
-    } else if (dragTag) {
-      // Nouveau champ depuis la sidebar — taille par défaut posée sur les champs texte libre
-      // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas), avec alignement
-      // magnétique (2026-09-18) sur une balise existante proche.
-      const snappedY = findSnappedY(yPct, currentPage + 1, []);
-      setFields(prev => [...prev, {
-        id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-        tag: dragTag,
-        page: currentPage + 1,
-        xPct,
-        yPct: snappedY,
-        ...(isTextInputTag(dragTag) ? { width_percent: 28, height_percent: 3.5 } : {}),
-      }]);
-      setDragTag(null);
-    }
+    // Nouveau champ depuis la sidebar — taille par défaut posée sur les champs texte libre
+    // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas), avec alignement
+    // magnétique (2026-09-18) sur une balise existante proche.
+    const snappedY = findSnappedY(yPct, currentPage + 1, []);
+    setFields(prev => [...prev, {
+      id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      tag: dragTag,
+      page: currentPage + 1,
+      xPct,
+      yPct: snappedY,
+      ...(isTextInputTag(dragTag) ? { width_percent: 28, height_percent: 3.5 } : {}),
+    }]);
+    setDragTag(null);
   };
 
   // Touche Escape pour annuler le mode clic-pour-placer
@@ -8009,6 +7993,74 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setSelectedFieldIds(new Set());
   }, [currentPage]);
 
+  // FIX (2026-09-18) : démarre le glissement "maison" d'une balise déjà posée (voir moveDragRef
+  // ci-dessus) — remplace le glissement natif du navigateur qui ne montrait aucun aperçu pendant le
+  // geste. Appelé au mousedown sur une balise (seule ou faisant partie d'une sélection multiple).
+  const handleFieldMouseDown = (e, field) => {
+    e.stopPropagation();
+    if (e.button !== 0 || clickPlaceTag) return; // le mode clic-pour-placer gère son propre déplacement
+    justDraggedRef.current = false;
+    const isGroup = selectedFieldIds.size > 1 && selectedFieldIds.has(field.id);
+    if (isGroup) {
+      const origins = new Map();
+      fields.forEach(f => { if (selectedFieldIds.has(f.id)) origins.set(f.id, { xPct: f.xPct, yPct: f.yPct }); });
+      moveDragRef.current = { fieldId: field.id, page: field.page, startClientX: e.clientX, startClientY: e.clientY, origins };
+    } else {
+      // Glisser une balise non sélectionnée annule toute sélection multiple en cours.
+      if (selectedFieldIds.size > 0) setSelectedFieldIds(new Set());
+      moveDragRef.current = {
+        fieldId: field.id,
+        page: field.page,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        origins: new Map([[field.id, { xPct: field.xPct, yPct: field.yPct }]]),
+      };
+    }
+    setDraggingFieldId(field.id);
+    setIsMoveDragging(true);
+  };
+
+  React.useEffect(() => {
+    if (!isMoveDragging) return;
+    const onMove = (e) => {
+      const st = moveDragRef.current;
+      if (!st || !pageRef.current) return;
+      const dxClient = e.clientX - st.startClientX;
+      const dyClient = e.clientY - st.startClientY;
+      if (Math.abs(dxClient) > 3 || Math.abs(dyClient) > 3) justDraggedRef.current = true;
+      const rect = pageRef.current.getBoundingClientRect();
+      const rawDeltaXPct = (dxClient / rect.width) * 100;
+      const rawDeltaYPct = (dyClient / rect.height) * 100;
+      const leaderOrigin = st.origins.get(st.fieldId);
+      if (!leaderOrigin) return;
+      // Alignement magnétique (2026-09-18) : calculé sur la nouvelle position du champ "meneur" (celui
+      // réellement saisi), en excluant du calcul toutes les balises qui bougent avec lui — puis la même
+      // correction est appliquée à tout le groupe pour garder les positions relatives.
+      const leaderNewYRaw = leaderOrigin.yPct + rawDeltaYPct;
+      const excludeIds = Array.from(st.origins.keys());
+      const snappedLeaderY = findSnappedY(leaderNewYRaw, st.page, excludeIds);
+      const snapCorrection = snappedLeaderY - leaderNewYRaw;
+      setFields(prev => prev.map(f => {
+        const origin = st.origins.get(f.id);
+        if (!origin) return f;
+        return {
+          ...f,
+          xPct: Math.max(2, Math.min(95, origin.xPct + rawDeltaXPct)),
+          yPct: Math.max(2, Math.min(97, origin.yPct + rawDeltaYPct + snapCorrection)),
+        };
+      }));
+    };
+    const onUp = () => {
+      moveDragRef.current = null;
+      setIsMoveDragging(false);
+      setDraggingFieldId(null);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMoveDragging]);
+
   // AJOUT (2026-09-18) : "Dupliquer la ligne" — demandé par l'utilisateur pour les documents avec
   // beaucoup de balises répétées côte à côte (ex. un calendrier prévisionnel où chaque séance a sa
   // propre ligne "date | durée | lieu" en texte libre) : jusqu'ici il fallait reposer et redimensionner
@@ -8045,6 +8097,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setCurrentPage(0); setStep('upload');
     setClickPlaceTag(null); setHoverPos(null);
     setSelectedFieldIds(new Set()); setRubberBandActive(false); setRubberBandRect(null);
+    moveDragRef.current = null; setIsMoveDragging(false); setDraggingFieldId(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -8262,10 +8315,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   }}
                   onMouseLeave={() => setHoverPos(null)}
                   onDragOver={e => {
+                    // FIX (2026-09-18) : ne concerne plus que le dépôt d'une NOUVELLE balise depuis la
+                    // sidebar (dragTag) — le repositionnement d'une balise déjà posée ne passe plus par
+                    // le glissement natif du navigateur, voir handleFieldMouseDown/moveDragRef plus haut.
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = draggingFieldId ? 'move' : 'copy';
-                    const color = draggingFieldId ? '#6b7280' : '#7C3AED';
-                    e.currentTarget.style.outline = `3px dashed ${color}`;
+                    e.dataTransfer.dropEffect = 'copy';
+                    e.currentTarget.style.outline = '3px dashed #7C3AED';
                     e.currentTarget.style.outlineOffset = '-3px';
                   }}
                   onDragLeave={e => {
@@ -8365,34 +8420,12 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       <div
                         key={field.id}
                         ref={el => { if (el) fieldRefs.current[field.id] = el; else delete fieldRefs.current[field.id]; }}
-                        draggable
-                        onMouseDown={e => e.stopPropagation()}
-                        onDragStart={e => {
-                          e.stopPropagation();
-                          setDraggingFieldId(field.id);
-                          setDragTag(null);
-                          setClickPlaceTag(null);
-                          // AJOUT (2026-09-18) : si cette balise fait partie d'une sélection multiple
-                          // (2+), on mémorise sa position de départ pour déplacer tout le groupe ensemble
-                          // au drop (voir handlePageDrop) — sinon, on annule toute sélection en cours :
-                          // glisser une balise non sélectionnée remplace l'intention de groupe.
-                          if (selectedFieldIds.size > 1 && selectedFieldIds.has(field.id)) {
-                            groupDragAnchorRef.current = { fieldId: field.id, xPct: field.xPct, yPct: field.yPct };
-                          } else {
-                            groupDragAnchorRef.current = null;
-                            if (selectedFieldIds.size > 0) setSelectedFieldIds(new Set());
-                          }
-                          e.dataTransfer.effectAllowed = 'move';
-                          // Image fantôme transparente pour éviter l'aperçu natif
-                          const ghost = document.createElement('div');
-                          ghost.style.width = '1px'; ghost.style.height = '1px'; ghost.style.opacity = '0';
-                          document.body.appendChild(ghost);
-                          e.dataTransfer.setDragImage(ghost, 0, 0);
-                          setTimeout(() => document.body.removeChild(ghost), 0);
-                        }}
-                        onDragEnd={() => setDraggingFieldId(null)}
+                        onMouseDown={e => handleFieldMouseDown(e, field)}
                         onClick={e => {
                           e.stopPropagation();
+                          // FIX (2026-09-18) : un vrai glissement (voir handleFieldMouseDown) ne doit pas
+                          // en plus armer le mode clic-pour-placer au relâchement.
+                          if (justDraggedRef.current) { justDraggedRef.current = false; return; }
                           // Clic sur balise posée → activer mode repositionnement
                           if (!clickPlaceTag) setClickPlaceTag({ fieldId: field.id });
                           else if (clickPlaceTag.fieldId === field.id) setClickPlaceTag(null);
@@ -8412,10 +8445,14 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           // texte de fusion = le point est le coin bas-gauche de la ligne de base
                           // (comportement réel de drawText/pdf-lib).
                           transform: (isSig || isChk) ? 'translate(-50%, -50%)' : isTxt ? 'translate(0%, -50%)' : 'translate(0%, -100%)',
-                          zIndex: 10,
-                          cursor: isSelectedForMove ? 'crosshair' : 'grab',
-                          opacity: isBeingMoved ? 0.35 : 1,
-                          transition: 'opacity 0.15s',
+                          // FIX (2026-09-18) : la balise reste pleinement visible pendant le glissement
+                          // "maison" (elle EST désormais ce qui bouge réellement à l'écran, plus besoin de
+                          // l'estomper comme du temps du glissement natif) — juste une légère ombre + un
+                          // z-index relevé pour bien la distinguer des autres pendant qu'on la tient.
+                          zIndex: isBeingMoved ? 25 : 10,
+                          cursor: isBeingMoved ? 'grabbing' : isSelectedForMove ? 'crosshair' : 'grab',
+                          opacity: 1,
+                          boxShadow: isBeingMoved ? '0 8px 20px rgba(0,0,0,0.28)' : undefined,
                           outline: isSelectedForMove ? '2px solid #7C3AED' : isLassoSelected ? '2px dashed #2563EB' : 'none',
                           outlineOffset: isLassoSelected ? 2 : 0,
                           borderRadius: 4,
@@ -8432,6 +8469,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
                             </div>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
                               title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous"
                               className="w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
@@ -8439,6 +8477,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <Copy size={8} />
                             </button>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
                             >
@@ -8454,6 +8493,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               style={{ width: 16, height: 16 }}
                             />
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
                               title="Dupliquer la ligne juste en dessous"
                               className="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
@@ -8461,6 +8501,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <Copy size={8} />
                             </button>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
                             >
@@ -8497,6 +8538,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               </p>
                             </div>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
                               title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous — pratique pour un calendrier prévisionnel, une liste de séances, etc."
                               className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-white border-2 border-violet-300 text-violet-500 hover:bg-violet-500 hover:text-white hover:border-violet-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
@@ -8505,6 +8547,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <Copy size={12} strokeWidth={2.5} />
                             </button>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               title="Supprimer cette balise"
                               className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-white border-2 border-red-300 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
@@ -8544,6 +8587,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
                             </div>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
                               title="Dupliquer la ligne juste en dessous"
                               className="absolute -top-2 -left-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
@@ -8551,6 +8595,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <Copy size={8} />
                             </button>
                             <button
+                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
                             >
@@ -8588,24 +8633,24 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     </div>
                   )}
 
-                  {/* Hint zone de dépôt */}
-                  {(dragTag || draggingFieldId) && (
+                  {/* Hint zone de dépôt — ne concerne que le dépôt d'une NOUVELLE balise depuis la
+                      sidebar (dragTag) : le repositionnement d'une balise déjà posée (draggingFieldId)
+                      n'en a plus besoin depuis le 2026-09-18, la balise elle-même bouge en direct sous
+                      le curseur et indique déjà clairement où elle va atterrir. */}
+                  {dragTag && (
                     <div className="absolute inset-0 pointer-events-none bg-gray-900/5 flex items-end justify-center pb-4">
                       <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
-                        draggingFieldId ? 'bg-gray-700/90' :
                         dragTag === 'signature_client' || dragTag === 'checkbox_client' || dragTag === 'texte_client' ? 'bg-blue-600/90' :
                         dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' || dragTag === 'texte_formateur' ? 'bg-orange-500/90' :
                         'bg-violet-700/90'
                       }`}>
-                        {draggingFieldId
-                          ? '↕ Déposez pour repositionner'
-                          : isSignatureTag(dragTag)
-                            ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
-                            : isCheckboxTag(dragTag)
-                              ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
-                              : isTextInputTag(dragTag)
-                                ? `📝 Déposez le champ texte libre ${dragTag === 'texte_client' ? 'client' : 'formateur'}`
-                                : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
+                        {isSignatureTag(dragTag)
+                          ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
+                          : isCheckboxTag(dragTag)
+                            ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
+                            : isTextInputTag(dragTag)
+                              ? `📝 Déposez le champ texte libre ${dragTag === 'texte_client' ? 'client' : 'formateur'}`
+                              : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
                         }
                       </div>
                     </div>
