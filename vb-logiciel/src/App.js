@@ -7604,6 +7604,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const resizeStartRef = React.useRef(null);
   const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
   const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
+  // AJOUT (2026-09-18) : sélection multiple par "lasso" (cliquer-glisser sur le fond de page pour
+  // entourer plusieurs balises) + déplacement groupé — demandé par l'utilisateur pour pouvoir bouger
+  // toute une ligne (ex. les 3 balises d'un calendrier prévisionnel) d'un seul geste au lieu de les
+  // glisser une par une. Voir startRubberBand/handleDuplicateRow (déplacement groupé) plus bas.
+  const [selectedFieldIds, setSelectedFieldIds] = React.useState(() => new Set());
+  const [rubberBandActive, setRubberBandActive] = React.useState(false);
+  const [rubberBandRect, setRubberBandRect] = React.useState(null); // {minX, maxX, minY, maxY} en % — pour le rectangle affiché
+  const rubberBandStartRef = React.useRef(null); // {xPct, yPct} figé au mousedown
+  const groupDragAnchorRef = React.useRef(null); // {fieldId, xPct, yPct} position de départ du champ "meneur" d'un déplacement groupé
   const [templateName, setTemplateName] = React.useState('');
   // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme, cochables librement
   // (remplace l'ancien choix unique 'client' | 'formateur' | 'both'). Stocké en base sous forme de
@@ -7815,18 +7824,44 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     const yPct = Math.max(2, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
 
     if (draggingFieldId) {
-      // Repositionnement d'un champ déjà posé
-      setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct } : f));
+      const anchor = groupDragAnchorRef.current;
+      if (anchor && anchor.fieldId === draggingFieldId && selectedFieldIds.size > 1 && selectedFieldIds.has(draggingFieldId)) {
+        // AJOUT (2026-09-18) : déplacement groupé — toutes les balises sélectionnées bougent ensemble,
+        // en conservant leur position relative. On calcule le déplacement du champ "meneur" (celui
+        // réellement glissé), on cherche un alignement magnétique pour SA nouvelle position (en excluant
+        // les autres balises du groupe pour ne pas s'accrocher à elles-mêmes), puis on applique le même
+        // décalage (+ la correction d'alignement) à tout le groupe.
+        const rawDeltaX = xPct - anchor.xPct;
+        const rawDeltaY = yPct - anchor.yPct;
+        const anchorField = fields.find(f => f.id === draggingFieldId);
+        const anchorNewY = anchor.yPct + rawDeltaY;
+        const snappedAnchorY = anchorField
+          ? findSnappedY(anchorNewY, anchorField.page, Array.from(selectedFieldIds))
+          : anchorNewY;
+        const snapCorrection = snappedAnchorY - anchorNewY;
+        setFields(prev => prev.map(f => selectedFieldIds.has(f.id)
+          ? { ...f, xPct: Math.max(2, Math.min(95, f.xPct + rawDeltaX)), yPct: Math.max(2, Math.min(97, f.yPct + rawDeltaY + snapCorrection)) }
+          : f
+        ));
+      } else {
+        // Repositionnement d'un champ déjà posé, seul — alignement magnétique (2026-09-18).
+        const movedField = fields.find(f => f.id === draggingFieldId);
+        const snappedY = movedField ? findSnappedY(yPct, movedField.page, [draggingFieldId]) : yPct;
+        setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct: snappedY } : f));
+      }
       setDraggingFieldId(null);
+      groupDragAnchorRef.current = null;
     } else if (dragTag) {
       // Nouveau champ depuis la sidebar — taille par défaut posée sur les champs texte libre
-      // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas).
+      // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas), avec alignement
+      // magnétique (2026-09-18) sur une balise existante proche.
+      const snappedY = findSnappedY(yPct, currentPage + 1, []);
       setFields(prev => [...prev, {
         id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         tag: dragTag,
         page: currentPage + 1,
         xPct,
-        yPct,
+        yPct: snappedY,
         ...(isTextInputTag(dragTag) ? { width_percent: 28, height_percent: 3.5 } : {}),
       }]);
       setDragTag(null);
@@ -7836,7 +7871,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   // Touche Escape pour annuler le mode clic-pour-placer
   React.useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e) => { if (e.key === 'Escape') setClickPlaceTag(null); };
+    const onKey = (e) => { if (e.key === 'Escape') { setClickPlaceTag(null); setSelectedFieldIds(new Set()); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen]);
@@ -7850,22 +7885,107 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     const yPct = Math.max(2, Math.min(98, ((e.clientY - rect.top) / rect.height) * 100));
 
     if (clickPlaceTag.fieldId) {
-      // Repositionner un champ déjà posé
-      setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct } : f));
+      // Repositionner un champ déjà posé — alignement magnétique (2026-09-18).
+      const movedField = fields.find(f => f.id === clickPlaceTag.fieldId);
+      const snappedY = movedField ? findSnappedY(yPct, movedField.page, [clickPlaceTag.fieldId]) : yPct;
+      setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct: snappedY } : f));
     } else if (clickPlaceTag.tag) {
       // Chaque clic ajoute une nouvelle occurrence de la balise — une même balise peut être
       // posée plusieurs fois (ex: signature sur plusieurs pages, adresse rappelée 2x, etc.).
       // Pour repositionner une occurrence déjà posée, on clique directement dessus (mode fieldId ci-dessus).
+      // Alignement magnétique (2026-09-18) sur une balise existante proche.
+      const snappedY = findSnappedY(yPct, currentPage + 1, []);
       setFields(prev => [...prev, {
         id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         tag: clickPlaceTag.tag,
         page: currentPage + 1,
-        xPct, yPct,
+        xPct, yPct: snappedY,
         ...(isTextInputTag(clickPlaceTag.tag) ? { width_percent: 28, height_percent: 3.5 } : {}),
       }]);
     }
     setClickPlaceTag(null);
   };
+
+  // AJOUT (2026-09-18) : alignement magnétique — quand on pose ou déplace une balise et qu'elle
+  // s'approche du Y d'une autre balise déjà posée sur la même page (tolérance SNAP_Y_TOLERANCE_PCT),
+  // elle se cale automatiquement sur cette même ligne au lieu de rester légèrement décalée. Demandé par
+  // l'utilisateur pour obtenir des lignes parfaitement alignées sans réglage manuel au pixel près.
+  const SNAP_Y_TOLERANCE_PCT = 1.4;
+  const findSnappedY = (yPct, page, excludeIds = []) => {
+    let best = null;
+    let bestDist = SNAP_Y_TOLERANCE_PCT;
+    for (const f of fields) {
+      if (f.page !== page || excludeIds.includes(f.id)) continue;
+      const d = Math.abs(f.yPct - yPct);
+      if (d <= bestDist) { bestDist = d; best = f.yPct; }
+    }
+    return best !== null ? best : yPct;
+  };
+
+  // AJOUT (2026-09-18) : sélection multiple par "lasso" — cliquer-glisser sur une zone vide de la page
+  // dessine un rectangle de sélection ; toutes les balises qu'il survole (au moment du relâchement)
+  // deviennent sélectionnées (selectedFieldIds). Un clic simple (rectangle minuscule) désélectionne tout.
+  // On démarre le lasso uniquement sur le fond de la page — chaque balise a son propre onMouseDown qui
+  // stoppe la propagation pour ne pas déclencher de lasso quand on clique/glisse dessus.
+  const rubberBandRectRef = React.useRef(null); // valeur "live" du rectangle, lue par onUp (évite de faire dépendre l'effet des coordonnées qui changent à chaque mousemove)
+  const startRubberBand = (e) => {
+    if (clickPlaceTag || !pageRef.current || e.button !== 0) return;
+    const rect = pageRef.current.getBoundingClientRect();
+    const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    rubberBandStartRef.current = { xPct, yPct };
+    const initRect = { minX: xPct, maxX: xPct, minY: yPct, maxY: yPct };
+    rubberBandRectRef.current = initRect;
+    setRubberBandRect(initRect);
+    setRubberBandActive(true);
+  };
+  React.useEffect(() => {
+    if (!rubberBandActive) return;
+    const onMove = (e) => {
+      if (!pageRef.current || !rubberBandStartRef.current) return;
+      const rect = pageRef.current.getBoundingClientRect();
+      const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+      const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+      const start = rubberBandStartRef.current;
+      const next = {
+        minX: Math.min(start.xPct, xPct), maxX: Math.max(start.xPct, xPct),
+        minY: Math.min(start.yPct, yPct), maxY: Math.max(start.yPct, yPct),
+      };
+      rubberBandRectRef.current = next;
+      setRubberBandRect(next);
+    };
+    const onUp = () => {
+      const r = rubberBandRectRef.current;
+      setRubberBandActive(false);
+      rubberBandStartRef.current = null;
+      rubberBandRectRef.current = null;
+      setRubberBandRect(null);
+      if (!r || (r.maxX - r.minX < 0.6 && r.maxY - r.minY < 0.6)) {
+        // Rectangle minuscule = simple clic sur le fond → on désélectionne tout.
+        setSelectedFieldIds(new Set());
+        return;
+      }
+      const ids = fields
+        .filter(f => f.page === currentPage + 1 && f.xPct >= r.minX && f.xPct <= r.maxX && f.yPct >= r.minY && f.yPct <= r.maxY)
+        .map(f => f.id);
+      setSelectedFieldIds(new Set(ids));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rubberBandActive, fields, currentPage]);
+
+  // Les deux modes de placement/sélection sont mutuellement exclusifs.
+  React.useEffect(() => {
+    if (clickPlaceTag) setSelectedFieldIds(new Set());
+  }, [clickPlaceTag]);
+
+  // Une sélection multiple ne doit pas survivre à un changement de page (les balises sélectionnées
+  // n'existent plus visuellement sur la nouvelle page).
+  React.useEffect(() => {
+    setSelectedFieldIds(new Set());
+  }, [currentPage]);
 
   // AJOUT (2026-09-18) : "Dupliquer la ligne" — demandé par l'utilisateur pour les documents avec
   // beaucoup de balises répétées côte à côte (ex. un calendrier prévisionnel où chaque séance a sa
@@ -7902,6 +8022,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setFile(null); setPdfPages([]); setFields([]);
     setCurrentPage(0); setStep('upload');
     setClickPlaceTag(null); setHoverPos(null);
+    setSelectedFieldIds(new Set()); setRubberBandActive(false); setRubberBandRect(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -8108,6 +8229,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     outlineOffset: clickPlaceTag ? '-3px' : '',
                   }}
                   onClick={handlePageClick}
+                  onMouseDown={startRubberBand}
                   onMouseMove={e => {
                     if (!clickPlaceTag || !pageRef.current) { if (hoverPos) setHoverPos(null); return; }
                     const rect = pageRef.current.getBoundingClientRect();
@@ -8138,6 +8260,20 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     alt={`Page ${currentPage + 1}`}
                     draggable={false}
                   />
+
+                  {/* AJOUT (2026-09-18) : rectangle de sélection "lasso" — visible pendant le glisser */}
+                  {rubberBandActive && rubberBandRect && (
+                    <div
+                      className="absolute border-2 border-violet-500 bg-violet-500/10 pointer-events-none"
+                      style={{
+                        left: `${rubberBandRect.minX}%`,
+                        top: `${rubberBandRect.minY}%`,
+                        width: `${rubberBandRect.maxX - rubberBandRect.minX}%`,
+                        height: `${rubberBandRect.maxY - rubberBandRect.minY}%`,
+                        zIndex: 40,
+                      }}
+                    />
+                  )}
 
                   {/* Ghost cursor — balise fantôme qui suit la souris en mode clic-pour-placer */}
                   {clickPlaceTag && hoverPos && (() => {
@@ -8200,15 +8336,29 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     const isTxt = isTextInputTag(field.tag);
                     const isBeingMoved = draggingFieldId === field.id;
                     const isSelectedForMove = clickPlaceTag?.fieldId === field.id;
+                    // AJOUT (2026-09-18) : sélection multiple (lasso) — surbrillance distincte du mode
+                    // "clic-pour-déplacer" ci-dessus, pour bien montrer quelles balises bougeront ensemble.
+                    const isLassoSelected = selectedFieldIds.has(field.id);
                     return (
                       <div
                         key={field.id}
                         draggable
+                        onMouseDown={e => e.stopPropagation()}
                         onDragStart={e => {
                           e.stopPropagation();
                           setDraggingFieldId(field.id);
                           setDragTag(null);
                           setClickPlaceTag(null);
+                          // AJOUT (2026-09-18) : si cette balise fait partie d'une sélection multiple
+                          // (2+), on mémorise sa position de départ pour déplacer tout le groupe ensemble
+                          // au drop (voir handlePageDrop) — sinon, on annule toute sélection en cours :
+                          // glisser une balise non sélectionnée remplace l'intention de groupe.
+                          if (selectedFieldIds.size > 1 && selectedFieldIds.has(field.id)) {
+                            groupDragAnchorRef.current = { fieldId: field.id, xPct: field.xPct, yPct: field.yPct };
+                          } else {
+                            groupDragAnchorRef.current = null;
+                            if (selectedFieldIds.size > 0) setSelectedFieldIds(new Set());
+                          }
                           e.dataTransfer.effectAllowed = 'move';
                           // Image fantôme transparente pour éviter l'aperçu natif
                           const ghost = document.createElement('div');
@@ -8243,7 +8393,8 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           cursor: isSelectedForMove ? 'crosshair' : 'grab',
                           opacity: isBeingMoved ? 0.35 : 1,
                           transition: 'opacity 0.15s',
-                          outline: isSelectedForMove ? '2px solid #7C3AED' : 'none',
+                          outline: isSelectedForMove ? '2px solid #7C3AED' : isLassoSelected ? '2px dashed #2563EB' : 'none',
+                          outlineOffset: isLassoSelected ? 2 : 0,
                           borderRadius: 4,
                         }}
                         title={(isSig || isChk || isTxt) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
@@ -8387,6 +8538,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       </div>
                     );
                   })}
+
+                  {/* AJOUT (2026-09-18) : bannière de confirmation de sélection multiple — indique
+                      combien de balises sont sélectionnées et qu'on peut les glisser ensemble. */}
+                  {!clickPlaceTag && selectedFieldIds.size > 1 && (
+                    <div className="absolute inset-x-0 top-2 pointer-events-none flex items-center justify-center">
+                      <div className="bg-blue-600/95 text-white text-xs font-bold px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2">
+                        <span>🔗</span>
+                        <span>{selectedFieldIds.size} balises sélectionnées — glissez-en une pour déplacer le groupe · Échap pour désélectionner</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Bannière mode clic-pour-placer */}
                   {clickPlaceTag && (
