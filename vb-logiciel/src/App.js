@@ -17986,6 +17986,44 @@ export default function App() {
     }
     setIsAddingUser(false);
   };
+
+  // AJOUT (2026-09-18) : équivalent de instantiateDocument mais pour les ressources de type "exercice"
+  // posées en Documents de début/fin d'un module — crée une séance "synthétique" dans `sessions`
+  // (numero_seance: null, pour ne pas fausser isModuleCompletedForClient) afin que l'exercice apparaisse
+  // dans l'onglet "Exercices" du client (ExercicesView, qui ne lit QUE la table `sessions`), avec le
+  // vrai workflow de rendu/correction. Appelée immédiatement côté ADMIN — à l'assignation du module
+  // (distributeDocumentsForModule) et à l'ajout d'une nouvelle ressource à un module déjà assigné
+  // (handleAddModuleMomentResource) — plutôt que d'attendre que le client ouvre une page précise :
+  // signalé par l'utilisateur le 2026-09-18 ("il faut que les documents de début du module apparaissent
+  // chez TOUS les clients qui y sont assignés", sans dépendre de l'onglet visité par le client.
+  const instantiateExerciceSession = async (client, resource, moment) => {
+    if (moment === 'fin' && !isModuleCompletedForClient(client.id, sessions)) return; // pas encore débloqué
+    try {
+      const { data: existing } = await supabase.from('sessions').select('id').eq('client_id', client.id).eq('nom', resource.titre).maybeSingle();
+      if (existing) return; // anti-doublon (même principe que instantiateDocument)
+      const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{')
+        ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
+        : (resource.metadata || {});
+      const { error } = await supabase.from('sessions').insert([{
+        client_id: client.id,
+        module_id: client.module_id,
+        numero_seance: null,
+        nom: resource.titre,
+        type_activite: 'exercice',
+        ressource_titre: resource.titre,
+        file_url: resource.file_url || null,
+        metadata: { ...meta, moment },
+        statut: 'À venir',
+        statut_client: 'À venir',
+        statut_formateur: 'À venir',
+        organisation_id: client.organisation_id || currentOrgId || null,
+      }]);
+      if (error) console.error('[instantiateExerciceSession] Erreur insertion:', error.message, { client: client.id, res: resource.titre });
+    } catch (e) {
+      console.error('[instantiateExerciceSession] Exception:', e.message);
+    }
+  };
+
   const instantiateDocument = async (client, templateResource, moment) => {
     const meta = typeof templateResource.metadata === 'string' && templateResource.metadata.startsWith('{') ? JSON.parse(templateResource.metadata) : (templateResource.metadata || {});
     const classification = meta.classification || 'telechargeable';
@@ -18293,13 +18331,14 @@ export default function App() {
       
       if (resErr || !resources || resources.length === 0) return;
 
+      let hasExercices = false;
       for (const res of resources) {
         if (res.type === 'document_group' && res.document_group_id) {
           const { data: groupDocs, error: grpErr } = await supabase
             .from('module_step_resources')
             .select('*')
             .eq('document_group_id', res.document_group_id);
-            
+
           if (!grpErr && groupDocs) {
             for (const doc of groupDocs) {
               if (doc.type === 'document') await instantiateDocument(client, doc, res.moment);
@@ -18307,9 +18346,14 @@ export default function App() {
           }
         } else if (res.type === 'document') {
           await instantiateDocument(client, res, res.moment);
+        } else if (res.type === 'exercice') {
+          // AJOUT (2026-09-18) : distribue aussi les exercices de début/fin — voir instantiateExerciceSession.
+          hasExercices = true;
+          await instantiateExerciceSession(client, res, res.moment);
         }
       }
       fetchDocuments();
+      if (hasExercices && typeof fetchSessions === 'function') await fetchSessions();
     } catch (e) {
       console.error("[distributeDocuments] Erreur :", e);
     }
@@ -18611,17 +18655,27 @@ export default function App() {
     if (error) {
       toast.error("Erreur lors de l'ajout : " + error.message);
     } else {
-      // Auto-distribuer ce document aux clients déjà assignés à ce module
-      if ((moment === 'debut' || moment === 'fin') && newResource && stepData.type === 'document') {
+      // Auto-distribuer cette ressource aux clients déjà assignés à ce module — pour que "Documents de
+      // début" (et "de fin", une fois le parcours terminé) apparaissent chez TOUS les clients concernés
+      // dès l'ajout, sans dépendre de la page que le client ouvre ensuite (corrigé le 2026-09-18, suite
+      // à un exercice de début resté invisible côté client).
+      if ((moment === 'debut' || moment === 'fin') && newResource && (stepData.type === 'document' || stepData.type === 'exercice')) {
         const assignedClients = clients.filter(c =>
           String(c.module_id) === String(moduleId) &&
           (!currentOrgId || String(c.organisation_id) === String(currentOrgId))
         );
-        for (const client of assignedClients) {
-          await instantiateDocument(client, newResource, moment);
+        if (stepData.type === 'document') {
+          for (const client of assignedClients) {
+            await instantiateDocument(client, newResource, moment);
+          }
+        } else {
+          for (const client of assignedClients) {
+            await instantiateExerciceSession(client, newResource, moment);
+          }
+          if (assignedClients.length > 0 && typeof fetchSessions === 'function') await fetchSessions();
         }
         if (assignedClients.length > 0) {
-          toast.success(`✅ Document distribué à ${assignedClients.length} client(s) existant(s)`);
+          toast.success(`✅ ${stepData.type === 'exercice' ? 'Exercice' : 'Document'} distribué à ${assignedClients.length} client(s) existant(s)`);
         }
       }
       await fetchModules();
@@ -18629,7 +18683,9 @@ export default function App() {
     setIsAddingStepResource(false);
   };
 
-  // Redistribue manuellement tous les documents début/fin d'un module à ses clients (sans toucher aux séances)
+  // Redistribue manuellement tous les documents ET exercices début/fin d'un module à ses clients (sans
+  // toucher aux séances du calendrier) — utile pour rattraper des clients déjà assignés avant l'ajout
+  // d'une ressource (voir distributeDocumentsForModule, qui gère désormais aussi les exercices).
   const handleRedistributeModuleDocs = async (moduleId) => {
     const assignedClients = clients.filter(c =>
       String(c.module_id) === String(moduleId) &&
@@ -18643,7 +18699,8 @@ export default function App() {
       await distributeDocumentsForModule(client, moduleId);
     }
     await fetchDocuments();
-    toast.success(`✅ Documents redistribués à ${assignedClients.length} client(s)`);
+    if (typeof fetchSessions === 'function') await fetchSessions();
+    toast.success(`✅ Documents et exercices redistribués à ${assignedClients.length} client(s)`);
   };
 
   const handleDeleteFolder = (folderId) => {
