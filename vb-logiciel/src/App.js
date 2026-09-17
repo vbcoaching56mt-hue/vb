@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -7867,6 +7867,37 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setClickPlaceTag(null);
   };
 
+  // AJOUT (2026-09-18) : "Dupliquer la ligne" — demandé par l'utilisateur pour les documents avec
+  // beaucoup de balises répétées côte à côte (ex. un calendrier prévisionnel où chaque séance a sa
+  // propre ligne "date | durée | lieu" en texte libre) : jusqu'ici il fallait reposer et redimensionner
+  // une balise à chaque case, puis l'aligner à la main sur la même ligne que ses voisines — fastidieux
+  // dès qu'il y a beaucoup de lignes. Un clic sur ce bouton repère TOUTES les balises de la page dont
+  // le Y est proche de celle cliquée (= "la même ligne", tolérance ROW_Y_TOLERANCE_PCT) et en pose une
+  // copie identique (même X, même largeur/hauteur) juste en dessous — la ligne suivante est donc déjà
+  // parfaitement alignée avec la précédente, sans aucun réglage manuel.
+  const ROW_Y_TOLERANCE_PCT = 2.5;
+  const handleDuplicateRow = (fieldId) => {
+    const ref = fields.find(f => f.id === fieldId);
+    if (!ref) return;
+    const rowFields = fields.filter(f => f.page === ref.page && Math.abs(f.yPct - ref.yPct) <= ROW_Y_TOLERANCE_PCT);
+    // Décalage vertical = hauteur de la balise la plus haute de la ligne (+ une petite marge) ; 4%
+    // par défaut pour les balises sans hauteur propre (signature, case à cocher, balise de fusion).
+    const rowHeightPct = Math.max(...rowFields.map(f => (typeof f.height_percent === 'number' ? f.height_percent : 4)), 4);
+    const offsetPct = rowHeightPct + 1.5;
+    const newYPct = ref.yPct + offsetPct;
+    if (newYPct > 97) {
+      toast.error("Plus de place en bas de la page pour une nouvelle ligne — repositionnez-la manuellement ou passez à la page suivante.");
+      return;
+    }
+    const newFields = rowFields.map((f, i) => ({
+      ...f,
+      id: `f_${Date.now()}_${i}_${Math.random().toString(36).slice(2)}`,
+      yPct: newYPct,
+    }));
+    setFields(prev => [...prev, ...newFields]);
+    toast.success(`Ligne dupliquée (${newFields.length} balise${newFields.length > 1 ? 's' : ''}) !`);
+  };
+
   const handleReset = () => {
     setFile(null); setPdfPages([]); setFields([]);
     setCurrentPage(0); setStep('upload');
@@ -8227,6 +8258,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
                             </div>
                             <button
+                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
+                              title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous"
+                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
+                            >
+                              <Copy size={8} />
+                            </button>
+                            <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
                             >
@@ -8241,6 +8279,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               className={`rounded-sm shadow-lg ring-2 ring-white ${roleFromTag(field.tag) === 'organisme' ? 'border-2 border-emerald-500 bg-emerald-500/20' : roleFromTag(field.tag) === 'formateur' ? 'border-2 border-orange-500 bg-orange-500/20' : 'border-2 border-blue-500 bg-blue-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
+                            <button
+                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
+                              title="Dupliquer la ligne juste en dessous"
+                              className="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
+                            >
+                              <Copy size={8} />
+                            </button>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
@@ -8277,6 +8322,14 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                                 Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
                               </p>
                             </div>
+                            <button
+                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
+                              title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous — pratique pour un calendrier prévisionnel, une liste de séances, etc."
+                              className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-white border-2 border-violet-300 text-violet-500 hover:bg-violet-500 hover:text-white hover:border-violet-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
+                              style={{ zIndex: 30 }}
+                            >
+                              <Copy size={12} strokeWidth={2.5} />
+                            </button>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               title="Supprimer cette balise"
@@ -8316,6 +8369,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
                               <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
                             </div>
+                            <button
+                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
+                              title="Dupliquer la ligne juste en dessous"
+                              className="absolute -top-2 -left-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
+                            >
+                              <Copy size={8} />
+                            </button>
                             <button
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
