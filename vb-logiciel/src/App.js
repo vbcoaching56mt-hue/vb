@@ -402,6 +402,22 @@ const computeInitials = (fullName) => {
   return (first + last).toUpperCase();
 };
 
+// AJOUT (2026-09-18) : détermine si le parcours (module) d'un client est "terminé" — défini avec
+// l'utilisateur comme : le client a au moins une séance de son parcours planifiée dans son calendrier,
+// et TOUTES ces séances ont une date déjà passée (aucune à venir, aucune sans date). Sert à déclencher
+// automatiquement l'accès aux documents/questionnaires/exercices de FIN de parcours (masqués tant que
+// le parcours n'est pas terminé — voir ClientDocumentsView) sans action manuelle du formateur.
+// Ne compte QUE les séances "réelles" du calendrier (numero_seance renseigné, issues des dossiers
+// séance du module) — pas les exercices de fin nouvellement créés par ce mécanisme lui-même
+// (numero_seance: null, voir plus bas), ce qui éviterait sinon un effet de bord où l'ajout d'un
+// exercice de fin repasserait aussitôt le parcours à "non terminé".
+const isModuleCompletedForClient = (clientId, sessions) => {
+  const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null);
+  if (realSessions.length === 0) return false;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return realSessions.every(s => s.date && s.date < todayStr);
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // RÉGION (2026-09-07) : liste officielle des 18 régions administratives françaises
 // (13 métropole + 5 outre-mer), utilisée comme <datalist> pour un champ « Région » à
@@ -11842,7 +11858,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
   );
 };
 
-const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings }) => {
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings, sessions, fetchSessions }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
@@ -11876,6 +11892,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [questionnaireResponses, setQuestionnaireResponses] = React.useState([]);
   const [activeQuestionnaire, setActiveQuestionnaire] = React.useState(null);
   const [groupQuestionnaires, setGroupQuestionnaires] = React.useState([]);
+  // AJOUT (2026-09-18) : ressources de type "exercice" posées en Documents de début/fin — sorties de
+  // moduleResources (qui n'affiche plus que document/questionnaire/document_group, voir plus bas) et
+  // traitées à part pour être basculées vers l'onglet "Exercices" du client (voir l'effet plus bas).
+  const [moduleExerciceResources, setModuleExerciceResources] = React.useState([]);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -11887,6 +11907,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       .then(({ data }) => { if (data) setQuestionnaireResponses(data); });
   }, [currentUserId, supabase]);
   const moduleId = currentClient?.module_id;
+
+  // AJOUT (2026-09-18) : le parcours est-il terminé pour CE client ? Détermine si les documents,
+  // questionnaires et exercices de FIN de parcours doivent être accessibles (voir isModuleCompletedForClient
+  // plus haut). Les ressources de DÉBUT restent, elles, toujours accessibles dès l'assignation du module.
+  const moduleCompleted = React.useMemo(
+    () => isModuleCompletedForClient(currentUserId, sessions),
+    [currentUserId, sessions]
+  );
 
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
@@ -11906,10 +11934,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           console.error('[ClientDocumentsView] Erreur requête:', error);
           setDebugInfo({ error: error.message, moduleId });
         } else {
-          // Filtre JS : exclure les signatures (inclut les NULL et document_group)
-          const filtered = (data || []).filter(r => r.type !== 'signature');
+          // Filtre JS : exclure les signatures (inclut les NULL et document_group) ET les exercices —
+          // ces derniers sont désormais traités séparément (voir moduleExerciceResources plus bas) pour
+          // n'apparaître QUE dans l'onglet "Exercices" du client, plus dans "Mes Documents" (décision
+          // 2026-09-18, pour éviter le doublon signalé par l'utilisateur).
+          const filtered = (data || []).filter(r => r.type !== 'signature' && r.type !== 'exercice');
           console.log('[ClientDocumentsView] après filtre signature:', filtered.length, 'ressources');
           setModuleResources(filtered);
+          setModuleExerciceResources((data || []).filter(r => r.type === 'exercice'));
           setDebugInfo({ count: filtered.length, moduleId, rawCount: data?.length });
 
           // ─── Résolution des noms de groupes via document_groups ───
@@ -11944,6 +11976,53 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setLoading(false);
     })();
   }, [moduleId, supabase, currentUserId]);
+
+  // AJOUT (2026-09-18) : bascule les exercices posés en "Documents de début/fin" (module_step_resources)
+  // vers l'onglet "Exercices" du client (ExercicesView, qui ne lit que la table `sessions`) — jusqu'ici
+  // ils n'y apparaissaient jamais, quel que soit le module assigné. On crée donc, pour chaque exercice
+  // éligible, une séance "synthétique" (numero_seance: null — pour la distinguer des vraies séances du
+  // calendrier et ne pas fausser isModuleCompletedForClient) : les exercices de DÉBUT sont créés dès
+  // que le module est chargé, ceux de FIN uniquement une fois le parcours détecté "terminé". Protégé
+  // contre les doublons par le titre (comme generateSessions le fait déjà pour les vraies séances).
+  React.useEffect(() => {
+    if (!currentUserId || !moduleId || !supabase || moduleExerciceResources.length === 0) return;
+    const eligible = moduleExerciceResources.filter(res => res.moment === 'debut' || moduleCompleted);
+    if (eligible.length === 0) return;
+    (async () => {
+      try {
+        const { data: existing, error: existErr } = await supabase
+          .from('sessions').select('nom').eq('client_id', currentUserId);
+        if (existErr) { console.error('[ClientDocumentsView] Erreur vérification exercices existants:', existErr); return; }
+        const existingNames = new Set((existing || []).map(s => s.nom));
+        const toCreate = eligible.filter(res => !existingNames.has(res.titre));
+        if (toCreate.length === 0) return;
+        const rows = toCreate.map(res => {
+          const meta = typeof res.metadata === 'string' && res.metadata.startsWith('{')
+            ? (() => { try { return JSON.parse(res.metadata); } catch { return {}; } })()
+            : (res.metadata || {});
+          return {
+            client_id: currentUserId,
+            module_id: moduleId,
+            numero_seance: null,
+            nom: res.titre,
+            type_activite: 'exercice',
+            ressource_titre: res.titre,
+            file_url: res.file_url || null,
+            metadata: { ...meta, moment: res.moment },
+            statut: 'À venir',
+            statut_client: 'À venir',
+            statut_formateur: 'À venir',
+            organisation_id: currentClient?.organisation_id || null,
+          };
+        });
+        const { error: insertErr } = await supabase.from('sessions').insert(rows);
+        if (insertErr) { console.error('[ClientDocumentsView] Erreur création exercices début/fin:', insertErr); return; }
+        if (typeof fetchSessions === 'function') await fetchSessions();
+      } catch (e) {
+        console.error('[ClientDocumentsView] Exception création exercices début/fin:', e);
+      }
+    })();
+  }, [moduleExerciceResources, moduleCompleted, currentUserId, moduleId, supabase, currentClient, fetchSessions]);
 
   // ─── Source 2 : documents per-client déjà dans la table documents ───
   // Capture les docs assignés manuellement ou via l'ancienne méthode de synchronisation
@@ -12980,8 +13059,16 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   );
 
   const debutResources = moduleResources.filter(r => r.moment === 'debut');
-  const finResources = moduleResources.filter(r => r.moment === 'fin');
-  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || extraFinDocs.length > 0 || extraOtherDocs.length > 0;
+  // FIX (2026-09-18) : les ressources de FIN de parcours (documents, questionnaires, groupes) ne
+  // s'affichent désormais QUE si le parcours du client est détecté "terminé" (voir moduleCompleted /
+  // isModuleCompletedForClient plus haut) — auparavant elles étaient visibles immédiatement, comme
+  // celles de début, ce qui n'était pas voulu par l'utilisateur.
+  const allFinResources = moduleResources.filter(r => r.moment === 'fin');
+  const finResources = moduleCompleted ? allFinResources : [];
+  const finExercicesPending = !moduleCompleted && moduleExerciceResources.some(r => r.moment === 'fin');
+  const finLocked = !moduleCompleted && (allFinResources.length > 0 || finExercicesPending);
+  const visibleExtraFinDocs = moduleCompleted ? extraFinDocs : [];
+  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || visibleExtraFinDocs.length > 0 || extraOtherDocs.length > 0;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
@@ -13023,15 +13110,28 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         </div>
       )}
 
-      {(finResources.length > 0 || extraFinDocs.length > 0) && (
+      {(finResources.length > 0 || visibleExtraFinDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-violet-600 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
+            <span className="bg-violet-50 text-violet-600 text-[10px] font-bold px-2 py-1 rounded-full">Débloqués — parcours terminé</span>
           </div>
           <div className="space-y-3">
             {finResources.map(renderResourceCard)}
-            {extraFinDocs.map(renderDocumentCard)}
+            {visibleExtraFinDocs.map(renderDocumentCard)}
+          </div>
+        </div>
+      )}
+
+      {/* AJOUT (2026-09-18) : indique au client que des documents/exercices de fin de parcours
+          existent mais ne sont pas encore débloqués, plutôt que de les faire disparaître silencieusement. */}
+      {finLocked && (
+        <div className="bg-gray-50 border border-dashed border-gray-200 rounded-3xl p-6 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 text-gray-400">🔒</div>
+          <div>
+            <p className="font-bold text-gray-700 text-sm">Documents de fin de parcours</p>
+            <p className="text-xs text-gray-400 mt-0.5">Ils seront débloqués automatiquement une fois toutes vos séances passées.</p>
           </div>
         </div>
       )}
@@ -21681,7 +21781,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'gestion_documents' && <DocumentsView
