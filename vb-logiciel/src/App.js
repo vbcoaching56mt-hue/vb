@@ -8069,7 +8069,15 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   // le Y est proche de celle cliquée (= "la même ligne", tolérance ROW_Y_TOLERANCE_PCT) et en pose une
   // copie identique (même X, même largeur/hauteur) juste en dessous — la ligne suivante est donc déjà
   // parfaitement alignée avec la précédente, sans aucun réglage manuel.
-  const ROW_Y_TOLERANCE_PCT = 2.5;
+  // FIX (2026-09-18) : tolérance resserrée (était 2.5) — elle ne doit repérer QUE les balises
+  // réellement alignées sur la même ligne (même Y au pixel près), jamais une autre ligne juste
+  // au-dessus ou en dessous. Avec l'ancienne tolérance plus large, si l'utilisateur cliquait plusieurs
+  // fois sur le bouton "dupliquer" de la ligne D'ORIGINE (au lieu de celui de la toute dernière ligne
+  // créée), la nouvelle ligne recalculée à partir de cette même origine atterrissait exactement au même
+  // endroit que la précédente copie — les deux lignes se retrouvaient empilées l'une sur l'autre, puis
+  // un clic sur l'une d'elles les repérait TOUTES comme "la même ligne" et les dupliquait d'un coup
+  // (signalé par l'utilisateur : "ça duplique tout ce qu'il y a au-dessus aussi").
+  const ROW_Y_TOLERANCE_PCT = 0.5;
   const handleDuplicateRow = (fieldId) => {
     const ref = fields.find(f => f.id === fieldId);
     if (!ref) return;
@@ -8078,7 +8086,16 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     // par défaut pour les balises sans hauteur propre (signature, case à cocher, balise de fusion).
     const rowHeightPct = Math.max(...rowFields.map(f => (typeof f.height_percent === 'number' ? f.height_percent : 4)), 4);
     const offsetPct = rowHeightPct + 1.5;
-    const newYPct = ref.yPct + offsetPct;
+    // FIX (2026-09-18) : si l'emplacement calculé tombe déjà sur une ligne existante, on ne l'empile
+    // plus dessus — on descend automatiquement d'un cran de plus jusqu'à trouver un emplacement libre,
+    // pour empêcher à la source la superposition de lignes décrite ci-dessus.
+    let newYPct = ref.yPct + offsetPct;
+    const isRowOccupied = (y) => fields.some(f => f.page === ref.page && Math.abs(f.yPct - y) <= ROW_Y_TOLERANCE_PCT);
+    let guard = 0;
+    while (isRowOccupied(newYPct) && guard < 40) {
+      newYPct += offsetPct;
+      guard++;
+    }
     if (newYPct > 97) {
       toast.error("Plus de place en bas de la page pour une nouvelle ligne — repositionnez-la manuellement ou passez à la page suivante.");
       return;
