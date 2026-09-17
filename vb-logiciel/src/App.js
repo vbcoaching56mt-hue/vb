@@ -7626,6 +7626,9 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const pageRef = React.useRef(null);
+  // AJOUT (2026-09-18) : map id de balise → élément DOM réel, pour tester l'intersection du lasso avec
+  // la vraie zone affichée de chaque balise (et non un simple point) — voir startRubberBand plus bas.
+  const fieldRefs = React.useRef({});
   const pdfBlobRef = React.useRef(null); // stocke le blob PDF pour prévisualisation
 
   // Garde signingOrder cohérent avec les destinataires cochés : retire les rôles décochés, ajoute
@@ -7965,8 +7968,27 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         setSelectedFieldIds(new Set());
         return;
       }
+      if (!pageRef.current) return;
+      // FIX (2026-09-18) : sélectionner une balise si le lasso touche sa zone RÉELLEMENT AFFICHÉE
+      // (intersection de rectangles, via son élément DOM réel), et non plus seulement son point
+      // d'ancrage (xPct/yPct) — ce dernier est parfois le bord gauche ou le coin bas d'une balise
+      // (texte libre, balise de fusion...), donc un lasso qui recouvre visuellement toute une balise
+      // pouvait la manquer si son point d'ancrage précis tombait juste hors du rectangle.
+      const pageRect = pageRef.current.getBoundingClientRect();
+      const selRect = {
+        left: pageRect.left + (r.minX / 100) * pageRect.width,
+        right: pageRect.left + (r.maxX / 100) * pageRect.width,
+        top: pageRect.top + (r.minY / 100) * pageRect.height,
+        bottom: pageRect.top + (r.maxY / 100) * pageRect.height,
+      };
       const ids = fields
-        .filter(f => f.page === currentPage + 1 && f.xPct >= r.minX && f.xPct <= r.maxX && f.yPct >= r.minY && f.yPct <= r.maxY)
+        .filter(f => f.page === currentPage + 1)
+        .filter(f => {
+          const el = fieldRefs.current[f.id];
+          if (!el) return false;
+          const b = el.getBoundingClientRect();
+          return selRect.left < b.right && selRect.right > b.left && selRect.top < b.bottom && selRect.bottom > b.top;
+        })
         .map(f => f.id);
       setSelectedFieldIds(new Set(ids));
     };
@@ -8342,6 +8364,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     return (
                       <div
                         key={field.id}
+                        ref={el => { if (el) fieldRefs.current[field.id] = el; else delete fieldRefs.current[field.id]; }}
                         draggable
                         onMouseDown={e => e.stopPropagation()}
                         onDragStart={e => {
