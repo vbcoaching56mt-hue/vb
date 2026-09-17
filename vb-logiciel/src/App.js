@@ -6049,10 +6049,15 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates
+  handleRenameFolder, handleRenameResource, handleRenameModule, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
+  // AJOUT (2026-09-17) : édition inline du nom d'un module (même principe que editingId/editValue
+  // plus bas pour les "dossiers de séance", mais état séparé pour éviter toute collision d'id entre
+  // un module et un dossier de séance — les deux sont des entités différentes en base).
+  const [editingModuleId, setEditingModuleId] = React.useState(null);
+  const [editModuleValue, setEditModuleValue] = React.useState('');
   const [activeMoment, setActiveMoment] = React.useState(null);
   const [activeMomentModuleId, setActiveMomentModuleId] = React.useState(null);
   const [editingId, setEditingId] = React.useState(null);
@@ -6117,7 +6122,33 @@ const IngenierieView = ({
 
             return (
               <div key={mod.id} className="border border-purple-100 bg-purple-50/20 p-5 rounded-2xl relative shadow-sm h-fit">
-                <h3 className="font-bold text-gray-900 text-lg pr-24">{mod.nom}</h3>
+                {editingModuleId === mod.id ? (
+                  <div className="flex items-center gap-2 pr-24">
+                    <input
+                      autoFocus
+                      className="bg-white border border-purple-300 rounded text-lg font-bold text-gray-900 p-1 w-full outline-none"
+                      value={editModuleValue}
+                      onChange={e => setEditModuleValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { handleRenameModule(mod.id, editModuleValue); setEditingModuleId(null); }
+                        else if (e.key === 'Escape') setEditingModuleId(null);
+                      }}
+                    />
+                    <button onClick={() => { handleRenameModule(mod.id, editModuleValue); setEditingModuleId(null); }} className="text-green-600 hover:text-green-700 shrink-0"><Check size={16} /></button>
+                    <button onClick={() => setEditingModuleId(null)} className="text-gray-400 hover:text-gray-600 shrink-0"><X size={16} /></button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 pr-24 group/modtitle">
+                    <h3 className="font-bold text-gray-900 text-lg">{mod.nom}</h3>
+                    <button
+                      onClick={() => { setEditingModuleId(mod.id); setEditModuleValue(mod.nom); }}
+                      className="text-gray-300 hover:text-purple-600 opacity-0 group-hover/modtitle:opacity-100 transition-opacity"
+                      title="Renommer ce module"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  </div>
+                )}
                 <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
 
                 <div className="flex gap-2 flex-wrap mt-6">
@@ -16943,7 +16974,8 @@ export default function App() {
     let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
     mQuery = currentOrgId ? mQuery.eq('organisation_id', currentOrgId) : mQuery.limit(0);
     const { data: mData, error: mErr } = await mQuery;
-    if (!mErr && mData) setModules(mData);
+    // AJOUT (2026-09-17) : tri alphabétique à la source, même logique que formateurs/clients ci-dessus.
+    if (!mErr && mData) setModules([...mData].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
 
     let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
     mstQuery = currentOrgId ? mstQuery.eq('organisation_id', currentOrgId) : mstQuery.limit(0);
@@ -16981,7 +17013,14 @@ export default function App() {
     if (clientsError) console.error("Erreur fetch clients:", clientsError);
 
     if (formateursData) {
-      setFormateurs(formateursData);
+      // AJOUT (2026-09-17) : tri alphabétique à la source, demandé par l'utilisateur ("comme toutes
+      // les listes") — jusqu'ici les formateurs remontaient dans l'ordre brut de la base (ordre de
+      // création), d'où par exemple le sélecteur "Formateur Référent" (InviteModal, création client)
+      // affiché dans le désordre. En triant ICI, à la source, TOUTES les listes/menus déroulants qui
+      // consomment `formateurs` en héritent automatiquement, sans avoir à modifier chaque endroit un
+      // par un — une vue qui a déjà son propre tri local (ex. FormateurAdminView) n'est pas affectée
+      // négativement (trier un tableau déjà trié ne change rien).
+      setFormateurs([...formateursData].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
     }
 
     if (clientsData) {
@@ -17014,6 +17053,8 @@ export default function App() {
         modalite_formation: c.modalite_formation || 'Mixte',
         organisation_id: c.organisation_id || null
       }));
+      // AJOUT (2026-09-17) : tri alphabétique à la source (même logique que formateurs ci-dessus).
+      mappedClients.sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr', { sensitivity: 'base' }));
       setClients(mappedClients);
     }
   };
@@ -17057,7 +17098,15 @@ export default function App() {
       oldRefs.forEach(r => {
         templates[r.nom] = { url: r.url, name: r.nom, destination: 'formateur', classification: 'a_signer' };
       });
-      setDocumentTemplates(templates);
+      // AJOUT (2026-09-17) : tri alphabétique du catalogue de modèles (demandé par l'utilisateur,
+      // "même les documents") — cette liste est un CATALOGUE (menu dans lequel on choisit un modèle à
+      // ajouter/envoyer), sans ordre intentionnel, contrairement aux documents DÉJÀ assignés à un
+      // client (module = ordre du parcours pédagogique, "Ajouts personnalisés" = ordre propre via son
+      // champ `ordre`, tous deux volontairement laissés inchangés). Les objets JS conservent l'ordre
+      // d'insertion des clés : reconstruire l'objet triées par titre suffit.
+      setDocumentTemplates(Object.fromEntries(
+        Object.entries(templates).sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }))
+      ));
     } else if (modErr) {
       console.error("[fetchDocuments] Erreur lors de la récupération des ressources modèles :", modErr);
       // Fallback : utiliser les Modèles Référence de la table documents
@@ -17066,7 +17115,9 @@ export default function App() {
       refs.forEach(r => {
         templates[r.nom] = { url: r.url, name: r.nom, destination: r.destination || 'formateur' };
       });
-      setDocumentTemplates(templates);
+      setDocumentTemplates(Object.fromEntries(
+        Object.entries(templates).sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }))
+      ));
     }
   };
 
@@ -18077,6 +18128,20 @@ export default function App() {
     if (!error) {
       await fetchModules();
       toast.success("Séance renommée avec succès !");
+    } else {
+      toast.error("Erreur renommage : " + error.message);
+    }
+  };
+
+  // AJOUT (2026-09-17) : renommer un module APRÈS sa création — jusqu'ici seul le nom des "dossiers
+  // de séance" à l'intérieur d'un module était modifiable (voir handleRenameFolder ci-dessus), pas le
+  // nom du module lui-même. Demandé par l'utilisateur le 17/09/2026.
+  const handleRenameModule = async (moduleId, newTitle) => {
+    if (!newTitle.trim()) return;
+    const { error } = await supabase.from('modules').update({ nom: newTitle.trim() }).eq('id', moduleId);
+    if (!error) {
+      await fetchModules();
+      toast.success("Module renommé avec succès !");
     } else {
       toast.error("Erreur renommage : " + error.message);
     }
@@ -21202,6 +21267,7 @@ export default function App() {
             modules={modules}
             handleAddModule={handleAddModule}
             handleDeleteModule={handleDeleteModule}
+            handleRenameModule={handleRenameModule}
             newModuleName={newModuleName}
             setNewModuleName={setNewModuleName}
             newModuleSeances={newModuleSeances}
