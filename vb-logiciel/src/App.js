@@ -2666,7 +2666,9 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
   if (!isOpen) return null;
 
-  const groupedSessions = clientSessions.reduce((acc, s) => {
+  // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de ce
+  // sélecteur — on ne doit pouvoir rattacher un nouvel élément qu'à une vraie séance planifiée.
+  const groupedSessions = clientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined).reduce((acc, s) => {
     if (!acc[s.numero_seance]) acc[s.numero_seance] = s;
     return acc;
   }, {});
@@ -3789,9 +3791,17 @@ const ClientDetailView = ({
     await fetchDocuments();
   };
 
-  const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
+  // AJOUT (2026-09-19) : on distingue les "vraies" séances calendrier (numero_seance renseigné) des
+  // exercices synthétiques de début/fin de module (numero_seance: null, voir instantiateExerciceSession).
+  // `clientSessions` ne garde que les vraies séances : c'est cette liste qui alimente tous les écrans de
+  // planification (onglet "Planning & Supervision", ajout d'item, etc.) pour que ces exercices n'y
+  // apparaissent plus jamais comme une "séance" à dater. `allClientSessions` garde tout, pour que les
+  // badges/compteurs d'exercices (et l'onglet "Exercices" du dossier client) continuent d'inclure ces
+  // exercices de début/fin normalement.
+  const allClientSessions = sessions ? sessions.filter(s => s.client_id === client.id) : [];
+  const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
-  const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+  const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
   const clientPendingCorrections = clientExercises.filter(s =>
     s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
   ).length;
@@ -4300,7 +4310,7 @@ const ClientDetailView = ({
                           <td className="px-4 py-3">
                             <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.titre || session.nom}</span>
                           </td>
-                          <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
+                          <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
                           <td className="px-4 py-3">{badge}</td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end items-center gap-2">
@@ -5790,7 +5800,9 @@ const AdminFormateursView = ({
   // --- Modal de Résumé de Planning pour l'Admin ---
   const renderClientSummary = () => {
     if (!selectedClientSummary) return null;
-    const clientSessions = sessions.filter(s => s.client_id === selectedClientSummary.id).sort((a, b) => a.numero_seance - b.numero_seance);
+    // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de ce
+    // récapitulatif d'émargements Qualiopi — ce ne sont pas des séances planifiées à émarger.
+    const clientSessions = sessions.filter(s => s.client_id === selectedClientSummary.id && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
 
     return (
       <div className="fixed inset-0 bg-gray-950/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
@@ -6873,9 +6885,14 @@ const FormateurView = ({
       {formateurMainSection === 'clients' && (
       <div className="grid grid-cols-1 gap-6">
         {assignedClients.length > 0 ? assignedClients.map(client => {
-          const clientSessions = sessions.filter(s => s.client_id === client.id);
-          const clientExercisesCount = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
-          const clientPendingCorrections = clientSessions.filter(s =>
+          // AJOUT (2026-09-19) : voir le même commentaire dans ClientDetailView — `clientSessions` ne
+          // garde que les vraies séances calendrier (numero_seance renseigné) pour que les exercices
+          // synthétiques de début/fin de module n'apparaissent plus comme une "séance" à dater ; les
+          // compteurs d'exercices utilisent `allClientSessions` pour continuer à tout inclure.
+          const allClientSessions = sessions.filter(s => s.client_id === client.id);
+          const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined);
+          const clientExercisesCount = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
+          const clientPendingCorrections = allClientSessions.filter(s =>
             (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
             s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
           ).length;
@@ -7495,7 +7512,7 @@ const FormateurView = ({
                 )}
 
                   {formateurClientTab === 'exercices' && (() => {
-                    const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+                    const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
                     if (clientExercises.length === 0) return (
                       <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                         <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
@@ -7545,7 +7562,7 @@ const FormateurView = ({
                                     <td className="px-4 py-3">
                                       <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom}</span>
                                     </td>
-                                    <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
+                                    <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
                                     <td className="px-4 py-3">{badge}</td>
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
@@ -11208,7 +11225,9 @@ const SessionsView = ({
   sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
 }) => {
-  const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
+  // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de "Mes
+  // Séances" — ils vivent désormais uniquement dans l'onglet "Exercices", jamais ici comme séance à venir.
+  const mySessions = sessions.filter(s => s.client_id === currentUserId && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
   const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   const parseSessionMeta = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
@@ -20864,7 +20883,9 @@ export default function App() {
         try {
           const isEmargementOnly = recapType === 'emargement';
           toast.loading(isEmargementOnly ? "Génération du récap émargements..." : "Génération du récapitulatif...", { id: 'recap' });
-          const clientSessions = sessions.filter(s => s.client_id === doc.id).sort((a, b) => {
+          // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) du
+          // récapitulatif PDF — ce ne sont pas des séances planifiées.
+          const clientSessions = sessions.filter(s => s.client_id === doc.id && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => {
             if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
             return new Date(a.created_at) - new Date(b.created_at);
           });
@@ -21961,7 +21982,7 @@ export default function App() {
         pedagogicalResources={pedagogicalResources}
         supabase={supabase}
         onSave={handleAddSessionItem}
-        clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId)}
+        clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId && s.numero_seance !== null && s.numero_seance !== undefined)}
         preSelectedSessionId={targetSessionForAddition?.preSelectedSessionId || null}
         preSelectedLabel={targetSessionForAddition?.numero ? `SÉANCE ${targetSessionForAddition.numero}` : null}
       />
