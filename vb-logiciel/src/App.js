@@ -17790,8 +17790,8 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
-      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'prospects', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
     const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
