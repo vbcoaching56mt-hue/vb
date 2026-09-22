@@ -2957,7 +2957,11 @@ const ProspectQuestionnaireView = () => {
     });
   };
 
+  // FIX (demande utilisateur, 2026-09-22) : seules les questions cochees "obligatoire" par
+  // l'admin bloquent la soumission - un champ obligatoire absent (anciens modeles crees avant
+  // cette option) est traite comme facultatif, pas comme obligatoire.
   const isComplete = questions.every(q => {
+    if (!q.obligatoire) return true;
     if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
     if (q.type === 'single') return !!answers[q.id];
     if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
@@ -3044,6 +3048,9 @@ const ProspectQuestionnaireView = () => {
               <p className="font-bold text-gray-900 text-sm leading-relaxed">
                 <span className="text-violet-500 font-black mr-1">{qi + 1}.</span>
                 {q.text || <span className="text-gray-400 italic">Question</span>}
+                {q.obligatoire
+                  ? <span className="text-red-500 ml-1">*</span>
+                  : <span className="text-gray-400 font-normal text-xs ml-1.5">(facultatif)</span>}
               </p>
               {q.type === 'text' && (
                 <textarea
@@ -16456,7 +16463,11 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
 
   // ── Constructeur de modèle (admin) — reprend le même schéma de questions que les
   //     questionnaires de module existants (text / single / multiple) ──
-  const tAddQuestion = () => setTQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''] }]);
+  // FIX (demande utilisateur, 2026-09-22) : "obligatoire" par défaut à false — une question de
+  // questionnaire prospect n'empêche donc plus la soumission tant qu'elle n'est pas explicitement
+  // cochée comme obligatoire. S'applique aussi aux questions de modèles déjà créés (voir isComplete
+  // dans ProspectQuestionnaireView : un champ "obligatoire" absent est traité comme false).
+  const tAddQuestion = () => setTQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], obligatoire: false }]);
   const tRemoveQuestion = (id) => setTQuestions(prev => prev.filter(q => q.id !== id));
   const tUpdateQuestion = (id, field, val) => setTQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
   const tAddOption = (qId) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
@@ -16468,7 +16479,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
   const handleSaveTemplate = async () => {
     if (!tTitre.trim() || tQuestions.length === 0) return;
     setSavingTemplate(true);
-    const questionsPayload = tQuestions.map(q => ({ id: String(q.id), text: q.text, type: q.type, options: q.options }));
+    const questionsPayload = tQuestions.map(q => ({ id: String(q.id), text: q.text, type: q.type, options: q.options, obligatoire: !!q.obligatoire }));
     if (editingTemplateId) {
       const { error } = await supabase
         .from('prospect_questionnaire_templates')
@@ -16632,6 +16643,11 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                             className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                         ))}
                       </div>
+                      <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
+                        <input type="checkbox" checked={!!q.obligatoire} onChange={e => tUpdateQuestion(q.id, 'obligatoire', e.target.checked)}
+                          className="w-3.5 h-3.5 rounded border-violet-300 text-violet-600 focus:ring-violet-400" />
+                        <span className="text-[10px] font-bold text-gray-500">Obligatoire — le prospect devra y répondre pour valider</span>
+                      </label>
                       {(q.type === 'single' || q.type === 'multiple') && (
                         <div className="space-y-1">
                           {(q.options || []).map((opt, oi) => (
