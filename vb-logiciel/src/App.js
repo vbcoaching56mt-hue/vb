@@ -16393,6 +16393,418 @@ const EMPTY_FORM = {
   require_unsigned: false,
 };
 
+// ─── Vue Admin/Formateur : Questionnaires Prospects ────────────────────────────────────────────
+// Demandé par l'utilisateur le 22/09/2026 : envoyer un questionnaire d'entretien préalable à une
+// personne qui n'a pas (encore) de compte SkorUp, par email, sans qu'elle ait à se connecter.
+// Les MODÈLES (questions) sont gérés par l'admin uniquement ; l'admin ET le formateur peuvent
+// ENVOYER un questionnaire à un prospect en choisissant un modèle actif. L'envoi passe par
+// api/prospects.js (jamais un insert Supabase direct) car c'est cette fonction qui génère le
+// token aléatoire du lien public et envoie l'email — voir ce fichier pour le détail de sécurité.
+function ProspectsView({ supabase, currentOrgId, userRole }) {
+  const isAdmin = userRole === 'admin';
+  const [templates, setTemplates] = useState([]);
+  const [envois, setEnvois] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // --- Modale d'envoi ---
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [sendForm, setSendForm] = useState({ nom: '', prenom: '', email: '', templateId: '' });
+  const [sending, setSending] = useState(false);
+
+  // --- Gestion des modèles (admin uniquement) ---
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [tTitre, setTTitre] = useState('');
+  const [tQuestions, setTQuestions] = useState([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  // --- Consultation des réponses d'un envoi rempli ---
+  const [viewingEnvoi, setViewingEnvoi] = useState(null);
+
+  const fetchTemplates = async () => {
+    if (!currentOrgId) return;
+    const { data, error } = await supabase
+      .from('prospect_questionnaire_templates')
+      .select('*')
+      .eq('organisation_id', currentOrgId)
+      .order('created_at', { ascending: false });
+    if (!error) setTemplates(data || []);
+  };
+
+  const fetchEnvois = async () => {
+    if (!currentOrgId) return;
+    const { data, error } = await supabase
+      .from('prospect_questionnaire_envois')
+      .select('*')
+      .eq('organisation_id', currentOrgId)
+      .order('envoye_at', { ascending: false });
+    if (!error) setEnvois(data || []);
+  };
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      await Promise.all([fetchTemplates(), fetchEnvois()]);
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrgId]);
+
+  const activeTemplates = templates.filter(t => t.actif);
+  const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
+
+  // ── Constructeur de modèle (admin) — reprend le même schéma de questions que les
+  //     questionnaires de module existants (text / single / multiple) ──
+  const tAddQuestion = () => setTQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''] }]);
+  const tRemoveQuestion = (id) => setTQuestions(prev => prev.filter(q => q.id !== id));
+  const tUpdateQuestion = (id, field, val) => setTQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  const tAddOption = (qId) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
+  const tUpdateOption = (qId, oi, val) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
+  const tRemoveOption = (qId, oi) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
+
+  const resetBuilder = () => { setTTitre(''); setTQuestions([]); setEditingTemplateId(null); setShowBuilder(false); };
+
+  const handleSaveTemplate = async () => {
+    if (!tTitre.trim() || tQuestions.length === 0) return;
+    setSavingTemplate(true);
+    const questionsPayload = tQuestions.map(q => ({ id: String(q.id), text: q.text, type: q.type, options: q.options }));
+    if (editingTemplateId) {
+      const { error } = await supabase
+        .from('prospect_questionnaire_templates')
+        .update({ titre: tTitre.trim(), questions: questionsPayload, updated_at: new Date().toISOString() })
+        .eq('id', editingTemplateId);
+      if (error) { toast.error('Erreur mise à jour : ' + error.message); setSavingTemplate(false); return; }
+      toast.success('Modèle mis à jour.');
+    } else {
+      const { error } = await supabase
+        .from('prospect_questionnaire_templates')
+        .insert([{ titre: tTitre.trim(), questions: questionsPayload, organisation_id: currentOrgId, actif: true }]);
+      if (error) { toast.error('Erreur création : ' + error.message); setSavingTemplate(false); return; }
+      toast.success('Modèle créé.');
+    }
+    setSavingTemplate(false);
+    resetBuilder();
+    fetchTemplates();
+  };
+
+  const handleEditTemplate = (t) => {
+    setTTitre(t.titre || '');
+    setTQuestions((t.questions || []).map(q => ({ ...q, id: q.id || Date.now() + Math.random() })));
+    setEditingTemplateId(t.id);
+    setShowBuilder(true);
+    setShowTemplates(true);
+  };
+
+  const handleToggleActif = async (t) => {
+    const { error } = await supabase.from('prospect_questionnaire_templates').update({ actif: !t.actif }).eq('id', t.id);
+    if (error) { toast.error('Erreur : ' + error.message); return; }
+    fetchTemplates();
+  };
+
+  // ── Envoi d'un questionnaire à un prospect ──
+  const handleSend = async () => {
+    if (!sendForm.templateId) { toast.error('Choisissez un modèle de questionnaire.'); return; }
+    if (!sendForm.nom.trim() || !sendForm.prenom.trim()) { toast.error('Le nom et le prénom sont requis.'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sendForm.email.trim())) { toast.error('Adresse email invalide.'); return; }
+    setSending(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) { toast.error('Session expirée, reconnectez-vous.'); setSending(false); return; }
+      const resp = await fetch('/api/prospects?action=envoyer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          templateId: sendForm.templateId,
+          nom: sendForm.nom.trim(),
+          prenom: sendForm.prenom.trim(),
+          email: sendForm.email.trim(),
+          origin: window.location.origin,
+        }),
+      });
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok) { toast.error(result.error || 'Erreur lors de l\'envoi.'); setSending(false); return; }
+      if (result.simulated) toast('Questionnaire créé, mais RESEND_API_KEY n\'est pas configurée côté serveur : aucun email envoyé.', { icon: '⚠️' });
+      else if (result.sent === false) toast.error('Le questionnaire est enregistré mais l\'email n\'a pas pu partir : ' + (result.error || ''));
+      else toast.success('Questionnaire envoyé à ' + sendForm.email.trim());
+      setShowSendModal(false);
+      setSendForm({ nom: '', prenom: '', email: '', templateId: '' });
+      fetchEnvois();
+    } catch (e) {
+      toast.error('Erreur réseau : ' + e.message);
+    }
+    setSending(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* En-tête */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-600 flex items-center justify-center">
+            <Send className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Questionnaires Prospects</h1>
+            <p className="text-sm text-gray-500">Envoyez un questionnaire d'entretien préalable, sans que le prospect ait besoin d'un compte SkorUp</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button
+              onClick={() => setShowTemplates(v => !v)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all"
+            >
+              <Settings className="w-4 h-4" /> {showTemplates ? 'Masquer les modèles' : 'Gérer les modèles'}
+            </button>
+          )}
+          <button
+            onClick={() => setShowSendModal(true)}
+            disabled={activeTemplates.length === 0}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title={activeTemplates.length === 0 ? 'Aucun modèle actif disponible' : ''}
+          >
+            <Plus className="w-4 h-4" /> Envoyer un questionnaire
+          </button>
+        </div>
+      </div>
+
+      {activeTemplates.length === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+          {isAdmin
+            ? 'Aucun modèle de questionnaire actif pour le moment. Cliquez sur "Gérer les modèles" pour en créer un.'
+            : 'Aucun modèle de questionnaire n\'est disponible pour le moment — demandez à votre administrateur d\'en créer un.'}
+        </div>
+      )}
+
+      {/* ── Gestion des modèles (admin) ── */}
+      {isAdmin && showTemplates && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold text-gray-800">Modèles de questionnaires</h2>
+            <button
+              onClick={() => { if (showBuilder) resetBuilder(); else setShowBuilder(true); }}
+              className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
+            >
+              <Plus size={13} /> {showBuilder ? 'Annuler' : 'Nouveau modèle'}
+            </button>
+          </div>
+
+          {showBuilder && (
+            <div className="bg-violet-50 rounded-2xl p-5 border border-violet-200 space-y-4 mb-5">
+              <div>
+                <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du modèle</label>
+                <input type="text" placeholder="Ex : Questionnaire d'entretien préalable"
+                  value={tTitre} onChange={e => setTTitre(e.target.value)}
+                  className="w-full p-3 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({tQuestions.length})</label>
+                  <button type="button" onClick={tAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                </div>
+                {tQuestions.length === 0 && (
+                  <div className="py-5 text-center bg-white rounded-xl border border-dashed border-gray-200">
+                    <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
+                  </div>
+                )}
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {tQuestions.map((q, qi) => (
+                    <div key={q.id} className="bg-white rounded-xl p-3 border border-violet-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                        <button type="button" onClick={() => tRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                      </div>
+                      <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => tUpdateQuestion(q.id, 'text', e.target.value)}
+                        className="w-full p-2.5 bg-gray-50 border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
+                      <div className="flex gap-1.5">
+                        {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
+                          <button key={val} type="button" onClick={() => tUpdateQuestion(q.id, 'type', val)}
+                            className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                        ))}
+                      </div>
+                      {(q.type === 'single' || q.type === 'multiple') && (
+                        <div className="space-y-1">
+                          {(q.options || []).map((opt, oi) => (
+                            <div key={oi} className="flex items-center gap-2">
+                              <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                              <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => tUpdateOption(q.id, oi, e.target.value)}
+                                className="flex-1 p-1.5 bg-gray-50 border border-violet-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400" />
+                              {q.options.length > 1 && <button type="button" onClick={() => tRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => tAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button onClick={handleSaveTemplate} disabled={!tTitre.trim() || tQuestions.length === 0 || savingTemplate}
+                className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
+                {savingTemplate ? 'Enregistrement…' : editingTemplateId ? '✓ Mettre à jour le modèle' : '✓ Enregistrer le modèle'}
+              </button>
+            </div>
+          )}
+
+          {templates.length > 0 ? (
+            <div className="space-y-2">
+              {templates.map(t => (
+                <div key={t.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:border-violet-200 transition-all">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <button onClick={() => handleToggleActif(t)} className="focus:outline-none shrink-0" title={t.actif ? 'Désactiver' : 'Activer'}>
+                      {t.actif ? <ToggleRight className="w-6 h-6 text-violet-600" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
+                    </button>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-800 text-sm truncate">{t.titre}</p>
+                      <p className="text-xs text-gray-400">{(t.questions || []).length} question{(t.questions || []).length > 1 ? 's' : ''} {!t.actif && '· Désactivé'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => handleEditTemplate(t)} className="text-gray-400 hover:text-violet-600 shrink-0 p-1.5">
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm text-center py-4">Aucun modèle pour le moment.</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Liste des envois ── */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+        <h2 className="text-base font-bold text-gray-800 mb-4">Questionnaires envoyés ({envois.length})</h2>
+        {envois.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-8">Aucun questionnaire envoyé pour le moment.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                  <th className="pb-2 pr-3">Prospect</th>
+                  <th className="pb-2 pr-3">Modèle</th>
+                  <th className="pb-2 pr-3">Envoyé le</th>
+                  <th className="pb-2 pr-3">Statut</th>
+                  <th className="pb-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {envois.map(e => (
+                  <tr key={e.id} className="border-b border-gray-50 last:border-0">
+                    <td className="py-3 pr-3">
+                      <p className="font-bold text-gray-800">{e.prenom} {e.nom}</p>
+                      <p className="text-xs text-gray-400">{e.email}</p>
+                    </td>
+                    <td className="py-3 pr-3 text-gray-600">{templateTitre(e.template_id)}</td>
+                    <td className="py-3 pr-3 text-gray-500 text-xs">{e.envoye_at ? new Date(e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
+                    <td className="py-3 pr-3">
+                      {e.statut === 'rempli'
+                        ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3" /> Rempli</span>
+                        : <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-full"><Clock className="w-3 h-3" /> En attente</span>}
+                    </td>
+                    <td className="py-3 text-right">
+                      {e.statut === 'rempli' && (
+                        <button onClick={() => setViewingEnvoi(e)} className="text-violet-600 hover:text-violet-800 text-xs font-bold flex items-center gap-1">
+                          <Eye className="w-3.5 h-3.5" /> Voir les réponses
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Modale d'envoi ── */}
+      {showSendModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-violet-600 p-6 text-white relative">
+              <h2 className="text-lg font-black">Envoyer un questionnaire</h2>
+              <p className="text-violet-200 text-sm mt-1">Le prospect recevra un lien par email, sans avoir besoin de compte.</p>
+              <button onClick={() => setShowSendModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
+            </div>
+            <div className="p-6 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Prénom</label>
+                  <input type="text" value={sendForm.prenom} onChange={e => setSendForm(f => ({ ...f, prenom: e.target.value }))}
+                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Nom</label>
+                  <input type="text" value={sendForm.nom} onChange={e => setSendForm(f => ({ ...f, nom: e.target.value }))}
+                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Email</label>
+                <input type="email" value={sendForm.email} onChange={e => setSendForm(f => ({ ...f, email: e.target.value }))}
+                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Modèle de questionnaire</label>
+                <select value={sendForm.templateId} onChange={e => setSendForm(f => ({ ...f, templateId: e.target.value }))}
+                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
+                  <option value="">Choisir un modèle…</option>
+                  {activeTemplates.map(t => <option key={t.id} value={t.id}>{t.titre}</option>)}
+                </select>
+              </div>
+              <button onClick={handleSend} disabled={sending}
+                className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50 mt-2">
+                {sending ? 'Envoi en cours…' : 'Envoyer le questionnaire'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modale de consultation des réponses ── */}
+      {viewingEnvoi && (() => {
+        const template = templates.find(t => t.id === viewingEnvoi.template_id);
+        const questions = template?.questions || [];
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+              <div className="bg-violet-600 p-6 text-white relative shrink-0">
+                <h2 className="text-lg font-black">{viewingEnvoi.prenom} {viewingEnvoi.nom}</h2>
+                <p className="text-violet-200 text-sm mt-1">{template?.titre || 'Modèle supprimé'} · Répondu le {viewingEnvoi.rempli_at ? new Date(viewingEnvoi.rempli_at).toLocaleDateString('fr-FR') : '—'}</p>
+                <button onClick={() => setViewingEnvoi(null)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
+              </div>
+              <div className="p-6 space-y-5 overflow-y-auto flex-1">
+                {questions.map((q, qi) => {
+                  const rep = viewingEnvoi.reponses?.[q.id];
+                  return (
+                    <div key={q.id}>
+                      <p className="font-bold text-gray-900 text-sm mb-1.5"><span className="text-violet-500 font-black mr-1">{qi + 1}.</span>{q.text}</p>
+                      <p className="text-gray-600 text-sm bg-gray-50 rounded-xl p-3">
+                        {Array.isArray(rep) ? (rep.length > 0 ? rep.join(', ') : <span className="text-gray-300 italic">Sans réponse</span>) : (rep || <span className="text-gray-300 italic">Sans réponse</span>)}
+                      </p>
+                    </div>
+                  );
+                })}
+                {questions.length === 0 && <p className="text-gray-400 text-sm text-center py-6">Le modèle utilisé pour cet envoi a été supprimé — impossible d'afficher les questions.</p>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 function AutomationSettingsView({ supabase, currentOrgId }) {
   const [settings, setSettings] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -17290,6 +17702,7 @@ const TAB_TO_PATH = {
   relances: '/relances',
   profil: '/profil',
   exercices: '/exercices',
+  prospects: '/prospects',
 };
 // Réciproque URL → onglet — 1:1, sans collision (chaque chemin ci-dessus n'a qu'un seul propriétaire).
 const PATH_TO_TAB = {};
@@ -21582,6 +21995,9 @@ export default function App() {
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
                 {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[9px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
               </button>
+              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Send className="w-5 h-5 mr-3" /> Prospects
+              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -21620,6 +22036,9 @@ export default function App() {
               </button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
+              </button>
+              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
@@ -21918,6 +22337,11 @@ export default function App() {
           {activeTab === 'relances' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && <AutomationSettingsView
             supabase={supabase}
             currentOrgId={currentOrgId}
+          />}
+          {activeTab === 'prospects' && (userRole === 'admin' || userRole === 'formateur') && <ProspectsView
+            supabase={supabase}
+            currentOrgId={currentOrgId}
+            userRole={userRole}
           />}
           {activeTab === 'processus' && (
             <SharedProcessesView
