@@ -2916,6 +2916,189 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 // et une fonction Edge Supabase "setup-organisation" — voir cette dernière si
 // le même comportement de module par défaut doit aussi y être retiré.)
 
+// ─── Vue publique : questionnaire d'entretien préalable envoyé à un prospect ──────────────────
+// Accessible sans compte SkorUp, via /questionnaire?t=<token> (lien reçu par email — voir
+// api/prospects.js action=envoyer). Demandé par l'utilisateur le 22/09/2026. Reprend le même
+// rendu de questions (text/single/multiple) que QuestionnaireFillerModal plus bas dans ce
+// fichier, adapté en page pleine plutôt qu'en modale puisqu'il n'y a ici ni app ni utilisateur
+// connecté autour. Tout passe par api/prospects.js (clé service_role côté serveur) : cette vue
+// n'appelle jamais directement Supabase.
+const ProspectQuestionnaireView = () => {
+  const token = React.useMemo(() => new URLSearchParams(window.location.search).get('t') || '', []);
+  const [etat, setEtat] = useState('chargement'); // chargement | a_remplir | rempli | expire | erreur
+  const [erreurMsg, setErreurMsg] = useState('');
+  const [titre, setTitre] = useState('');
+  const [questions, setQuestions] = useState([]);
+  const [prenom, setPrenom] = useState('');
+  const [answers, setAnswers] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!token) { setEtat('erreur'); setErreurMsg('Ce lien est incomplet.'); return; }
+    fetch(`/api/prospects?action=lire&t=${encodeURIComponent(token)}`)
+      .then(async (resp) => {
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) { setEtat('erreur'); setErreurMsg(data.error || 'Ce lien est invalide.'); return; }
+        if (data.etat === 'rempli') { setEtat('rempli'); return; }
+        if (data.etat === 'expire') { setEtat('expire'); return; }
+        setTitre(data.titre || '');
+        setQuestions(data.questions || []);
+        setPrenom(data.prenom || '');
+        setEtat('a_remplir');
+      })
+      .catch(() => { setEtat('erreur'); setErreurMsg('Impossible de charger le questionnaire pour le moment.'); });
+  }, [token]);
+
+  const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
+  const toggleMultiple = (qId, option) => {
+    setAnswers(prev => {
+      const current = prev[qId] || [];
+      return { ...prev, [qId]: current.includes(option) ? current.filter(o => o !== option) : [...current, option] };
+    });
+  };
+
+  const isComplete = questions.every(q => {
+    if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
+    if (q.type === 'single') return !!answers[q.id];
+    if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
+    return true;
+  });
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setErreurMsg('');
+    try {
+      const resp = await fetch(`/api/prospects?action=soumettre`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ t: token, reponses: answers }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { setErreurMsg(data.error || 'Ce lien n\'est plus valable.'); setSubmitting(false); return; }
+      setEtat('rempli');
+    } catch (e) {
+      setErreurMsg('Erreur réseau — vérifiez votre connexion et réessayez.');
+      setSubmitting(false);
+    }
+  };
+
+  if (etat === 'chargement') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+        <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
+        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement du questionnaire...</div>
+      </div>
+    );
+  }
+
+  if (etat === 'erreur') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-2xl">✕</div>
+          <h1 className="text-xl font-black text-gray-900 mb-2">Lien invalide</h1>
+          <p className="text-gray-500 text-sm">{erreurMsg}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (etat === 'expire') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center text-2xl">⏱</div>
+          <h1 className="text-xl font-black text-gray-900 mb-2">Ce lien a expiré</h1>
+          <p className="text-gray-500 text-sm">Contactez directement l'organisme qui vous l'a envoyé pour recevoir un nouveau lien.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (etat === 'rempli') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center text-2xl">✓</div>
+          <h1 className="text-xl font-black text-gray-900 mb-2">Merci !</h1>
+          <p className="text-gray-500 text-sm">Vos réponses ont bien été transmises. Vous pouvez fermer cette page.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // etat === 'a_remplir'
+  return (
+    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+      <div className="bg-white rounded-[32px] w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="bg-violet-600 p-6 text-white shrink-0">
+          <p className="text-violet-200 text-xs font-bold uppercase tracking-widest mb-1">SkorUp</p>
+          <h1 className="text-xl font-black flex items-center gap-2">📝 {titre}</h1>
+          <p className="text-violet-200 text-sm mt-1">
+            {prenom ? `Bonjour ${prenom}, ` : ''}{questions.length} question{questions.length > 1 ? 's' : ''} à compléter
+          </p>
+        </div>
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {questions.map((q, qi) => (
+            <div key={q.id} className="space-y-3">
+              <p className="font-bold text-gray-900 text-sm leading-relaxed">
+                <span className="text-violet-500 font-black mr-1">{qi + 1}.</span>
+                {q.text || <span className="text-gray-400 italic">Question</span>}
+              </p>
+              {q.type === 'text' && (
+                <textarea
+                  placeholder="Votre réponse..."
+                  value={answers[q.id] || ''}
+                  onChange={e => setAnswer(q.id, e.target.value)}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm resize-none outline-none focus:ring-2 focus:ring-violet-400 transition-all"
+                  rows={3}
+                />
+              )}
+              {q.type === 'single' && (
+                <div className="space-y-2">
+                  {(q.options || []).map((opt, oi) => (
+                    <label key={oi} onClick={() => setAnswer(q.id, opt)}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${answers[q.id] === opt ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${answers[q.id] === opt ? 'border-violet-600' : 'border-gray-300'}`}>
+                        {answers[q.id] === opt && <div className="w-2 h-2 bg-violet-600 rounded-full"></div>}
+                      </div>
+                      <span className="text-sm text-gray-700 select-none">{opt}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {q.type === 'multiple' && (
+                <div className="space-y-2">
+                  {(q.options || []).map((opt, oi) => {
+                    const checked = (answers[q.id] || []).includes(opt);
+                    return (
+                      <label key={oi} onClick={() => toggleMultiple(q.id, opt)}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${checked ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-violet-600 bg-violet-600' : 'border-gray-300'}`}>
+                          {checked && <span className="text-white text-[8px] font-black leading-none">✓</span>}
+                        </div>
+                        <span className="text-sm text-gray-700 select-none">{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="p-6 border-t border-gray-100 shrink-0">
+          {erreurMsg && <p className="text-[11px] text-red-500 text-center mb-3">{erreurMsg}</p>}
+          <button onClick={handleSubmit} disabled={!isComplete || submitting}
+            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+            {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
+          </button>
+          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions pour soumettre</p>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SignupView = ({ supabase, onComplete }) => {
   const [orgName, setOrgName] = useState('');
   const [adminName, setAdminName] = useState('');
@@ -17230,6 +17413,8 @@ export default function App() {
 
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
   const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
+  // Questionnaire prospect (sans compte SkorUp) : /questionnaire?t=<token> — voir ProspectQuestionnaireView.
+  const [isProspectQuestionnaire] = useState(() => window.location.pathname === '/questionnaire');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
@@ -21282,6 +21467,10 @@ export default function App() {
         onComplete={() => { window.history.replaceState(null, '', '/'); setIsSignup(false); }}
       />
     );
+  }
+
+  if (isProspectQuestionnaire) {
+    return <ProspectQuestionnaireView />;
   }
 
   if (needsSetup) {
