@@ -211,6 +211,9 @@ module.exports = async (req, res) => {
                   </div>
                   <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
                     <p style="color:#111827;font-size:14px;line-height:1.6;">${emailBodyHtml}</p>
+                    <div style="text-align:center;margin:28px 0 8px;">
+                      <a href="https://app.skorup.fr" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 30px;border-radius:10px;">Se connecter à SkorUp</a>
+                    </div>
                     <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
                     <p style="color:#9ca3af;font-size:11px;">Email automatique — merci de ne pas répondre directement à ce message.</p>
                   </div>
