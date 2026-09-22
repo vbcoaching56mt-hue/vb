@@ -19385,10 +19385,10 @@ export default function App() {
         supabase.auth.getSession().then(({ data: sessionData }) => {
           const accessToken = sessionData?.session?.access_token;
           if (!accessToken) return;
-          fetch('/api/formateur/notify-assignment', {
+          fetch('/api/formateur/notify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-            body: JSON.stringify({ clientId: userId, formateurId, origin: window.location.origin }),
+            body: JSON.stringify({ type: 'assignation', clientId: userId, formateurId, origin: window.location.origin }),
           }).then(async (resp) => {
             const result = await resp.json().catch(() => ({}));
             if (!resp.ok) {
@@ -19908,10 +19908,10 @@ export default function App() {
     supabase.auth.getSession().then(({ data: sessionData }) => {
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) return;
-      fetch('/api/formateur/notify-new-document', {
+      fetch('/api/formateur/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-        body: JSON.stringify({ formateurId, documentName, origin: window.location.origin }),
+        body: JSON.stringify({ type: 'nouveau_document', formateurId, documentName, origin: window.location.origin }),
       }).then(async (resp) => {
         const result = await resp.json().catch(() => ({}));
         if (!resp.ok) {
