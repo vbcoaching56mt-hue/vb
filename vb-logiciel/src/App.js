@@ -16429,6 +16429,10 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
   // --- Consultation des réponses d'un envoi rempli ---
   const [viewingEnvoi, setViewingEnvoi] = useState(null);
 
+  // --- Statistiques par modèle (demande utilisateur, 2026-09-22, usage Qualiopi) ---
+  const [showStats, setShowStats] = useState(false);
+  const [statsTemplateId, setStatsTemplateId] = useState('');
+
   const fetchTemplates = async () => {
     if (!currentOrgId) return;
     const { data, error } = await supabase
@@ -16460,6 +16464,100 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
 
   const activeTemplates = templates.filter(t => t.actif);
   const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
+
+  // ── Statistiques par modèle — calculées ici, côté navigateur, à partir des envois déjà en
+  //     base (aucune fonction serveur supplémentaire nécessaire) ──
+  React.useEffect(() => {
+    if (!statsTemplateId && templates.length > 0) setStatsTemplateId(templates[0].id);
+  }, [templates]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const statsTemplate = templates.find(t => t.id === statsTemplateId);
+  const statsEnvois = React.useMemo(
+    () => statsTemplate ? envois.filter(e => e.template_id === statsTemplate.id && e.statut === 'rempli') : [],
+    [statsTemplate, envois]
+  );
+  const questionStats = React.useMemo(() => {
+    if (!statsTemplate) return [];
+    const total = statsEnvois.length;
+    return (statsTemplate.questions || []).map(q => {
+      if (q.type === 'text') {
+        const answered = statsEnvois.filter(e => (e.reponses?.[q.id] || '').toString().trim().length > 0).length;
+        return { question: q, type: 'text', answered, total };
+      }
+      const counts = {};
+      (q.options || []).forEach(opt => { counts[opt] = 0; });
+      statsEnvois.forEach(e => {
+        const rep = e.reponses?.[q.id];
+        if (q.type === 'single') {
+          if (rep && Object.prototype.hasOwnProperty.call(counts, rep)) counts[rep]++;
+        } else if (q.type === 'multiple') {
+          (Array.isArray(rep) ? rep : []).forEach(opt => { if (Object.prototype.hasOwnProperty.call(counts, opt)) counts[opt]++; });
+        }
+      });
+      return { question: q, type: q.type, counts, total };
+    });
+  }, [statsTemplate, statsEnvois]);
+
+  // ── PDF des réponses d'un prospect (usage Qualiopi : trace du positionnement préalable) ──
+  // Génération 100% côté navigateur avec jsPDF (déjà utilisé ailleurs dans SkorUp pour d'autres
+  // PDF) — aucune fonction serveur supplémentaire nécessaire.
+  const handleDownloadResponsesPdf = (envoi) => {
+    const template = templates.find(t => t.id === envoi.template_id);
+    const questions = template?.questions || [];
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    const marginX = 50;
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const maxWidth = pageWidth - marginX * 2;
+    const lineHeight = 15;
+    let y = 60;
+
+    const ensureSpace = (needed) => {
+      if (y + needed > pageHeight - 50) { pdf.addPage(); y = 60; }
+    };
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(16);
+    pdf.setTextColor(20);
+    const titleLines = pdf.splitTextToSize(template?.titre || 'Questionnaire prospect', maxWidth);
+    pdf.text(titleLines, marginX, y);
+    y += titleLines.length * 20 + 10;
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+    pdf.setTextColor(100);
+    pdf.text(`${envoi.prenom || ''} ${envoi.nom || ''} — ${envoi.email || ''}`, marginX, y);
+    y += 14;
+    pdf.text(`Répondu le ${envoi.rempli_at ? new Date(envoi.rempli_at).toLocaleDateString('fr-FR') : '—'}`, marginX, y);
+    y += 20;
+    pdf.setDrawColor(220);
+    pdf.line(marginX, y, pageWidth - marginX, y);
+    y += 24;
+
+    questions.forEach((q, qi) => {
+      const rep = envoi.reponses?.[q.id];
+      const repText = Array.isArray(rep) ? (rep.length > 0 ? rep.join(', ') : 'Sans réponse') : ((rep && String(rep).trim()) || 'Sans réponse');
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(11);
+      pdf.setTextColor(20);
+      const qLines = pdf.splitTextToSize(`${qi + 1}. ${q.text || ''}`, maxWidth);
+      ensureSpace(qLines.length * lineHeight + 20);
+      pdf.text(qLines, marginX, y);
+      y += qLines.length * lineHeight + 4;
+
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(80);
+      const aLines = pdf.splitTextToSize(repText, maxWidth);
+      ensureSpace(aLines.length * lineHeight + 20);
+      pdf.text(aLines, marginX, y);
+      y += aLines.length * lineHeight + 18;
+    });
+
+    const safeName = `${envoi.prenom || ''}_${envoi.nom || ''}`.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '') || 'prospect';
+    pdf.save(`questionnaire_${safeName}.pdf`);
+  };
 
   // ── Constructeur de modèle (admin) — reprend le même schéma de questions que les
   //     questionnaires de module existants (text / single / multiple) ──
@@ -16579,6 +16677,12 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
             </button>
           )}
           <button
+            onClick={() => setShowStats(v => !v)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all"
+          >
+            <TrendingUp className="w-4 h-4" /> {showStats ? 'Masquer les statistiques' : 'Statistiques'}
+          </button>
+          <button
             onClick={() => setShowSendModal(true)}
             disabled={activeTemplates.length === 0}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
@@ -16594,6 +16698,55 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
           {isAdmin
             ? 'Aucun modèle de questionnaire actif pour le moment. Cliquez sur "Gérer les modèles" pour en créer un.'
             : 'Aucun modèle de questionnaire n\'est disponible pour le moment — demandez à votre administrateur d\'en créer un.'}
+        </div>
+      )}
+
+      {/* ── Statistiques par modèle (usage Qualiopi) ── */}
+      {showStats && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h2 className="text-base font-bold text-gray-800">Statistiques</h2>
+            {templates.length > 0 && (
+              <select value={statsTemplateId} onChange={e => setStatsTemplateId(e.target.value)}
+                className="p-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
+                {templates.map(t => <option key={t.id} value={t.id}>{t.titre}</option>)}
+              </select>
+            )}
+          </div>
+          {templates.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-6">Aucun modèle pour le moment.</p>
+          ) : statsEnvois.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-6">Aucune réponse reçue pour ce modèle pour le moment.</p>
+          ) : (
+            <div className="space-y-6">
+              <p className="text-sm text-gray-500">{statsEnvois.length} réponse{statsEnvois.length > 1 ? 's' : ''} reçue{statsEnvois.length > 1 ? 's' : ''}</p>
+              {questionStats.map(({ question, type, counts, answered, total }, qi) => (
+                <div key={question.id}>
+                  <p className="font-bold text-gray-800 text-sm mb-2">{qi + 1}. {question.text}</p>
+                  {type === 'text' ? (
+                    <p className="text-xs text-gray-500">{answered} / {total} ont répondu à cette question</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {Object.entries(counts).map(([opt, count]) => {
+                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={opt}>
+                            <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                              <span>{opt || <span className="italic text-gray-400">Option vide</span>}</span>
+                              <span className="font-bold">{count} ({pct}%)</span>
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-violet-600 transition-all duration-500" style={{ width: `${pct}%` }}></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -16813,6 +16966,14 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                 })}
                 {questions.length === 0 && <p className="text-gray-400 text-sm text-center py-6">Le modèle utilisé pour cet envoi a été supprimé — impossible d'afficher les questions.</p>}
               </div>
+              {questions.length > 0 && (
+                <div className="p-4 border-t border-gray-100 shrink-0">
+                  <button onClick={() => handleDownloadResponsesPdf(viewingEnvoi)}
+                    className="w-full flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl transition-all text-sm">
+                    <Download className="w-4 h-4" /> Télécharger en PDF
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );
