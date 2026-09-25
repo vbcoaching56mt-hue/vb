@@ -18671,6 +18671,7 @@ export default function App() {
         ville: c.ville || '',
         montant_prestation: c.montant_prestation,
         prix_prestation: c.montant_prestation || '',
+        pourcentage_formateur: c.pourcentage_formateur,
         modalite_formation: c.modalite_formation || 'Mixte',
         organisation_id: c.organisation_id || null
       }));
