@@ -7702,7 +7702,12 @@ const FormateurView = ({
                                           const metadata = session.metadata || {};
                                           const signedUrl = session.file_url_signed || metadata.file_url_signed;
                                           const isToSign = metadata.isToSign || session.type_activite === 'signature';
-                                          const isSigned = session.statut_formateur === 'Signé' || session.statut === 'Signé';
+                                          // FIX (2026-09-25 bis) : le bouton "Signer" du formateur ne doit refléter QUE
+                                          // sa propre signature (statut_formateur), jamais le statut global "statut" —
+                                          // sinon il apparaît "Signé ✓" dès que le CLIENT a signé, alors que le
+                                          // formateur lui-même n'a rien signé (bug repéré le 25/09/2026, séance déjà
+                                          // corrigée côté écriture mais toujours affichée à tort ici côté lecture).
+                                          const isSigned = session.statut_formateur === 'Signé';
 
                                           return (
                                             <div className="flex gap-2 items-center">
