@@ -20446,6 +20446,19 @@ export default function App() {
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
     if (!error) {
+      // FIX (2026-09-26) : incrémente le compteur de progression du client (clients.seances_effectuees,
+      // lu par la barre "PROGRESSION X%" de la vue formateur "Mes Clients") dès que cette séance passe
+      // à 'Signé' — cette fonction ne le faisait jamais, contrairement à handleSessionSignatureSave qui
+      // gère le même compteur pour les documents. On ne compte que la transition (pas encore signée ->
+      // signée) pour éviter un double comptage si la fonction était rappelée.
+      if (updateData.statut === 'Signé' && emargementSession?.statut !== 'Signé') {
+        const emargementClient = clients.find(c => c.id === emargementSession?.client_id);
+        if (emargementClient) {
+          const newEffectuees = (emargementClient.seances_effectuees || 0) + 1;
+          await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', emargementClient.id);
+          await fetchUtilisateurs();
+        }
+      }
       await fetchSessions();
       setSigningSessionId(null);
       toast.success('Émargement enregistré !');
