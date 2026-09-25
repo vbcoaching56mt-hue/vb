@@ -2308,6 +2308,83 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
   );
 };
 
+// ─── Modale "Qui doit signer ?" pour un émargement DÉJÀ créé dans un modèle de module ──────────
+// AJOUT (2026-09-25) : jusqu'ici, changer qui doit signer un émargement déjà créé dans un module
+// obligeait à le supprimer et le recréer (StepResourceModal ne proposait ce choix qu'à la création).
+// Demandé par l'utilisateur pour pouvoir ajuster ses modules sans "tout refaire" — voir
+// handleUpdateStepResourceSignatures pour la logique de propagation aux dossiers clients existants.
+const StepResourceSignatureModal = ({ isOpen, resource, onClose, onSave }) => {
+  const [reqClient, setReqClient] = React.useState(true);
+  const [reqFormateur, setReqFormateur] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen && resource) {
+      const meta = (typeof resource.metadata === 'string' && resource.metadata.startsWith('{'))
+        ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
+        : (resource.metadata || {});
+      setReqClient(meta.requiresClientSignature !== false);
+      setReqFormateur(meta.requiresTrainerSignature === true);
+    }
+  }, [isOpen, resource]);
+
+  if (!isOpen || !resource) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-7">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-violet-100 text-violet-600 rounded-2xl flex items-center justify-center">
+            <Settings size={20} />
+          </div>
+          <div>
+            <h3 className="font-extrabold text-gray-900 text-base">Qui doit signer ?</h3>
+            <p className="text-xs text-gray-400">{resource.titre}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-indigo-200 transition-all">
+            <input type="checkbox" checked={reqClient} onChange={e => setReqClient(e.target.checked)} className="w-4 h-4 accent-indigo-600 rounded" />
+            <div>
+              <p className="font-bold text-gray-800 text-sm">Signature du Bénéficiaire (Client)</p>
+              <p className="text-[10px] text-gray-400">Le client devra signer cet émargement</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-violet-200 transition-all">
+            <input type="checkbox" checked={reqFormateur} onChange={e => setReqFormateur(e.target.checked)} className="w-4 h-4 accent-violet-600 rounded" />
+            <div>
+              <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
+              <p className="text-[10px] text-gray-400">Le formateur devra aussi signer cet émargement</p>
+            </div>
+          </label>
+        </div>
+
+        <div className="p-3 mt-4 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 font-medium">
+          <span className="font-black uppercase tracking-wider">Aperçu : </span>
+          {reqClient && reqFormateur && 'Signature client + formateur requises'}
+          {reqClient && !reqFormateur && 'Signature client uniquement'}
+          {!reqClient && reqFormateur && 'Signature formateur uniquement'}
+          {!reqClient && !reqFormateur && 'Aucune signature requise'}
+        </div>
+
+        <p className="text-[10px] text-amber-600 mt-3 font-medium">
+          ⚠️ Ajouter la signature formateur l'ajoutera aussi aux dossiers clients déjà créés avec cet émargement (sans toucher aux signatures déjà obtenues). La retirer ne modifie que les futurs dossiers.
+        </p>
+
+        <div className="flex gap-3 mt-6">
+          <button onClick={onClose} className="flex-1 px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
+          <button
+            onClick={() => onSave({ requiresClientSignature: reqClient, requiresTrainerSignature: reqFormateur })}
+            className="flex-1 px-5 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg"
+          >
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -2434,6 +2511,25 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
               className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium transition-all"
             />
           </div>
+
+          {/* AJOUT (2026-09-25) : jusqu'ici ce choix n'existait que pour les documents (plus bas,
+              {type === 'document'}) — jamais pour les émargements, qui étaient donc TOUJOURS créés en
+              "client uniquement" sans aucun moyen de demander aussi la signature du formateur. */}
+          {type === 'signature' && (
+            <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
+              <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Qui doit signer ?</label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={metadata.requiresClientSignature !== false} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={metadata.requiresTrainerSignature === true} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                </label>
+              </div>
+            </div>
+          )}
 
           {type === 'exercice' && (
             <div>
@@ -6267,10 +6363,14 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource, handleRenameModule, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates
+  handleRenameFolder, handleRenameResource, handleRenameModule, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates,
+  handleUpdateStepResourceSignatures
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
+  // AJOUT (2026-09-25) : modale "Qui doit signer ?" pour éditer un émargement de module déjà créé.
+  const [isSignatureSettingsOpen, setIsSignatureSettingsOpen] = React.useState(false);
+  const [signatureSettingsTarget, setSignatureSettingsTarget] = React.useState(null);
   // AJOUT (2026-09-17) : édition inline du nom d'un module (même principe que editingId/editValue
   // plus bas pour les "dossiers de séance", mais état séparé pour éviter toute collision d'id entre
   // un module et un dossier de séance — les deux sont des entités différentes en base).
@@ -6524,9 +6624,20 @@ const IngenierieView = ({
                                       <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
                                     </div>
                                   </div>
-                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
-                                    <Trash2 size={12} />
-                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    {res.type === 'signature' && (
+                                      <button
+                                        onClick={() => { setSignatureSettingsTarget(res); setIsSignatureSettingsOpen(true); }}
+                                        className="text-gray-300 hover:text-violet-600"
+                                        title="Qui doit signer ?"
+                                      >
+                                        <Settings size={12} />
+                                      </button>
+                                    )}
+                                    <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
 
@@ -6641,6 +6752,19 @@ const IngenierieView = ({
           } else {
             handleAddStepResource(activeFolderId, data);
           }
+        }}
+      />
+
+      <StepResourceSignatureModal
+        isOpen={isSignatureSettingsOpen}
+        resource={signatureSettingsTarget}
+        onClose={() => { setIsSignatureSettingsOpen(false); setSignatureSettingsTarget(null); }}
+        onSave={async (data) => {
+          if (signatureSettingsTarget) {
+            await handleUpdateStepResourceSignatures(signatureSettingsTarget.id, data);
+          }
+          setIsSignatureSettingsOpen(false);
+          setSignatureSettingsTarget(null);
         }}
       />
     </div>
@@ -19403,6 +19527,68 @@ export default function App() {
     }
   };
 
+  // AJOUT (2026-09-25) : permet de changer QUI doit signer un émargement de module APRÈS sa
+  // création, sans avoir à le supprimer/recréer (demandé par l'utilisateur — jusqu'ici
+  // StepResourceModal ne proposait ce choix qu'à la création, et uniquement pour les documents,
+  // jamais pour les émargements).
+  //
+  // Règle de propagation volontairement asymétrique (validée avec l'utilisateur le 25/09/2026) :
+  //  - si on AJOUTE la signature formateur (false/absent -> true), on la propage aussi à tous les
+  //    dossiers clients déjà générés à partir de cet émargement (sans risque : ça ajoute juste une
+  //    case à signer en plus, aucune signature déjà obtenue n'est touchée) ;
+  //  - si on RETIRE la signature formateur (true -> false), on NE touche PAS aux dossiers déjà créés
+  //    (on ne veut jamais faire disparaître un suivi ou une signature déjà obtenue sur un dossier en
+  //    cours) — seuls les futurs dossiers générés après ce changement n'auront plus cette case.
+  //
+  // Le rattachement séance générée <-> ressource de modèle se fait par titre + module_id, comme le
+  // fait déjà generateSessions() pour sa dé-duplication (pas de clé étrangère directe
+  // sessions -> module_step_resources dans ce schéma).
+  const handleUpdateStepResourceSignatures = async (resourceId, { requiresClientSignature, requiresTrainerSignature }) => {
+    const resource = moduleStepResources.find(r => r.id === resourceId);
+    if (!resource) return;
+
+    const parseMeta = (m) => (typeof m === 'string' && m.startsWith('{')) ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
+    const currentMeta = parseMeta(resource.metadata);
+    const wasTrainerRequired = currentMeta.requiresTrainerSignature === true;
+    const newMeta = { ...currentMeta, requiresClientSignature, requiresTrainerSignature, documentType: 'signature' };
+
+    const { error } = await supabase.from('module_step_resources').update({ metadata: newMeta }).eq('id', resourceId);
+    if (error) {
+      toast.error('Erreur lors de la mise à jour : ' + error.message);
+      return;
+    }
+
+    // Propagation UNIQUEMENT dans le sens "ajout" — voir commentaire ci-dessus.
+    let propagatedCount = 0;
+    if (!wasTrainerRequired && requiresTrainerSignature === true) {
+      const template = moduleSessionTemplates.find(t => t.id === resource.template_id);
+      const moduleId = template?.module_id;
+      if (moduleId) {
+        const { data: matching, error: fetchErr } = await supabase
+          .from('sessions')
+          .select('id, metadata')
+          .eq('module_id', moduleId)
+          .eq('ressource_titre', resource.titre);
+        if (!fetchErr && matching && matching.length > 0) {
+          const toUpdate = matching.filter(s => parseMeta(s.metadata).requiresTrainerSignature !== true);
+          for (const s of toUpdate) {
+            const m = parseMeta(s.metadata);
+            await supabase.from('sessions').update({ metadata: { ...m, requiresTrainerSignature: true } }).eq('id', s.id);
+          }
+          propagatedCount = toUpdate.length;
+          if (propagatedCount > 0 && typeof fetchSessions === 'function') await fetchSessions();
+        }
+      }
+    }
+
+    await fetchModules();
+    if (propagatedCount > 0) {
+      toast.success(`Paramètres enregistrés — signature formateur ajoutée à ${propagatedCount} dossier(s) client déjà existant(s).`);
+    } else {
+      toast.success('Paramètres de signature enregistrés.');
+    }
+  };
+
   const handleAddStepResource = async (templateId, stepData) => {
     if (!templateId) return;
 
@@ -22585,6 +22771,7 @@ export default function App() {
             handleRedistributeModuleDocs={handleRedistributeModuleDocs}
             documentTemplates={documentTemplates}
             currentOrgId={currentOrgId}
+            handleUpdateStepResourceSignatures={handleUpdateStepResourceSignatures}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
