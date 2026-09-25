@@ -21984,8 +21984,35 @@ export default function App() {
           document.body.removeChild(recapEl);
 
           const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-          const imgData = canvas.toDataURL('image/png');
-          pdf.addImage(imgData, 'PNG', 40, 40, 515, (canvas.height * 515) / canvas.width);
+          // FIX (2026-09-26) : pagination du récapitulatif — avant ce correctif, le canevas complet
+          // (qui grandit avec le nombre de séances) était posé en une seule fois sur une unique page
+          // A4 sans jamais appeler pdf.addPage(), donc tout ce qui dépassait la hauteur d'une page
+          // était silencieusement coupé (le PDF semblait "s'arrêter" après quelques séances). On
+          // découpe maintenant le canevas en tranches de la hauteur d'une page A4 et on ajoute une
+          // page par tranche, pour que toutes les séances soient toujours présentes, quel que soit
+          // leur nombre.
+          const imgWidthPt = 515;
+          const pageHeightPt = 842 - 80; // hauteur A4 (pt) moins marges haut/bas de 40pt
+          const pxPerPt = canvas.width / imgWidthPt;
+          const pageHeightPx = Math.max(1, Math.round(pageHeightPt * pxPerPt));
+
+          let yOffset = 0;
+          let isFirstPage = true;
+          while (yOffset < canvas.height) {
+            const sliceHeightPx = Math.min(pageHeightPx, canvas.height - yOffset);
+            const sliceCanvas = document.createElement('canvas');
+            sliceCanvas.width = canvas.width;
+            sliceCanvas.height = sliceHeightPx;
+            sliceCanvas.getContext('2d').drawImage(
+              canvas, 0, yOffset, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx
+            );
+            const sliceImgData = sliceCanvas.toDataURL('image/png');
+            const sliceHeightPt = sliceHeightPx / pxPerPt;
+            if (!isFirstPage) pdf.addPage();
+            pdf.addImage(sliceImgData, 'PNG', 40, 40, imgWidthPt, sliceHeightPt);
+            yOffset += sliceHeightPx;
+            isFirstPage = false;
+          }
           pdf.save(`${isEmargementOnly ? 'Emargements' : 'Recapitulatif'}_${doc.nom || 'Client'}_${Date.now()}.pdf`);
           
           toast.success(isEmargementOnly ? "Récap émargements généré !" : "Récapitulatif généré !", { id: 'recap' });
