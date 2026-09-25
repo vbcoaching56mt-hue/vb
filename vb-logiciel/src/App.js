@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -3780,6 +3780,14 @@ const ClientDetailView = ({
   const [isSendingDocs, setIsSendingDocs] = React.useState(false);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
+  // --- Finances (2026-09-26) : historique des paiements reçus pour ce client ---
+  const [clientPaiements, setClientPaiements] = React.useState([]);
+  const [isLoadingPaiements, setIsLoadingPaiements] = React.useState(false);
+  const [newPaiementMontant, setNewPaiementMontant] = React.useState('');
+  const [newPaiementDate, setNewPaiementDate] = React.useState(() => new Date().toISOString().split('T')[0]);
+  const [newPaiementMode, setNewPaiementMode] = React.useState('Virement');
+  const [newPaiementNote, setNewPaiementNote] = React.useState('');
+  const [isSavingPaiement, setIsSavingPaiement] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -3790,7 +3798,8 @@ const ClientDetailView = ({
     region: '',
     numero_dossier: client.numero_dossier || '',
     modalite_formation: client.modalite_formation || 'Mixte',
-    montant_prestation: client.montant_prestation || ''
+    montant_prestation: client.montant_prestation || '',
+    pourcentage_formateur: client.pourcentage_formateur || ''
   });
 
   // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche client. Le vrai
@@ -3817,12 +3826,25 @@ const ClientDetailView = ({
           region: data.region || '',
           numero_dossier: data.numero_dossier || '',
           modalite_formation: data.modalite_formation || 'Mixte',
-          montant_prestation: data.montant_prestation || ''
+          montant_prestation: data.montant_prestation || '',
+          pourcentage_formateur: data.pourcentage_formateur || ''
         });
       }
     };
     fetchDetailedClient();
   }, [client.id, supabase]);
+
+  // --- Finances (2026-09-26) ---
+  const fetchClientPaiements = async () => {
+    setIsLoadingPaiements(true);
+    const { data, error } = await supabase.from('client_paiements').select('*').eq('client_id', client.id).order('date_paiement', { ascending: false });
+    if (!error) setClientPaiements(data || []);
+    setIsLoadingPaiements(false);
+  };
+
+  React.useEffect(() => {
+    fetchClientPaiements();
+  }, [client.id]);
 
   React.useEffect(() => {
     const fetchAssignedDocs = async () => {
@@ -4132,6 +4154,7 @@ const ClientDetailView = ({
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
+      pourcentage_formateur: clientInfo.pourcentage_formateur || null,
     }).eq('id', client.id);
 
     if (error) {
@@ -4142,6 +4165,40 @@ const ClientDetailView = ({
       toast.success("Informations personnelles sauvegardées !");
     }
     setIsSavingInfo(false);
+  };
+
+  // --- Finances (2026-09-26) ---
+  const handleAddPaiement = async () => {
+    const montant = parseFloat(newPaiementMontant);
+    if (!montant || montant <= 0) { toast.error("Merci d'indiquer un montant valide."); return; }
+    setIsSavingPaiement(true);
+    const { error } = await supabase.from('client_paiements').insert({
+      client_id: client.id,
+      organisation_id: currentOrgId,
+      montant,
+      date_paiement: newPaiementDate || new Date().toISOString().split('T')[0],
+      mode_paiement: newPaiementMode,
+      note: newPaiementNote || null,
+    });
+    if (error) {
+      toast.error("Erreur lors de l'ajout du paiement : " + error.message);
+    } else {
+      toast.success("Paiement ajouté !");
+      setNewPaiementMontant('');
+      setNewPaiementNote('');
+      await fetchClientPaiements();
+    }
+    setIsSavingPaiement(false);
+  };
+
+  const handleDeletePaiement = async (paiementId) => {
+    const { error } = await supabase.from('client_paiements').delete().eq('id', paiementId);
+    if (error) {
+      toast.error("Erreur lors de la suppression : " + error.message);
+    } else {
+      toast.success("Paiement supprimé.");
+      await fetchClientPaiements();
+    }
   };
 
   const updateSession = async (id, payload) => {
@@ -4230,6 +4287,7 @@ const ClientDetailView = ({
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
         <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{clientQuestionnaireResources.length > 0 ? ` (${clientQuestionnaireResources.length})` : ''}</button>
+        <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>💶 Finances</button>
       </div>
 
       {activeTab === 'infos' && (
@@ -4298,6 +4356,10 @@ const ClientDetailView = ({
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Montant de la Prestation (€)</label>
               <input type="number" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.montant_prestation} onChange={e => setClientInfo({ ...clientInfo, montant_prestation: e.target.value })} placeholder="Montant en euros (ex: 1500)" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Part reversée au formateur (%)</label>
+              <input type="number" min="0" max="100" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.pourcentage_formateur} onChange={e => setClientInfo({ ...clientInfo, pourcentage_formateur: e.target.value })} placeholder="Ex: 50" />
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Modalités de la formation</label>
@@ -5295,6 +5357,122 @@ const ClientDetailView = ({
                 <p className="text-2xl mb-2">✉️</p>
                 <p className="text-sm italic">Aucun document envoyé pour signature.</p>
                 <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer" sur un document ci-dessus (onglet "Documents de ce client").</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'finances' && (
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Euro size={20} className="text-emerald-600" /> Finances</h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Montant total de la prestation</label>
+              <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
+                {(parseFloat(clientInfo.montant_prestation) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1">Part reversée au formateur</label>
+              <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
+                {clientInfo.pourcentage_formateur || 0}% <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
+              </div>
+            </div>
+          </div>
+
+          {(() => {
+            const montantTotal = parseFloat(clientInfo.montant_prestation) || 0;
+            const montantPaye = clientPaiements.reduce((sum, p) => sum + (parseFloat(p.montant) || 0), 0);
+            const resteDu = montantTotal - montantPaye;
+            const pourcentageFormateur = parseFloat(clientInfo.pourcentage_formateur) || 0;
+            const partFormateur = montantTotal * pourcentageFormateur / 100;
+            const partOrganisme = montantTotal - partFormateur;
+            const fmt = (n) => (n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                  <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Payé</p>
+                  <p className="text-lg font-black text-emerald-800">{fmt(montantPaye)}</p>
+                </div>
+                <div className={`rounded-2xl p-4 border ${resteDu > 0 ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
+                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${resteDu > 0 ? 'text-orange-700' : 'text-gray-500'}`}>Reste dû</p>
+                  <p className={`text-lg font-black ${resteDu > 0 ? 'text-orange-800' : 'text-gray-600'}`}>{fmt(resteDu)}</p>
+                </div>
+                {pourcentageFormateur > 0 && (
+                  <>
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
+                      <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateur</p>
+                      <p className="text-lg font-black text-indigo-800">{fmt(partFormateur)}</p>
+                    </div>
+                    <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
+                      <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
+                      <p className="text-lg font-black text-violet-800">{fmt(partOrganisme)}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          <div className="border-t border-gray-100 pt-6">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">Ajouter un paiement reçu</h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1">Montant (€)</label>
+                <input type="number" step="0.01" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMontant} onChange={e => setNewPaiementMontant(e.target.value)} placeholder="Ex: 500" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1">Date</label>
+                <input type="date" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementDate} onChange={e => setNewPaiementDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 mb-1">Mode</label>
+                <select className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMode} onChange={e => setNewPaiementMode(e.target.value)}>
+                  <option value="Virement">Virement</option>
+                  <option value="Carte bancaire">Carte bancaire</option>
+                  <option value="Chèque">Chèque</option>
+                  <option value="Espèces">Espèces</option>
+                  <option value="Autre">Autre</option>
+                </select>
+              </div>
+              <div>
+                <button
+                  onClick={handleAddPaiement}
+                  disabled={isSavingPaiement || !newPaiementMontant}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all disabled:opacity-50"
+                >
+                  {isSavingPaiement ? 'Ajout...' : '+ Ajouter'}
+                </button>
+              </div>
+            </div>
+            <div className="mt-3">
+              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementNote} onChange={e => setNewPaiementNote(e.target.value)} placeholder="Note (optionnel, ex: 1er versement)" />
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-6">
+            <h4 className="text-sm font-bold text-gray-700 mb-3">Historique des paiements</h4>
+            {isLoadingPaiements ? (
+              <p className="text-sm text-gray-400 italic">Chargement...</p>
+            ) : clientPaiements.length === 0 ? (
+              <p className="text-sm text-gray-400 italic">Aucun paiement enregistré pour ce client.</p>
+            ) : (
+              <div className="space-y-2">
+                {clientPaiements.map(p => (
+                  <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div>
+                      <span className="font-bold text-gray-800 text-sm">{(parseFloat(p.montant) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</span>
+                      <span className="text-xs text-gray-400 ml-3">{p.date_paiement ? new Date(p.date_paiement).toLocaleDateString('fr-FR') : ''}</span>
+                      {p.mode_paiement && <span className="text-xs text-gray-400 ml-3">{p.mode_paiement}</span>}
+                      {p.note && <span className="text-xs text-gray-400 ml-3 italic">{p.note}</span>}
+                    </div>
+                    <button onClick={() => handleDeletePaiement(p.id)} className="p-2 text-gray-300 hover:text-red-500 rounded-lg transition-colors" title="Supprimer">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -16536,6 +16714,119 @@ const EMPTY_FORM = {
 // ENVOYER un questionnaire à un prospect en choisissant un modèle actif. L'envoi passe par
 // api/prospects.js (jamais un insert Supabase direct) car c'est cette fonction qui génère le
 // token aléatoire du lien public et envoie l'email — voir ce fichier pour le détail de sécurité.
+// --- Finances (2026-09-26) : vue d'ensemble admin des encaissements clients ---------------------
+function FinancesView({ supabase, currentOrgId, clients }) {
+  const [paiements, setPaiements] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const fetchPaiements = async () => {
+      setLoading(true);
+      const { data, error } = await supabase.from('client_paiements').select('*').eq('organisation_id', currentOrgId);
+      if (!error) setPaiements(data || []);
+      setLoading(false);
+    };
+    if (currentOrgId) fetchPaiements();
+  }, [currentOrgId, supabase]);
+
+  const fmt = (n) => (n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+
+  const paiementsByClient = paiements.reduce((acc, p) => {
+    acc[p.client_id] = (acc[p.client_id] || 0) + (parseFloat(p.montant) || 0);
+    return acc;
+  }, {});
+
+  const rows = (clients || [])
+    .filter(c => c.montant_prestation && parseFloat(c.montant_prestation) > 0)
+    .map(c => {
+      const montantTotal = parseFloat(c.montant_prestation) || 0;
+      const montantPaye = paiementsByClient[c.id] || 0;
+      const resteDu = montantTotal - montantPaye;
+      const pourcentageFormateur = parseFloat(c.pourcentage_formateur) || 0;
+      const partFormateur = montantTotal * pourcentageFormateur / 100;
+      const partOrganisme = montantTotal - partFormateur;
+      return { client: c, montantTotal, montantPaye, resteDu, pourcentageFormateur, partFormateur, partOrganisme };
+    })
+    .sort((a, b) => b.resteDu - a.resteDu);
+
+  const totals = rows.reduce((acc, r) => ({
+    montantTotal: acc.montantTotal + r.montantTotal,
+    montantPaye: acc.montantPaye + r.montantPaye,
+    resteDu: acc.resteDu + r.resteDu,
+    partFormateur: acc.partFormateur + r.partFormateur,
+    partOrganisme: acc.partOrganisme + r.partOrganisme,
+  }), { montantTotal: 0, montantPaye: 0, resteDu: 0, partFormateur: 0, partOrganisme: 0 });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-black text-gray-900">Finances</h2>
+        <p className="text-sm text-gray-500 mt-1">Vue d'ensemble des encaissements clients. Les paiements se saisissent dans l'onglet "Finances" de chaque fiche client.</p>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-400 italic">Chargement...</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+              <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">CA prévisionnel</p>
+              <p className="text-lg font-black text-gray-800">{fmt(totals.montantTotal)}</p>
+            </div>
+            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Encaissé</p>
+              <p className="text-lg font-black text-emerald-800">{fmt(totals.montantPaye)}</p>
+            </div>
+            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase text-orange-700 tracking-widest mb-1">Reste dû</p>
+              <p className="text-lg font-black text-orange-800">{fmt(totals.resteDu)}</p>
+            </div>
+            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateurs</p>
+              <p className="text-lg font-black text-indigo-800">{fmt(totals.partFormateur)}</p>
+            </div>
+            <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
+              <p className="text-lg font-black text-violet-800">{fmt(totals.partOrganisme)}</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left">
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest">Client</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Montant total</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Payé</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Reste dû</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">% Formateur</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part formateur</th>
+                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part organisme</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan="7" className="p-8 text-center text-gray-400 italic">Aucun client avec un montant de prestation renseigné.</td></tr>
+                ) : rows.map(r => (
+                  <tr key={r.client.id} className="border-b border-gray-50 last:border-0">
+                    <td className="p-4 font-bold text-gray-800">{r.client.nomcomplet_client || r.client.nom_complet || 'Client'}</td>
+                    <td className="p-4 text-right">{fmt(r.montantTotal)}</td>
+                    <td className="p-4 text-right text-emerald-700 font-bold">{fmt(r.montantPaye)}</td>
+                    <td className={`p-4 text-right font-bold ${r.resteDu > 0 ? 'text-orange-700' : 'text-gray-400'}`}>{fmt(r.resteDu)}</td>
+                    <td className="p-4 text-right text-gray-500">{r.pourcentageFormateur ? `${r.pourcentageFormateur}%` : '—'}</td>
+                    <td className="p-4 text-right text-indigo-700">{r.pourcentageFormateur ? fmt(r.partFormateur) : '—'}</td>
+                    <td className="p-4 text-right text-violet-700">{r.pourcentageFormateur ? fmt(r.partOrganisme) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProspectsView({ supabase, currentOrgId, userRole }) {
   const isAdmin = userRole === 'admin';
   const [templates, setTemplates] = useState([]);
@@ -18096,7 +18387,7 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'prospects', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
@@ -22420,6 +22711,9 @@ export default function App() {
               <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
+              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Wallet className="w-5 h-5 mr-3" /> Finances
+              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -22461,6 +22755,9 @@ export default function App() {
               </button>
               <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
+              </button>
+              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Wallet className="w-5 h-5 mr-3" /> Finances
               </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
@@ -22764,6 +23061,11 @@ export default function App() {
             supabase={supabase}
             currentOrgId={currentOrgId}
             userRole={userRole}
+          />}
+          {activeTab === 'finances' && userRole === 'admin' && <FinancesView
+            supabase={supabase}
+            currentOrgId={currentOrgId}
+            clients={clients}
           />}
           {activeTab === 'processus' && (
             <SharedProcessesView
