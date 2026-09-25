@@ -2076,7 +2076,7 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
                   className="w-4 h-4 accent-violet-600 rounded"
                 />
                 <div>
-                  <p className="font-bold text-gray-800 text-sm">Signature du Coach (Formateur)</p>
+                  <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
                   <p className="text-[10px] text-gray-400">Le formateur devra contresigner</p>
                 </div>
               </label>
@@ -2086,9 +2086,9 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
           {/* Preview du statut */}
           <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 font-medium">
             <span className="font-black uppercase tracking-wider">Aperçu : </span>
-            {reqClient && reqFormateur && 'Signature client + coach requises'}
-            {reqClient && !reqFormateur && 'Signature client uniquement — Coach N/A'}
-            {!reqClient && reqFormateur && 'Signature coach uniquement — Client N/A'}
+            {reqClient && reqFormateur && 'Signature client + formateur requises'}
+            {reqClient && !reqFormateur && 'Signature client uniquement — Formateur N/A'}
+            {!reqClient && reqFormateur && 'Signature formateur uniquement — Client N/A'}
             {!reqClient && !reqFormateur && 'Aucune signature requise — Document informatif'}
           </div>
         </div>
@@ -2957,7 +2957,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 className="w-5 h-5 rounded-lg border-indigo-300 text-indigo-600 focus:ring-indigo-500"
               />
               <label htmlFor="isToSignCustom" className="text-xs font-bold text-indigo-900 cursor-pointer">
-                Nécessite une signature du client / coach
+                Nécessite une signature du client / formateur
               </label>
             </div>
           )}
@@ -5140,10 +5140,10 @@ const ClientDetailView = ({
                                             )}
                                             {coachRequired ? (
                                               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                                Coach: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
+                                                Formateur: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
                                               </span>
                                             ) : (
-                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Coach: N/A</span>
+                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Formateur: N/A</span>
                                             )}
                                           </div>
                                         </div>
@@ -6120,7 +6120,7 @@ const AdminFormateursView = ({
                     <th className="p-4">Date & Heures</th>
                     <th className="p-4">Activité</th>
                     <th className="p-4 text-center">Émargement Client</th>
-                    <th className="p-4 text-center">Émargement Coach</th>
+                    <th className="p-4 text-center">Émargement Formateur</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -6185,7 +6185,7 @@ const AdminFormateursView = ({
           </div>
           <div>
             <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Formateur</h3>
-            <p className="text-sm text-gray-500">Invitez un nouveau formateur (coach) par email.</p>
+            <p className="text-sm text-gray-500">Invitez un nouveau formateur par email.</p>
           </div>
         </div>
         <button
@@ -7688,7 +7688,7 @@ const FormateurView = ({
                                         {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         )}
                                       </div>
@@ -11475,7 +11475,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         {brandSettings?.welcome_message || `Bienvenue sur l'espace ${brandSettings?.org_name}`}
       </p>
     )}
-    {coachName && <p className="text-sm text-gray-400 mb-4">Votre coach : <span className="font-bold text-gray-600">{coachName}</span></p>}
+    {coachName && <p className="text-sm text-gray-400 mb-4">Votre formateur : <span className="font-bold text-gray-600">{coachName}</span></p>}
 
     {/* Info cards : prochaine séance + docs en attente */}
     {(nextSession || pendingDocsCount > 0) && (
@@ -11652,7 +11652,7 @@ const SessionsView = ({
     return null;
   };
 
-  // Badges de statut (Moi / Coach) — partagés entre les deux vues.
+  // Badges de statut (Moi / Formateur) — partagés entre les deux vues.
   const renderStatus = (session) => (
     <div className="flex flex-col gap-1 items-start md:items-center">
       <div className="flex items-center gap-1.5">
@@ -11662,7 +11662,7 @@ const SessionsView = ({
       {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+        <span className="text-[9px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
       )}
     </div>
@@ -11691,7 +11691,7 @@ const SessionsView = ({
           const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
 
           if (sortedGroups.length === 0) {
-            return <p className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</p>;
+            return <p className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre formateur les générera prochainement.</p>;
           }
 
           return (
@@ -13578,7 +13578,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
                 </div>
                 {s.correction_commentaire && (
                   <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du coach</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du formateur</p>
                     <p className="text-xs text-gray-600 leading-relaxed">{s.correction_commentaire}</p>
                   </div>
                 )}
@@ -14565,7 +14565,7 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
               onChange={e => setFormData({ ...formData, role: e.target.value })}
             >
               <option value="client">Client (Bénéficiaire)</option>
-              <option value="formateur">Formateur (Coach)</option>
+              <option value="formateur">Formateur</option>
             </select>
           </div>
 
@@ -20057,14 +20057,25 @@ export default function App() {
     const updateData = {};
     const client = clients.find(c => c.id === session.client_id);
 
+    // FIX (2026-09-25) : même correctif que handleEmargementSave — voir son commentaire pour le
+    // détail. "statut" ne doit passer à 'Signé' que lorsque toutes les signatures EXIGÉES par la
+    // séance sont réunies, jamais dès qu'une seule partie a signé.
     if (userRole === 'formateur' || userRole === 'admin') {
       updateData.date_signature_formateur = new Date().toISOString();
       updateData.statut_formateur = 'Signé';
-      updateData.statut = 'Signé';
     } else {
       updateData.date_signature_client = new Date().toISOString();
       updateData.statut_client = 'Signé';
-      updateData.statut = 'Signé';
+    }
+    {
+      const sigMeta = session.metadata || {};
+      const requiresClientSig = sigMeta.requiresClientSignature !== false;
+      const requiresTrainerSig = sigMeta.requiresTrainerSignature === true;
+      const clientNowSigned = updateData.statut_client === 'Signé' || session.statut_client === 'Signé';
+      const trainerNowSigned = updateData.statut_formateur === 'Signé' || session.statut_formateur === 'Signé';
+      if ((!requiresClientSig || clientNowSigned) && (!requiresTrainerSig || trainerNowSigned)) {
+        updateData.statut = 'Signé';
+      }
     }
 
     if (documentChoice) {
@@ -20110,14 +20121,30 @@ export default function App() {
       updateData.signature_formateur = formateurSig;
       updateData.statut_formateur = 'Signé';
       updateData.date_signature_formateur = new Date().toISOString();
-      updateData.statut = 'Signé';
     }
 
     if (clientSig) {
       updateData.signature_client = clientSig;
       updateData.statut_client = 'Signé';
       updateData.date_signature_client = new Date().toISOString();
-      if (!formateurSig) updateData.statut = 'Signé';
+    }
+
+    // FIX (2026-09-25) : le statut global "statut" (encore lu par les écrans de planning via
+    // isSigned = statut_formateur === 'Signé' || statut === 'Signé') ne doit passer à 'Signé' que
+    // lorsque TOUTES les signatures réellement exigées par la séance (metadata.requiresClientSignature
+    // !== false, metadata.requiresTrainerSignature === true) sont réunies. Avant ce correctif, signer
+    // d'UN SEUL côté (ex. le client) mettait déjà updateData.statut = 'Signé', ce qui faisait
+    // apparaître le bouton "Signer" du formateur en "Signé ✓" (désactivé) dans
+    // "Mes Clients > Planning des Séances" alors qu'il n'avait pas encore signé lui-même —
+    // l'empêchant purement et simplement d'émarger.
+    const emargementSession = sessions.find(s => String(s.id) === String(sessionId));
+    const emargementMeta = emargementSession?.metadata || {};
+    const requiresClientSig = emargementMeta.requiresClientSignature !== false;
+    const requiresTrainerSig = emargementMeta.requiresTrainerSignature === true;
+    const clientNowSigned = !!clientSig || emargementSession?.statut_client === 'Signé';
+    const trainerNowSigned = !!formateurSig || emargementSession?.statut_formateur === 'Signé';
+    if ((!requiresClientSig || clientNowSigned) && (!requiresTrainerSig || trainerNowSigned)) {
+      updateData.statut = 'Signé';
     }
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
@@ -21009,11 +21036,11 @@ export default function App() {
         }
 
         dataToMerge = {
-          // ── Formateur / Coach ──
-          nom: theCoach.nom || 'Coach',
-          nom_formateur: theCoach.nom || 'Coach',
+          // ── Formateur ──
+          nom: theCoach.nom || 'Formateur',
+          nom_formateur: theCoach.nom || 'Formateur',
           formateur_nom_complet: theCoach.nom || '',
-          raison_sociale: theCoach.nom || 'Coach',
+          raison_sociale: theCoach.nom || 'Formateur',
           adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
           region_formateur: theCoach.region || '',
           formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
@@ -22504,7 +22531,7 @@ export default function App() {
                 displayName = orgSettings?.nom || "Mon espace";
               } else if (userRole === 'formateur') {
                 rawName = assignableFormateurs.find(f => f.id === currentUserId)?.nom;
-                displayName = rawName || "Coach";
+                displayName = rawName || "Formateur";
               } else if (userRole === 'client') {
                 rawName = clients.find(c => c.id === currentUserId)?.nom;
                 displayName = rawName || "Bénéficiaire";
