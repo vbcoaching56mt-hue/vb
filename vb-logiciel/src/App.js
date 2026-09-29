@@ -16832,6 +16832,10 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
   const [templates, setTemplates] = useState([]);
   const [envois, setEnvois] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Annuaire id -> nom (admins + formateurs de l'organisme), pour afficher qui a envoyé chaque
+  // questionnaire (2026-09-29). Fetché ici plutôt que de dépendre d'une liste "formateurs" passée
+  // en prop, car celle du composant parent exclut les admins alors qu'un admin peut aussi envoyer.
+  const [staffById, setStaffById] = useState({});
 
   // --- Modale d'envoi ---
   const [showSendModal, setShowSendModal] = useState(false);
@@ -16873,10 +16877,23 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
     if (!error) setEnvois(data || []);
   };
 
+  const fetchStaff = async () => {
+    if (!currentOrgId) return;
+    const { data, error } = await supabase
+      .from('utilisateurs')
+      .select('id, nom')
+      .eq('organisation_id', currentOrgId);
+    if (!error && data) {
+      const map = {};
+      data.forEach(u => { map[u.id] = u.nom; });
+      setStaffById(map);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchTemplates(), fetchEnvois()]);
+      await Promise.all([fetchTemplates(), fetchEnvois(), fetchStaff()]);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -17282,6 +17299,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                 <tr className="text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
                   <th className="pb-2 pr-3">Prospect</th>
                   <th className="pb-2 pr-3">Modèle</th>
+                  <th className="pb-2 pr-3">Envoyé par</th>
                   <th className="pb-2 pr-3">Envoyé le</th>
                   <th className="pb-2 pr-3">Statut</th>
                   <th className="pb-2"></th>
@@ -17295,6 +17313,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                       <p className="text-xs text-gray-400">{e.email}</p>
                     </td>
                     <td className="py-3 pr-3 text-gray-600">{templateTitre(e.template_id)}</td>
+                    <td className="py-3 pr-3 text-gray-600 text-xs">{staffById[e.envoye_par] || '—'}</td>
                     <td className="py-3 pr-3 text-gray-500 text-xs">{e.envoye_at ? new Date(e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
                     <td className="py-3 pr-3">
                       {e.statut === 'rempli'
