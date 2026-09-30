@@ -9984,10 +9984,25 @@ const DocumentsView = ({
         await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
         // Détacher les documents dont group_id = ce groupe (évite FK orpheline)
         await supabase.from('documents').update({ group_id: null }).eq('group_id', groupId).is('user_id', null);
+        // FIX (2026-09-30) : nettoie aussi metadata.group_ids des questionnaires/quiz rattachés à ce
+        // groupe — sinon leur badge "X groupes" restait gonflé indéfiniment après cette suppression
+        // (voir qGroupIds plus bas, qui filtre déjà les ids orphelins à l'affichage, mais autant
+        // nettoyer la donnée elle-même pour les prochaines fois).
+        const { data: questTemplatesWithGroup } = await supabase.from('module_step_resources').select('id, metadata').eq('type', 'questionnaire').eq('organisation_id', currentOrgId);
+        if (questTemplatesWithGroup) {
+          for (const tpl of questTemplatesWithGroup) {
+            const meta = (() => { try { return typeof tpl.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl.metadata || {}); } catch { return {}; } })();
+            if (Array.isArray(meta.group_ids) && meta.group_ids.includes(groupId)) {
+              const newGroupIds = meta.group_ids.filter(id => id !== groupId);
+              await supabase.from('module_step_resources').update({ metadata: JSON.stringify({ ...meta, group_ids: newGroupIds }) }).eq('id', tpl.id);
+            }
+          }
+        }
         const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
         if (!error) {
           fetchDocumentGroups();
           if (fetchDocuments) fetchDocuments();
+          fetchQTemplates();
           toast.success("Groupe supprimé.");
         } else {
           toast.error("Erreur lors de la suppression : " + error.message);
@@ -10555,7 +10570,10 @@ const DocumentsView = ({
                 {questionnaireTemplates.map(q => {
                   const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
                   const nbQ = (qMeta.questions || []).length;
-                  const qGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                  const rawGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                  // FIX (2026-09-30) : ignore les ids de groupes qui n'existent plus (groupe supprimé
+                  // depuis), sinon le badge affiche un nombre de groupes dont aucun n'est coché.
+                  const qGroupIds = rawGroupIds.filter(id => documentGroups.some(g => g.id === id));
                   return (
                         <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
                           <div className="flex items-start justify-between mb-3">
