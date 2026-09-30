@@ -7415,6 +7415,31 @@ const FormateurView = ({
 
                 <div className="flex gap-2">
                   <button
+                    onClick={async () => {
+                      const email = client.email || client.email_contact || client.client_email;
+                      if (!email) return toast.error("Aucun email trouvé pour ce client.");
+                      try {
+                        const { data: { session: authSession } } = await supabase.auth.getSession();
+                        const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authSession.access_token}` },
+                          body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin })
+                        });
+                        const result = await res.json();
+                        if (!res.ok) return toast.error(`Erreur : ${result.error}`);
+                        toast.success(result.method === 'reset'
+                          ? `Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`
+                          : `Email d'invitation envoyé à ${email}.`, { duration: 6000 });
+                      } catch (err) {
+                        toast.error(`Erreur : ${err.message}`);
+                      }
+                    }}
+                    title="Renvoyer le lien de connexion à ce client"
+                    className="px-4 py-2.5 rounded-xl text-sm font-bold transition-all bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5"
+                  >
+                    <Mail size={15} /> Renvoyer le lien
+                  </button>
+                  <button
                     onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
                     className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-700' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'}`}
                   >
