@@ -6644,6 +6644,68 @@ const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
   );
 };
 
+// AJOUT (2026-09-30) : ligne d'un document/émargement/questionnaire à l'intérieur d'un dossier de
+// séance, rendue glissable vers un autre dossier — même correctif transform que DraggableGroupBlock
+// ci-dessus (sinon l'élément reste visuellement figé à l'écran pendant le glisser).
+const DraggableStepResourceRow = ({ res, editingId, setEditingId, editValue, setEditValue, handleRenameResource, setSignatureSettingsTarget, setIsSignatureSettingsOpen, handleDeleteStepResource }) => {
+  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({ id: `drag-res-${res.id}` });
+  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
+  return (
+    <div ref={setNodeRef} style={style} className={`flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px] transition-all ${isDragging ? 'opacity-40' : ''}`}>
+      <div className="flex items-center gap-2">
+        <span {...attributes} {...listeners} className="text-gray-300 hover:text-indigo-500 cursor-grab active:cursor-grabbing" title="Glisser pour déplacer vers une autre séance">⠿</span>
+        <span className="text-gray-400">
+          {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : res.type === 'questionnaire' ? '📝' : '⚙️'}
+        </span>
+        <div className="flex flex-col flex-1">
+          {editingId === res.id ? (
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                className="bg-white border border-indigo-200 rounded text-[11px] p-0.5 font-bold text-gray-800 w-full outline-none"
+                value={editValue}
+                onChange={e => setEditValue(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    handleRenameResource(res.id, editValue);
+                    setEditingId(null);
+                  } else if (e.key === 'Escape') setEditingId(null);
+                }}
+              />
+              <button onClick={() => { handleRenameResource(res.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={12} /></button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 group/restitle leading-none">
+              <span className="font-bold text-gray-800">{res.titre}</span>
+              <button
+                onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
+                className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
+              >
+                <Pencil size={10} />
+              </button>
+            </div>
+          )}
+          <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        {res.type === 'signature' && (
+          <button
+            onClick={() => { setSignatureSettingsTarget(res); setIsSignatureSettingsOpen(true); }}
+            className="text-gray-300 hover:text-violet-600"
+            title="Qui doit signer ?"
+          >
+            <Settings size={12} />
+          </button>
+        )}
+        <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const IngenierieView = ({
   modules, handleAddModule, handleDeleteModule,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
@@ -6686,16 +6748,36 @@ const IngenierieView = ({
   const handleGroupDragEnd = async (event) => {
     const { active, over } = event;
     if (!over) return;
-    const resourceId = String(active.id).replace('drag-grp-', '');
-    const overIdParts = String(over.id).split('-'); // expected 'drop-{moduleId}-{moment}'
-    if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
-      const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
-      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un
-      // glisser-déposer aurait pu modifier la ressource de module d'un AUTRE organisme si l'id était deviné.
-      if (!currentOrgId) return;
-      const dragQuery = supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId).eq('organisation_id', currentOrgId);
-      const { error } = await dragQuery;
-      if (!error) fetchModules();
+    if (!currentOrgId) return;
+    const activeIdStr = String(active.id);
+    const overIdStr = String(over.id);
+
+    // AJOUT (2026-09-30) : déplace un document/émargement/questionnaire d'un dossier de séance vers
+    // un autre (over.id = `drop-tpl-{templateId}`) — jusqu'ici seul le déplacement de groupes de
+    // documents entre Début/Fin existait.
+    if (activeIdStr.startsWith('drag-res-')) {
+      if (overIdStr.startsWith('drop-tpl-')) {
+        const resourceId = activeIdStr.replace('drag-res-', '');
+        const targetTemplateId = overIdStr.replace('drop-tpl-', '');
+        const { error } = await supabase.from('module_step_resources').update({ template_id: targetTemplateId }).eq('id', resourceId).eq('organisation_id', currentOrgId);
+        if (!error) fetchModules();
+      }
+      return;
+    }
+
+    // Déplacement d'un groupe de documents entre les zones Début/Fin de parcours (comportement
+    // existant, inchangé) — ignore explicitement un dépôt sur un dossier de séance (drop-tpl-),
+    // qui n'a pas de sens pour un groupe de documents.
+    if (activeIdStr.startsWith('drag-grp-') && overIdStr.startsWith('drop-') && !overIdStr.startsWith('drop-tpl-')) {
+      const resourceId = activeIdStr.replace('drag-grp-', '');
+      const overIdParts = overIdStr.split('-'); // expected 'drop-{moduleId}-{moment}'
+      if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
+        const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
+        // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un
+        // glisser-déposer aurait pu modifier la ressource de module d'un AUTRE organisme si l'id était deviné.
+        const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId).eq('organisation_id', currentOrgId);
+        if (!error) fetchModules();
+      }
     }
   };
 
@@ -6877,59 +6959,20 @@ const IngenierieView = ({
                               >✕</button>
                             </div>
 
-                            <div className="p-4 space-y-2">
+                            <DroppableMomentZone id={`drop-tpl-${template.id}`} className="p-4 space-y-2">
                               {resources.map((res) => (
-                                <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
-                                  <div className="flex items-center gap-3">
-                                    <span className="text-gray-400">
-                                      {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : res.type === 'questionnaire' ? '📝' : '⚙️'}
-                                    </span>
-                                    <div className="flex flex-col flex-1">
-                                      {editingId === res.id ? (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            autoFocus
-                                            className="bg-white border border-indigo-200 rounded text-[11px] p-0.5 font-bold text-gray-800 w-full outline-none"
-                                            value={editValue}
-                                            onChange={e => setEditValue(e.target.value)}
-                                            onKeyDown={e => {
-                                              if (e.key === 'Enter') {
-                                                handleRenameResource(res.id, editValue);
-                                                setEditingId(null);
-                                              } else if (e.key === 'Escape') setEditingId(null);
-                                            }}
-                                          />
-                                          <button onClick={() => { handleRenameResource(res.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={12} /></button>
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center gap-2 group/restitle leading-none">
-                                          <span className="font-bold text-gray-800">{res.titre}</span>
-                                          <button 
-                                            onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
-                                            className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
-                                          >
-                                            <Pencil size={10} />
-                                          </button>
-                                        </div>
-                                      )}
-                                      <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    {res.type === 'signature' && (
-                                      <button
-                                        onClick={() => { setSignatureSettingsTarget(res); setIsSignatureSettingsOpen(true); }}
-                                        className="text-gray-300 hover:text-violet-600"
-                                        title="Qui doit signer ?"
-                                      >
-                                        <Settings size={12} />
-                                      </button>
-                                    )}
-                                    <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                </div>
+                                <DraggableStepResourceRow
+                                  key={res.id}
+                                  res={res}
+                                  editingId={editingId}
+                                  setEditingId={setEditingId}
+                                  editValue={editValue}
+                                  setEditValue={setEditValue}
+                                  handleRenameResource={handleRenameResource}
+                                  setSignatureSettingsTarget={setSignatureSettingsTarget}
+                                  setIsSignatureSettingsOpen={setIsSignatureSettingsOpen}
+                                  handleDeleteStepResource={handleDeleteStepResource}
+                                />
                               ))}
 
                               <button
@@ -6938,7 +6981,7 @@ const IngenierieView = ({
                               >
                                 <Plus size={14} /> Ajouter un élément
                               </button>
-                            </div>
+                            </DroppableMomentZone>
                           </div>
                         );
                       })}
