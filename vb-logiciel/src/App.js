@@ -411,11 +411,31 @@ const computeInitials = (fullName) => {
 // séance du module) — pas les exercices de fin nouvellement créés par ce mécanisme lui-même
 // (numero_seance: null, voir plus bas), ce qui éviterait sinon un effet de bord où l'ajout d'un
 // exercice de fin repasserait aussitôt le parcours à "non terminé".
+//
+// FIX (2026-09-30) : demandé par l'utilisateur — les documents de fin doivent être accessibles dès la
+// FIN DU MODULE, « même si tout n'est pas signé ou autre ». L'ancienne règle exigeait que CHAQUE ligne
+// de séance (émargement, document, exercice…) porte sa propre date strictement passée : une seule
+// ligne sans date (ex. un document glissé dans un dossier de séance) pouvait suffire à bloquer la fin de
+// parcours pour toujours (signalé sur le dossier Matthys Tessier : dernière séance signée la veille,
+// documents de fin toujours verrouillés). Désormais on raisonne PAR SÉANCE (numero_seance) : la date d'une
+// séance = la date renseignée sur l'une de ses lignes ; le parcours est terminé quand toutes les
+// séances sont planifiées et que la date de la dernière est arrivée (le jour même inclus). Les
+// statuts de signature / de rendu ne sont volontairement PAS pris en compte.
 const isModuleCompletedForClient = (clientId, sessions) => {
   const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null);
   if (realSessions.length === 0) return false;
-  const todayStr = new Date().toISOString().slice(0, 10);
-  return realSessions.every(s => s.date && s.date < todayStr);
+  const seanceDates = new Map(); // numero_seance → date la plus tardive trouvée sur ses lignes (ou null)
+  realSessions.forEach(s => {
+    const key = String(s.numero_seance);
+    const d = s.date ? String(s.date).slice(0, 10) : null;
+    const prev = seanceDates.get(key) || null;
+    seanceDates.set(key, d && (!prev || d > prev) ? d : prev);
+  });
+  const dates = Array.from(seanceDates.values());
+  if (dates.some(d => !d)) return false; // une séance entière n'a encore aucune date → pas encore planifiée
+  const now = new Date(); // date LOCALE (et non UTC) pour basculer à minuit heure française
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return dates.every(d => d <= todayStr);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -12845,10 +12865,20 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // AJOUT (2026-09-18) : le parcours est-il terminé pour CE client ? Détermine si les documents,
   // questionnaires et exercices de FIN de parcours doivent être accessibles (voir isModuleCompletedForClient
   // plus haut). Les ressources de DÉBUT restent, elles, toujours accessibles dès l'assignation du module.
-  const moduleCompleted = React.useMemo(
-    () => isModuleCompletedForClient(currentUserId, sessions),
-    [currentUserId, sessions]
-  );
+  // FIX (2026-09-30) : on recharge aussi DIRECTEMENT les séances de ce client (filtre client_id) —
+  // la liste globale `sessions` est filtrée sur organisation_id, si bien que des séances anciennes sans
+  // organisation_id n'y figuraient pas et que la fin de parcours ne pouvait jamais être détectée.
+  const [ownSessions, setOwnSessions] = React.useState([]);
+  React.useEffect(() => {
+    if (!currentUserId || !supabase) return;
+    supabase.from('sessions').select('id, client_id, numero_seance, date').eq('client_id', currentUserId)
+      .then(({ data, error }) => { if (!error && data) setOwnSessions(data); });
+  }, [currentUserId, supabase, sessions]);
+  const moduleCompleted = React.useMemo(() => {
+    const byId = new Map();
+    [...(sessions || []), ...ownSessions].forEach(s => { if (s && s.id != null) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s }); });
+    return isModuleCompletedForClient(currentUserId, Array.from(byId.values()));
+  }, [currentUserId, sessions, ownSessions]);
 
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
@@ -14085,7 +14115,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 text-gray-400">🔒</div>
           <div>
             <p className="font-bold text-gray-700 text-sm">Documents de fin de parcours</p>
-            <p className="text-xs text-gray-400 mt-0.5">Ils seront débloqués automatiquement une fois toutes vos séances passées.</p>
+            <p className="text-xs text-gray-400 mt-0.5">Ils seront débloqués automatiquement à la date de votre dernière séance.</p>
           </div>
         </div>
       )}
