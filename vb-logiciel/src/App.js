@@ -2398,6 +2398,12 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
   const [instructions, setInstructions] = useState('');
   const [destination, setDestination] = useState('client');
   const [questions, setQuestions] = useState([]);
+  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
+  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
+  const [isQuiz, setIsQuiz] = useState(false);
+  const [seuilReussite, setSeuilReussite] = useState(50);
+  const [qDescription, setQDescription] = useState('');
+  const [qClosingMessage, setQClosingMessage] = useState('');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -2414,6 +2420,10 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
       setInstructions('');
       setDestination('client');
       setQuestions([]);
+      setIsQuiz(false);
+      setSeuilReussite(50);
+      setQDescription('');
+      setQClosingMessage('');
     }
   }, [isOpen]);
 
@@ -2450,12 +2460,41 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
     }
   };
 
-  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
+  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
   const removeQuestion = (id) => setQuestions(prev => prev.filter(q => q.id !== id));
   const updateQuestion = (id, field, value) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
+  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
+  // format (chaîne pour "unique", tableau pour "multiple") — sinon un quiz noté peut se retrouver
+  // avec un correctAnswer du mauvais format après un changement de type.
+  const setQuestionType = (id, newType) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
   const addOption = (qId) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  const updateOption = (qId, idx, value) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === idx ? value : o) } : q));
-  const removeOption = (qId, idx) => setQuestions(prev => prev.map(q => q.id === qId && q.options.length > 1 ? { ...q, options: q.options.filter((_, i) => i !== idx) } : q));
+  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
+  // resynchronise ici si l'option qu'il désignait vient d'être renommée, sinon la bonne réponse
+  // du quiz se désynchronise silencieusement dès qu'on corrige le texte d'une option.
+  const updateOption = (qId, idx, value) => setQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    const oldVal = q.options[idx];
+    const options = q.options.map((o, i) => i === idx ? value : o);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = value;
+    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? value : o);
+    return { ...q, options, correctAnswer };
+  }));
+  const removeOption = (qId, idx) => setQuestions(prev => prev.map(q => {
+    if (q.id !== qId || q.options.length <= 1) return q;
+    const removedVal = q.options[idx];
+    const options = q.options.filter((_, i) => i !== idx);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
+    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
+    return { ...q, options, correctAnswer };
+  }));
+  const toggleCorrectOption = (qId, opt) => setQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    if (q.type === 'single') return { ...q, correctAnswer: opt };
+    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
+  }));
 
   if (!isOpen) return null;
 
@@ -2487,7 +2526,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                   } else if (t === 'questionnaire') {
                     setTitle('');
                     setMetadata({ documentType: 'questionnaire' });
-                    if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
+                    if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
                   } else {
                     setTitle('');
                     setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'info' });
@@ -2546,6 +2585,37 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
           {type === 'questionnaire' && (
             <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
+                <textarea
+                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
+                  placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
+                  rows={2}
+                  value={qDescription}
+                  onChange={e => setQDescription(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between bg-violet-50 border border-violet-100 rounded-2xl p-3">
+                <div>
+                  <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
+                  <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
+                </div>
+                <button type="button" onClick={() => setIsQuiz(v => !v)}
+                  className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${isQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
+                  <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${isQuiz ? 'left-6' : 'left-1'}`}></span>
+                </button>
+              </div>
+
+              {isQuiz && (
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
+                  <input type="number" min="0" max="100" value={seuilReussite}
+                    onChange={e => setSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                    className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Questions ({questions.length})</label>
                 <button type="button" onClick={addQuestion} className="flex items-center gap-1 text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase tracking-wider">+ Ajouter une question</button>
@@ -2570,28 +2640,51 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                       className="w-full p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm font-medium"
                     />
                     <div className="flex gap-1.5">
-                      {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
-                        <button key={val} type="button" onClick={() => updateQuestion(q.id, 'type', val)}
+                      {(isQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
+                        <button key={val} type="button" onClick={() => setQuestionType(q.id, val)}
                           className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
                       ))}
                     </div>
                     {(q.type === 'single' || q.type === 'multiple') && (
                       <div className="space-y-1.5">
-                        {q.options.map((opt, oi) => (
-                          <div key={oi} className="flex items-center gap-2">
-                            <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                            <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
-                              className="flex-1 p-2 bg-white border border-indigo-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400" />
-                            {q.options.length > 1 && (
-                              <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
-                            )}
-                          </div>
-                        ))}
+                        {isQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                        {q.options.map((opt, oi) => {
+                          const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
+                          return (
+                            <div key={oi} className="flex items-center gap-2">
+                              {isQuiz ? (
+                                <button type="button" onClick={() => toggleCorrectOption(q.id, opt)}
+                                  title="Marquer comme bonne réponse"
+                                  className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
+                                  <span className="text-[9px] leading-none">✓</span>
+                                </button>
+                              ) : (
+                                <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                              )}
+                              <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
+                                className={`flex-1 p-2 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400 ${isQuiz && isCorrect ? 'border-emerald-300' : 'border-indigo-100'}`} />
+                              {q.options.length > 1 && (
+                                <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
+                              )}
+                            </div>
+                          );
+                        })}
                         <button type="button" onClick={() => addOption(q.id)} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-bold mt-1">+ Option</button>
                       </div>
                     )}
                   </div>
                 ))}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
+                <textarea
+                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
+                  placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
+                  rows={2}
+                  value={qClosingMessage}
+                  onChange={e => setQClosingMessage(e.target.value)}
+                />
               </div>
             </div>
           )}
@@ -2681,11 +2774,13 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                const questionsMeta = type === 'questionnaire' ? { questions } : {};
+                const questionsMeta = type === 'questionnaire'
+                  ? { questions, isQuiz, ...(isQuiz ? { seuilReussite } : { seuilReussite: undefined }), description: qDescription.trim() || undefined, closingMessage: qClosingMessage.trim() || undefined }
+                  : {};
                 onSave({ type, title, metadata: { ...metadata, destination, ...questionsMeta }, resourceId: selectedResourceId, fileUrl: (selectedResourceId && selectedResourceId.includes('/')) ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
                 onClose();
               }}
-              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0)}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0) || (type === 'questionnaire' && isQuiz && questions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
               {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
@@ -4998,7 +5093,7 @@ const ClientDetailView = ({
       {activeTab === 'questionnaires' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires du parcours</h3>
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires & Quiz du parcours</h3>
             <span className="text-xs text-gray-400">{clientQuestionnaireResources.length} questionnaire{clientQuestionnaireResources.length > 1 ? 's' : ''} dans le module</span>
           </div>
           {clientQuestionnaireResources.length === 0 ? (
@@ -5012,22 +5107,30 @@ const ClientDetailView = ({
               {clientQuestionnaireResources.map(qResource => {
                 const meta = (() => { try { return typeof qResource.metadata === 'string' ? JSON.parse(qResource.metadata) : (qResource.metadata || {}); } catch { return {}; } })();
                 const questions = meta.questions || [];
+                const isQuizResource = !!meta.isQuiz;
                 const response = clientQuestionnaireResponses.find(r => r.questionnaire_id === qResource.id);
                 return (
                   <div key={qResource.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
                     <div className="p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center text-lg shrink-0">📝</div>
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
-                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''}</p>
+                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
                         </div>
                       </div>
-                      {response ? (
-                        <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
-                      ) : (
-                        <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {response && isQuizResource && response.score_percent != null && (
+                          <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+                            {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
+                          </span>
+                        )}
+                        {response ? (
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
+                        ) : (
+                          <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                        )}
+                      </div>
                     </div>
                     {response && response.responses && (
                       <div className="border-t border-gray-50 p-4 bg-gray-50/50 space-y-3">
@@ -5035,9 +5138,19 @@ const ClientDetailView = ({
                         {questions.map((q, qi) => {
                           const answer = response.responses[q.id];
                           const hasAnswer = answer !== undefined && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
+                          const isQuestionCorrect = isQuizResource && (q.type === 'single' || q.type === 'multiple')
+                            ? (q.type === 'single'
+                                ? answer === q.correctAnswer
+                                : (Array.isArray(q.correctAnswer) && Array.isArray(answer) && q.correctAnswer.length === answer.length && q.correctAnswer.every(o => answer.includes(o))))
+                            : null;
                           return (
                             <div key={q.id} className="space-y-1">
-                              <p className="text-xs font-bold text-gray-700">{qi + 1}. {q.text}</p>
+                              <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                                <span>{qi + 1}. {q.text}</span>
+                                {isQuestionCorrect !== null && (
+                                  <span className={`text-[10px] font-black ${isQuestionCorrect ? 'text-emerald-600' : 'text-red-500'}`}>{isQuestionCorrect ? '✓' : '✗'}</span>
+                                )}
+                              </p>
                               {hasAnswer ? (
                                 <div className="bg-white rounded-lg px-3 py-2 border border-gray-100">
                                   {Array.isArray(answer) ? (
@@ -6984,6 +7097,24 @@ const FormateurView = ({
   const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
+  // AJOUT (2026-09-30) : résultats de quiz des propres clients du formateur — jamais ceux des
+  // autres formateurs (myClientIds ci-dessous est dérivé du même filtre formateur_id === currentUserId
+  // qu'assignedClients juste au-dessus).
+  const [formateurQuizResources, setFormateurQuizResources] = React.useState([]);
+  const [formateurQuizResponses, setFormateurQuizResponses] = React.useState([]);
+  React.useEffect(() => {
+    if (!currentOrgId || !supabase) return;
+    supabase.from('module_step_resources').select('id, titre, metadata, module_id').eq('type', 'questionnaire').eq('organisation_id', currentOrgId)
+      .then(({ data }) => { if (data) setFormateurQuizResources(data); });
+    const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
+    if (myClientIds.length > 0) {
+      supabase.from('questionnaire_responses').select('*').in('client_id', myClientIds)
+        .then(({ data }) => { if (data) setFormateurQuizResponses(data); });
+    } else {
+      setFormateurQuizResponses([]);
+    }
+  }, [currentOrgId, supabase, clients, currentUserId]);
+
   // Documents à signer par le formateur : uniquement ceux qui lui sont explicitement assignés
   // (assigned_formateur_id = ce formateur). Le champ est posé par instantiateDocument quand
   // la destination inclut le formateur (visFormateur=true).
@@ -7462,7 +7593,48 @@ const FormateurView = ({
                         </span>
                       )}
                     </button>
+                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Quiz</button>
                   </div>
+
+                  {formateurClientTab === 'quiz' && (
+                    <div className="space-y-3">
+                      {(() => {
+                        const quizItems = formateurQuizResources
+                          .filter(r => String(r.module_id) === String(client.module_id))
+                          .map(r => {
+                            const meta = (() => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } })();
+                            return { resource: r, meta };
+                          })
+                          .filter(({ meta }) => meta.isQuiz);
+                        if (quizItems.length === 0) {
+                          return (
+                            <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                              <p className="text-2xl mb-2">🎯</p>
+                              <p className="text-gray-400 text-sm">Aucun quiz dans le module de ce client.</p>
+                            </div>
+                          );
+                        }
+                        return quizItems.map(({ resource, meta }) => {
+                          const response = formateurQuizResponses.find(r => r.questionnaire_id === resource.id && r.client_id === client.id);
+                          return (
+                            <div key={resource.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
+                                <p className="text-[10px] text-gray-500">Seuil de réussite : {meta.seuilReussite ?? 50}%</p>
+                              </div>
+                              {response && response.score_percent != null ? (
+                                <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+                                  {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
+                                </span>
+                              ) : (
+                                <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  )}
 
                   {formateurClientTab === 'administratif' && (
                     <div className="space-y-4">
@@ -9840,6 +10012,12 @@ const DocumentsView = ({
   const [qQuestions, setQQuestions] = React.useState([]);
   const [editingQId, setEditingQId] = React.useState(null);
   const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
+  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
+  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
+  const [qIsQuiz, setQIsQuiz] = React.useState(false);
+  const [qSeuilReussite, setQSeuilReussite] = React.useState(50);
+  const [qDescription, setQDescription] = React.useState('');
+  const [qClosingMessage, setQClosingMessage] = React.useState('');
 
   const fetchQTemplates = React.useCallback(async () => {
     if (!currentOrgId) return;
@@ -9861,13 +10039,40 @@ const DocumentsView = ({
   }, [isAdmin, fetchQTemplates]);
 
   const qAddQuestion = () => {
-    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''] }]);
+    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '' }]);
   };
   const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
   const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
+  // format (chaîne pour "unique", tableau pour "multiple").
+  const qSetQuestionType = (id, newType) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
   const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
-  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
+  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
+  // resynchronise ici si l'option qu'il désignait vient d'être renommée.
+  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    const oldVal = q.options[oi];
+    const options = q.options.map((o, i) => i === oi ? val : o);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = val;
+    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? val : o);
+    return { ...q, options, correctAnswer };
+  }));
+  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    const removedVal = q.options[oi];
+    const options = q.options.filter((_, i) => i !== oi);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
+    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
+    return { ...q, options, correctAnswer };
+  }));
+  const qToggleCorrectOption = (qId, opt) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    if (q.type === 'single') return { ...q, correctAnswer: opt };
+    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
+  }));
 
   const handleSaveQTemplate = async () => {
     if (!qName.trim() || qQuestions.length === 0) return;
@@ -9879,7 +10084,14 @@ const DocumentsView = ({
       const payload = {
         titre: qName.trim(),
         type: 'questionnaire',
-        metadata: JSON.stringify({ ...existingMeta, questions: qQuestions }),
+        metadata: JSON.stringify({
+          ...existingMeta,
+          questions: qQuestions,
+          isQuiz: qIsQuiz,
+          seuilReussite: qIsQuiz ? qSeuilReussite : undefined,
+          description: qDescription.trim() || undefined,
+          closingMessage: qClosingMessage.trim() || undefined,
+        }),
         module_id: null,
         organisation_id: currentOrgId,
       };
@@ -9892,6 +10104,7 @@ const DocumentsView = ({
       }
       toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
       setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+      setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
       await fetchQTemplates();
     } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
   };
@@ -9900,6 +10113,10 @@ const DocumentsView = ({
     const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
     setQName(q.titre || '');
     setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
+    setQIsQuiz(!!meta.isQuiz);
+    setQSeuilReussite(meta.seuilReussite ?? 50);
+    setQDescription(meta.description || '');
+    setQClosingMessage(meta.closingMessage || '');
     setEditingQId(q.id);
     setShowQBuilder(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -10168,12 +10385,12 @@ const DocumentsView = ({
             initialData={editingTemplate}
           />
 
-          {/* ── Section Questionnaires ── */}
+          {/* ── Section Questionnaires & Quiz ── */}
           <div className="mb-8 p-5 bg-violet-50 rounded-2xl border border-violet-100">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires</h3>
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires & Quiz</h3>
               <button
-                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); } }}
+                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
                 className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
               >
                 <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
@@ -10188,6 +10405,36 @@ const DocumentsView = ({
                     value={qName} onChange={e => setQName(e.target.value)}
                     className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
                 </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
+                  <textarea
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
+                    placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
+                    rows={2}
+                    value={qDescription} onChange={e => setQDescription(e.target.value)} />
+                </div>
+
+                <div className="flex items-center justify-between bg-violet-100/60 border border-violet-200 rounded-2xl p-3">
+                  <div>
+                    <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
+                    <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
+                  </div>
+                  <button type="button" onClick={() => setQIsQuiz(v => !v)}
+                    className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${qIsQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
+                    <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${qIsQuiz ? 'left-6' : 'left-1'}`}></span>
+                  </button>
+                </div>
+
+                {qIsQuiz && (
+                  <div>
+                    <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
+                    <input type="number" min="0" max="100" value={qSeuilReussite}
+                      onChange={e => setQSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                      className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                  </div>
+                )}
+
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
@@ -10208,21 +10455,33 @@ const DocumentsView = ({
                         <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
                           className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
                         <div className="flex gap-1.5">
-                          {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
-                            <button key={val} type="button" onClick={() => qUpdateQuestion(q.id, 'type', val)}
+                          {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
+                            <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
                               className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                           ))}
                         </div>
                         {(q.type === 'single' || q.type === 'multiple') && (
                           <div className="space-y-1">
-                            {q.options.map((opt, oi) => (
-                              <div key={oi} className="flex items-center gap-2">
-                                <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                                <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
-                                  className="flex-1 p-1.5 bg-white border border-violet-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400" />
-                                {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
-                              </div>
-                            ))}
+                            {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                            {q.options.map((opt, oi) => {
+                              const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
+                              return (
+                                <div key={oi} className="flex items-center gap-2">
+                                  {qIsQuiz ? (
+                                    <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
+                                      title="Marquer comme bonne réponse"
+                                      className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
+                                      <span className="text-[9px] leading-none">✓</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                                  )}
+                                  <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
+                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qIsQuiz && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
+                                  {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                                </div>
+                              );
+                            })}
                             <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
                           </div>
                         )}
@@ -10230,7 +10489,17 @@ const DocumentsView = ({
                     ))}
                   </div>
                 </div>
-                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0}
+
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
+                  <textarea
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
+                    placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
+                    rows={2}
+                    value={qClosingMessage} onChange={e => setQClosingMessage(e.target.value)} />
+                </div>
+
+                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuestions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
                   className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
                   {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
                 </button>
@@ -10248,10 +10517,10 @@ const DocumentsView = ({
                         <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <span className="text-xl">📝</span>
+                              <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
                               <div>
                                 <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
-                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''}</p>
+                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
                               </div>
                             </div>
                             <div className="flex gap-1">
@@ -12304,8 +12573,13 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
     catch { return {}; }
   }, [questionnaire]);
   const questions = meta.questions || [];
+  const isQuiz = !!meta.isQuiz;
   const [answers, setAnswers] = React.useState({});
   const [submitting, setSubmitting] = React.useState(false);
+  // AJOUT (2026-09-30) : résultat affiché après soumission — note/statut pour un quiz noté (calculée
+  // ici même, tout ou rien par question, avant l'enregistrement), ou simple écran de remerciement si
+  // un message de fin a été configuré (questionnaire classique ou quiz).
+  const [result, setResult] = React.useState(null); // null | 'done' | { scorePercent, passed, correctCount, total }
 
   const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
   const toggleMultiple = (qId, option) => {
@@ -12322,11 +12596,66 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
     return true;
   });
 
+  const computeQuizScore = () => {
+    if (!isQuiz || questions.length === 0) return null;
+    let correctCount = 0;
+    questions.forEach(q => {
+      const answer = answers[q.id];
+      if (q.type === 'single') {
+        if (answer !== undefined && answer === q.correctAnswer) correctCount++;
+      } else if (q.type === 'multiple') {
+        const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+        const given = Array.isArray(answer) ? answer : [];
+        if (correct.length > 0 && correct.length === given.length && correct.every(o => given.includes(o))) correctCount++;
+      }
+    });
+    const scorePercent = Math.round((correctCount / questions.length) * 100);
+    const passed = scorePercent >= (meta.seuilReussite ?? 50);
+    return { scorePercent, passed, correctCount, total: questions.length };
+  };
+
   const handleSubmit = async () => {
     setSubmitting(true);
-    await onSubmit(answers);
-    setSubmitting(false);
+    const scoreInfo = computeQuizScore();
+    try {
+      await onSubmit(answers, scoreInfo);
+      if (isQuiz && scoreInfo) setResult(scoreInfo);
+      else if (meta.closingMessage) setResult('done');
+      else onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  if (result) {
+    const isQuizResult = isQuiz && result !== 'done';
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+        <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden">
+          <div className={`p-8 text-white text-center ${isQuizResult ? (result.passed ? 'bg-emerald-600' : 'bg-red-500') : 'bg-violet-600'}`}>
+            {isQuizResult ? (
+              <>
+                <p className="text-5xl mb-2">{result.passed ? '✅' : '❌'}</p>
+                <h2 className="text-2xl font-black">{result.passed ? 'Acquis' : 'Non acquis'}</h2>
+                <p className="text-white/80 text-sm mt-1">{result.correctCount}/{result.total} bonnes réponses · {result.scorePercent}%</p>
+              </>
+            ) : (
+              <>
+                <p className="text-5xl mb-2">🎉</p>
+                <h2 className="text-2xl font-black">Merci !</h2>
+              </>
+            )}
+          </div>
+          {meta.closingMessage && (
+            <div className="p-6 text-center text-gray-700 text-sm whitespace-pre-wrap">{meta.closingMessage}</div>
+          )}
+          <div className="p-6 pt-0">
+            <button onClick={onClose} className="w-full bg-gray-900 hover:bg-black text-white font-black py-3.5 rounded-2xl transition-all">Fermer</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
@@ -12336,6 +12665,9 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
           <h2 className="text-xl font-black flex items-center gap-2">📝 {questionnaire.titre}</h2>
           <p className="text-violet-200 text-sm mt-1">{questions.length} question{questions.length > 1 ? 's' : ''} à compléter</p>
           <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
+          {meta.description && (
+            <p className="text-violet-100 text-xs mt-3 bg-white/10 rounded-xl p-3 whitespace-pre-wrap">{meta.description}</p>
+          )}
         </div>
         {/* Questions */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
@@ -13443,21 +13775,29 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                 {groupQuestItems.map(q => {
                   const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
                   const nbQ = (qMeta.questions || []).length;
-                  const isQCompleted = questionnaireResponses.some(r => r.questionnaire_id === q.id);
+                  const isQuizItem = !!qMeta.isQuiz;
+                  const qResponse = questionnaireResponses.find(r => r.questionnaire_id === q.id);
+                  const isQCompleted = !!qResponse;
                   return (
                     <div key={q.id} className="px-4 py-3 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-base shrink-0">📝</span>
+                        <span className="text-base shrink-0">{isQuizItem ? '🎯' : '📝'}</span>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{q.titre}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · Questionnaire</p>
+                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {isQuizItem ? 'Quiz noté' : 'Questionnaire'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {isQCompleted ? (
-                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Complété</span>
+                          isQuizItem && qResponse.score_percent != null ? (
+                            <span className={`text-xs font-bold px-2 py-1 rounded border ${qResponse.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+                              {qResponse.passed ? '✅' : '❌'} {Math.round(qResponse.score_percent)}%
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Complété</span>
+                          )
                         ) : (
-                          <button onClick={() => setActiveQuestionnaire(q)} className="px-3 py-1.5 bg-amber-500 text-white font-bold rounded-lg text-xs hover:bg-amber-600 transition-colors shadow-sm">Remplir</button>
+                          <button onClick={() => setActiveQuestionnaire(q)} className="px-3 py-1.5 bg-amber-500 text-white font-bold rounded-lg text-xs hover:bg-amber-600 transition-colors shadow-sm">{isQuizItem ? 'Passer le quiz' : 'Remplir'}</button>
                         )}
                       </div>
                     </div>
@@ -13475,21 +13815,29 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const renderQuestionnaireCard = (resource) => {
     const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
     const nbQuestions = (meta.questions || []).length;
-    const isCompleted = questionnaireResponses.some(r => r.questionnaire_id === resource.id);
+    const isQuizResource = !!meta.isQuiz;
+    const response = questionnaireResponses.find(r => r.questionnaire_id === resource.id);
+    const isCompleted = !!response;
     return (
       <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-amber-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-amber-50 text-amber-600 flex items-center justify-center rounded-xl shrink-0 text-xl">📝</div>
+          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 text-xl ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {isCompleted ? (
-            <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété</span>
+            isQuizResource && response.score_percent != null ? (
+              <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+                {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
+              </span>
+            ) : (
+              <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété</span>
+            )
           ) : (
-            <button onClick={() => setActiveQuestionnaire(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Remplir</button>
+            <button onClick={() => setActiveQuestionnaire(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">{isQuizResource ? 'Passer le quiz' : 'Remplir'}</button>
           )}
         </div>
       </div>
@@ -13617,18 +13965,22 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <QuestionnaireFillerModal
           questionnaire={activeQuestionnaire}
           onClose={() => setActiveQuestionnaire(null)}
-          onSubmit={async (answers) => {
+          onSubmit={async (answers, scoreInfo) => {
             const { error } = await supabase.from('questionnaire_responses').insert([{
               questionnaire_id: activeQuestionnaire.id,
               client_id: currentUserId,
               responses: answers,
-              completed_at: new Date().toISOString()
+              completed_at: new Date().toISOString(),
+              // AJOUT (2026-09-30) : note du quiz (absent pour un questionnaire classique) — voir
+              // QuestionnaireFillerModal.computeQuizScore.
+              ...(scoreInfo ? { score_percent: scoreInfo.scorePercent, passed: scoreInfo.passed } : {})
             }]);
-            if (error) { toast.error('Erreur lors de l\'envoi : ' + error.message); return; }
+            if (error) { toast.error('Erreur lors de l\'envoi : ' + error.message); throw error; }
             const { data } = await supabase.from('questionnaire_responses').select('*').eq('client_id', currentUserId);
             if (data) setQuestionnaireResponses(data);
-            setActiveQuestionnaire(null);
-            toast.success('✅ Questionnaire envoyé !');
+            toast.success(scoreInfo ? '✅ Quiz envoyé !' : '✅ Questionnaire envoyé !');
+            // NB : la fermeture de la modale est gérée par QuestionnaireFillerModal lui-même (affiche
+            // d'abord un écran de résultat/remerciement si besoin, avant d'appeler onClose()).
           }}
         />
       )}
