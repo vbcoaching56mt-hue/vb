@@ -9741,6 +9741,973 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AJOUT (2026-10-01) : onglet admin "Questionnaires & Quiz" (demande utilisateur, besoin Qualiopi).
+// La création / modification / rattachement aux groupes des questionnaires et quiz est DÉPLACÉE
+// ici depuis la page Documents (même code qu'avant, voir DocumentsView), et chaque questionnaire
+// ou quiz ouvre désormais une page de STATISTIQUES (QuestionnaireStatsPanel) calculée à partir
+// de la table questionnaire_responses : nombre de réponses, répartition des réponses question par
+// question, réponses libres (verbatims), note moyenne et taux de réussite pour les quiz — avec
+// filtres période / formateur / module et export PDF (preuve pour l'audit Qualiopi).
+// Réservé à l'administrateur (voir ROLE_TABS et le menu latéral).
+// ═══════════════════════════════════════════════════════════════════════════
+const parseQMeta = (q) => {
+  try { return typeof q?.metadata === 'string' ? JSON.parse(q.metadata) : (q?.metadata || {}); }
+  catch { return {}; }
+};
+const parseQAnswers = (r) => {
+  try { return typeof r?.responses === 'string' ? JSON.parse(r.responses) : (r?.responses || {}); }
+  catch { return {}; }
+};
+// Date LOCALE au format AAAA-MM-JJ (comparaisons de filtres) et JJ/MM/AAAA (affichage).
+const qLocalDay = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value).slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const qFrDate = (value) => {
+  const day = qLocalDay(value);
+  if (!day) return '—';
+  const [y, m, d] = day.split('-');
+  return `${d}/${m}/${y}`;
+};
+// Une réponse "unique" ou "multiple" est-elle correcte ? (même règle que QuestionnaireFillerModal :
+// tout ou rien par question)
+const qIsAnswerCorrect = (q, answer) => {
+  if (q.type === 'single') return answer !== undefined && answer !== null && answer !== '' && answer === q.correctAnswer;
+  if (q.type === 'multiple') {
+    const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    const given = Array.isArray(answer) ? answer : [];
+    return correct.length > 0 && correct.length === given.length && correct.every(o => given.includes(o));
+  }
+  return false;
+};
+// Note d'une réponse de quiz : on reprend la note enregistrée au moment du passage (score_percent /
+// passed, enregistrés depuis le 2026-09-30) ; à défaut (anciennes réponses), on la recalcule.
+const qQuizResult = (response, questions, seuil) => {
+  if (typeof response.score_percent === 'number') {
+    return { score: response.score_percent, passed: typeof response.passed === 'boolean' ? response.passed : response.score_percent >= seuil };
+  }
+  const gradable = questions.filter(q => q.type === 'single' || q.type === 'multiple');
+  if (questions.length === 0) return { score: null, passed: null };
+  const answers = parseQAnswers(response);
+  const correctCount = gradable.filter(q => qIsAnswerCorrect(q, answers[q.id])).length;
+  const score = Math.round((correctCount / questions.length) * 100);
+  return { score, passed: score >= seuil };
+};
+
+// Calcule toutes les statistiques d'un questionnaire pour une liste de réponses déjà filtrées.
+const computeQuestionnaireStats = (questionnaire, responses) => {
+  const meta = parseQMeta(questionnaire);
+  const questions = meta.questions || [];
+  const isQuiz = !!meta.isQuiz;
+  const seuil = meta.seuilReussite ?? 50;
+  const parsed = responses.map(r => ({ ...r, _answers: parseQAnswers(r), _quiz: isQuiz ? qQuizResult(r, questions, seuil) : null }));
+
+  const questionStats = questions.map((q, qi) => {
+    const answered = parsed.filter(r => {
+      const a = r._answers[q.id];
+      if (q.type === 'text') return typeof a === 'string' && a.trim().length > 0;
+      if (q.type === 'multiple') return Array.isArray(a) && a.length > 0;
+      return a !== undefined && a !== null && a !== '';
+    });
+    const base = { index: qi + 1, question: q, answeredCount: answered.length };
+    if (q.type === 'text') {
+      return { ...base, texts: answered.map(r => ({ text: String(r._answers[q.id]).trim(), clientId: r.client_id, date: r.completed_at || r.created_at })) };
+    }
+    const counts = new Map();
+    (q.options || []).filter(o => o !== '').forEach(o => counts.set(o, 0));
+    answered.forEach(r => {
+      const a = r._answers[q.id];
+      (Array.isArray(a) ? a : [a]).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
+    });
+    const correctSet = new Set(q.type === 'multiple' ? (Array.isArray(q.correctAnswer) ? q.correctAnswer : []) : (q.correctAnswer ? [q.correctAnswer] : []));
+    const options = Array.from(counts.entries()).map(([label, count]) => ({
+      label,
+      count,
+      percent: answered.length > 0 ? Math.round((count / answered.length) * 100) : 0,
+      isCorrect: isQuiz && correctSet.has(label),
+      isLegacy: !(q.options || []).includes(label), // option supprimée/renommée depuis
+    }));
+    const correctCount = isQuiz ? answered.filter(r => qIsAnswerCorrect(q, r._answers[q.id])).length : null;
+    return {
+      ...base,
+      options,
+      correctPercent: isQuiz && answered.length > 0 ? Math.round((correctCount / answered.length) * 100) : null,
+    };
+  });
+
+  const days = parsed.map(r => qLocalDay(r.completed_at || r.created_at)).filter(Boolean).sort();
+  const quizScores = parsed.map(r => r._quiz).filter(x => x && typeof x.score === 'number');
+  const passedCount = quizScores.filter(x => x.passed).length;
+  return {
+    meta, questions, isQuiz, seuil, parsed, questionStats,
+    total: parsed.length,
+    distinctClients: new Set(parsed.map(r => String(r.client_id))).size,
+    firstDay: days[0] || null,
+    lastDay: days[days.length - 1] || null,
+    avgScore: quizScores.length > 0 ? Math.round(quizScores.reduce((s, x) => s + x.score, 0) / quizScores.length) : null,
+    minScore: quizScores.length > 0 ? Math.min(...quizScores.map(x => x.score)) : null,
+    maxScore: quizScores.length > 0 ? Math.max(...quizScores.map(x => x.score)) : null,
+    passedCount,
+    failedCount: quizScores.length - passedCount,
+    passRate: quizScores.length > 0 ? Math.round((passedCount / quizScores.length) * 100) : null,
+  };
+};
+
+// Export PDF "natif" (jsPDF, texte vectoriel) — volontairement sans capture d'écran html2canvas :
+// rendu net, texte sélectionnable, et aucune dépendance aux couleurs CSS de Tailwind.
+// NB : polices standard PDF → pas d'émojis ni de caractères hors Latin-1 dans les libellés fixes.
+const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, formateurOfClient, moduleOfClient, orgName }) => {
+  const pdf = new jsPDF('p', 'mm', 'a4');
+  const W = 210, H = 297, M = 15, CW = W - 2 * M;
+  const VIOLET = [109, 40, 217], GREEN = [5, 150, 105], RED = [220, 38, 38], DARK = [31, 41, 55], GREY = [107, 114, 128], LIGHT = [237, 233, 254];
+  let y = M;
+  const clean = (s) => String(s ?? '')
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u0153/g, 'oe').replace(/\u0152/g, 'OE').replace(/\u2026/g, '...').replace(/\u202F/g, ' ')
+    .replace(/[^\x20-\xFF\n]/g, '');
+  const ensure = (h) => { if (y + h > H - M - 8) { pdf.addPage(); y = M; } };
+  const write = (str, { size = 10, bold = false, color = DARK, indent = 0, width = CW - indent, gap = 0 } = {}) => {
+    pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+    pdf.setFontSize(size);
+    pdf.setTextColor(...color);
+    const lineH = size * 0.45;
+    pdf.splitTextToSize(clean(str), width).forEach(line => {
+      ensure(lineH);
+      pdf.text(line, M + indent, y + lineH * 0.75);
+      y += lineH;
+    });
+    y += gap;
+  };
+
+  // En-tête
+  write(orgName ? `${orgName} - Statistiques questionnaire` : 'Statistiques questionnaire', { size: 9, color: GREY, gap: 1 });
+  write(titre, { size: 16, bold: true, color: VIOLET, gap: 1 });
+  write(`${stats.isQuiz ? `Quiz noté (seuil de réussite : ${stats.seuil} %)` : 'Questionnaire'} - ${stats.questions.length} question(s)`, { size: 9, color: GREY });
+  write(`Filtres : ${filtersLabel}`, { size: 9, color: GREY });
+  write(`Édité le ${qFrDate(new Date())}`, { size: 9, color: GREY, gap: 4 });
+
+  // Indicateurs clés
+  const kpis = [
+    ['Réponses', String(stats.total)],
+    ['Bénéficiaires', String(stats.distinctClients)],
+    ['Période des réponses', stats.firstDay ? `${qFrDate(stats.firstDay)} au ${qFrDate(stats.lastDay)}` : '-'],
+  ];
+  if (stats.isQuiz) {
+    kpis.push(['Note moyenne', stats.avgScore != null ? `${stats.avgScore} %` : '-']);
+    kpis.push(['Taux de réussite', stats.passRate != null ? `${stats.passRate} % (${stats.passedCount} acquis / ${stats.failedCount} non acquis)` : '-']);
+    kpis.push(['Note min / max', stats.minScore != null ? `${stats.minScore} % / ${stats.maxScore} %` : '-']);
+  }
+  ensure(8 + kpis.length * 6);
+  pdf.setFillColor(...LIGHT);
+  pdf.roundedRect(M, y, CW, 4 + kpis.length * 6, 2, 2, 'F');
+  y += 2;
+  kpis.forEach(([label, value]) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...GREY);
+    pdf.text(clean(label), M + 4, y + 4);
+    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...DARK);
+    pdf.text(clean(value), M + 60, y + 4);
+    y += 6;
+  });
+  y += 6;
+
+  // Détail question par question
+  write('Détail par question', { size: 12, bold: true, color: VIOLET, gap: 2 });
+  stats.questionStats.forEach(qs => {
+    ensure(18);
+    pdf.setDrawColor(229, 231, 235);
+    pdf.line(M, y, M + CW, y);
+    y += 3;
+    write(`Q${qs.index}. ${qs.question.text || '(question sans titre)'}`, { size: 10.5, bold: true, gap: 0.5 });
+    const typeLabel = qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples (plusieurs réponses possibles)' : 'Choix unique';
+    write(`${typeLabel} - ${qs.answeredCount} réponse(s)${qs.correctPercent != null ? ` - ${qs.correctPercent} % de bonnes réponses` : ''}`, { size: 8.5, color: GREY, gap: 2 });
+
+    if (qs.question.type === 'text') {
+      if (qs.texts.length === 0) write('Aucune réponse.', { size: 9, color: GREY, indent: 3, gap: 2 });
+      qs.texts.forEach(t => {
+        write(`"${t.text}"`, { size: 9, indent: 3 });
+        write(`- ${clientName(t.clientId)}, le ${qFrDate(t.date)}`, { size: 8, color: GREY, indent: 3, gap: 1.5 });
+      });
+      y += 2;
+      return;
+    }
+    const labelW = 88, barX = M + 3 + labelW + 2, barW = 52;
+    qs.options.forEach(o => {
+      pdf.setFont('helvetica', o.isCorrect ? 'bold' : 'normal'); pdf.setFontSize(9);
+      const lines = pdf.splitTextToSize(clean(o.label + (o.isCorrect ? '  (bonne réponse)' : '') + (o.isLegacy ? '  (option retirée)' : '')), labelW);
+      const rowH = Math.max(lines.length * 4.1, 5);
+      ensure(rowH + 1);
+      pdf.setTextColor(...(o.isCorrect ? GREEN : DARK));
+      lines.forEach((line, li) => pdf.text(line, M + 3, y + 3.4 + li * 4.1));
+      pdf.setFillColor(243, 244, 246);
+      pdf.roundedRect(barX, y + 0.8, barW, 3.4, 1, 1, 'F');
+      if (o.percent > 0) {
+        pdf.setFillColor(...(o.isCorrect ? GREEN : VIOLET));
+        pdf.roundedRect(barX, y + 0.8, Math.max(1.5, (barW * o.percent) / 100), 3.4, 1, 1, 'F');
+      }
+      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...DARK);
+      pdf.text(`${o.percent} %`, barX + barW + 3, y + 3.4);
+      pdf.setFont('helvetica', 'normal'); pdf.setTextColor(...GREY);
+      pdf.text(`(${o.count})`, barX + barW + 15, y + 3.4);
+      y += rowH + 1;
+    });
+    y += 3;
+  });
+
+  // Liste des répondants
+  y += 2;
+  write('Liste des réponses', { size: 12, bold: true, color: VIOLET, gap: 2 });
+  const cols = stats.isQuiz
+    ? [['Bénéficiaire', 44], ['Formateur', 36], ['Module', 44], ['Date', 22], ['Résultat', 34]]
+    : [['Bénéficiaire', 52], ['Formateur', 44], ['Module', 58], ['Date', 26]];
+  const header = () => {
+    ensure(7);
+    pdf.setFillColor(...LIGHT);
+    pdf.rect(M, y, CW, 6, 'F');
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(...VIOLET);
+    let x = M + 2;
+    cols.forEach(([label, w]) => { pdf.text(label, x, y + 4.2); x += w; });
+    y += 7;
+  };
+  header();
+  if (stats.parsed.length === 0) write('Aucune réponse pour ces filtres.', { size: 9, color: GREY });
+  [...stats.parsed]
+    .sort((a, b) => String(b.completed_at || b.created_at || '').localeCompare(String(a.completed_at || a.created_at || '')))
+    .forEach(r => {
+      if (y + 6 > H - M - 8) { pdf.addPage(); y = M; header(); }
+      const values = [clientName(r.client_id), formateurOfClient(r.client_id), moduleOfClient(r.client_id), qFrDate(r.completed_at || r.created_at)];
+      if (stats.isQuiz) values.push(r._quiz && r._quiz.score != null ? `${r._quiz.score} % - ${r._quiz.passed ? 'Acquis' : 'Non acquis'}` : '-');
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5);
+      let x = M + 2;
+      cols.forEach(([, w], ci) => {
+        const isResult = stats.isQuiz && ci === cols.length - 1 && r._quiz && r._quiz.score != null;
+        pdf.setTextColor(...(isResult ? (r._quiz.passed ? GREEN : RED) : DARK));
+        pdf.text(pdf.splitTextToSize(clean(values[ci]), w - 3)[0] || '', x, y + 3.8);
+        x += w;
+      });
+      pdf.setDrawColor(243, 244, 246);
+      pdf.line(M, y + 5.5, M + CW, y + 5.5);
+      y += 6;
+    });
+
+  // Pied de page : numérotation
+  const pages = pdf.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    pdf.setPage(p);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...GREY);
+    pdf.text(clean(`${titre} - page ${p}/${pages}`), W / 2, H - 8, { align: 'center' });
+  }
+  const safeName = clean(titre).replace(/[\\/:*?"<>|]/g, '-').trim() || 'questionnaire';
+  pdf.save(`Statistiques - ${safeName}.pdf`);
+};
+
+const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit }) => {
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+  const [formateurFilter, setFormateurFilter] = React.useState('');
+  const [moduleFilter, setModuleFilter] = React.useState('');
+  const [expandedTexts, setExpandedTexts] = React.useState({});
+
+  const clientById = React.useMemo(() => {
+    const m = new Map();
+    (clients || []).forEach(c => m.set(String(c.id), c));
+    return m;
+  }, [clients]);
+  const formateurNameById = (id) => (formateurs || []).find(f => String(f.id) === String(id))?.nom || '—';
+  const moduleNameById = (id) => (modules || []).find(m => String(m.id) === String(id))?.nom || '—';
+  const clientName = (clientId) => clientById.get(String(clientId))?.nom || 'Bénéficiaire supprimé';
+  const formateurOfClient = (clientId) => { const c = clientById.get(String(clientId)); return c?.formateur_id ? formateurNameById(c.formateur_id) : '—'; };
+  const moduleOfClient = (clientId) => { const c = clientById.get(String(clientId)); return c?.module_id ? moduleNameById(c.module_id) : '—'; };
+
+  const allForQ = React.useMemo(
+    () => (responses || []).filter(r => String(r.questionnaire_id) === String(questionnaire.id)),
+    [responses, questionnaire.id]
+  );
+  const filtered = React.useMemo(() => allForQ.filter(r => {
+    const c = clientById.get(String(r.client_id));
+    const day = qLocalDay(r.completed_at || r.created_at);
+    if (dateFrom && (!day || day < dateFrom)) return false;
+    if (dateTo && (!day || day > dateTo)) return false;
+    if (formateurFilter && String(c?.formateur_id ?? '') !== formateurFilter) return false;
+    if (moduleFilter && String(c?.module_id ?? '') !== moduleFilter) return false;
+    return true;
+  }), [allForQ, clientById, dateFrom, dateTo, formateurFilter, moduleFilter]);
+  const stats = React.useMemo(() => computeQuestionnaireStats(questionnaire, filtered), [questionnaire, filtered]);
+
+  // Ne proposer dans les filtres que les formateurs / modules réellement concernés par des réponses
+  const formateurOptions = React.useMemo(() => {
+    const ids = new Set(allForQ.map(r => clientById.get(String(r.client_id))?.formateur_id).filter(Boolean).map(String));
+    return (formateurs || []).filter(f => ids.has(String(f.id)));
+  }, [allForQ, clientById, formateurs]);
+  const moduleOptions = React.useMemo(() => {
+    const ids = new Set(allForQ.map(r => clientById.get(String(r.client_id))?.module_id).filter(Boolean).map(String));
+    return (modules || []).filter(m => ids.has(String(m.id)));
+  }, [allForQ, clientById, modules]);
+
+  const hasFilters = !!(dateFrom || dateTo || formateurFilter || moduleFilter);
+  const filtersLabel = [
+    dateFrom || dateTo ? `période ${dateFrom ? 'du ' + qFrDate(dateFrom) : ''}${dateTo ? ' au ' + qFrDate(dateTo) : ''}`.trim() : null,
+    formateurFilter ? `formateur : ${formateurNameById(formateurFilter)}` : null,
+    moduleFilter ? `module : ${moduleNameById(moduleFilter)}` : null,
+  ].filter(Boolean).join(' · ') || 'aucun (toutes les réponses)';
+
+  const handleExport = () => {
+    try {
+      exportQuestionnaireStatsPdf({ titre: questionnaire.titre, stats, filtersLabel: filtersLabel.replace(/·/g, '-'), clientName, formateurOfClient, moduleOfClient, orgName });
+    } catch (e) {
+      console.error('[QuestionnaireStatsPanel] export PDF :', e);
+      toast.error('Erreur export PDF : ' + e.message);
+    }
+  };
+
+  const Kpi = ({ label, value, sub, tone = 'violet' }) => (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>
+      <p className={`text-2xl font-black mt-1 ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-500' : 'text-violet-700'}`}>{value}</p>
+      {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <button onClick={onBack} className="text-sm text-gray-500 hover:text-violet-700 font-bold flex items-center gap-1 mb-2">
+            <ChevronLeft size={16} /> Retour aux questionnaires
+          </button>
+          <h2 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
+            <span>{stats.isQuiz ? '🎯' : '📝'}</span> {questionnaire.titre}
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            {stats.isQuiz ? `Quiz noté · seuil de réussite ${stats.seuil} %` : 'Questionnaire'} · {stats.questions.length} question{stats.questions.length > 1 ? 's' : ''}
+            {questionnaire.module_id ? ` · intégré au module « ${moduleNameById(questionnaire.module_id)} »` : ''}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {onEdit && (
+            <button onClick={onEdit} className="px-4 py-2 rounded-xl border border-violet-200 bg-white text-violet-700 text-sm font-bold hover:bg-violet-50">✏️ Modifier</button>
+          )}
+          <button onClick={handleExport} disabled={loadingResponses}
+            className="px-4 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold hover:bg-violet-800 shadow-sm flex items-center gap-2 disabled:opacity-50">
+            <Download size={15} /> Exporter en PDF
+          </button>
+        </div>
+      </div>
+
+      {/* Filtres */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+        <div>
+          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Du</label>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Au</label>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Formateur</label>
+          <select value={formateurFilter} onChange={e => setFormateurFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
+            <option value="">Tous</option>
+            {formateurOptions.map(f => <option key={f.id} value={String(f.id)}>{f.nom}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Module</label>
+          <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
+            <option value="">Tous</option>
+            {moduleOptions.map(m => <option key={m.id} value={String(m.id)}>{m.nom}</option>)}
+          </select>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => { const y = new Date().getFullYear(); setDateFrom(`${y}-01-01`); setDateTo(`${y}-12-31`); }}
+            className="flex-1 p-2 rounded-xl bg-violet-50 text-violet-700 text-xs font-bold hover:bg-violet-100">Année en cours</button>
+          {hasFilters && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); setFormateurFilter(''); setModuleFilter(''); }}
+              className="p-2 rounded-xl bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200">Effacer</button>
+          )}
+        </div>
+      </div>
+
+      {loadingResponses ? (
+        <div className="py-16 text-center text-gray-400 text-sm">Chargement des réponses…</div>
+      ) : (
+        <>
+          {/* Indicateurs clés */}
+          <div className={`grid grid-cols-2 ${stats.isQuiz ? 'lg:grid-cols-5' : 'lg:grid-cols-3'} gap-3`}>
+            <Kpi label="Réponses" value={stats.total} sub={hasFilters ? `sur ${allForQ.length} au total` : null} />
+            <Kpi label="Bénéficiaires" value={stats.distinctClients} />
+            <Kpi label="Période" value={stats.firstDay ? qFrDate(stats.lastDay) : '—'} sub={stats.firstDay ? `1re réponse le ${qFrDate(stats.firstDay)}` : 'aucune réponse'} />
+            {stats.isQuiz && <Kpi label="Note moyenne" value={stats.avgScore != null ? `${stats.avgScore} %` : '—'} sub={stats.minScore != null ? `min ${stats.minScore} % · max ${stats.maxScore} %` : null} />}
+            {stats.isQuiz && <Kpi label="Taux de réussite" value={stats.passRate != null ? `${stats.passRate} %` : '—'} tone={stats.passRate == null ? 'violet' : stats.passRate >= 50 ? 'green' : 'red'} sub={`${stats.passedCount} acquis · ${stats.failedCount} non acquis`} />}
+          </div>
+
+          {stats.total === 0 ? (
+            <div className="py-12 text-center bg-white rounded-2xl border border-dashed border-gray-200">
+              <p className="text-3xl mb-2">📭</p>
+              <p className="text-gray-500 text-sm font-bold">Aucune réponse {hasFilters ? 'pour ces filtres' : 'pour le moment'}.</p>
+            </div>
+          ) : (
+            <>
+              {/* Détail par question */}
+              <div className="space-y-4">
+                {stats.questionStats.map(qs => (
+                  <div key={qs.question.id || qs.index} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                      <div>
+                        <p className="text-[10px] font-black text-violet-600 uppercase tracking-widest">Question {qs.index}</p>
+                        <p className="font-bold text-gray-900">{qs.question.text || '(question sans titre)'}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          {qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples — plusieurs réponses possibles' : 'Choix unique'} · {qs.answeredCount} réponse{qs.answeredCount > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      {qs.correctPercent != null && (
+                        <span className={`text-xs font-black px-3 py-1 rounded-full ${qs.correctPercent >= 50 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                          {qs.correctPercent} % de bonnes réponses
+                        </span>
+                      )}
+                    </div>
+
+                    {qs.question.type === 'text' ? (
+                      qs.texts.length === 0 ? <p className="text-sm text-gray-400 italic">Aucune réponse.</p> : (
+                        <div className="space-y-2">
+                          {(expandedTexts[qs.index] ? qs.texts : qs.texts.slice(0, 5)).map((t, i) => (
+                            <div key={i} className="bg-gray-50 rounded-xl p-3">
+                              <p className="text-sm text-gray-800 whitespace-pre-wrap">« {t.text} »</p>
+                              <p className="text-[10px] text-gray-400 mt-1">{clientName(t.clientId)} · {qFrDate(t.date)}</p>
+                            </div>
+                          ))}
+                          {qs.texts.length > 5 && (
+                            <button onClick={() => setExpandedTexts(prev => ({ ...prev, [qs.index]: !prev[qs.index] }))} className="text-xs font-bold text-violet-600 hover:underline">
+                              {expandedTexts[qs.index] ? 'Réduire' : `Voir les ${qs.texts.length} réponses`}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      <div className="space-y-2">
+                        {qs.options.map(o => (
+                          <div key={o.label} className="grid grid-cols-12 items-center gap-3">
+                            <p className={`col-span-12 sm:col-span-5 text-sm ${o.isCorrect ? 'font-bold text-emerald-700' : 'text-gray-700'}`}>
+                              {o.isCorrect && '✓ '}{o.label}{o.isLegacy && <span className="text-[10px] text-gray-400 ml-1">(option retirée)</span>}
+                            </p>
+                            <div className="col-span-9 sm:col-span-5 h-3 bg-gray-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full ${o.isCorrect ? 'bg-emerald-500' : 'bg-violet-500'}`} style={{ width: `${o.percent}%` }} />
+                            </div>
+                            <p className="col-span-3 sm:col-span-2 text-sm text-right">
+                              <span className="font-black text-gray-900">{o.percent} %</span> <span className="text-gray-400 text-xs">({o.count})</span>
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Liste des réponses */}
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-gray-100">
+                  <h3 className="font-bold text-gray-900">Liste des réponses ({stats.total})</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-[10px] uppercase tracking-widest text-gray-400">
+                      <tr>
+                        <th className="text-left px-4 py-2">Bénéficiaire</th>
+                        <th className="text-left px-4 py-2">Formateur</th>
+                        <th className="text-left px-4 py-2">Module</th>
+                        <th className="text-left px-4 py-2">Date</th>
+                        {stats.isQuiz && <th className="text-left px-4 py-2">Résultat</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...stats.parsed]
+                        .sort((a, b) => String(b.completed_at || b.created_at || '').localeCompare(String(a.completed_at || a.created_at || '')))
+                        .map(r => (
+                          <tr key={r.id} className="border-t border-gray-50">
+                            <td className="px-4 py-2 font-medium text-gray-800">{clientName(r.client_id)}</td>
+                            <td className="px-4 py-2 text-gray-600">{formateurOfClient(r.client_id)}</td>
+                            <td className="px-4 py-2 text-gray-600">{moduleOfClient(r.client_id)}</td>
+                            <td className="px-4 py-2 text-gray-600">{qFrDate(r.completed_at || r.created_at)}</td>
+                            {stats.isQuiz && (
+                              <td className="px-4 py-2">
+                                {r._quiz && r._quiz.score != null ? (
+                                  <span className={`text-xs font-black px-2 py-1 rounded-full ${r._quiz.passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                    {r._quiz.score} % · {r._quiz.passed ? 'Acquis' : 'Non acquis'}
+                                  </span>
+                                ) : '—'}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modules, orgName }) => {
+  // Modale de confirmation suppression (même mécanisme que DocumentsView)
+  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
+  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
+  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
+
+  // Groupes de documents (pour rattacher un questionnaire à un groupe, comme avant dans Documents)
+  const [documentGroups, setDocumentGroups] = React.useState([]);
+  React.useEffect(() => {
+    if (!currentOrgId || !supabase) return;
+    supabase.from('document_groups').select('*').eq('organisation_id', currentOrgId).order('nom', { ascending: true })
+      .then(({ data }) => { if (data) setDocumentGroups(data); });
+  }, [currentOrgId, supabase]);
+
+  // Questionnaires intégrés directement à un module (créés depuis l'éditeur de module, module_id
+  // renseigné) — leurs statistiques sont consultables ici, leur modification reste dans Modules.
+  const [moduleQuestionnaires, setModuleQuestionnaires] = React.useState([]);
+  const [selectedStatsId, setSelectedStatsId] = React.useState(null);
+
+  // ── Réponses de tous les bénéficiaires de l'organisme ──
+  const [responses, setResponses] = React.useState([]);
+  const [loadingResponses, setLoadingResponses] = React.useState(true);
+  const clientIdsKey = React.useMemo(() => (clients || []).map(c => c.id).join(','), [clients]);
+  React.useEffect(() => {
+    const ids = clientIdsKey ? clientIdsKey.split(',') : [];
+    if (!supabase || ids.length === 0) { setResponses([]); setLoadingResponses(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoadingResponses(true);
+      const all = [];
+      // Par paquets de 100 clients (longueur d'URL) et pages de 1000 lignes (limite Supabase)
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100);
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase.from('questionnaire_responses').select('*')
+            .in('client_id', chunk).order('id', { ascending: true }).range(from, from + 999);
+          if (error) { console.error('[QuestionnairesView] réponses :', error); toast.error('Erreur chargement des réponses : ' + error.message); break; }
+          all.push(...(data || []));
+          if (!data || data.length < 1000) break;
+        }
+      }
+      if (!cancelled) { setResponses(all); setLoadingResponses(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [supabase, clientIdsKey]);
+
+  const responseCountById = React.useMemo(() => {
+    const m = new Map();
+    responses.forEach(r => m.set(String(r.questionnaire_id), (m.get(String(r.questionnaire_id)) || 0) + 1));
+    return m;
+  }, [responses]);
+
+  // ── États Questionnaires (déplacés depuis DocumentsView le 2026-10-01) ────────────────────────────────
+  const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
+  const [showQBuilder, setShowQBuilder] = React.useState(false);
+  const [qName, setQName] = React.useState('');
+  const [qQuestions, setQQuestions] = React.useState([]);
+  const [editingQId, setEditingQId] = React.useState(null);
+  const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
+  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
+  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
+  const [qIsQuiz, setQIsQuiz] = React.useState(false);
+  const [qSeuilReussite, setQSeuilReussite] = React.useState(50);
+  const [qDescription, setQDescription] = React.useState('');
+  const [qClosingMessage, setQClosingMessage] = React.useState('');
+
+  const fetchQTemplates = React.useCallback(async () => {
+    if (!currentOrgId) return;
+    try {
+      const { data, error } = await supabase
+        .from('module_step_resources')
+        .select('id, titre, metadata, document_group_id, module_id')
+        .eq('type', 'questionnaire')
+        .eq('organisation_id', currentOrgId)
+        .order('titre', { ascending: true });
+      if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
+      const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
+      setQuestionnaireTemplates(templates);
+      setModuleQuestionnaires((data || []).filter(r => r.module_id !== null && r.module_id !== undefined));
+    } catch(e) { console.error('[fetchQTemplates] exception:', e); }
+  }, [currentOrgId]);
+
+  React.useEffect(() => {
+    fetchQTemplates();
+  }, [fetchQTemplates]);
+
+  const qAddQuestion = () => {
+    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '' }]);
+  };
+  const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
+  const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
+  // format (chaîne pour "unique", tableau pour "multiple").
+  const qSetQuestionType = (id, newType) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
+  const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
+  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
+  // resynchronise ici si l'option qu'il désignait vient d'être renommée.
+  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    const oldVal = q.options[oi];
+    const options = q.options.map((o, i) => i === oi ? val : o);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = val;
+    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? val : o);
+    return { ...q, options, correctAnswer };
+  }));
+  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    const removedVal = q.options[oi];
+    const options = q.options.filter((_, i) => i !== oi);
+    let correctAnswer = q.correctAnswer;
+    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
+    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
+    return { ...q, options, correctAnswer };
+  }));
+  const qToggleCorrectOption = (qId, opt) => setQQuestions(prev => prev.map(q => {
+    if (q.id !== qId) return q;
+    if (q.type === 'single') return { ...q, correctAnswer: opt };
+    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
+  }));
+
+  const handleSaveQTemplate = async () => {
+    if (!qName.trim() || qQuestions.length === 0) return;
+    try {
+      // Préserver les group_ids existants lors d'une mise à jour
+      const existingMeta = editingQId
+        ? (() => { const tpl = questionnaireTemplates.find(t => t.id === editingQId); try { return typeof tpl?.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl?.metadata || {}); } catch { return {}; } })()
+        : {};
+      const payload = {
+        titre: qName.trim(),
+        type: 'questionnaire',
+        metadata: JSON.stringify({
+          ...existingMeta,
+          questions: qQuestions,
+          isQuiz: qIsQuiz,
+          seuilReussite: qIsQuiz ? qSeuilReussite : undefined,
+          description: qDescription.trim() || undefined,
+          closingMessage: qClosingMessage.trim() || undefined,
+        }),
+        module_id: null,
+        organisation_id: currentOrgId,
+      };
+      if (editingQId) {
+        const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
+        if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
+      } else {
+        const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
+        if (error) { toast.error('Erreur création : ' + error.message); return; }
+      }
+      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
+      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+      setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
+      await fetchQTemplates();
+    } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
+  };
+
+  const handleEditQTemplate = (q) => {
+    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+    setQName(q.titre || '');
+    setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
+    setQIsQuiz(!!meta.isQuiz);
+    setQSeuilReussite(meta.seuilReussite ?? 50);
+    setQDescription(meta.description || '');
+    setQClosingMessage(meta.closingMessage || '');
+    setEditingQId(q.id);
+    setShowQBuilder(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteQTemplate = (id) => {
+    showDeleteConfirm(
+      'Supprimer ce questionnaire ?',
+      'Ce questionnaire sera définitivement supprimé.',
+      async () => {
+        hideDeleteConfirm();
+        const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
+        if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
+      }
+    );
+  };
+
+  const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
+    const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
+    const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
+    const { error } = await supabase.from('module_step_resources').update({
+      document_group_id: primaryGroup,
+      metadata: JSON.stringify(newMeta),
+    }).eq('id', qId);
+    if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
+  };
+
+
+  const allQuestionnaires = [...questionnaireTemplates, ...moduleQuestionnaires];
+  const selectedQuestionnaire = selectedStatsId != null ? allQuestionnaires.find(q => String(q.id) === String(selectedStatsId)) : null;
+  const moduleNameById = (id) => (modules || []).find(m => String(m.id) === String(id))?.nom || 'Module supprimé';
+
+  if (selectedQuestionnaire) {
+    return (
+      <div className="max-w-6xl mx-auto animate-fade-in">
+        <QuestionnaireStatsPanel
+          questionnaire={selectedQuestionnaire}
+          responses={responses}
+          loadingResponses={loadingResponses}
+          clients={clients}
+          formateurs={formateurs}
+          modules={modules}
+          orgName={orgName}
+          onBack={() => setSelectedStatsId(null)}
+          onEdit={selectedQuestionnaire.module_id == null ? () => { setSelectedStatsId(null); handleEditQTemplate(selectedQuestionnaire); } : null}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+      <div>
+        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Questionnaires & Quiz</h1>
+        <p className="text-gray-500 mt-1">Créez vos questionnaires et quiz, puis cliquez sur l'un d'eux pour consulter ses statistiques (indicateurs Qualiopi) et les exporter en PDF.</p>
+      </div>
+
+          {/* ── Section Questionnaires & Quiz ── */}
+          <div className="p-5 bg-violet-50 rounded-2xl border border-violet-100">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires & Quiz</h3>
+              <button
+                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
+                className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
+              >
+                <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
+              </button>
+            </div>
+
+            {showQBuilder && (
+              <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
+                  <input type="text" placeholder="Ex : Questionnaire de satisfaction"
+                    value={qName} onChange={e => setQName(e.target.value)}
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
+                  <textarea
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
+                    placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
+                    rows={2}
+                    value={qDescription} onChange={e => setQDescription(e.target.value)} />
+                </div>
+
+                <div className="flex items-center justify-between bg-violet-100/60 border border-violet-200 rounded-2xl p-3">
+                  <div>
+                    <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
+                    <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
+                  </div>
+                  <button type="button" onClick={() => setQIsQuiz(v => !v)}
+                    className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${qIsQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
+                    <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${qIsQuiz ? 'left-6' : 'left-1'}`}></span>
+                  </button>
+                </div>
+
+                {qIsQuiz && (
+                  <div>
+                    <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
+                    <input type="number" min="0" max="100" value={qSeuilReussite}
+                      onChange={e => setQSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                      className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
+                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                  </div>
+                  {qQuestions.length === 0 && (
+                    <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
+                    </div>
+                  )}
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {qQuestions.map((q, qi) => (
+                      <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                        </div>
+                        <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
+                          className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
+                        <div className="flex gap-1.5">
+                          {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
+                            <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
+                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                          ))}
+                        </div>
+                        {(q.type === 'single' || q.type === 'multiple') && (
+                          <div className="space-y-1">
+                            {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                            {q.options.map((opt, oi) => {
+                              const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
+                              return (
+                                <div key={oi} className="flex items-center gap-2">
+                                  {qIsQuiz ? (
+                                    <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
+                                      title="Marquer comme bonne réponse"
+                                      className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
+                                      <span className="text-[9px] leading-none">✓</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                                  )}
+                                  <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
+                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qIsQuiz && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
+                                  {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                                </div>
+                              );
+                            })}
+                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
+                  <textarea
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
+                    placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
+                    rows={2}
+                    value={qClosingMessage} onChange={e => setQClosingMessage(e.target.value)} />
+                </div>
+
+                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuestions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
+                  className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
+                  {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
+                </button>
+              </div>
+            )}
+
+            {/* Grille des questionnaires */}
+            {questionnaireTemplates.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {questionnaireTemplates.map(q => {
+                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                  const nbQ = (qMeta.questions || []).length;
+                  const rawGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                  // FIX (2026-09-30) : ignore les ids de groupes qui n'existent plus (groupe supprimé
+                  // depuis), sinon le badge affiche un nombre de groupes dont aucun n'est coché.
+                  const qGroupIds = rawGroupIds.filter(id => documentGroups.some(g => g.id === id));
+                  return (
+                        <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
+                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1">
+                              <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
+                              <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
+                            </div>
+                          </div>
+                          <button type="button" onClick={() => setSelectedStatsId(q.id)}
+                            className="w-full flex items-center justify-between mt-1 px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-800 transition-colors">
+                            <span className="text-[11px] font-black uppercase tracking-widest">📊 Voir les statistiques</span>
+                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${responseCountById.get(String(q.id)) || 0} réponse${(responseCountById.get(String(q.id)) || 0) > 1 ? 's' : ''}`}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
+                            className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
+                          >
+                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
+                              📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
+                            </span>
+                            <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
+                          </button>
+                          {expandedQGroupId === q.id && (
+                            <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
+                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
+                              {documentGroups.map(g => {
+                                const checked = qGroupIds.includes(g.id);
+                                return (
+                                  <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
+                                    <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
+                                      onChange={() => {
+                                        const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
+                                        handleQSetGroups(q.id, next, qMeta);
+                                      }} />
+                                    <span className="text-xs text-gray-700">{g.nom}</span>
+                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                  );
+                })}
+              </div>
+            ) : !showQBuilder && (
+              <div className="py-8 text-center bg-white rounded-2xl border border-dashed border-violet-200">
+                <p className="text-2xl mb-1">📝</p>
+                <p className="text-gray-400 text-sm">Aucun questionnaire créé.</p>
+                <p className="text-gray-300 text-xs mt-0.5">Cliquez sur "Nouveau questionnaire" pour commencer.</p>
+              </div>
+            )}
+          </div>
+
+
+      {moduleQuestionnaires.length > 0 && (
+        <div className="p-5 bg-white rounded-2xl border border-gray-100 shadow-sm">
+          <h3 className="font-bold text-gray-900 mb-1">Questionnaires intégrés aux modules</h3>
+          <p className="text-xs text-gray-400 mb-4">Créés directement dans un module (onglet Modules, où ils se modifient). Cliquez pour voir leurs statistiques.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {moduleQuestionnaires.map(q => {
+              const qMeta = parseQMeta(q);
+              const nbQ = (qMeta.questions || []).length;
+              const nbR = responseCountById.get(String(q.id)) || 0;
+              return (
+                <button key={q.id} type="button" onClick={() => setSelectedStatsId(q.id)}
+                  className="text-left bg-white p-4 rounded-2xl border border-gray-100 hover:border-violet-300 hover:shadow-sm transition-all">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-900 text-sm truncate">{q.titre}</p>
+                      <p className="text-[10px] text-gray-500">{moduleNameById(q.module_id)} · {nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
+                    </div>
+                    <span className="ml-auto shrink-0 text-[10px] font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''}`}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        onConfirm={confirmState.onConfirm}
+        onCancel={hideDeleteConfirm}
+      />
+    </div>
+  );
+};
+
 const DocumentsView = ({
   sessions, documents, clients, formateurs, userRole, currentUserId, currentOrgId,
   handleSignDocument, handleDownloadPDF, handleAddDocument,
@@ -9754,7 +10721,8 @@ const DocumentsView = ({
   newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete,
   newTemplateDestination, setNewTemplateDestination, supabase,
   onUpdateTemplateDestination,
-  newTemplateClassification, setNewTemplateClassification, fetchDocuments
+  newTemplateClassification, setNewTemplateClassification, fetchDocuments,
+  onOpenQuestionnaires
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [clientDocTab, setClientDocTab] = React.useState('avant');
@@ -10083,144 +11051,26 @@ const DocumentsView = ({
     }
   };
 
-  // ── États Questionnaires (DocumentsView) ────────────────────────────────
+  // ── Questionnaires (lecture seule ici) ──────────────────────────────────
+  // DÉPLACÉ (2026-10-01) : la création / modification / suppression des questionnaires et quiz et leur
+  // rattachement aux groupes se font désormais dans l'onglet "Questionnaires & Quiz"
+  // (QuestionnairesView). On garde ici uniquement la liste, utilisée pour afficher les questionnaires
+  // contenus dans chaque groupe de documents.
   const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
-  const [showQBuilder, setShowQBuilder] = React.useState(false);
-  const [qName, setQName] = React.useState('');
-  const [qQuestions, setQQuestions] = React.useState([]);
-  const [editingQId, setEditingQId] = React.useState(null);
-  const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
-  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
-  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
-  const [qIsQuiz, setQIsQuiz] = React.useState(false);
-  const [qSeuilReussite, setQSeuilReussite] = React.useState(50);
-  const [qDescription, setQDescription] = React.useState('');
-  const [qClosingMessage, setQClosingMessage] = React.useState('');
-
   const fetchQTemplates = React.useCallback(async () => {
     if (!currentOrgId) return;
-    try {
-      const { data, error } = await supabase
-        .from('module_step_resources')
-        .select('id, titre, metadata, document_group_id, module_id')
-        .eq('type', 'questionnaire')
-        .eq('organisation_id', currentOrgId)
-        .order('titre', { ascending: true });
-      if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
-      const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
-      setQuestionnaireTemplates(templates);
-    } catch(e) { console.error('[fetchQTemplates] exception:', e); }
+    const { data, error } = await supabase
+      .from('module_step_resources')
+      .select('id, titre, metadata, document_group_id, module_id')
+      .eq('type', 'questionnaire')
+      .eq('organisation_id', currentOrgId)
+      .order('titre', { ascending: true });
+    if (error) { console.error('[fetchQTemplates] error:', error); return; }
+    setQuestionnaireTemplates((data || []).filter(r => r.module_id === null || r.module_id === undefined));
   }, [currentOrgId]);
-
   React.useEffect(() => {
     if (isAdmin) fetchQTemplates();
   }, [isAdmin, fetchQTemplates]);
-
-  const qAddQuestion = () => {
-    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '' }]);
-  };
-  const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
-  const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
-  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
-  // format (chaîne pour "unique", tableau pour "multiple").
-  const qSetQuestionType = (id, newType) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
-  const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
-  // resynchronise ici si l'option qu'il désignait vient d'être renommée.
-  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    const oldVal = q.options[oi];
-    const options = q.options.map((o, i) => i === oi ? val : o);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = val;
-    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? val : o);
-    return { ...q, options, correctAnswer };
-  }));
-  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    const removedVal = q.options[oi];
-    const options = q.options.filter((_, i) => i !== oi);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
-    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
-    return { ...q, options, correctAnswer };
-  }));
-  const qToggleCorrectOption = (qId, opt) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    if (q.type === 'single') return { ...q, correctAnswer: opt };
-    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
-  }));
-
-  const handleSaveQTemplate = async () => {
-    if (!qName.trim() || qQuestions.length === 0) return;
-    try {
-      // Préserver les group_ids existants lors d'une mise à jour
-      const existingMeta = editingQId
-        ? (() => { const tpl = questionnaireTemplates.find(t => t.id === editingQId); try { return typeof tpl?.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl?.metadata || {}); } catch { return {}; } })()
-        : {};
-      const payload = {
-        titre: qName.trim(),
-        type: 'questionnaire',
-        metadata: JSON.stringify({
-          ...existingMeta,
-          questions: qQuestions,
-          isQuiz: qIsQuiz,
-          seuilReussite: qIsQuiz ? qSeuilReussite : undefined,
-          description: qDescription.trim() || undefined,
-          closingMessage: qClosingMessage.trim() || undefined,
-        }),
-        module_id: null,
-        organisation_id: currentOrgId,
-      };
-      if (editingQId) {
-        const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
-        if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
-      } else {
-        const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
-        if (error) { toast.error('Erreur création : ' + error.message); return; }
-      }
-      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
-      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
-      setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
-      await fetchQTemplates();
-    } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
-  };
-
-  const handleEditQTemplate = (q) => {
-    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
-    setQName(q.titre || '');
-    setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
-    setQIsQuiz(!!meta.isQuiz);
-    setQSeuilReussite(meta.seuilReussite ?? 50);
-    setQDescription(meta.description || '');
-    setQClosingMessage(meta.closingMessage || '');
-    setEditingQId(q.id);
-    setShowQBuilder(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDeleteQTemplate = (id) => {
-    showDeleteConfirm(
-      'Supprimer ce questionnaire ?',
-      'Ce questionnaire sera définitivement supprimé.',
-      async () => {
-        hideDeleteConfirm();
-        const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
-        if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
-      }
-    );
-  };
-
-  const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
-    const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
-    const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
-    const { error } = await supabase.from('module_step_resources').update({
-      document_group_id: primaryGroup,
-      metadata: JSON.stringify(newMeta),
-    }).eq('id', qId);
-    if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
-  };
 
   // Group clients by their documents
   const clientsWithDocs = React.useMemo(() => {
@@ -10463,193 +11313,17 @@ const DocumentsView = ({
             initialData={editingTemplate}
           />
 
-          {/* ── Section Questionnaires & Quiz ── */}
-          <div className="mb-8 p-5 bg-violet-50 rounded-2xl border border-violet-100">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires & Quiz</h3>
-              <button
-                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
-                className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
-              >
-                <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
-              </button>
-            </div>
-
-            {showQBuilder && (
-              <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
-                  <input type="text" placeholder="Ex : Questionnaire de satisfaction"
-                    value={qName} onChange={e => setQName(e.target.value)}
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
-                  <textarea
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
-                    placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
-                    rows={2}
-                    value={qDescription} onChange={e => setQDescription(e.target.value)} />
-                </div>
-
-                <div className="flex items-center justify-between bg-violet-100/60 border border-violet-200 rounded-2xl p-3">
-                  <div>
-                    <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
-                    <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
-                  </div>
-                  <button type="button" onClick={() => setQIsQuiz(v => !v)}
-                    className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${qIsQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
-                    <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${qIsQuiz ? 'left-6' : 'left-1'}`}></span>
-                  </button>
-                </div>
-
-                {qIsQuiz && (
-                  <div>
-                    <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
-                    <input type="number" min="0" max="100" value={qSeuilReussite}
-                      onChange={e => setQSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-                      className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                  </div>
-                )}
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
-                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
-                  </div>
-                  {qQuestions.length === 0 && (
-                    <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                      <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
-                    </div>
-                  )}
-                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-                    {qQuestions.map((q, qi) => (
-                      <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
-                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
-                        </div>
-                        <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
-                          className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
-                        <div className="flex gap-1.5">
-                          {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
-                            <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
-                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
-                          ))}
-                        </div>
-                        {(q.type === 'single' || q.type === 'multiple') && (
-                          <div className="space-y-1">
-                            {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
-                            {q.options.map((opt, oi) => {
-                              const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
-                              return (
-                                <div key={oi} className="flex items-center gap-2">
-                                  {qIsQuiz ? (
-                                    <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
-                                      title="Marquer comme bonne réponse"
-                                      className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
-                                      <span className="text-[9px] leading-none">✓</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                                  )}
-                                  <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
-                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qIsQuiz && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
-                                  {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
-                                </div>
-                              );
-                            })}
-                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
-                  <textarea
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
-                    placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
-                    rows={2}
-                    value={qClosingMessage} onChange={e => setQClosingMessage(e.target.value)} />
-                </div>
-
-                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuestions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
-                  className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
-                  {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
-                </button>
-              </div>
-            )}
-
-            {/* Grille des questionnaires */}
-            {questionnaireTemplates.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {questionnaireTemplates.map(q => {
-                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
-                  const nbQ = (qMeta.questions || []).length;
-                  const rawGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
-                  // FIX (2026-09-30) : ignore les ids de groupes qui n'existent plus (groupe supprimé
-                  // depuis), sinon le badge affiche un nombre de groupes dont aucun n'est coché.
-                  const qGroupIds = rawGroupIds.filter(id => documentGroups.some(g => g.id === id));
-                  return (
-                        <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
-                              <div>
-                                <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
-                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
-                              <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
-                            className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
-                          >
-                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
-                              📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
-                            </span>
-                            <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
-                          </button>
-                          {expandedQGroupId === q.id && (
-                            <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
-                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
-                              {documentGroups.map(g => {
-                                const checked = qGroupIds.includes(g.id);
-                                return (
-                                  <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
-                                    <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
-                                      onChange={() => {
-                                        const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
-                                        handleQSetGroups(q.id, next, qMeta);
-                                      }} />
-                                    <span className="text-xs text-gray-700">{g.nom}</span>
-                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                  );
-                })}
-              </div>
-            ) : !showQBuilder && (
-              <div className="py-8 text-center bg-white rounded-2xl border border-dashed border-violet-200">
-                <p className="text-2xl mb-1">📝</p>
-                <p className="text-gray-400 text-sm">Aucun questionnaire créé.</p>
-                <p className="text-gray-300 text-xs mt-0.5">Cliquez sur "Nouveau questionnaire" pour commencer.</p>
-              </div>
-            )}
-          </div>
+          {/* DÉPLACÉ (2026-10-01) : les questionnaires & quiz ont désormais leur propre onglet. */}
+          {onOpenQuestionnaires && (
+            <button type="button" onClick={onOpenQuestionnaires}
+              className="w-full mb-8 p-4 bg-violet-50 rounded-2xl border border-violet-100 flex items-center justify-between text-left hover:bg-violet-100 transition-all">
+              <span>
+                <span className="block font-bold text-gray-900 text-sm">📝 Questionnaires & Quiz</span>
+                <span className="block text-xs text-gray-500 mt-0.5">Ils se créent et se gèrent désormais dans leur propre onglet, avec leurs statistiques.</span>
+              </span>
+              <span className="text-xs font-black text-violet-700">Ouvrir →</span>
+            </button>
+          )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayTemplates.map((doc) => {
@@ -18779,6 +19453,7 @@ const TAB_TO_PATH = {
   calendrier: '/calendrier',
   messagerie: '/messagerie',
   gestion_documents: '/documents',
+  questionnaires: '/questionnaires',
   mes_documents: '/mes-documents',
   mes_seances: '/mes-seances',
   bilan: '/mon-bilan',
@@ -18874,7 +19549,7 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
@@ -23199,6 +23874,9 @@ export default function App() {
               <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Documents
               </button>
+              <button onClick={() => { setActiveTab('questionnaires'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'questionnaires' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <FileCheck className="w-5 h-5 mr-3" /> Questionnaires & Quiz
+              </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
               </button>
@@ -23701,7 +24379,9 @@ export default function App() {
           {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
+          {activeTab === 'questionnaires' && userRole === 'admin' && <QuestionnairesView supabase={supabase} currentOrgId={currentOrgId} clients={clients} formateurs={assignableFormateurs} modules={modules} orgName={orgSettings?.nom || ''} />}
           {activeTab === 'gestion_documents' && <DocumentsView
+            onOpenQuestionnaires={userRole === 'admin' ? () => setActiveTab('questionnaires') : null}
             sessions={sessions}
             documents={documents}
             clients={clients}
