@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClientConfig';
 
+export const BENEFICIAIRE_MSG = "Cette adresse email est déjà enregistrée comme bénéficiaire d'un organisme de formation : vous n'avez pas besoin de créer d'espace. Connectez-vous avec le lien reçu par email, ou cliquez sur « Oublié ? » (à côté du mot de passe) sur la page de connexion.";
+
 const SignupPage = () => {
   const [orgName, setOrgName] = useState('');
   const [adminName, setAdminName] = useState('');
@@ -24,6 +26,19 @@ const SignupPage = () => {
     }
     setIsLoading(true);
     try {
+      // AJOUT (2026-10-01) : cette page sert UNIQUEMENT à créer un nouvel organisme de formation. Des
+      // bénéficiaires invités par leur organisme arrivaient ici par erreur ("Créer votre espace" sur la
+      // page de connexion) et se retrouvaient administrateurs d'un organisme vide au lieu d'accéder à
+      // leur espace client. On refuse donc toute adresse déjà enregistrée comme bénéficiaire. Le vrai
+      // verrou est côté base (trigger guard_utilisateurs_roles, voir beneficiaire_admin_guard_migration.sql) ;
+      // ce contrôle-ci sert à afficher un message clair AVANT de créer quoi que ce soit.
+      const { data: isBeneficiaire, error: checkError } = await supabase.rpc('email_est_beneficiaire', { p_email: email.trim() });
+      if (checkError) console.error('[Signup] vérification bénéficiaire impossible :', checkError);
+      if (isBeneficiaire === true) {
+        setError(BENEFICIAIRE_MSG);
+        setIsLoading(false);
+        return;
+      }
       const { error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -66,7 +81,11 @@ const SignupPage = () => {
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100">
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
-        <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
+        <p className="text-gray-500 mb-4 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
+        <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <strong>Vous êtes bénéficiaire ou formateur ?</strong> N'utilisez pas ce formulaire : il sert uniquement à créer un
+          nouvel organisme de formation. Connectez-vous avec le lien reçu par email de votre organisme.
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>

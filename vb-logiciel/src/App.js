@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -13,13 +13,13 @@ import SetupOrganisationPage from './pages/SetupOrganisation';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { saveAs } from 'file-saver';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
 } from 'recharts';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
 import romeData from './data/romeData.json';
 
 
@@ -66,84 +66,6 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
-// --- Ouverture sécurisée d'un fichier de stockage ---
-// Au lieu d'ouvrir directement l'URL publique (permanente, devinable, partageable sans limite),
-// on génère un lien signé à courte durée de vie (5 min) avant d'ouvrir l'onglet.
-// Repli sur l'URL publique en cas d'échec (bucket/format non reconnu) pour ne jamais casser
-// une fonctionnalité existante. Cf. audit sécurité — exposition des URLs de stockage.
-const extractStorageBucketAndPath = (rawUrl) => {
-  if (!rawUrl) return null;
-  if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) return null;
-
-  // URL Supabase complète (publique ou déjà signée)
-  const match = rawUrl.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+?)(?:\?|$)/);
-  if (match) {
-    const bucket = match[1];
-    let path = decodeURIComponent(match[2]);
-    if (path.startsWith(`${bucket}/`)) path = path.substring(bucket.length + 1);
-    return { bucket, path };
-  }
-  if (rawUrl.startsWith('http')) return null; // URL externe non-Supabase
-
-  // Chemin relatif
-  let cleanPath = rawUrl;
-  const knownBuckets = ['documents', 'ressources-pedagogiques', 'signed_documents', 'module_resources', 'client_files'];
-  for (const b of knownBuckets) {
-    if (cleanPath.startsWith(`${b}/`)) { cleanPath = cleanPath.substring(b.length + 1); break; }
-  }
-  const isRessource = cleanPath.startsWith('ressources/') || cleanPath.startsWith('modeling-imports/');
-  const isSigned = cleanPath.startsWith('signed_');
-  const bucket = isSigned ? 'signed_documents' : (isRessource ? 'ressources-pedagogiques' : 'documents');
-  return { bucket, path: cleanPath };
-};
-
-const openSecureStorageFile = async (rawUrl) => {
-  if (!rawUrl) return;
-  if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) { window.open(rawUrl, '_blank'); return; }
-  try {
-    const extracted = extractStorageBucketAndPath(rawUrl);
-    if (extracted) {
-      const { data, error } = await supabase.storage.from(extracted.bucket).createSignedUrl(extracted.path, 300);
-      if (!error && data?.signedUrl) {
-        window.open(data.signedUrl, '_blank');
-        return;
-      }
-    }
-  } catch (e) {
-    console.warn('[openSecureStorageFile] Repli sur URL publique :', e.message);
-  }
-  // Repli : comportement historique (URL publique) si la génération du lien signé échoue
-  window.open(resolveFileUrl(rawUrl) || rawUrl, '_blank');
-};
-
-// Télécharge un fichier de stockage en forçant le nom donné par l'utilisateur (doc.nom), au lieu du nom
-// technique généré à l'upload (horodatage, dossier, etc.) — utilisé partout où un document du "dossier
-// client" (organisme + formateur) doit se télécharger sous le nom que la personne lui a donné.
-const handleDownloadNamedFile = async (doc) => {
-  if (!doc?.url) return;
-  try {
-    const extracted = extractStorageBucketAndPath(doc.url);
-    if (!extracted) throw new Error('URL de fichier invalide.');
-    const { data, error } = await supabase.storage.from(extracted.bucket).download(extracted.path);
-    if (error) throw error;
-    const ext = (extracted.path.split('.').pop() || '').toLowerCase();
-    const baseName = (doc.nom || 'document').trim() || 'document';
-    const hasExt = ext && baseName.toLowerCase().endsWith('.' + ext);
-    const fileName = hasExt ? baseName : (ext ? `${baseName}.${ext}` : baseName);
-    const blobUrl = URL.createObjectURL(data);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(blobUrl);
-  } catch (e) {
-    console.error('Erreur téléchargement document:', e);
-    toast.error('Erreur lors du téléchargement : ' + e.message);
-  }
-};
-
 const ANCHOR_KEYS = [
   { key: 'score_technique', label: 'Expertise Technique', description: "Le contenu du travail est votre motivation. Vous cherchez à être expert et reconnu par vos pairs." },
   { key: 'score_management', label: 'Compétence Managériale', description: "Vous avez un désir intense de diriger, de contrôler et de prendre des décisions stratégiques." },
@@ -159,7 +81,7 @@ const ANCHOR_KEYS = [
 // ==========================================
 // MODALS
 // ==========================================
-const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requiredTextFields = [] }) => {
+const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [] }) => {
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [checkedIds, setCheckedIds] = useState(() => new Set());
@@ -171,7 +93,7 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     }
-    if (isOpen) { setCheckedIds(new Set()); setTextFieldValues({}); }
+    if (isOpen) setCheckedIds(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -185,31 +107,16 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
     });
   };
 
-  // FIX (2026-09-07) : balises "texte libre" (ex: texte_organisme) exigées pour ce signataire —
-  // même pattern que DocumentViewerModal (requiredTextFields / textFieldValues / blocage tant
-  // que non rempli), absent jusqu'ici de cette modale générique de signature.
-  const [textFieldValues, setTextFieldValues] = useState({});
-  const setTextFieldValue = (fieldId, value) => {
-    setTextFieldValues(prev => ({ ...prev, [fieldId]: value }));
-  };
-  const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
-
-  // FIX (2026-09-14) : même correctif que EmargementModal (getCoords) — voir le commentaire détaillé
-  // là-bas. Ce composant n'est actuellement rendu nulle part dans l'app (remplacé le 2026-09-07 par
-  // <DocumentViewerModal mode="sign">), mais corrigé quand même pour éviter de réintroduire ce bug
-  // s'il est un jour réutilisé.
   const getCoordinates = (e) => {
     const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / rect.width;
-    const sy = canvas.height / rect.height;
     if (e.touches && e.touches.length > 0) {
+      const rect = canvas.getBoundingClientRect();
       return {
-        offsetX: (e.touches[0].clientX - rect.left) * sx,
-        offsetY: (e.touches[0].clientY - rect.top) * sy
+        offsetX: e.touches[0].clientX - rect.left,
+        offsetY: e.touches[0].clientY - rect.top
       };
     }
-    return { offsetX: (e.clientX - rect.left) * sx, offsetY: (e.clientY - rect.top) * sy };
+    return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
   };
 
   const startDrawing = (e) => {
@@ -239,9 +146,9 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
   };
 
   const handleSave = () => {
-    if (!canvasRef.current || !allCheckboxesChecked || !allRequiredTextFilled) return;
+    if (!canvasRef.current || !allCheckboxesChecked) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
-    onSave(dataUrl, checkedIds, textFieldValues);
+    onSave(dataUrl, checkedIds);
   };
 
   if (!isOpen) return null;
@@ -270,25 +177,6 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
             )}
           </div>
         )}
-        {requiredTextFields.length > 0 && (
-          <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-            <p className="text-sm font-bold text-emerald-800 mb-3">Avant de signer, complétez le(s) champ(s) suivant(s) :</p>
-            {requiredTextFields.map((f, i) => (
-              <div key={fieldKey(f) || i} className="mb-2">
-                <textarea
-                  value={textFieldValues[fieldKey(f)] || ''}
-                  onChange={e => setTextFieldValue(fieldKey(f), e.target.value)}
-                  placeholder={`Texte ${i + 1}`}
-                  rows={2}
-                  className="w-full p-2.5 text-sm bg-white border border-emerald-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
-                />
-              </div>
-            ))}
-            {!allRequiredTextFilled && (
-              <p className="text-xs text-emerald-700 mt-2 italic">Merci de compléter ce(s) champ(s) avant de signer.</p>
-            )}
-          </div>
-        )}
         <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none mb-6 relative">
           <canvas
             ref={canvasRef}
@@ -311,7 +199,7 @@ const SignatureModal = ({ isOpen, onClose, onSave, requiredCheckboxes = [], requ
             <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors w-full sm:w-auto">Annuler</button>
             <button
               onClick={handleSave}
-              disabled={!allCheckboxesChecked || !allRequiredTextFilled}
+              disabled={!allCheckboxesChecked}
               className="px-6 py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg w-full sm:w-auto disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Valider
@@ -331,11 +219,6 @@ const AddressInput = ({ value, onChange }) => {
     return { rue: addr, codePostal: '', ville: '' };
   };
   const [parts, setParts] = React.useState(() => parseAddress(value));
-  // FIX (2026-09-07) : l'initialiseur paresseux de useState ne s'exécute qu'AU MONTAGE — si
-  // `value` change ensuite depuis l'extérieur (ex: AddressAutocomplete qui met à jour la
-  // valeur combinée du parent après sélection d'une suggestion), `parts` ne se resynchronisait
-  // jamais. Round-trip sûr : onChange(combined) plus bas repasse par le même parse/combine.
-  React.useEffect(() => { setParts(parseAddress(value)); }, [value]);
   const updatePart = (field, val) => {
     const np = { ...parts, [field]: val };
     setParts(np);
@@ -388,155 +271,6 @@ const parseAddressString = (addr) => {
   return { rue: addr, codePostal: '', ville: '' };
 };
 
-// AJOUT (2026-09-16) : balises "initiales" (client, formateur, organisme), demandé par l'utilisateur.
-// Prend la première lettre du PREMIER et du DERNIER mot d'un nom — plutôt que de dépendre de colonnes
-// nom/prénom séparées, qui existent en base mais ne sont quasiment jamais renseignées en pratique
-// (le formulaire de création ne demande qu'un seul champ "Nom Complet", ex. "Jean Dupont" ou
-// "Marie LEROY" — voir InviteModal). Fonctionne donc quel que soit l'ordre (Nom Prénom ou Prénom Nom)
-// et même sur un nom à un seul mot (ex. "Dupont" → "D"). Toujours en majuscules.
-const computeInitials = (fullName) => {
-  const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '';
-  const first = words[0].charAt(0);
-  const last = words.length > 1 ? words[words.length - 1].charAt(0) : '';
-  return (first + last).toUpperCase();
-};
-
-// AJOUT (2026-09-18) : détermine si le parcours (module) d'un client est "terminé" — défini avec
-// l'utilisateur comme : le client a au moins une séance de son parcours planifiée dans son calendrier,
-// et TOUTES ces séances ont une date déjà passée (aucune à venir, aucune sans date). Sert à déclencher
-// automatiquement l'accès aux documents/questionnaires/exercices de FIN de parcours (masqués tant que
-// le parcours n'est pas terminé — voir ClientDocumentsView) sans action manuelle du formateur.
-// Ne compte QUE les séances "réelles" du calendrier (numero_seance renseigné, issues des dossiers
-// séance du module) — pas les exercices de fin nouvellement créés par ce mécanisme lui-même
-// (numero_seance: null, voir plus bas), ce qui éviterait sinon un effet de bord où l'ajout d'un
-// exercice de fin repasserait aussitôt le parcours à "non terminé".
-//
-// FIX (2026-09-30) : demandé par l'utilisateur — les documents de fin doivent être accessibles dès la
-// FIN DU MODULE, « même si tout n'est pas signé ou autre ». L'ancienne règle exigeait que CHAQUE ligne
-// de séance (émargement, document, exercice…) porte sa propre date strictement passée : une seule
-// ligne sans date (ex. un document glissé dans un dossier de séance) pouvait suffire à bloquer la fin de
-// parcours pour toujours (signalé sur le dossier Matthys Tessier : dernière séance signée la veille,
-// documents de fin toujours verrouillés). Désormais on raisonne PAR SÉANCE (numero_seance) : la date d'une
-// séance = la date renseignée sur l'une de ses lignes ; le parcours est terminé quand toutes les
-// séances sont planifiées et que la date de la dernière est arrivée (le jour même inclus). Les
-// statuts de signature / de rendu ne sont volontairement PAS pris en compte.
-const isModuleCompletedForClient = (clientId, sessions) => {
-  const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null);
-  if (realSessions.length === 0) return false;
-  const seanceDates = new Map(); // numero_seance → date la plus tardive trouvée sur ses lignes (ou null)
-  realSessions.forEach(s => {
-    const key = String(s.numero_seance);
-    const d = s.date ? String(s.date).slice(0, 10) : null;
-    const prev = seanceDates.get(key) || null;
-    seanceDates.set(key, d && (!prev || d > prev) ? d : prev);
-  });
-  const dates = Array.from(seanceDates.values());
-  if (dates.some(d => !d)) return false; // une séance entière n'a encore aucune date → pas encore planifiée
-  const now = new Date(); // date LOCALE (et non UTC) pour basculer à minuit heure française
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  return dates.every(d => d <= todayStr);
-};
-
-// ═══════════════════════════════════════════════════════════════════════════
-// RÉGION (2026-09-07) : liste officielle des 18 régions administratives françaises
-// (13 métropole + 5 outre-mer), utilisée comme <datalist> pour un champ « Région » à
-// autocomplétion native sur les fiches Client / Formateur / Organisme (taper « Bre » →
-// suggère « Bretagne »).
-// ═══════════════════════════════════════════════════════════════════════════
-const FRENCH_REGIONS = [
-  'Auvergne-Rhône-Alpes', 'Bourgogne-Franche-Comté', 'Bretagne', 'Centre-Val de Loire',
-  'Corse', 'Grand Est', 'Guadeloupe', 'Guyane', 'Hauts-de-France', 'Île-de-France',
-  'La Réunion', 'Martinique', 'Mayotte', 'Normandie', 'Nouvelle-Aquitaine', 'Occitanie',
-  'Pays de la Loire', "Provence-Alpes-Côte d'Azur",
-];
-
-// Autocomplétion d'adresse française (API Adresse — api-adresse.data.gouv.fr — gratuite,
-// sans clé, données BAN officielles). Au clic sur une suggestion, remonte via onSelect
-// rue/codePostal/ville ET la région administrative correspondante (dernier segment de
-// `properties.context`, ex: "75, Paris, Île-de-France"), pour pré-remplir automatiquement
-// le champ Région à côté.
-const AddressAutocomplete = ({ value, onChange, onSelect, placeholder, className }) => {
-  const [query, setQuery] = React.useState(value || '');
-  const [suggestions, setSuggestions] = React.useState([]);
-  const [isOpen, setIsOpen] = React.useState(false);
-  const wrapRef = React.useRef(null);
-  const debounceRef = React.useRef(null);
-
-  React.useEffect(() => { setQuery(value || ''); }, [value]);
-
-  React.useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setIsOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleChange = (val) => {
-    setQuery(val);
-    onChange(val);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!val || val.trim().length < 3) { setSuggestions([]); return; }
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const resp = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(val)}&limit=5`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        setSuggestions(data.features || []);
-        setIsOpen(true);
-      } catch (_) { /* best-effort : ne bloque jamais la saisie manuelle en cas d'échec réseau */ }
-    }, 300);
-  };
-
-  const pick = (feature) => {
-    const p = feature.properties || {};
-    const label = p.label || '';
-    setQuery(label);
-    onChange(label);
-    setIsOpen(false);
-    setSuggestions([]);
-    // properties.context est de la forme "<code dépt>, <nom dépt>, <nom région>" → la région
-    // est toujours le DERNIER segment.
-    const contextParts = (p.context || '').split(',').map(s => s.trim());
-    const region = contextParts.length > 0 ? contextParts[contextParts.length - 1] : '';
-    if (onSelect) onSelect({
-      label,
-      rue: [p.housenumber, p.street].filter(Boolean).join(' ') || p.name || '',
-      codePostal: p.postcode || '',
-      ville: p.city || '',
-      region,
-    });
-  };
-
-  return (
-    <div className="relative" ref={wrapRef}>
-      <input
-        className={className || "w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-violet-400 transition-all text-sm"}
-        value={query}
-        onChange={e => handleChange(e.target.value)}
-        onFocus={() => { if (suggestions.length > 0) setIsOpen(true); }}
-        placeholder={placeholder || 'Ex : 12 Rue de la Paix, 75001 Paris'}
-        autoComplete="off"
-      />
-      {isOpen && suggestions.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden max-h-56 overflow-y-auto">
-          {suggestions.map((f, i) => (
-            <button
-              type="button"
-              key={f.properties?.id || i}
-              onClick={() => pick(f)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-violet-50 transition-colors border-b border-gray-50 last:border-b-0"
-            >
-              {f.properties?.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
 // Identifiant stable d'un champ de balise (signature/case à cocher), utilisé pour savoir QUELLE
 // case précise a été cochée par le signataire. Les champs venus d'une vraie ligne de la table
 // `template_fields` ont un `id` de base de données unique. Mais les champs dupliqués en zéro-RLS
@@ -557,186 +291,6 @@ const fieldKey = (f) => {
   return `pos_${f.tag || ''}_${f.page || 1}_${Number(f.x_percent).toFixed(2)}_${Number(f.y_percent).toFixed(2)}`;
 };
 
-// ─── Retour à la ligne des balises "texte libre" (2026-09-10) ──────────────────────────────────
-// Découpe un texte pour tenir dans une case de largeur/hauteur données, à une taille de police
-// donnée : sur "\n" (retours à la ligne tapés), puis mot par mot pour enrouler chaque ligne aux
-// limites réelles de la case (avec découpage caractère par caractère d'un mot lui-même trop large,
-// ex. texte tapé sans espaces). `widthOfTextAtSize` est injecté en paramètre plutôt que codé en dur
-// (police pdf-lib Helvetica) : cette MÊME fonction sert à la fois PENDANT la saisie côté client
-// (DocumentViewerModal, pour empêcher physiquement de taper plus que ce qui tiendra — avec une
-// police Helvetica embarquée côté navigateur, voir measureFontRef) ET à la GRAVURE finale dans le
-// PDF (overlayFieldsOnPdf). Avant ce correctif, ces deux endroits avaient chacun leur propre calcul
-// de capacité (l'un une estimation par largeur moyenne de caractère, l'autre la vraie mesure
-// pdf-lib) qui pouvaient diverger légèrement — d'où des coupures imprévisibles malgré un texte qui
-// semblait tenir à l'écran. En partageant EXACTEMENT le même algorithme des deux côtés, un texte
-// accepté à la saisie est GARANTI de tenir, sans coupure, dans le PDF final.
-const wrapTextForBox = (text, widthOfTextAtSize, fs, maxTextW, maxLines) => {
-  const breakLongWord = (word) => {
-    if (widthOfTextAtSize(word, fs) <= maxTextW) return [word];
-    const chunks = [];
-    let cur = '';
-    for (const ch of word) {
-      const cand = cur + ch;
-      if (cur && widthOfTextAtSize(cand, fs) > maxTextW) {
-        chunks.push(cur);
-        cur = ch;
-      } else {
-        cur = cand;
-      }
-    }
-    if (cur) chunks.push(cur);
-    return chunks.length > 0 ? chunks : [word];
-  };
-  const rawLines = String(text).split('\n');
-  const wrappedLines = [];
-  for (const rawLine of rawLines) {
-    if (rawLine === '') { wrappedLines.push(''); continue; }
-    const words = rawLine.split(' ');
-    let current = '';
-    for (const word of words) {
-      const pieces = breakLongWord(word);
-      pieces.forEach((piece, idx) => {
-        const candidate = current ? (idx === 0 ? `${current} ${piece}` : `${current}${piece}`) : piece;
-        if (current && widthOfTextAtSize(candidate, fs) > maxTextW) {
-          wrappedLines.push(current);
-          current = piece;
-        } else {
-          current = candidate;
-        }
-      });
-    }
-    wrappedLines.push(current);
-  }
-  const fits = wrappedLines.length <= maxLines;
-  const visibleLines = wrappedLines.slice(0, maxLines);
-  if (!fits) {
-    let last = visibleLines[visibleLines.length - 1];
-    while (last.length > 0 && widthOfTextAtSize(last + '…', fs) > maxTextW) {
-      last = last.slice(0, -1);
-    }
-    visibleLines[visibleLines.length - 1] = (last || '') + '…';
-  }
-  return { lines: visibleLines, fits, totalLines: wrappedLines.length };
-};
-
-// ─── Signature séquentielle (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) ────────
-// Un modèle de document peut être configuré en 'sequentiel' (metadata.signing_mode, réglé une fois
-// dans VisualTemplateEditor et copié sur chaque document instancié) : dans ce cas une partie ne peut
-// signer qu'APRÈS celle qui la précède dans metadata.signing_order. Tant que ce n'est pas son tour,
-// le document doit rester totalement invisible pour elle (masqué, pas juste désactivé) — décision
-// produit du 2026-07-24. Fonction utilitaire partagée entre les espaces client/formateur/admin pour
-// éviter de dupliquer cette règle à chaque endroit où une liste de documents à signer est construite.
-//
-// 2026-07-27 : un document peut désormais nécessiter la signature du client, du formateur ET/OU de
-// l'organisme (n'importe quel admin de l'organisation), dans n'importe quelle combinaison. Les
-// balises posées dans l'éditeur visuel suivent la convention <type>_<rôle> (signature_client,
-// checkbox_formateur, texte_organisme...) ; ces helpers centralisent la correspondance balise/rôle
-// et la lecture de destination/ordre de signature pour éviter des ternaires binaires client/
-// formateur un peu partout (overlayFieldsOnPdf, handleSignDocument, instantiateDocument...).
-const SIGNER_ROLES = ['client', 'formateur', 'organisme'];
-const roleFromTag = (tag) => {
-  if (!tag) return null;
-  for (const r of SIGNER_ROLES) { if (tag.endsWith(`_${r}`)) return r; }
-  return null;
-};
-const SIGNED_FLAG_COLUMN = { client: 'signe_par_client', formateur: 'signe_par_formateur', organisme: 'signe_par_organisme' };
-const SIGNATURE_DATE_COLUMN = { client: 'date_signature_client', formateur: 'date_signature_formateur', organisme: 'date_signature_organisme' };
-const SIGNATURE_IMAGE_COLUMN = { client: 'signature_client', formateur: 'signature_formateur', organisme: 'signature_organisme' };
-// Couleur/libellé par rôle, utilisés à la fois dans overlayFieldsOnPdf (rendu PDF, couleurs rgb())
-// et dans VisualTemplateEditor (rendu HTML, classes Tailwind) — bleu client / orange formateur /
-// vert organisme, cohérent partout où une balise est affichée.
-const ROLE_COLOR_RGB = { client: rgb(0.18, 0.42, 0.93), formateur: rgb(0.92, 0.49, 0.06), organisme: rgb(0.06, 0.6, 0.35) };
-const ROLE_LABEL = { client: 'client', formateur: 'formateur', organisme: 'administrateur' };
-// Libellé spécifique sous la signature (reprend le "bénéficiaire" déjà utilisé historiquement pour
-// le client, plutôt que de changer ce texte sur les documents existants).
-const ROLE_SIGNATURE_LABEL = { client: 'bénéficiaire', formateur: 'formateur', organisme: 'organisme' };
-
-// destination stockée en base sous forme de chaîne "client,formateur,organisme" (ordre libre, rôles
-// présents = destinataires). Valeurs héritées toujours comprises en lecture : 'client', 'formateur',
-// 'both' (= client+formateur).
-const parseDestinationRoles = (destination) => {
-  if (!destination) return ['client'];
-  if (destination === 'both') return ['client', 'formateur'];
-  if (Array.isArray(destination)) return destination.filter(r => SIGNER_ROLES.includes(r));
-  const roles = String(destination).split(',').map(s => s.trim()).filter(r => SIGNER_ROLES.includes(r));
-  return roles.length ? roles : ['client'];
-};
-const stringifyDestinationRoles = (roles) => SIGNER_ROLES.filter(r => (roles || []).includes(r)).join(',');
-
-// signing_order stocké en metadata sous forme de tableau de rôles dans l'ordre de signature (nouveau
-// format) — ou chaîne héritée 'client_first' | 'formateur_first' (Stage 3, comprise en lecture seule).
-const normalizeSigningOrder = (meta) => {
-  if (Array.isArray(meta?.signing_order) && meta.signing_order.length) return meta.signing_order;
-  if (meta?.signing_order === 'formateur_first') return ['formateur', 'client'];
-  return ['client', 'formateur']; // valeur par défaut / 'client_first' hérité
-};
-
-const parseDocMetadata = (doc) => {
-  const m = doc?.metadata;
-  if (m && typeof m === 'object') return m;
-  if (typeof m === 'string' && m.startsWith('{')) { try { return JSON.parse(m); } catch { return {}; } }
-  return {};
-};
-const isBlockedBySigningOrder = (doc, role) => {
-  const meta = parseDocMetadata(doc);
-  if (meta.signing_mode !== 'sequentiel') return false; // mode simultané (défaut) : jamais masqué
-  const order = normalizeSigningOrder(meta);
-  const myIndex = order.indexOf(role);
-  if (myIndex <= 0) return false; // pas concerné par l'ordre, ou premier de l'ordre : jamais masqué
-  for (let i = 0; i < myIndex; i++) {
-    const flagCol = SIGNED_FLAG_COLUMN[order[i]];
-    if (flagCol && !doc[flagCol]) return true; // une partie précédente n'a pas encore signé
-  }
-  return false;
-};
-
-// FIX (2026-09-04) : détermine les rôles dont la signature est réellement requise sur CE document —
-// d'après les balises signature_<rôle> posées dessus (même repli que handleSignDocument : metadata
-// .signature_fields → metadata.template_fields → metadata.fields → table technique template_fields
-// en tout dernier recours). Sert à savoir quand un document peut légitimement passer au statut
-// "Signé" (= tous les rôles requis ont signé), plutôt que dès la toute première signature reçue.
-const getRequiredSignerRoles = async (docLike, supabaseClient) => {
-  const meta = parseDocMetadata(docLike);
-  let candidateFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-    : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
-    : (Array.isArray(meta.fields) ? meta.fields : []);
-  if (candidateFields.length === 0 && docLike?.template_id && supabaseClient) {
-    try {
-      const { data: dbFields } = await supabaseClient.from('template_fields').select('*').eq('template_id', docLike.template_id);
-      if (dbFields && dbFields.length > 0) candidateFields = dbFields;
-    } catch (e) { /* non-bloquant */ }
-  }
-  const roles = new Set();
-  candidateFields.forEach(f => { if ((f.tag || '').startsWith('signature_')) { const r = roleFromTag(f.tag); if (r) roles.add(r); } });
-  // Aucune balise signature du tout → document hors du système de balises visuelles (ancien format) :
-  // comportement historique, une seule signature client attendue.
-  if (roles.size === 0) roles.add('client');
-  return Array.from(roles);
-};
-// mergedDoc = document avec les colonnes signe_par_* déjà mises à jour (état APRÈS la signature en cours).
-const isDocFullySigned = (mergedDoc, requiredRoles) => (requiredRoles || []).every(r => !!mergedDoc[SIGNED_FLAG_COLUMN[r]]);
-
-// Types "dossier" (documents administratifs simples, ajoutés librement, SANS signature) — catégorie
-// PARTAGÉE entre le dossier d'un client (ClientDetailView) et celui d'un formateur (FormateurDetailView
-// côté admin / FormateurView côté formateur) : un document affiché dans un "dossier" doit avoir l'un de
-// ces types ET ne pas déjà être un document signé archivé (qui, lui, s'affiche dans "Documents Signés").
-const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
-const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
-
-// ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
-// Déclenchée "best-effort" (non bloquante, sans afficher d'erreur) à chaque fois qu'une séance
-// est créée/modifiée (date, heure, lien visio, note...). Le serveur (api/calendar/sync-seance)
-// vérifie lui-même si le client et/ou son formateur ont connecté leur agenda Google — si
-// personne n'est connecté, l'appel ne fait rien. Voir ProfileView pour l'écran de connexion.
-const syncSeanceToCalendar = (clientId, numeroSeance) => {
-  if (!clientId || numeroSeance === undefined || numeroSeance === null) return;
-  fetch('/api/calendar/sync-seance', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, numeroSeance }),
-  }).catch(() => {});
-};
-
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
   const fCanvasRef = useRef(null);
   const cCanvasRef = useRef(null);
@@ -744,46 +298,23 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
   const [cDrawing, setCDrawing] = useState(false);
   const isClient = signerRole === 'client';
 
-  // FIX (2026-09-14, v2) : la 1ère correction (ratio canvas.width/rect.width appliqué aux coordonnées
-  // souris) n'a pas suffi — une formatrice a de nouveau signalé un décalage net et constant ("ma
-  // souris était bien à 5 cm sur la gauche"). Le calcul du ratio était correct en théorie, mais cette
-  // approche reste fragile (elle dépend de rect.width étant lu au bon moment, jamais 0, etc.).
-  // Remplacé par la technique standard des pads de signature (ex. lib signature_pad) : on fait
-  // correspondre la RÉSOLUTION INTERNE du canvas à sa taille RÉELLEMENT affichée à l'écran, en
-  // pixels PHYSIQUES (× devicePixelRatio, pour un tracé net sur écran HiDPI/Retina — bonus : la
-  // signature enregistrée est aussi en meilleure résolution qu'avant, qui était figée à 280×150),
-  // puis on applique ctx.scale(dpr, dpr) sur le contexte. À partir de là, 1 unité de dessin = 1 pixel
-  // CSS exactement : getCoords utilise directement (clientX/clientY - rect.left/top), sans AUCUN
-  // calcul de ratio qui pourrait se tromper. On recalcule aussi si la fenêtre est redimensionnée
-  // pendant que la modale est ouverte (le tracé en cours est alors effacé — cas rare, préférable à
-  // un décalage silencieux).
   useEffect(() => {
     if (!isOpen) return;
     const setup = (canvas) => {
       if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(rect.width * dpr));
-      canvas.height = Math.max(1, Math.round(rect.height * dpr));
       const ctx = canvas.getContext('2d');
-      ctx.scale(dpr, dpr);
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       ctx.strokeStyle = '#0f172a';
     };
-    const setupAll = () => {
-      if (!isClient) setup(fCanvasRef.current);
-      setup(cCanvasRef.current);
-    };
-    setupAll();
-    window.addEventListener('resize', setupAll);
-    return () => window.removeEventListener('resize', setupAll);
+    if (!isClient) setup(fCanvasRef.current);
+    setup(cCanvasRef.current);
   }, [isOpen, isClient]);
 
   const getCoords = (e, canvas) => {
     const rect = canvas.getBoundingClientRect();
     if (e.touches?.length > 0) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY };
   };
 
   const fStart = (e) => { if (e.touches) e.preventDefault(); setFDrawing(true); const ctx = fCanvasRef.current.getContext('2d'); const { x, y } = getCoords(e, fCanvasRef.current); ctx.beginPath(); ctx.moveTo(x, y); };
@@ -865,42 +396,105 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
 // - mode "view" => lecture simple (iframe)
 // - mode "sign" => lecture obligatoire + canvas de signature en bas
 /**
- * Convertit un Blob DOCX en Blob PDF via la fonction serverless /api/convert/docx-to-pdf.
- * Conversion 100% auto-hébergée côté serveur (mammoth + Chromium headless embarqué, voir
- * api/_lib/docxToPdf.js) — aucune plateforme externe, aucune clé API tierce à gérer (l'ancienne
- * intégration CloudConvert a été retirée le 2026-09-02, à la demande explicite de l'organisme de
- * ne dépendre d'aucun service tiers pour ses documents).
- * Lance une erreur si l'appel échoue (le fallback local convertDocxBlobToPdfLocal prend le relais).
+ * Convertit un Blob DOCX en Blob PDF via CloudConvert (LibreOffice, pixel-perfect).
+ * Priorité : CloudConvert (REACT_APP_CLOUDCONVERT_API_KEY) → ConvertAPI legacy (REACT_APP_CONVERT_API_SECRET).
+ * Lance une erreur si aucune clé n'est disponible ou si l'API échoue.
  */
 const convertDocxBlobToPdf = async (docxBlob) => {
-  // Encoder le DOCX en base64 pour l'envoi inline au serverless (évite les problèmes CORS S3)
-  const base64Data = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(docxBlob);
-  });
+  const ccKey = process.env.REACT_APP_CLOUDCONVERT_API_KEY;
+  const convertApiSecret = process.env.REACT_APP_CONVERT_API_SECRET || process.env.REACT_APP_CONVERTAPI_SECRET;
 
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error('Session invalide — reconnectez-vous pour convertir ce document.');
+  // ── CloudConvert (principal) ──────────────────────────────────────────────
+  if (ccKey) {
+    // Encoder le DOCX en base64 pour l'envoi inline (évite les problèmes CORS S3)
+    const base64Data = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(docxBlob);
+    });
 
-  const response = await fetch('/api/convert/docx-to-pdf', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({ docxBase64: base64Data }),
-  });
+    // Créer le job : import base64 → convert docx→pdf (libreoffice) → export url
+    const jobRes = await fetch('https://api.cloudconvert.com/v2/jobs', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${ccKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tasks: {
+          'import-file': {
+            operation: 'import/base64',
+            file: base64Data,
+            filename: 'document.docx',
+          },
+          'convert-file': {
+            operation: 'convert',
+            input: 'import-file',
+            input_format: 'docx',
+            output_format: 'pdf',
+            engine: 'libreoffice',
+          },
+          'export-file': {
+            operation: 'export/url',
+            input: 'convert-file',
+          },
+        },
+      }),
+    });
 
-  if (!response.ok) {
-    let errMsg = `Conversion serveur échouée: ${response.status}`;
-    try { const errJson = await response.json(); if (errJson?.error) errMsg = errJson.error; } catch (_) {}
-    throw new Error(errMsg);
+    if (!jobRes.ok) {
+      const errText = await jobRes.text().catch(() => '');
+      throw new Error(`CloudConvert job création: ${jobRes.status} — ${errText}`);
+    }
+
+    const job = await jobRes.json();
+    const jobId = job.data.id;
+
+    // Polling toutes les 2s, max 90s
+    for (let i = 0; i < 45; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const statusRes = await fetch(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
+        headers: { 'Authorization': `Bearer ${ccKey}` },
+      });
+      if (!statusRes.ok) throw new Error(`CloudConvert status: ${statusRes.status}`);
+      const status = await statusRes.json();
+
+      if (status.data.status === 'error') {
+        const failedTask = status.data.tasks?.find(t => t.status === 'error');
+        throw new Error(`CloudConvert échec: ${failedTask?.message || 'erreur inconnue'}`);
+      }
+
+      const exportTask = status.data.tasks?.find(t => t.name === 'export-file');
+      if (exportTask?.status === 'finished' && exportTask.result?.files?.[0]?.url) {
+        const pdfRes = await fetch(exportTask.result.files[0].url);
+        if (!pdfRes.ok) throw new Error(`CloudConvert téléchargement PDF: ${pdfRes.status}`);
+        return new Blob([await pdfRes.arrayBuffer()], { type: 'application/pdf' });
+      }
+    }
+    throw new Error('CloudConvert: timeout après 90 secondes');
   }
 
-  const pdfArrayBuffer = await response.arrayBuffer();
-  return new Blob([pdfArrayBuffer], { type: 'application/pdf' });
+  // ── ConvertAPI legacy ─────────────────────────────────────────────────────
+  if (convertApiSecret) {
+    const formData = new FormData();
+    formData.append('File', new File([docxBlob], 'document.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }));
+    const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${convertApiSecret}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error(`ConvertAPI error: ${response.status} ${response.statusText}`);
+    const result = await response.json();
+    if (!result.Files?.length) throw new Error('ConvertAPI: aucun fichier retourné dans la réponse.');
+    const byteCharacters = atob(result.Files[0].FileData);
+    const byteArray = new Uint8Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) byteArray[i] = byteCharacters.charCodeAt(i);
+    return new Blob([byteArray], { type: 'application/pdf' });
+  }
+
+  throw new Error('Aucune clé API de conversion configurée. Ajoutez REACT_APP_CLOUDCONVERT_API_KEY dans Vercel.');
 };
 
 /**
@@ -1024,14 +618,11 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  * @param {Object} dataValues — {nomcomplet_client: "...", ...}
  * @returns {Blob} PDF modifié
  */
-const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}, textInputMap = {}) => {
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}) => {
   // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
   // checkedMap = { [field.id]: true } — état coché des cases à cocher, par identifiant de champ
   //   (une même balise checkbox_client/checkbox_formateur peut être posée plusieurs fois : on
   //   distingue donc chaque case par son id, pas par son tag).
-  // textInputMap = { [fieldKey(field)]: 'texte saisi par le signataire' } — même principe que
-  //   checkedMap : une balise texte_client/texte_formateur peut être posée plusieurs fois, donc
-  //   on distingue chaque champ par fieldKey(field), pas par son tag.
   const pdfDoc = await PDFDocument.load(await pdfBlob.arrayBuffer(), { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -1052,85 +643,14 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
     }
     const isSignature = field.field_type === 'signature' || (field.tag || '').startsWith('signature_');
     const isCheckbox = field.field_type === 'checkbox' || (field.tag || '').startsWith('checkbox_');
-    const isTextInput = field.field_type === 'text_input' || (field.tag || '').startsWith('texte_');
-
-    if (isTextInput) {
-      // Champ à remplir librement par le signataire (client ou formateur, façon Yousign) — la valeur
-      // n'est connue qu'au moment de signer, transmise via textInputMap (une même balise texte_client/
-      // texte_formateur peut être posée plusieurs fois, d'où l'indexation par fieldKey, pas par tag).
-      // FIX (2026-09-04) : largeur/hauteur réglables depuis l'éditeur visuel (poignée de
-      // redimensionnable) — repli sur les valeurs historiques (28% de la page / une ligne de texte)
-      // quand le champ n'a pas encore été redimensionné (modèles existants, ou balise placée avant
-      // ce correctif).
-      const boxW = typeof field.width_percent === 'number' ? (field.width_percent / 100) * pageW : pageW * 0.28;
-      // FIX (2026-09-10, round 2) : 12pt par défaut (au lieu de 10pt) pour correspondre exactement à
-      // la taille utilisée par la zone de saisie à l'écran (pageTexts, fontSize: 12) — un texte tapé
-      // ne doit pas apparaître "beaucoup plus petit" une fois gravé dans le PDF final (retour
-      // utilisateur). `nominalFs` sert aussi de point de départ au "rétrécissement automatique"
-      // ci-dessous quand le texte est trop long pour la case à cette taille.
-      const nominalFs = field.font_size || 12;
-      const boxH = typeof field.height_percent === 'number' ? (field.height_percent / 100) * pageH : Math.round(nominalFs * 1.35) + 2;
-      // Ancrée à GAUCHE exactement sur le point cliqué dans l'éditeur (bx = cx), plutôt que centrée
-      // autour de ce point (bx = cx - boxW/2 comme avant) : le texte tapé commence maintenant pile là
-      // où la balise a été posée, ce qui était la source persistante de confusion sur "où le texte va
-      // apparaître" (retour utilisateur du 2026-07-24, à deux reprises). Le marqueur dans l'éditeur
-      // (VisualTemplateEditor) est ancré de la même façon pour que ce que l'admin voit corresponde
-      // exactement à ce que produit ce rendu.
-      const bx = Math.max(0, cx);
-      const by = Math.max(0, cy - boxH / 2);
-      const typedValue = textInputMap[fieldKey(field)];
-      try {
-        if (typedValue) {
-          // FIX (2026-09-10) : la case de saisie à l'écran (pageTexts) accepte désormais plusieurs
-          // lignes (touche Entrée) et enroule automatiquement le texte trop long — mais cette gravure
-          // finale dans le PDF ne dessinait encore qu'UNE seule ligne, en mesurant la chaîne ENTIÈRE
-          // (retours à la ligne "\n" compris) avec font.widthOfTextAtSize puis un unique page.drawText().
-          // pdf-lib ne sait pas interpréter "\n" à l'intérieur d'une chaîne : dès que le texte tapé en
-          // contenait un (donc dès qu'on écrivait plus d'une ligne), ça faisait échouer le calcul/dessin
-          // — erreur silencieusement avalée par le catch ci-dessous, et le champ entier disparaissait du
-          // PDF final. C'est exactement ce qui rendait les cases "Votre demande s'énonce ainsi"/"Nous
-          // allons centrer notre travail sur" (larges, redimensionnées pour plusieurs lignes) invisibles
-          // dans le document final, alors que les petites cases à une ligne (ex. le calendrier
-          // prévisionnel, jamais redimensionnées) continuaient de fonctionner.
-          const textStr = String(typedValue);
-          const tx = bx + 3;
-          const maxTextW = Math.max(4, boxW - 6);
-          const fs = nominalFs;
-          const lineHeight = fs * 1.25;
-          // FIX (2026-09-10, round 4) : utilise désormais EXACTEMENT la même fonction de découpage
-          // (wrapTextForBox, définie une seule fois en haut du fichier) que la zone de saisie côté
-          // client — voir DocumentViewerModal/handleTextFieldChange. Les deux côtés utilisaient
-          // auparavant des calculs de capacité légèrement différents (l'un une estimation par
-          // largeur moyenne de caractère, l'autre la vraie mesure pdf-lib), ce qui provoquait des
-          // coupures imprévisibles ici malgré un texte qui semblait tenir à l'écran. En partageant
-          // le même algorithme ET la même police (Helvetica) des deux côtés, un texte accepté à la
-          // saisie est garanti de tenir, sans coupure, dans ce rendu final.
-          const maxLines = Math.max(1, Math.floor(boxH / lineHeight));
-          const { lines: visibleLines } = wrapTextForBox(textStr, (s, sz) => font.widthOfTextAtSize(s, sz), fs, maxTextW, maxLines);
-          const topY = by + boxH - fs;
-          visibleLines.forEach((line, i) => {
-            if (!line) return;
-            page.drawText(line, {
-              x: tx, y: topY - i * lineHeight,
-              size: fs, font, color: rgb(0.1, 0.1, 0.1),
-            });
-          });
-        }
-        // Pas encore rempli (2026-09-03, suite) : on ne dessine plus rien du tout — plus de cadre ni de
-        // libellé "Texte libre ..." gravé dans le PDF final. Champ optionnel non rempli = totalement
-        // invisible pour le lecteur du document (retour utilisateur explicite).
-      } catch (e) {
-        console.warn('[overlayFieldsOnPdf] Erreur champ texte libre:', e.message);
-      }
-      continue;
-    }
 
     if (isCheckbox) {
       // Case à cocher sans texte : simple carré, coché = rempli + coche blanche, décoché = contour seul.
       const boxSize = 12;
       const bx = cx - boxSize / 2;
       const by = cy - boxSize / 2;
-      const bc = ROLE_COLOR_RGB[roleFromTag(field.tag) || 'client'];
+      const isClient = field.tag === 'checkbox_client';
+      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
       const isChecked = !!checkedMap[fieldKey(field)];
       try {
         if (isChecked) {
@@ -1152,9 +672,9 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
       const sigH = 44;
       const bx = Math.max(0, cx - sigW / 2);
       const by = Math.max(0, cy - sigH / 2);
-      const sigFieldRole = roleFromTag(field.tag) || 'client';
-      // Couleur : bleu pour client, orange pour formateur, vert pour organisme
-      const bc = ROLE_COLOR_RGB[sigFieldRole];
+      const isClient = field.tag === 'signature_client';
+      // Couleur : bleu pour client, orange pour formateur
+      const bc = isClient ? rgb(0.18, 0.42, 0.93) : rgb(0.92, 0.49, 0.06);
 
       const sigDataUrl = signaturesMap[field.tag];
       if (sigDataUrl) {
@@ -1173,7 +693,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
           page.drawImage(sigImg, { x: bx, y: by + sigH - drawH, width: drawW, height: drawH });
           // Ligne de séparation + label
           page.drawLine({ start: { x: bx, y: by }, end: { x: bx + sigW, y: by }, thickness: 0.5, color: bc, opacity: 0.6 });
-          page.drawText(`Signature ${ROLE_SIGNATURE_LABEL[sigFieldRole]}`, {
+          page.drawText(isClient ? 'Signature bénéficiaire' : 'Signature formateur', {
             x: bx, y: by - 9, size: 6.5, font, color: rgb(0.4, 0.4, 0.4),
           });
         } catch (e) {
@@ -1183,7 +703,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
         // Placeholder : rectangle pointillé
         try {
           page.drawRectangle({ x: bx, y: by, width: sigW, height: sigH, borderColor: bc, borderWidth: 0.8, opacity: 0.5 });
-          const label = `Signature ${ROLE_SIGNATURE_LABEL[sigFieldRole]}`;
+          const label = isClient ? 'Signature beneficiaire' : 'Signature formateur';
           page.drawText(label, {
             x: bx + 4, y: by + sigH / 2 - 3, size: 7.5, font, color: bc, opacity: 0.7,
           });
@@ -1213,7 +733,7 @@ const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signature
   return new Blob([pdfBytes], { type: 'application/pdf' });
 };
 
-const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], requiredTextFields = [], requiresSignature = true, supabase: passedSupabase }) => {
+const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'view', onSave, isInteractiveConsent = false, requiredCheckboxes = [], supabase: passedSupabase }) => {
   // On utilise le supabase passé en prop s'il existe, sinon le global
   const activeSupabase = passedSupabase || supabase;
   const [hasRead, setHasRead] = useState(false);
@@ -1239,102 +759,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       return next;
     });
   };
-  // ── Balises "texte libre" appartenant à ce signataire : saisie directement sur le document ──
-  const [textFieldValues, setTextFieldValues] = useState({});
-  const setTextFieldValue = (fieldId, value) => {
-    setTextFieldValues(prev => ({ ...prev, [fieldId]: value }));
-  };
-  const allRequiredTextFilled = requiredTextFields.length === 0 || requiredTextFields.every(f => (textFieldValues[fieldKey(f)] || '').trim().length > 0);
-  // FIX (2026-09-10, round 4) : police Helvetica embarquée côté navigateur (pdf-lib fonctionne aussi
-  // en client, cette app l'utilise déjà pour bâtir le PDF final) — sert UNIQUEMENT à mesurer la
-  // largeur du texte tapé (widthOfTextAtSize), avec la MÊME fonction wrapTextForBox que la gravure
-  // finale (overlayFieldsOnPdf), pour savoir EXACTEMENT ce qui tiendra dans la case, sans estimation
-  // approximative. Chargée une seule fois à l'ouverture en mode signature.
-  const measureFontRef = useRef(null);
-  useEffect(() => {
-    let cancelled = false;
-    if (mode !== 'sign') return;
-    (async () => {
-      try {
-        const measureDoc = await PDFDocument.create();
-        const f = await measureDoc.embedFont(StandardFonts.Helvetica);
-        if (!cancelled) measureFontRef.current = f;
-      } catch (e) {
-        console.warn('[DocumentViewerModal] Police de mesure indisponible pour la saisie texte libre :', e.message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [mode]);
-  // Calcule, pour un champ texte libre donné (sur une page dont on connaît les dimensions RÉELLES
-  // en points), si une nouvelle valeur tiendrait dans la case sans être tronquée dans le PDF final —
-  // et si oui seulement, met à jour l'état. Une frappe qui ferait déborder la case est ignorée
-  // plutôt qu'acceptée puis silencieusement coupée plus tard à la signature (retour utilisateur :
-  // "il faut que ce soit exactement pareil quand le client reçoit le document").
-  const handleTextFieldChange = (f, pg, newValue) => {
-    const k = fieldKey(f);
-    const font = measureFontRef.current;
-    if (!font) { setTextFieldValue(k, newValue); return; }
-    const pageWidthPt = pg.pageWidthPt || 595;
-    const pageHeightPt = pg.pageHeightPt || 842;
-    const fs = 12;
-    const boxWpt = typeof f.width_percent === 'number' ? (f.width_percent / 100) * pageWidthPt : pageWidthPt * 0.28;
-    const boxHpt = typeof f.height_percent === 'number' ? (f.height_percent / 100) * pageHeightPt : Math.round(fs * 1.35) + 2;
-    const maxTextWpt = Math.max(4, boxWpt - 6);
-    const maxLines = Math.max(1, Math.floor(boxHpt / (fs * 1.25)));
-    const { fits } = wrapTextForBox(newValue, (s, sz) => font.widthOfTextAtSize(s, sz), fs, maxTextWpt, maxLines);
-    if (!fits) return; // la case est pleine : on ignore cette frappe (rien à couper plus tard)
-    setTextFieldValue(k, newValue);
-  };
   // ── Rendu des cases à cocher directement SUR le document (au lieu d'une liste générique
   // "Case 1 / Case 2" sans contexte) : on rend chaque page en image (comme dans l'éditeur de
   // balises) et on superpose un carré cliquable exactement à la position (x_percent, y_percent)
   // enregistrée — le texte imprimé autour donne le contexte, pas besoin de libellé inventé.
   const [pageImages, setPageImages] = useState([]);
   const [pageImagesLoading, setPageImagesLoading] = useState(false);
-  // FIX (2026-09-10, round 5) : corrige l'écart visuel signalé — "on voit bien la différence
-  // d'écriture" entre l'écran du formateur qui tape et le PDF final reçu par le client. Cause
-  // racine : la case (width/height en %) est bien proportionnelle à la page, mais la TAILLE DE
-  // POLICE affichée pendant la saisie était fixée en dur à 12px CSS, quelle que soit la largeur
-  // RÉELLE à l'écran de l'image de page (large sur un écran d'ordinateur, étroite sur mobile) —
-  // alors que dans le PDF final, la police (12pt Helvetica) est TOUJOURS proportionnelle à la
-  // largeur de la page (595pt pour une A4), quel que soit l'appareil qui l'affiche ensuite. Donc
-  // plus la fenêtre du formateur est large, plus la case paraissait "vide" (police relativement
-  // petite) par rapport à ce que ce même texte donnera, proportionnellement, dans le PDF.
-  // Correctif : on mesure la largeur RÉELLE en pixels du conteneur de page (pagesContainerRef,
-  // via ResizeObserver — se met à jour si la fenêtre/modale est redimensionnée), puis on calcule
-  // une taille de police à l'écran proportionnelle à cette largeur, dans le MÊME ratio que 12pt
-  // par rapport à la largeur de page en points du PDF (pg.pageWidthPt). Résultat : le texte
-  // occupe, visuellement, exactement la même proportion de la case à l'écran (n'importe quel
-  // appareil) que dans le document final — formateur et client voient la même chose.
-  // NOTE (bugfix immédiat) : ce bloc DOIT rester après la déclaration de pageImages ci-dessus —
-  // l'effet ci-dessous lit pageImages.length dans son tableau de dépendances, et le placer AVANT
-  // (comme dans la toute première version de ce correctif) provoquait un plantage total de l'appli
-  // ("Cannot access 'pageImages' before initialization", page blanche) car ce const est en TDZ tant
-  // que sa ligne de déclaration n'a pas encore été exécutée dans le corps de la fonction.
-  const pagesContainerRef = useRef(null);
-  const [pagesContainerWidthPx, setPagesContainerWidthPx] = useState(0);
-  useEffect(() => {
-    if (mode !== 'sign') return;
-    const el = pagesContainerRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const update = () => setPagesContainerWidthPx(el.getBoundingClientRect().width);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [mode, pageImages.length]);
-  const scaledFontSizePx = (pg) => {
-    const pageWidthPt = pg && pg.pageWidthPt;
-    if (!pageWidthPt || !pagesContainerWidthPx) return 12; // repli avant première mesure
-    return Math.max(8, (12 / pageWidthPt) * pagesContainerWidthPx);
-  };
   useEffect(() => {
     let cancelled = false;
     setPageImages([]);
-    // FIX (2026-09-03, suite — bug mobile "une seule page visible en signature") : on ne restreint
-    // plus ce rendu aux documents ayant des cases/textes interactifs requis — voir commentaire
-    // détaillé au-dessus de ce useEffect.
-    if (!isOpen || mode !== 'sign' || !blobUrl) return;
+    if (!isOpen || mode !== 'sign' || requiredCheckboxes.length === 0 || !blobUrl) return;
     (async () => {
       setPageImagesLoading(true);
       try {
@@ -1357,12 +791,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           const canvas = window.document.createElement('canvas');
           canvas.width = vp.width; canvas.height = vp.height;
           await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-          // FIX (2026-09-10, round 3) : on garde aussi les dimensions RÉELLES de la page PDF (en
-          // points, indépendamment du zoom "scale: 1.5" utilisé ci-dessus juste pour la netteté de
-          // l'image) — nécessaire pour calculer, au caractère près, combien de texte une case peut
-          // réellement contenir dans le PDF final (voir pageTexts plus bas) et empêcher de taper plus
-          // que ce qui tiendra, plutôt que de le découvrir après coup lors de la signature.
-          pages.push({ dataUrl: canvas.toDataURL(), pageWidthPt: vp.width / 1.5, pageHeightPt: vp.height / 1.5 });
+          pages.push({ dataUrl: canvas.toDataURL() });
         }
         if (!cancelled) setPageImages(pages);
       } catch (e) {
@@ -1374,7 +803,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, mode, blobUrl, requiredCheckboxes.length, requiredTextFields.length]);
+  }, [isOpen, mode, blobUrl, requiredCheckboxes.length]);
 
   // resolveFileUrl est appliqué ici pour couvrir toutes les sources (relative path ou URL complète)
   const pdfUrl = resolveFileUrl(url || document?.url);
@@ -1534,7 +963,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       setPdfError(null);
       setDocumentChoice(null);
       setCheckedBoxIds(new Set());
-      setHasSig(false); // Sans ce reset, une signature dessinée sur un document restait "true" pour le document suivant.
     }
 
     return () => { cancelled = true; };
@@ -1653,11 +1081,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         >
           {/* PDF Zone — mode interactif (cases directement sur le document) si des cases sont
               requises ET que le rendu page-par-page a réussi ; sinon le lecteur PDF classique. */}
-          {mode === 'sign' && pageImages.length > 0 ? (
-            <div className="w-full space-y-3" ref={pagesContainerRef}>
+          {mode === 'sign' && requiredCheckboxes.length > 0 && pageImages.length > 0 ? (
+            <div className="w-full space-y-3">
               {pageImages.map((pg, pi) => {
                 const pageChecks = requiredCheckboxes.filter(f => (f.page || 1) === pi + 1);
-                const pageTexts = requiredTextFields.filter(f => (f.page || 1) === pi + 1);
                 return (
                   <div key={pi} className="relative w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white">
                     <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
@@ -1677,79 +1104,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         </button>
                       );
                     })}
-                    {pageTexts.map((f, fi) => {
-                      const k = fieldKey(f);
-                      const val = textFieldValues[k] || '';
-                      return (
-                        <textarea
-                          key={k || `txt-${fi}`}
-                          value={val}
-                          onChange={e => handleTextFieldChange(f, pg, e.target.value)}
-                          placeholder="Cliquez pour écrire…"
-                          rows={1}
-                          // FIX (2026-09-10, round 4) : remplace l'ancienne limite de caractères — une
-                          // ESTIMATION (largeur moyenne de caractère) qui pouvait diverger de la
-                          // capacité RÉELLE du PDF final et laissait encore passer des textes ensuite
-                          // tronqués — par handleTextFieldChange, qui utilise la MÊME fonction de
-                          // découpage ET la même police (Helvetica, mesurée par pdf-lib) que la
-                          // gravure finale : une frappe qui ferait déborder la case dans le PDF est
-                          // refusée ici, en temps réel, plutôt que découverte à la signature.
-                          // FIX (2026-09-10) : remplace le <input type="text"> mono-ligne par une <textarea> —
-                          // sur une case large, on ne pouvait écrire que sur une seule ligne et le texte trop
-                          // long était coupé/débordait sans jamais revenir à la ligne. La <textarea> gère
-                          // nativement "Entrée" (saut de ligne) et enroule le texte (whiteSpace/overflowWrap
-                          // ci-dessous) sans jamais dépasser les contours de la case (overflow hidden + hauteur
-                          // fixée sur field.height_percent, ignoré par l'ancien <input> qui ne lisait que
-                          // width_percent — d'où le fait qu'agrandir la case dans l'éditeur de balises n'avait
-                          // aucun effet ici). `resize: none` empêche l'utilisateur de re-déformer la case
-                          // pendant la signature : la taille reste celle définie dans l'éditeur de modèle.
-                          // Zone d'édition volontairement plus resserrée et en gris neutre (au lieu du violet/
-                          // vert d'origine) : la balise posée dans l'éditeur de modèle est large pour laisser
-                          // de la marge. Le rendu final (overlayFieldsOnPdf) souligne désormais uniquement la
-                          // largeur réelle du texte, en gris — cette zone d'édition adopte la même sobriété
-                          // (retour utilisateur 2026-07-24).
-                          // Ancrée à GAUCHE (translate(0%, -50%), pas -50%/-50%) : le point posé dans
-                          // l'éditeur de modèle est désormais le coin gauche exact où le texte démarre, à
-                          // l'écran comme dans le PDF final — même correctif que overlayFieldsOnPdf.
-                          style={{
-                            position: 'absolute',
-                            left: `${f.x_percent}%`,
-                            top: `${f.y_percent}%`,
-                            transform: 'translate(0%, -50%)',
-                            ...(typeof f.width_percent === 'number' ? { width: `${f.width_percent}%` } : { minWidth: '10%', maxWidth: '26%' }),
-                            height: `${typeof f.height_percent === 'number' ? f.height_percent : 3.5}%`,
-                            minHeight: 20,
-                            // FIX (round 5) : taille de police PROPORTIONNELLE à la largeur réelle à
-                            // l'écran de la page (voir scaledFontSizePx ci-dessus) — plus fixée à 12px —
-                            // pour que le texte occupe visuellement la même part de la case sur tous les
-                            // écrans (ordinateur large ou mobile étroit), comme dans le PDF final.
-                            fontSize: scaledFontSizePx(pg),
-                            // Arial/Helvetica : la police la plus proche, en métriques de largeur, de
-                            // l'Helvetica standard utilisée par pdf-lib pour graver le PDF final — pour
-                            // que le texte affiché ici ressemble d'aussi près que possible à ce qui sera
-                            // effectivement imprimé (retour utilisateur du 2026-09-10 : la police à
-                            // l'écran devait "être exactement pareille" une fois le document reçu).
-                            fontFamily: 'Arial, Helvetica, sans-serif',
-                            resize: 'none',
-                            overflow: 'hidden',
-                            whiteSpace: 'pre-wrap',
-                            overflowWrap: 'break-word',
-                            lineHeight: 1.25,
-                          }}
-                          className={`px-0.5 bg-transparent outline-none text-gray-900 border rounded ${val ? 'border-gray-400' : 'border-gray-300 border-dashed'} focus:border-violet-500`}
-                        />
-                      );
-                    })}
                   </div>
                 );
               })}
             </div>
           ) : (
             <div className="w-full rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white" style={{ height: mode === 'sign' ? '60vh' : '72vh', minHeight: 380 }}>
-              {mode === 'sign' && pageImagesLoading ? (
+              {mode === 'sign' && requiredCheckboxes.length > 0 && pageImagesLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-400">
                   <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
-                  <p className="text-sm font-medium">Préparation des champs interactifs sur le document…</p>
+                  <p className="text-sm font-medium">Préparation des cases à cocher sur le document…</p>
                 </div>
               ) : renderPdfZone()}
             </div>
@@ -1759,12 +1123,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
           {mode === 'sign' && (
             <div ref={signatureSectionRef} className={`bg-white rounded-2xl border-2 transition-all ${hasRead ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-50 pointer-events-none'}`}>
               <div className="p-5 border-b border-gray-100">
-                <h4 className="font-extrabold text-gray-900 mb-1">{requiresSignature ? 'Signature électronique' : 'Validation'}</h4>
-                <p className="text-sm text-gray-500">
-                  {requiresSignature
-                    ? 'Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".'
-                    : 'Ce document ne comporte pas de zone de signature — cliquez sur "Signer ce document" pour valider.'}
-                </p>
+                <h4 className="font-extrabold text-gray-900 mb-1">Signature électronique</h4>
+                <p className="text-sm text-gray-500">Dessinez votre signature dans le cadre ci-dessous, puis cliquez sur "Signer ce document".</p>
               </div>
               <div className="p-5">
                 {isInteractiveConsent && (
@@ -1826,42 +1186,11 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                     )}
                   </div>
                 )}
-                {requiredTextFields.length > 0 && pageImages.length > 0 && (
-                  // Mode interactif actif : les champs se remplissent directement sur le document ci-dessus.
-                  // Purement informatif depuis le 2026-09-03 : ces champs ne bloquent plus la signature,
-                  // il est normal que certains restent vides selon le document.
-                  <div className={`mb-4 p-3 rounded-xl border text-sm font-bold ${allRequiredTextFilled ? 'bg-green-50 border-green-200 text-green-700' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
-                    {allRequiredTextFilled
-                      ? `✅ ${requiredTextFields.length} champ(s) texte rempli(s) sur le document ci-dessus.`
-                      : `✏️ ${requiredTextFields.filter(f => (textFieldValues[fieldKey(f)] || '').trim()).length} / ${requiredTextFields.length} champ(s) texte rempli(s) sur le document ci-dessus (facultatif — vous pouvez signer avec des champs vides).`}
-                  </div>
-                )}
-                {requiredTextFields.length > 0 && pageImages.length === 0 && (
-                  // Repli (rendu page-par-page indisponible) : liste générique, sans contexte visuel.
-                  <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                    <p className="text-sm font-bold text-blue-800 mb-3">Champ(s) texte du document (facultatif) :</p>
-                    {requiredTextFields.map((f, i) => (
-                      <div key={fieldKey(f) || i} className="mb-2 last:mb-0">
-                        <input
-                          type="text"
-                          value={textFieldValues[fieldKey(f)] || ''}
-                          onChange={e => setTextFieldValue(fieldKey(f), e.target.value)}
-                          placeholder={`Champ texte ${i + 1}`}
-                          className="w-full px-3 py-2 text-sm border border-blue-300 rounded-lg focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
                 <label className="flex items-start gap-3 cursor-pointer mb-4 select-none">
                   <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} className="mt-0.5 w-4 h-4 rounded accent-violet-600 shrink-0" />
-                  <span className="text-sm text-gray-600">
-                    Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document{requiresSignature ? " et j'accepte de le valider par ma signature électronique." : '.'}
-                  </span>
+                  <span className="text-sm text-gray-600">Je certifie avoir <strong>lu et compris</strong> l'intégralité de ce document et j'accepte de le valider par ma signature électronique.</span>
                 </label>
-                {/* Canvas de signature manuscrite — uniquement si le document comporte une balise
-                    signature pour ce signataire (sinon rien à signer, on ne l'exige pas). */}
-                {requiresSignature && (
+                {/* Canvas de signature manuscrite */}
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Votre signature</span>
@@ -1926,7 +1255,6 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                   />
                   {!hasSig && <p className="text-xs text-gray-400 mt-1 text-center italic">Tracez votre signature ci-dessus</p>}
                 </div>
-                )}
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
                   <button
@@ -1947,10 +1275,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues);
+                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds);
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || (requiresSignature && !hasSig)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
                     Signer ce document
                   </button>
@@ -2096,7 +1424,7 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
                   className="w-4 h-4 accent-violet-600 rounded"
                 />
                 <div>
-                  <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
+                  <p className="font-bold text-gray-800 text-sm">Signature du Coach (Formateur)</p>
                   <p className="text-[10px] text-gray-400">Le formateur devra contresigner</p>
                 </div>
               </label>
@@ -2106,9 +1434,9 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
           {/* Preview du statut */}
           <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 font-medium">
             <span className="font-black uppercase tracking-wider">Aperçu : </span>
-            {reqClient && reqFormateur && 'Signature client + formateur requises'}
-            {reqClient && !reqFormateur && 'Signature client uniquement — Formateur N/A'}
-            {!reqClient && reqFormateur && 'Signature formateur uniquement — Client N/A'}
+            {reqClient && reqFormateur && 'Signature client + coach requises'}
+            {reqClient && !reqFormateur && 'Signature client uniquement — Coach N/A'}
+            {!reqClient && reqFormateur && 'Signature coach uniquement — Client N/A'}
             {!reqClient && !reqFormateur && 'Aucune signature requise — Document informatif'}
           </div>
         </div>
@@ -2185,7 +1513,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
             <div>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
               <button
-                onClick={() => openSecureStorageFile(fileUrl)}
+                onClick={() => window.open(fileUrl, '_blank')}
                 className="w-full flex items-center justify-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl text-emerald-700 font-bold hover:bg-emerald-100 transition-all"
               >
                 <Download size={18} /> Télécharger le modèle d'exercice
@@ -2274,14 +1602,16 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
         </div>
         <div className="p-6 space-y-5">
           {session.reponse_url && (
-            <button
-              onClick={() => openSecureStorageFile(session.reponse_url)}
+            <a
+              href={session.reponse_url}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-3 w-full px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-700 font-bold text-sm hover:bg-emerald-100 transition-colors"
             >
               <FileCheck size={18} />
               Ouvrir le rendu du client
               <span className="ml-auto text-emerald-400">↗</span>
-            </button>
+            </a>
           )}
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Statut de correction</p>
@@ -2328,83 +1658,6 @@ const CorrectionModal = ({ isOpen, onClose, session, onSave }) => {
   );
 };
 
-// ─── Modale "Qui doit signer ?" pour un émargement DÉJÀ créé dans un modèle de module ──────────
-// AJOUT (2026-09-25) : jusqu'ici, changer qui doit signer un émargement déjà créé dans un module
-// obligeait à le supprimer et le recréer (StepResourceModal ne proposait ce choix qu'à la création).
-// Demandé par l'utilisateur pour pouvoir ajuster ses modules sans "tout refaire" — voir
-// handleUpdateStepResourceSignatures pour la logique de propagation aux dossiers clients existants.
-const StepResourceSignatureModal = ({ isOpen, resource, onClose, onSave }) => {
-  const [reqClient, setReqClient] = React.useState(true);
-  const [reqFormateur, setReqFormateur] = React.useState(false);
-
-  React.useEffect(() => {
-    if (isOpen && resource) {
-      const meta = (typeof resource.metadata === 'string' && resource.metadata.startsWith('{'))
-        ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
-        : (resource.metadata || {});
-      setReqClient(meta.requiresClientSignature !== false);
-      setReqFormateur(meta.requiresTrainerSignature === true);
-    }
-  }, [isOpen, resource]);
-
-  if (!isOpen || !resource) return null;
-
-  return (
-    <div className="fixed inset-0 bg-gray-900/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-7">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-violet-100 text-violet-600 rounded-2xl flex items-center justify-center">
-            <Settings size={20} />
-          </div>
-          <div>
-            <h3 className="font-extrabold text-gray-900 text-base">Qui doit signer ?</h3>
-            <p className="text-xs text-gray-400">{resource.titre}</p>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-indigo-200 transition-all">
-            <input type="checkbox" checked={reqClient} onChange={e => setReqClient(e.target.checked)} className="w-4 h-4 accent-indigo-600 rounded" />
-            <div>
-              <p className="font-bold text-gray-800 text-sm">Signature du Bénéficiaire (Client)</p>
-              <p className="text-[10px] text-gray-400">Le client devra signer cet émargement</p>
-            </div>
-          </label>
-          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-violet-200 transition-all">
-            <input type="checkbox" checked={reqFormateur} onChange={e => setReqFormateur(e.target.checked)} className="w-4 h-4 accent-violet-600 rounded" />
-            <div>
-              <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
-              <p className="text-[10px] text-gray-400">Le formateur devra aussi signer cet émargement</p>
-            </div>
-          </label>
-        </div>
-
-        <div className="p-3 mt-4 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 font-medium">
-          <span className="font-black uppercase tracking-wider">Aperçu : </span>
-          {reqClient && reqFormateur && 'Signature client + formateur requises'}
-          {reqClient && !reqFormateur && 'Signature client uniquement'}
-          {!reqClient && reqFormateur && 'Signature formateur uniquement'}
-          {!reqClient && !reqFormateur && 'Aucune signature requise'}
-        </div>
-
-        <p className="text-[10px] text-amber-600 mt-3 font-medium">
-          ⚠️ Ajouter la signature formateur l'ajoutera aussi aux dossiers clients déjà créés avec cet émargement (sans toucher aux signatures déjà obtenues). La retirer ne modifie que les futurs dossiers.
-        </p>
-
-        <div className="flex gap-3 mt-6">
-          <button onClick={onClose} className="flex-1 px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-          <button
-            onClick={() => onSave({ requiresClientSignature: reqClient, requiresTrainerSignature: reqFormateur })}
-            className="flex-1 px-5 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg"
-          >
-            Enregistrer
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
@@ -2418,12 +1671,6 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
   const [instructions, setInstructions] = useState('');
   const [destination, setDestination] = useState('client');
   const [questions, setQuestions] = useState([]);
-  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
-  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
-  const [isQuiz, setIsQuiz] = useState(false);
-  const [seuilReussite, setSeuilReussite] = useState(50);
-  const [qDescription, setQDescription] = useState('');
-  const [qClosingMessage, setQClosingMessage] = useState('');
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -2440,10 +1687,6 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
       setInstructions('');
       setDestination('client');
       setQuestions([]);
-      setIsQuiz(false);
-      setSeuilReussite(50);
-      setQDescription('');
-      setQClosingMessage('');
     }
   }, [isOpen]);
 
@@ -2480,41 +1723,12 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
     }
   };
 
-  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
+  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
   const removeQuestion = (id) => setQuestions(prev => prev.filter(q => q.id !== id));
   const updateQuestion = (id, field, value) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
-  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
-  // format (chaîne pour "unique", tableau pour "multiple") — sinon un quiz noté peut se retrouver
-  // avec un correctAnswer du mauvais format après un changement de type.
-  const setQuestionType = (id, newType) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
   const addOption = (qId) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
-  // resynchronise ici si l'option qu'il désignait vient d'être renommée, sinon la bonne réponse
-  // du quiz se désynchronise silencieusement dès qu'on corrige le texte d'une option.
-  const updateOption = (qId, idx, value) => setQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    const oldVal = q.options[idx];
-    const options = q.options.map((o, i) => i === idx ? value : o);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = value;
-    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? value : o);
-    return { ...q, options, correctAnswer };
-  }));
-  const removeOption = (qId, idx) => setQuestions(prev => prev.map(q => {
-    if (q.id !== qId || q.options.length <= 1) return q;
-    const removedVal = q.options[idx];
-    const options = q.options.filter((_, i) => i !== idx);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
-    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
-    return { ...q, options, correctAnswer };
-  }));
-  const toggleCorrectOption = (qId, opt) => setQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    if (q.type === 'single') return { ...q, correctAnswer: opt };
-    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
-  }));
+  const updateOption = (qId, idx, value) => setQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === idx ? value : o) } : q));
+  const removeOption = (qId, idx) => setQuestions(prev => prev.map(q => q.id === qId && q.options.length > 1 ? { ...q, options: q.options.filter((_, i) => i !== idx) } : q));
 
   if (!isOpen) return null;
 
@@ -2546,7 +1760,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                   } else if (t === 'questionnaire') {
                     setTitle('');
                     setMetadata({ documentType: 'questionnaire' });
-                    if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
+                    if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'] }]);
                   } else {
                     setTitle('');
                     setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'info' });
@@ -2571,25 +1785,6 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
             />
           </div>
 
-          {/* AJOUT (2026-09-25) : jusqu'ici ce choix n'existait que pour les documents (plus bas,
-              {type === 'document'}) — jamais pour les émargements, qui étaient donc TOUJOURS créés en
-              "client uniquement" sans aucun moyen de demander aussi la signature du formateur. */}
-          {type === 'signature' && (
-            <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
-              <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Qui doit signer ?</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={metadata.requiresClientSignature !== false} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={metadata.requiresTrainerSignature === true} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
-                </label>
-              </div>
-            </div>
-          )}
-
           {type === 'exercice' && (
             <div>
               <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
@@ -2605,37 +1800,6 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
           {type === 'questionnaire' && (
             <div className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
-                <textarea
-                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
-                  placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
-                  rows={2}
-                  value={qDescription}
-                  onChange={e => setQDescription(e.target.value)}
-                />
-              </div>
-
-              <div className="flex items-center justify-between bg-violet-50 border border-violet-100 rounded-2xl p-3">
-                <div>
-                  <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
-                  <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
-                </div>
-                <button type="button" onClick={() => setIsQuiz(v => !v)}
-                  className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${isQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
-                  <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${isQuiz ? 'left-6' : 'left-1'}`}></span>
-                </button>
-              </div>
-
-              {isQuiz && (
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
-                  <input type="number" min="0" max="100" value={seuilReussite}
-                    onChange={e => setSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-                    className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                </div>
-              )}
-
               <div className="flex items-center justify-between">
                 <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Questions ({questions.length})</label>
                 <button type="button" onClick={addQuestion} className="flex items-center gap-1 text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase tracking-wider">+ Ajouter une question</button>
@@ -2660,51 +1824,28 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                       className="w-full p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm font-medium"
                     />
                     <div className="flex gap-1.5">
-                      {(isQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
-                        <button key={val} type="button" onClick={() => setQuestionType(q.id, val)}
+                      {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
+                        <button key={val} type="button" onClick={() => updateQuestion(q.id, 'type', val)}
                           className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
                       ))}
                     </div>
                     {(q.type === 'single' || q.type === 'multiple') && (
                       <div className="space-y-1.5">
-                        {isQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
-                        {q.options.map((opt, oi) => {
-                          const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
-                          return (
-                            <div key={oi} className="flex items-center gap-2">
-                              {isQuiz ? (
-                                <button type="button" onClick={() => toggleCorrectOption(q.id, opt)}
-                                  title="Marquer comme bonne réponse"
-                                  className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
-                                  <span className="text-[9px] leading-none">✓</span>
-                                </button>
-                              ) : (
-                                <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                              )}
-                              <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
-                                className={`flex-1 p-2 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400 ${isQuiz && isCorrect ? 'border-emerald-300' : 'border-indigo-100'}`} />
-                              {q.options.length > 1 && (
-                                <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
-                              )}
-                            </div>
-                          );
-                        })}
+                        {q.options.map((opt, oi) => (
+                          <div key={oi} className="flex items-center gap-2">
+                            <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                            <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
+                              className="flex-1 p-2 bg-white border border-indigo-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400" />
+                            {q.options.length > 1 && (
+                              <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
+                            )}
+                          </div>
+                        ))}
                         <button type="button" onClick={() => addOption(q.id)} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-bold mt-1">+ Option</button>
                       </div>
                     )}
                   </div>
                 ))}
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
-                <textarea
-                  className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
-                  placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
-                  rows={2}
-                  value={qClosingMessage}
-                  onChange={e => setQClosingMessage(e.target.value)}
-                />
               </div>
             </div>
           )}
@@ -2794,13 +1935,11 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                const questionsMeta = type === 'questionnaire'
-                  ? { questions, isQuiz, ...(isQuiz ? { seuilReussite } : { seuilReussite: undefined }), description: qDescription.trim() || undefined, closingMessage: qClosingMessage.trim() || undefined }
-                  : {};
+                const questionsMeta = type === 'questionnaire' ? { questions } : {};
                 onSave({ type, title, metadata: { ...metadata, destination, ...questionsMeta }, resourceId: selectedResourceId, fileUrl: (selectedResourceId && selectedResourceId.includes('/')) ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
                 onClose();
               }}
-              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0) || (type === 'questionnaire' && isQuiz && questions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0)}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
               {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
@@ -2877,9 +2016,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
   if (!isOpen) return null;
 
-  // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de ce
-  // sélecteur — on ne doit pouvoir rattacher un nouvel élément qu'à une vraie séance planifiée.
-  const groupedSessions = clientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined).reduce((acc, s) => {
+  const groupedSessions = clientSessions.reduce((acc, s) => {
     if (!acc[s.numero_seance]) acc[s.numero_seance] = s;
     return acc;
   }, {});
@@ -3072,7 +2209,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 className="w-5 h-5 rounded-lg border-indigo-300 text-indigo-600 focus:ring-indigo-500"
               />
               <label htmlFor="isToSignCustom" className="text-xs font-bold text-indigo-900 cursor-pointer">
-                Nécessite une signature du client / formateur
+                Nécessite une signature du client / coach
               </label>
             </div>
           )}
@@ -3118,203 +2255,28 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 // COMPOSANTS DE VUES EXTRAITS DE APP
 // ==========================================
 
-// REMARQUE (2026-07-28) : la création automatique d'un module de démarrage
-// "Bilan de Compétences 24h" pour chaque nouvel organisme a été retirée à la
-// demande explicite de l'utilisateur — chaque nouvel organisme doit désormais
-// démarrer avec une page Modules totalement vide, sans rien créer par défaut.
-// (Cette vue SignupView n'est de toute façon plus utilisée en production : le
-// vrai flux d'inscription passe par pages/Signup.js + pages/SetupOrganisation.js
-// et une fonction Edge Supabase "setup-organisation" — voir cette dernière si
-// le même comportement de module par défaut doit aussi y être retiré.)
-
-// ─── Vue publique : questionnaire d'entretien préalable envoyé à un prospect ──────────────────
-// Accessible sans compte SkorUp, via /questionnaire?t=<token> (lien reçu par email — voir
-// api/prospects.js action=envoyer). Demandé par l'utilisateur le 22/09/2026. Reprend le même
-// rendu de questions (text/single/multiple) que QuestionnaireFillerModal plus bas dans ce
-// fichier, adapté en page pleine plutôt qu'en modale puisqu'il n'y a ici ni app ni utilisateur
-// connecté autour. Tout passe par api/prospects.js (clé service_role côté serveur) : cette vue
-// n'appelle jamais directement Supabase.
-const ProspectQuestionnaireView = () => {
-  const token = React.useMemo(() => new URLSearchParams(window.location.search).get('t') || '', []);
-  const [etat, setEtat] = useState('chargement'); // chargement | a_remplir | rempli | expire | erreur
-  const [erreurMsg, setErreurMsg] = useState('');
-  const [titre, setTitre] = useState('');
-  const [questions, setQuestions] = useState([]);
-  const [prenom, setPrenom] = useState('');
-  const [answers, setAnswers] = useState({});
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!token) { setEtat('erreur'); setErreurMsg('Ce lien est incomplet.'); return; }
-    fetch(`/api/prospects?action=lire&t=${encodeURIComponent(token)}`)
-      .then(async (resp) => {
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) { setEtat('erreur'); setErreurMsg(data.error || 'Ce lien est invalide.'); return; }
-        if (data.etat === 'rempli') { setEtat('rempli'); return; }
-        if (data.etat === 'expire') { setEtat('expire'); return; }
-        setTitre(data.titre || '');
-        setQuestions(data.questions || []);
-        setPrenom(data.prenom || '');
-        setEtat('a_remplir');
-      })
-      .catch(() => { setEtat('erreur'); setErreurMsg('Impossible de charger le questionnaire pour le moment.'); });
-  }, [token]);
-
-  const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
-  const toggleMultiple = (qId, option) => {
-    setAnswers(prev => {
-      const current = prev[qId] || [];
-      return { ...prev, [qId]: current.includes(option) ? current.filter(o => o !== option) : [...current, option] };
-    });
-  };
-
-  // FIX (demande utilisateur, 2026-09-22) : seules les questions cochees "obligatoire" par
-  // l'admin bloquent la soumission - un champ obligatoire absent (anciens modeles crees avant
-  // cette option) est traite comme facultatif, pas comme obligatoire.
-  const isComplete = questions.every(q => {
-    if (!q.obligatoire) return true;
-    if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
-    if (q.type === 'single') return !!answers[q.id];
-    if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
-    return true;
-  });
-
-  const handleSubmit = async () => {
-    setSubmitting(true);
-    setErreurMsg('');
-    try {
-      const resp = await fetch(`/api/prospects?action=soumettre`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ t: token, reponses: answers }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) { setErreurMsg(data.error || 'Ce lien n\'est plus valable.'); setSubmitting(false); return; }
-      setEtat('rempli');
-    } catch (e) {
-      setErreurMsg('Erreur réseau — vérifiez votre connexion et réessayez.');
-      setSubmitting(false);
+const initDefaultTemplatesForOrg = async (supabase, orgId) => {
+  const { data: module } = await supabase.from('modules')
+    .insert([{ nom: 'Bilan de Compétences 24h', seances_prevues: 8, organisation_id: orgId }])
+    .select().single();
+  if (!module) return;
+  const templates = [
+    'Séance 1 — Accueil & Cadrage', 'Séance 2 — Parcours Professionnel',
+    'Séance 3 — Compétences & Ressources', 'Séance 4 — Analyse des Motivations',
+    'Séance 5 — Exploration des Métiers', 'Séance 6 — Projet Professionnel',
+    "Séance 7 — Plan d'Action", 'Séance 8 — Synthèse & Restitution'
+  ];
+  for (let i = 0; i < templates.length; i++) {
+    const { data: tpl } = await supabase.from('module_session_templates')
+      .insert([{ module_id: module.id, titre: templates[i], ordre: i + 1 }])
+      .select().single();
+    if (tpl) {
+      await supabase.from('module_step_resources').insert([{
+        template_id: tpl.id, titre: 'Émargement de présence', type: 'signature', ordre: 1,
+        metadata: { requiresClientSignature: true, requiresTrainerSignature: false }
+      }]);
     }
-  };
-
-  if (etat === 'chargement') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
-        <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
-        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement du questionnaire...</div>
-      </div>
-    );
   }
-
-  if (etat === 'erreur') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-2xl">✕</div>
-          <h1 className="text-xl font-black text-gray-900 mb-2">Lien invalide</h1>
-          <p className="text-gray-500 text-sm">{erreurMsg}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (etat === 'expire') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center text-2xl">⏱</div>
-          <h1 className="text-xl font-black text-gray-900 mb-2">Ce lien a expiré</h1>
-          <p className="text-gray-500 text-sm">Contactez directement l'organisme qui vous l'a envoyé pour recevoir un nouveau lien.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (etat === 'rempli') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
-        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center text-2xl">✓</div>
-          <h1 className="text-xl font-black text-gray-900 mb-2">Merci !</h1>
-          <p className="text-gray-500 text-sm">Vos réponses ont bien été transmises. Vous pouvez fermer cette page.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // etat === 'a_remplir'
-  return (
-    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
-      <div className="bg-white rounded-[32px] w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="bg-violet-600 p-6 text-white shrink-0">
-          <p className="text-violet-200 text-xs font-bold uppercase tracking-widest mb-1">SkorUp</p>
-          <h1 className="text-xl font-black flex items-center gap-2">📝 {titre}</h1>
-          <p className="text-violet-200 text-sm mt-1">
-            {prenom ? `Bonjour ${prenom}, ` : ''}{questions.length} question{questions.length > 1 ? 's' : ''} à compléter
-          </p>
-        </div>
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
-          {questions.map((q, qi) => (
-            <div key={q.id} className="space-y-3">
-              <p className="font-bold text-gray-900 text-sm leading-relaxed">
-                <span className="text-violet-500 font-black mr-1">{qi + 1}.</span>
-                {q.text || <span className="text-gray-400 italic">Question</span>}
-                {q.obligatoire
-                  ? <span className="text-red-500 ml-1">*</span>
-                  : <span className="text-gray-400 font-normal text-xs ml-1.5">(facultatif)</span>}
-              </p>
-              {q.type === 'text' && (
-                <textarea
-                  placeholder="Votre réponse..."
-                  value={answers[q.id] || ''}
-                  onChange={e => setAnswer(q.id, e.target.value)}
-                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm resize-none outline-none focus:ring-2 focus:ring-violet-400 transition-all"
-                  rows={3}
-                />
-              )}
-              {q.type === 'single' && (
-                <div className="space-y-2">
-                  {(q.options || []).map((opt, oi) => (
-                    <label key={oi} onClick={() => setAnswer(q.id, opt)}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${answers[q.id] === opt ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${answers[q.id] === opt ? 'border-violet-600' : 'border-gray-300'}`}>
-                        {answers[q.id] === opt && <div className="w-2 h-2 bg-violet-600 rounded-full"></div>}
-                      </div>
-                      <span className="text-sm text-gray-700 select-none">{opt}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {q.type === 'multiple' && (
-                <div className="space-y-2">
-                  {(q.options || []).map((opt, oi) => {
-                    const checked = (answers[q.id] || []).includes(opt);
-                    return (
-                      <label key={oi} onClick={() => toggleMultiple(q.id, opt)}
-                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${checked ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
-                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-violet-600 bg-violet-600' : 'border-gray-300'}`}>
-                          {checked && <span className="text-white text-[8px] font-black leading-none">✓</span>}
-                        </div>
-                        <span className="text-sm text-gray-700 select-none">{opt}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="p-6 border-t border-gray-100 shrink-0">
-          {erreurMsg && <p className="text-[11px] text-red-500 text-center mb-3">{erreurMsg}</p>}
-          <button onClick={handleSubmit} disabled={!isComplete || submitting}
-            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-            {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
-          </button>
-          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions pour soumettre</p>}
-        </div>
-      </div>
-    </div>
-  );
 };
 
 const SignupView = ({ supabase, onComplete }) => {
@@ -3349,27 +2311,17 @@ const SignupView = ({ supabase, onComplete }) => {
         .insert([{ nom: orgName.trim() }]).select().single();
       if (orgError) throw orgError;
 
-      // 3. Créer l'entrée admin dans utilisateurs — auth_uid explicitement lié à authData.user.id pour
-      // que toute policy RLS qui vérifie auth.uid() = utilisateurs.auth_uid puisse s'appliquer ici aussi
-      // (utilisateurs.id est un entier auto-incrémenté, PAS un UUID — voir le flux d'invitation formateur
-      // un peu plus bas dans ce fichier qui utilise déjà auth_uid pour la même raison ; ne jamais y mettre
-      // authData.user.id, qui casserait l'insert avec une erreur de type).
-      // ATTENTION (signalé par l'audit, non entièrement corrigeable côté client) : cet insert crée un
-      // organisme + un compte admin directement depuis le navigateur avec la clé anon. La seule vraie
-      // protection contre un utilisateur qui s'auto-promouvrait admin d'un organisme existant (au lieu
-      // du nouvel organisme tout juste créé ci-dessus) est une policy RLS côté Supabase sur l'INSERT de
-      // 'utilisateurs' — à vérifier/durcir côté base (voir le message envoyé séparément à ce sujet).
+      // 3. Créer l'entrée admin dans utilisateurs
       const { error: userError } = await supabase.from('utilisateurs').insert([{
         nom: adminName.trim(),
         email: email.trim(),
         role: 'admin',
-        organisation_id: org.id,
-        auth_uid: authData.user.id
+        organisation_id: org.id
       }]);
       if (userError) throw userError;
 
-      // 4. (Ancienne étape "injecter les templates par défaut" retirée le 2026-07-28 —
-      // un nouvel organisme démarre désormais avec une page Modules vide.)
+      // 4. Injecter les templates par défaut
+      await initDefaultTemplatesForOrg(supabase, org.id);
 
       // 5. Si la session est directement disponible, connecter
       if (authData.session) {
@@ -3385,9 +2337,9 @@ const SignupView = ({ supabase, onComplete }) => {
 
   if (needsConfirmation) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-3">Confirmez votre email</h1>
           <p className="text-gray-500 mb-6">Un lien de confirmation a été envoyé à <strong>{email}</strong>. Cliquez dessus pour activer votre compte.</p>
           <button onClick={() => { window.history.replaceState(null, '', '/'); window.location.reload(); }} className="text-sm font-bold text-violet-600 hover:text-violet-700">Retour à la connexion</button>
@@ -3397,9 +2349,9 @@ const SignupView = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
         <p className="text-gray-500 mb-8 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
 
@@ -3592,17 +2544,9 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
       } else {
         const metaRole = authData.user?.user_metadata?.role;
         if (metaRole === 'client') {
-          // La requête clients (par email, ilike) a été bloquée par RLS mais l'utilisateur est un client :
-          // son clients.id est identique à son UUID Auth. On retente une lecture par id (auth.uid() = id
-          // est en général autorisé par les policies RLS même quand la lecture par email ne l'est pas) afin
-          // de récupérer organisation_id — sans quoi currentOrgId resterait null pour toute la session et
-          // toutes les requêtes scopées par organisation_id ne renverraient plus rien pour ce client.
-          const { data: selfClientData } = await supabase
-            .from('clients')
-            .select('organisation_id')
-            .eq('id', authData.user.id)
-            .maybeSingle();
-          handleLogin('client', authData.user.id, selfClientData?.organisation_id || null);
+          // La requête clients a été bloquée par RLS mais l'utilisateur est un client :
+          // son clients.id est identique à son UUID Auth
+          handleLogin('client', authData.user.id);
           setIsLoading(false);
           return;
         } else if (metaRole === 'formateur') {
@@ -3639,9 +2583,9 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
 
   if (showForgotPassword) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
+          <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
           <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
           <p className="text-gray-500 mb-8">Saisissez votre email pour réinitialiser l'accès.</p>
 
@@ -3690,9 +2634,9 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
-        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
+        <div className="w-20 h-20 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/30"><svg width="40" height="31" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Connexion à SkorUp</h1>
         <p className="text-gray-500 mb-8">Connectez-vous avec vos identifiants.</p>
 
@@ -3794,16 +2738,10 @@ const SessDropZone = ({ zoneId, isAdmin, hasActive, children }) => {
 
 // --- dnd-kit: élément déplaçable séance (carte) ---
 const SessDragItem = ({ itemId, activeId, children }) => {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: String(itemId) });
-  // CORRECTIF (2026-08-31) : useDraggable() calcule un "transform" mais ne déplace jamais l'élément
-  // visuellement tout seul — il faut appliquer explicitement ce transform au style de l'élément
-  // déplacé, sinon le glisser-déposer semble "ne rien faire du tout" (l'élément reste figé à l'écran)
-  // bien que la logique de dépôt (onDragEnd) fonctionne en réalité normalement en dessous.
-  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: String(itemId) });
   return (
     <div
       ref={setNodeRef}
-      style={style}
       {...listeners}
       {...attributes}
       className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${String(activeId) === String(itemId) ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
@@ -3826,15 +2764,10 @@ const FDropGroupRow = ({ groupNum, hasActive, children }) => {
 
 // --- dnd-kit: ligne déplaçable (tableau formateur) ---
 const FDragItemRow = ({ sessionId, activeId, children }) => {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({ id: `fi-${sessionId}` });
-  // CORRECTIF (2026-08-31) : même correctif que SessDragItem — le transform calculé par dnd-kit
-  // n'était jamais appliqué, donc la ligne ne suivait pas le curseur pendant le glisser-déposer,
-  // ce qui donnait l'impression que la fonctionnalité ne marchait pas du tout côté formateur.
-  const style = transform ? { transform: CSS.Translate.toString(transform), position: 'relative', zIndex: 30 } : undefined;
+  const { attributes, listeners, setNodeRef } = useDraggable({ id: `fi-${sessionId}` });
   return (
     <tr
       ref={setNodeRef}
-      style={style}
       {...listeners}
       {...attributes}
       className={`transition-colors border-l border-gray-100 cursor-grab active:cursor-grabbing ${activeId === `fi-${sessionId}` ? 'opacity-40 bg-indigo-50' : 'hover:bg-gray-50/30'}`}
@@ -3868,41 +2801,12 @@ const ClientDetailView = ({
   const [moduleDocResources, setModuleDocResources] = React.useState([]);
   const [isLoadingAssigned, setIsLoadingAssigned] = React.useState(false);
   const [showAddDocModal, setShowAddDocModal] = React.useState(false);
-  // Envoi programmé des documents "Ajouts personnalisés" (ajouté 2026-09-02) : au lieu de rester
-  // en attente jusqu'à un clic manuel sur "Générer", un document peut être programmé pour être
-  // généré + envoyé automatiquement à une date précise (ex : le jour de démarrage de la formation)
-  // via le cron quotidien /api/automation/process-scheduled-documents.
-  const [addDocSendMode, setAddDocSendMode] = React.useState('immediate');
-  const [addDocScheduledDate, setAddDocScheduledDate] = React.useState('');
-  // État pour la programmation d'un document DÉJÀ ajouté ("Ajouts personnalisés") — permet de
-  // programmer/reprogrammer l'envoi après coup, pas seulement au moment de l'ajout (demande du
-  // 2026-09-02 : "qu'une fois qu'il à été ajouté il puisse le programmé si besoin").
-  const [scheduleEditDoc, setScheduleEditDoc] = React.useState(null); // ligne client_documents en cours d'édition
-  const [scheduleEditMode, setScheduleEditMode] = React.useState('immediate');
-  const [scheduleEditDate, setScheduleEditDate] = React.useState('');
-  // Documents du dossier client (ajouté 2026-08-31, généralisé 2026-09-01) : section "Administratif"
-  // partagée avec l'espace Formateur (voir handleUploadForClient plus bas dans le fichier) — l'organisme
-  // ET le formateur peuvent tous les deux y déposer des documents pour le dossier du client (factures,
-  // pièces envoyées par le client par un autre biais, etc.), et voient exactement la même liste.
-  const [showAdminDocModal, setShowAdminDocModal] = React.useState(false);
-  const [adminDocFile, setAdminDocFile] = React.useState(null);
-  const [adminDocName, setAdminDocName] = React.useState('');
-  const [adminDocType, setAdminDocType] = React.useState('Administratif');
-  const [isUploadingAdminDoc, setIsUploadingAdminDoc] = React.useState(false);
   const [localDocGroups, setLocalDocGroups] = React.useState([]);
   const [showSendDocsModal, setShowSendDocsModal] = React.useState(false);
   const [selectedGroupId, setSelectedGroupId] = React.useState(null);
   const [isSendingDocs, setIsSendingDocs] = React.useState(false);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
-  // --- Finances (2026-09-26) : historique des paiements reçus pour ce client ---
-  const [clientPaiements, setClientPaiements] = React.useState([]);
-  const [isLoadingPaiements, setIsLoadingPaiements] = React.useState(false);
-  const [newPaiementMontant, setNewPaiementMontant] = React.useState('');
-  const [newPaiementDate, setNewPaiementDate] = React.useState(() => new Date().toISOString().split('T')[0]);
-  const [newPaiementMode, setNewPaiementMode] = React.useState('Virement');
-  const [newPaiementNote, setNewPaiementNote] = React.useState('');
-  const [isSavingPaiement, setIsSavingPaiement] = React.useState(false);
   const [clientInfo, setClientInfo] = React.useState({
     nomcomplet_client: client.nomcomplet_client || '',
     client_email: client.client_email || '',
@@ -3910,22 +2814,10 @@ const ClientDetailView = ({
     rue_client: '',
     code_postal_client: '',
     ville_client: '',
-    region: '',
     numero_dossier: client.numero_dossier || '',
     modalite_formation: client.modalite_formation || 'Mixte',
-    montant_prestation: client.montant_prestation || '',
-    pourcentage_formateur: client.pourcentage_formateur || ''
+    montant_prestation: client.montant_prestation || ''
   });
-
-  // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche client. Le vrai
-  // conteneur défilant de l'appli est le <main overflow-y-auto> qui enveloppe tout le contenu des
-  // onglets (la <nav> latérale, elle, est fixe) — window.scrollTo() était donc un no-op. On cible
-  // directement ce <main> (repli sur window par sécurité s'il n'est pas trouvé).
-  React.useEffect(() => {
-    const mainEl = document.querySelector('main');
-    if (mainEl) mainEl.scrollTo(0, 0);
-    window.scrollTo(0, 0);
-  }, []);
 
   React.useEffect(() => {
     const fetchDetailedClient = async () => {
@@ -3938,42 +2830,24 @@ const ClientDetailView = ({
           rue_client: data.rue || '',
           code_postal_client: data.code_postal || '',
           ville_client: data.ville || '',
-          region: data.region || '',
           numero_dossier: data.numero_dossier || '',
           modalite_formation: data.modalite_formation || 'Mixte',
-          montant_prestation: data.montant_prestation || '',
-          pourcentage_formateur: data.pourcentage_formateur || ''
+          montant_prestation: data.montant_prestation || ''
         });
       }
     };
     fetchDetailedClient();
   }, [client.id, supabase]);
 
-  // --- Finances (2026-09-26) ---
-  const fetchClientPaiements = async () => {
-    setIsLoadingPaiements(true);
-    const { data, error } = await supabase.from('client_paiements').select('*').eq('client_id', client.id).order('date_paiement', { ascending: false });
-    if (!error) setClientPaiements(data || []);
-    setIsLoadingPaiements(false);
-  };
-
-  React.useEffect(() => {
-    fetchClientPaiements();
-  }, [client.id]);
-
   React.useEffect(() => {
     const fetchAssignedDocs = async () => {
       setIsLoadingAssigned(true);
-      const [{ data: clientDocs, error: clientDocsError }, { data: moduleResources }] = await Promise.all([
+      const [{ data: clientDocs }, { data: moduleResources }] = await Promise.all([
         supabase.from('client_documents').select('*').eq('client_id', client.id).order('ordre', { ascending: true }),
         client.module_id
           ? supabase.from('module_step_resources').select('*').eq('module_id', client.module_id).eq('type', 'document')
           : Promise.resolve({ data: [] })
       ]);
-      if (clientDocsError) {
-        console.error('[fetchAssignedDocs] Erreur lecture client_documents:', clientDocsError);
-        toast.error('Erreur lors du chargement des documents du client : ' + clientDocsError.message);
-      }
       setAssignedDocs(clientDocs || []);
       setModuleDocResources(moduleResources || []);
       setIsLoadingAssigned(false);
@@ -4018,16 +2892,12 @@ const ClientDetailView = ({
       }
 
       // Chercher les entrées MSR correspondantes (par nom) pour récupérer les métadonnées visuelles (has_visual_fields, visual_template_id, file_url)
-      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un modèle
-      // du même nom appartenant à un AUTRE organisme aurait pu être utilisé pour générer ce document.
       const docNames = groupDocs.map(d => d.nom);
-      let msrQuery = supabase
+      const { data: msrEntries } = await supabase
         .from('module_step_resources')
         .select('*')
         .eq('type', 'document')
         .in('titre', docNames);
-      msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
-      const { data: msrEntries } = await msrQuery;
       const msrByName = {};
       (msrEntries || []).forEach(m => { msrByName[m.titre] = m; });
 
@@ -4073,18 +2943,7 @@ const ClientDetailView = ({
     setAssignedDocs(prev => prev.filter(d => d.id !== docId));
   };
 
-  const handleAddAssignedDoc = async (titre, url, sendMode = 'immediate', scheduledDate = null) => {
-    // Avant : une erreur d'insertion était silencieusement ignorée (rien ne s'affichait, aucun message) —
-    // on l'affiche maintenant pour pouvoir diagnostiquer précisément ce qui bloque (ex : modèle sans
-    // fichier associé, conflit de doublon, règle de sécurité Supabase, etc.).
-    if (!url) {
-      toast.error(`Le modèle "${titre}" n'a pas de fichier associé dans la modélothèque — impossible de l'ajouter.`);
-      return;
-    }
-    if (sendMode === 'scheduled' && !scheduledDate) {
-      toast.error('Choisissez une date pour programmer l\'envoi de ce document.');
-      return;
-    }
+  const handleAddAssignedDoc = async (titre, url) => {
     const { data, error } = await supabase
       .from('client_documents')
       .insert([{
@@ -4093,138 +2952,17 @@ const ClientDetailView = ({
         template_url: url,
         destination: 'client',
         ordre: assignedDocs.length,
-        organisation_id: client.organisation_id,
-        send_mode: sendMode,
-        scheduled_date: sendMode === 'scheduled' ? scheduledDate : null,
+        organisation_id: client.organisation_id
       }])
       .select()
       .single();
-    if (error) {
-      console.error('[handleAddAssignedDoc] Erreur insertion client_documents:', error);
-      toast.error("Erreur lors de l'ajout du document : " + error.message);
-      return;
-    }
-    if (data) setAssignedDocs(prev => [...prev, data]);
+    if (!error && data) setAssignedDocs(prev => [...prev, data]);
     setShowAddDocModal(false);
   };
 
-  // Programmer/reprogrammer l'envoi d'un document déjà présent dans "Ajouts personnalisés" — sans
-  // repasser par le modal d'ajout. sendMode 'immediate' annule toute programmation (le document
-  // reste dans la liste, à générer manuellement comme avant).
-  const handleUpdateAssignedDocSchedule = async (docId, sendMode, scheduledDate) => {
-    if (sendMode === 'scheduled' && !scheduledDate) {
-      toast.error("Choisissez une date pour programmer l'envoi de ce document.");
-      return;
-    }
-    const { data, error } = await supabase
-      .from('client_documents')
-      .update({
-        send_mode: sendMode,
-        scheduled_date: sendMode === 'scheduled' ? scheduledDate : null,
-        send_error: null,
-      })
-      .eq('id', docId)
-      .select()
-      .single();
-    if (error) {
-      console.error('[handleUpdateAssignedDocSchedule] Erreur mise à jour client_documents:', error);
-      toast.error('Erreur lors de la programmation : ' + error.message);
-      return;
-    }
-    if (data) setAssignedDocs(prev => prev.map(d => d.id === docId ? data : d));
-    toast.success(sendMode === 'scheduled' ? 'Envoi programmé mis à jour.' : 'Le document sera envoyé manuellement.');
-    setScheduleEditDoc(null);
-  };
-
-  // Bibliothèque complète pour le sélecteur "Ajouter un document" — fusionne documentTemplates
-  // (issu de module_step_resources, la source habituelle) avec tous les documents de la table
-  // "documents" qui ne sont pas déjà couverts (user_id null = modèle de bibliothèque, qu'il soit
-  // rangé dans un groupe ou non — mêmes lignes que "Gestion des documents" > Bibliothèque de
-  // modèles / Groupes de documents). Garantit que tout document ajouté par l'administrateur dans
-  // la partie "Documents" apparaisse ici, groupé ou non (demande du 2026-09-02), y compris les cas
-  // historiques jamais synchronisés vers module_step_resources.
-  const allTemplatesForPicker = React.useMemo(() => {
-    const merged = { ...(documentTemplates || {}) };
-    (documents || [])
-      .filter(d => !d.user_id && !d.assigned_formateur_id && d.nom && d.url)
-      .forEach(d => {
-        if (merged[d.nom]) return; // déjà présent via module_step_resources (métadonnées plus complètes)
-        let parsedMeta = {};
-        try { parsedMeta = typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { parsedMeta = {}; }
-        merged[d.nom] = {
-          id: d.id,
-          url: d.url,
-          name: d.nom,
-          destination: (d.visible_formateur && !d.visible_client) ? 'formateur' : 'client',
-          classification: parsedMeta.classification || 'telechargeable',
-          document_group_id: d.group_id || null,
-          metadata: parsedMeta,
-        };
-      });
-    return merged;
-  }, [documentTemplates, documents]);
-
-  // DOSSIER_DOC_TYPES / isDossierDoc sont désormais définis au niveau module (voir plus haut dans le
-  // fichier) — partagés avec FormateurDetailView et FormateurView.
-
-  const handleUploadAdminDoc = async () => {
-    if (!adminDocFile || !adminDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
-    setIsUploadingAdminDoc(true);
-    try {
-      const ext = adminDocFile.name.split('.').pop();
-      const safeN = adminDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileName = `dossier_client/${client.id}/${Date.now()}_${safeN}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, adminDocFile);
-      if (uploadError) throw uploadError;
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-
-      // visible_client: false — section à usage interne (organisme + formateur), jamais visible du client.
-      // visible_formateur: true — le formateur assigné à ce client doit voir tout ce que l'organisme dépose ici,
-      // exactement comme l'organisme voit ce que le formateur dépose depuis son propre espace.
-      const { error: insertError } = await supabase.from('documents').insert([{
-        nom: adminDocName.trim(),
-        type_document: adminDocType,
-        url: publicUrl,
-        user_id: client.id,
-        organisation_id: client.organisation_id || currentOrgId,
-        visible_client: false,
-        visible_formateur: true,
-        signe_par_client: false,
-        signe_par_formateur: false,
-      }]);
-      if (insertError) throw insertError;
-
-      toast.success('Document ajouté au dossier du client.');
-      setShowAdminDocModal(false);
-      setAdminDocFile(null);
-      setAdminDocName('');
-      setAdminDocType('Administratif');
-      await fetchDocuments();
-    } catch (e) {
-      console.error('Erreur upload document dossier client:', e);
-      toast.error("Erreur lors de l'ajout : " + e.message);
-    }
-    setIsUploadingAdminDoc(false);
-  };
-
-  const handleDeleteAdminDoc = async (docId) => {
-    const { error } = await supabase.from('documents').delete().eq('id', docId);
-    if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
-    toast.success('Document supprimé.');
-    await fetchDocuments();
-  };
-
-  // AJOUT (2026-09-19) : on distingue les "vraies" séances calendrier (numero_seance renseigné) des
-  // exercices synthétiques de début/fin de module (numero_seance: null, voir instantiateExerciceSession).
-  // `clientSessions` ne garde que les vraies séances : c'est cette liste qui alimente tous les écrans de
-  // planification (onglet "Planning & Supervision", ajout d'item, etc.) pour que ces exercices n'y
-  // apparaissent plus jamais comme une "séance" à dater. `allClientSessions` garde tout, pour que les
-  // badges/compteurs d'exercices (et l'onglet "Exercices" du dossier client) continuent d'inclure ces
-  // exercices de début/fin normalement.
-  const allClientSessions = sessions ? sessions.filter(s => s.client_id === client.id) : [];
-  const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+  const clientSessions = sessions ? sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance) : [];
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
-  const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+  const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
   const clientPendingCorrections = clientExercises.filter(s =>
     s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
   ).length;
@@ -4265,11 +3003,9 @@ const ClientDetailView = ({
       code_postal: clientInfo.code_postal_client,
       ville: clientInfo.ville_client,
       adresse_postale: fullAddress,
-      region: clientInfo.region,
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
       montant_prestation: clientInfo.montant_prestation,
-      pourcentage_formateur: clientInfo.pourcentage_formateur || null,
     }).eq('id', client.id);
 
     if (error) {
@@ -4282,47 +3018,9 @@ const ClientDetailView = ({
     setIsSavingInfo(false);
   };
 
-  // --- Finances (2026-09-26) ---
-  const handleAddPaiement = async () => {
-    const montant = parseFloat(newPaiementMontant);
-    if (!montant || montant <= 0) { toast.error("Merci d'indiquer un montant valide."); return; }
-    setIsSavingPaiement(true);
-    const { error } = await supabase.from('client_paiements').insert({
-      client_id: client.id,
-      organisation_id: currentOrgId,
-      montant,
-      date_paiement: newPaiementDate || new Date().toISOString().split('T')[0],
-      mode_paiement: newPaiementMode,
-      note: newPaiementNote || null,
-    });
-    if (error) {
-      toast.error("Erreur lors de l'ajout du paiement : " + error.message);
-    } else {
-      toast.success("Paiement ajouté !");
-      setNewPaiementMontant('');
-      setNewPaiementNote('');
-      await fetchClientPaiements();
-    }
-    setIsSavingPaiement(false);
-  };
-
-  const handleDeletePaiement = async (paiementId) => {
-    const { error } = await supabase.from('client_paiements').delete().eq('id', paiementId);
-    if (error) {
-      toast.error("Erreur lors de la suppression : " + error.message);
-    } else {
-      toast.success("Paiement supprimé.");
-      await fetchClientPaiements();
-    }
-  };
-
   const updateSession = async (id, payload) => {
     await supabase.from('sessions').update(payload).eq('id', id);
     if (fetchSessions) fetchSessions();
-    if (payload.date || payload.heure_debut || payload.heure_fin) {
-      const target = clientSessions.find(s => s.id === id);
-      if (target) syncSeanceToCalendar(client.id, target.numero_seance);
-    }
   };
 
   const handleAddCustomSession = async () => {
@@ -4390,7 +3088,6 @@ const ClientDetailView = ({
       <div className="flex gap-4 border-b border-gray-200 overflow-x-auto">
         <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
-        <button onClick={() => setActiveTab('administratif')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'administratif' ? 'border-b-2 border-violet-700 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>📄 Administratif</button>
         <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
         <button onClick={() => setActiveTab('exercices')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'exercices' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
           📝 Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
@@ -4402,7 +3099,6 @@ const ClientDetailView = ({
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
         <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{clientQuestionnaireResources.length > 0 ? ` (${clientQuestionnaireResources.length})` : ''}</button>
-        <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>💶 Finances</button>
       </div>
 
       {activeTab === 'infos' && (
@@ -4442,13 +3138,7 @@ const ClientDetailView = ({
             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-3">
                 <label className="block text-xs font-bold text-gray-400 mb-1">Rue / N° de voie</label>
-                <AddressAutocomplete
-                  value={clientInfo.rue_client}
-                  onChange={val => setClientInfo({ ...clientInfo, rue_client: val })}
-                  onSelect={({ rue, codePostal, ville, region }) => setClientInfo(prev => ({ ...prev, rue_client: rue, code_postal_client: codePostal || prev.code_postal_client, ville_client: ville || prev.ville_client, region: region || prev.region }))}
-                  placeholder="Ex : 245 rue Jeanine"
-                  className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors"
-                />
+                <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.rue_client} onChange={e => setClientInfo({ ...clientInfo, rue_client: e.target.value })} placeholder="Ex : 245 rue Jeanine" />
               </div>
               <div>
                 <label className="block text-xs font-bold text-gray-400 mb-1">Code Postal</label>
@@ -4458,11 +3148,6 @@ const ClientDetailView = ({
                 <label className="block text-xs font-bold text-gray-400 mb-1">Ville</label>
                 <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.ville_client} onChange={e => setClientInfo({ ...clientInfo, ville_client: e.target.value })} placeholder="Ex : Paris" />
               </div>
-              <div className="md:col-span-3">
-                <label className="block text-xs font-bold text-gray-400 mb-1">Région</label>
-                <input list="region-list-client" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.region} onChange={e => setClientInfo({ ...clientInfo, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
-                <datalist id="region-list-client">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
-              </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">N° de Dossier</label>
@@ -4471,10 +3156,6 @@ const ClientDetailView = ({
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Montant de la Prestation (€)</label>
               <input type="number" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.montant_prestation} onChange={e => setClientInfo({ ...clientInfo, montant_prestation: e.target.value })} placeholder="Montant en euros (ex: 1500)" />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 mb-1">Part reversée au formateur (%)</label>
-              <input type="number" min="0" max="100" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={clientInfo.pourcentage_formateur} onChange={e => setClientInfo({ ...clientInfo, pourcentage_formateur: e.target.value })} placeholder="Ex: 50" />
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Modalités de la formation</label>
@@ -4546,7 +3227,7 @@ const ClientDetailView = ({
                         <Eye size={14} /> Voir
                       </button>
                       <button
-                        onClick={() => openSecureStorageFile(signedUrl)}
+                        onClick={() => window.open(signedUrl, '_blank')}
                         className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                       >
                         <Download size={14} /> Télécharger
@@ -4558,7 +3239,7 @@ const ClientDetailView = ({
 
             {/* Documents administratifs signés */}
             {documents
-              .filter(d => d.user_id === client.id && (d.statut === 'Signé'))
+              .filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client))
               .map(doc => (
                 <div key={doc.id} className="flex items-center justify-between p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100 hover:border-emerald-300 transition-all group">
                   <div className="flex items-center gap-4">
@@ -4580,7 +3261,7 @@ const ClientDetailView = ({
                       <Eye size={14} /> Voir
                     </button>
                     <button
-                      onClick={() => openSecureStorageFile(doc.url || doc.file_url)}
+                      onClick={() => window.open(doc.url || doc.file_url, '_blank')}
                       className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
                     >
                       <Download size={14} /> Télécharger
@@ -4590,142 +3271,12 @@ const ClientDetailView = ({
               ))}
 
             {(sessions.filter(s => s.client_id === client.id && (s.signed_pdf_url || s.file_url_signed || s.metadata?.file_url_signed)).length === 0 &&
-              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé')).length === 0) && (
+              documents.filter(d => d.user_id === client.id && (d.statut === 'Signé' || d.signe_par_client)).length === 0) && (
               <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                 <p className="text-gray-400 text-sm italic">Aucun document signé n'est archivé pour ce client.</p>
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {activeTab === 'administratif' && (
-        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h3 className="text-sm font-bold text-gray-800">Documents du dossier client</h3>
-              <p className="text-xs text-gray-400 mt-0.5">Espace partagé avec le formateur assigné : factures, justificatifs, documents envoyés par le client par un autre biais, etc. Usage interne — jamais visible par le client.</p>
-            </div>
-            <button
-              onClick={() => setShowAdminDocModal(true)}
-              className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm shrink-0"
-            >
-              <Plus className="w-4 h-4" /> Ajouter un document
-            </button>
-          </div>
-
-          {documents.filter(d => d.user_id === client.id && isDossierDoc(d)).length === 0 ? (
-            <div className="text-center py-8 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-              <Archive className="mx-auto mb-3 text-gray-300" size={32} />
-              <p className="text-gray-400 text-sm italic">Aucun document dans le dossier de ce client.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {documents.filter(d => d.user_id === client.id && isDossierDoc(d)).map(doc => (
-                <div key={doc.id} className="flex items-center justify-between bg-violet-50/30 rounded-2xl px-4 py-3 border border-violet-100 group">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <FileText className="w-4 h-4 text-violet-500 shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => openSecureStorageFile(doc.url)}
-                      className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
-                    >
-                      Ouvrir
-                    </button>
-                    <button
-                      onClick={() => handleDownloadNamedFile(doc)}
-                      className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
-                      title="Télécharger sous le nom indiqué"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => showDeleteConfirm(
-                        `Supprimer "${doc.nom}" ?`,
-                        'Ce document sera définitivement retiré du dossier du client.',
-                        async () => { hideDeleteConfirm(); await handleDeleteAdminDoc(doc.id); }
-                      )}
-                      className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                      title="Supprimer ce document"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {showAdminDocModal && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document au dossier</h4>
-                <p className="text-xs text-gray-400 mb-4">Ce fichier sera archivé dans le dossier de {client.nom_complet || client.nom || 'ce client'}, visible par vous et le formateur assigné (pas par le client).</p>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
-                    <input
-                      type="file"
-                      onChange={(e) => {
-                        const f = e.target.files[0] || null;
-                        setAdminDocFile(f);
-                        // Pré-remplit le nom avec celui du fichier (sans l'extension) — modifiable ensuite ; on ne
-                        // remplace pas un nom déjà saisi à la main.
-                        if (f && !adminDocName.trim()) {
-                          setAdminDocName(f.name.replace(/\.[^/.]+$/, ''));
-                        }
-                      }}
-                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
-                    <input
-                      type="text"
-                      value={adminDocName}
-                      onChange={(e) => setAdminDocName(e.target.value)}
-                      placeholder="Ex : Facture finale"
-                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
-                    <select
-                      value={adminDocType}
-                      onChange={(e) => setAdminDocType(e.target.value)}
-                      className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                    >
-                      <option value="Administratif">Administratif</option>
-                      <option value="Contrat">Contrat</option>
-                      <option value="Mission">Mission</option>
-                      <option value="Pièce justificative">Pièce justificative</option>
-                      <option value="Autre">Autre</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-5">
-                  <button
-                    onClick={() => { setShowAdminDocModal(false); setAdminDocFile(null); setAdminDocName(''); setAdminDocType('Administratif'); }}
-                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    onClick={handleUploadAdminDoc}
-                    disabled={isUploadingAdminDoc || !adminDocFile || !adminDocName.trim()}
-                    className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
-                  >
-                    {isUploadingAdminDoc ? 'Envoi...' : 'Ajouter au dossier'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -4773,7 +3324,7 @@ const ClientDetailView = ({
                           <td className="px-4 py-3">
                             <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.titre || session.nom}</span>
                           </td>
-                          <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
+                          <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
                           <td className="px-4 py-3">{badge}</td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end items-center gap-2">
@@ -4812,13 +3363,25 @@ const ClientDetailView = ({
               <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
             <div className="flex items-center gap-2">
-              {/* "Régénérer PDF" et "Envoyer pour signature" retirés du 02/09/2026 : ces deux
-                  boutons ne concernaient pas les "Ajouts personnalisés" (le premier régénère les
-                  documents visuels du module, le second ouvre un envoi par groupe de documents
-                  distinct) et créaient une confusion de doublon avec les boutons Envoyer/Consulter
-                  disponibles sur chaque ligne d'"Ajouts personnalisés" ci-dessous. */}
+              {handleRegenerateVisualDocs && client.module_id && (
+                <button
+                  onClick={() => handleRegenerateVisualDocs(client.id)}
+                  className="bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all border border-violet-200"
+                  title="Regénère les PDF pré-remplis pour les documents visuels (balises)"
+                >
+                  ↺ Régénérer PDF
+                </button>
+              )}
+              {instantiateDocument && localDocGroups.length > 0 && (
+                <button
+                  onClick={() => setShowSendDocsModal(true)}
+                  className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+                >
+                  ✉️ Envoyer pour signature
+                </button>
+              )}
               <button
-                onClick={() => { setAddDocSendMode('immediate'); setAddDocScheduledDate(''); setShowAddDocModal(true); }}
+                onClick={() => setShowAddDocModal(true)}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
               >
                 <Plus className="w-4 h-4" /> Ajouter
@@ -4838,46 +3401,25 @@ const ClientDetailView = ({
               {moduleDocResources.length > 0 && (
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
               )}
-              {moduleDocResources.map(res => {
-                // "à signer" détecté via classification/requiresClientSignature/documentType — mêmes
-                // trois signaux que needsSignature ailleurs dans le fichier (ex: renderResourceCard),
-                // avec analyse défensive du JSON (metadata peut arriver en chaîne ou déjà en objet).
-                const resMeta = typeof res.metadata === 'string' && res.metadata.startsWith('{')
-                  ? (() => { try { return JSON.parse(res.metadata); } catch { return {}; } })()
-                  : (res.metadata || {});
-                const needsSignatureRes = resMeta.classification === 'a_signer' || resMeta.requiresClientSignature === true || resMeta.documentType === 'signature';
-                return (
+              {moduleDocResources.map(res => (
                 <div key={res.id} className="flex items-center justify-between bg-indigo-50/40 rounded-2xl px-4 py-3 border border-indigo-100">
                   <div className="flex items-center gap-3">
                     <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
                     <div>
                       <span className="text-sm font-bold text-gray-700">{res.titre}</span>
-                      {needsSignatureRes && (
+                      {res.metadata?.requiresClientSignature && (
                         <span className="ml-2 text-[9px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {needsSignatureRes && (
-                      <button
-                        onClick={() => { const previewWin = window.open('', '_blank'); handleGenerateDocx(client, res.titre, false, null, false, 'preview', previewWin); }}
-                        className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
-                        title="Ouvrir un aperçu dans un nouvel onglet, sans l'envoyer"
-                      >
-                        Consulter
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleGenerateDocx(client, res.titre)}
-                      className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                      title={needsSignatureRes ? 'Générer et envoyer pour signature' : undefined}
-                    >
-                      {needsSignatureRes ? 'Envoyer' : 'Générer'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleGenerateDocx(client, res.titre)}
+                    className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
+                  >
+                    Générer
+                  </button>
                 </div>
-                );
-              })}
+              ))}
               {assignedDocs.length > 0 && (
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
               )}
@@ -4885,54 +3427,17 @@ const ClientDetailView = ({
                 <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
                   <div className="flex items-center gap-3">
                     <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
-                    <div>
-                      <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
-                      {doc.send_mode === 'scheduled' && !doc.sent_at && (
-                        <span
-                          className={`ml-2 text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${doc.send_error ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}
-                          title={doc.send_error ? `Erreur lors du dernier essai : ${doc.send_error}` : "Ce document sera généré et envoyé automatiquement à la date indiquée."}
-                        >
-                          {doc.send_error ? '⚠ Erreur — nouvel essai auto.' : `📅 Programmé le ${doc.scheduled_date ? new Date(doc.scheduled_date + 'T00:00:00').toLocaleDateString('fr-FR') : ''}`}
-                        </span>
-                      )}
-                      {doc.send_mode === 'scheduled' && doc.sent_at && (
-                        <span className="ml-2 text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase" title={`Envoyé automatiquement le ${new Date(doc.sent_at).toLocaleDateString('fr-FR')}`}>
-                          ✓ Envoyé auto.
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* Mêmes boutons pour tous les documents ajoutés depuis le 02/09/2026, qu'ils
-                        nécessitent une signature ou non (avant : bouton "Générer" seul si le
-                        document n'était pas détecté comme "à signer"). */}
-                    <button
-                      onClick={() => { const previewWin = window.open('', '_blank'); handleGenerateDocx(client, doc.template_titre, false, null, false, 'preview', previewWin); }}
-                      className="bg-gray-50 text-gray-600 hover:bg-gray-100 text-xs font-bold px-3 py-1.5 rounded-lg border border-gray-200 transition-all"
-                      title="Ouvrir un aperçu dans un nouvel onglet, sans l'envoyer"
-                    >
-                      Consulter
-                    </button>
                     <button
                       onClick={() => handleGenerateDocx(client, doc.template_titre)}
                       className="bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-indigo-100 transition-all"
-                      title="Générer et envoyer"
                     >
-                      Envoyer
+                      Générer
                     </button>
                     <button
-                      onClick={() => { setScheduleEditDoc(doc); setScheduleEditMode(doc.send_mode || 'immediate'); setScheduleEditDate(doc.scheduled_date || ''); }}
-                      className="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 rounded-lg hover:bg-indigo-50"
-                      title="Programmer l'envoi de ce document"
-                    >
-                      📅
-                    </button>
-                    <button
-                      onClick={() => showDeleteConfirm(
-                        `Retirer "${doc.template_titre}" ?`,
-                        'Ce document personnalisé ne sera plus assigné à ce client.',
-                        async () => { hideDeleteConfirm(); await handleRemoveAssignedDoc(doc.id); }
-                      )}
+                      onClick={() => handleRemoveAssignedDoc(doc.id)}
                       className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
                       title="Retirer ce document"
                     >
@@ -4948,42 +3453,9 @@ const ClientDetailView = ({
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
                 <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document</h4>
-                <p className="text-xs text-gray-400 mb-3">Choisissez un modèle de la modélothèque à ajouter.</p>
-
-                <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-3 space-y-2">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Envoi</p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAddDocSendMode('immediate')}
-                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${addDocSendMode === 'immediate' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
-                    >
-                      Maintenant
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAddDocSendMode('scheduled')}
-                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${addDocSendMode === 'scheduled' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
-                    >
-                      📅 Programmer
-                    </button>
-                  </div>
-                  {addDocSendMode === 'scheduled' && (
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Date d'envoi automatique</label>
-                      <input
-                        type="date"
-                        value={addDocScheduledDate}
-                        onChange={(e) => setAddDocScheduledDate(e.target.value)}
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      />
-                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là (ex : jour de démarrage de la formation), sans action de votre part.</p>
-                    </div>
-                  )}
-                </div>
-
+                <p className="text-xs text-gray-400 mb-4">Choisissez un modèle de la modélothèque à ajouter.</p>
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                  {Object.entries(allTemplatesForPicker || {})
+                  {Object.entries(documentTemplates || {})
                     .filter(([titre]) =>
                       !assignedDocs.some(d => d.template_titre === titre) &&
                       !moduleDocResources.some(r => r.titre === titre)
@@ -4991,7 +3463,7 @@ const ClientDetailView = ({
                     .map(([titre, tpl]) => (
                       <button
                         key={titre}
-                        onClick={() => handleAddAssignedDoc(titre, tpl.url, addDocSendMode, addDocScheduledDate)}
+                        onClick={() => handleAddAssignedDoc(titre, tpl.url)}
                         className="w-full flex items-center gap-3 text-left bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 text-gray-700 font-bold text-sm px-4 py-3 rounded-xl border border-gray-100 hover:border-indigo-200 transition-all"
                       >
                         <FileText className="w-4 h-4 shrink-0 text-indigo-300" />
@@ -4999,7 +3471,7 @@ const ClientDetailView = ({
                       </button>
                     ))
                   }
-                  {Object.entries(allTemplatesForPicker || {}).filter(([titre]) =>
+                  {Object.entries(documentTemplates || {}).filter(([titre]) =>
                     !assignedDocs.some(d => d.template_titre === titre) &&
                     !moduleDocResources.some(r => r.titre === titre)
                   ).length === 0 && (
@@ -5012,59 +3484,6 @@ const ClientDetailView = ({
                 >
                   Annuler
                 </button>
-              </div>
-            </div>
-          )}
-
-          {scheduleEditDoc && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                <h4 className="text-base font-black text-gray-900 mb-1">Programmer l'envoi</h4>
-                <p className="text-xs text-gray-400 mb-3">« {scheduleEditDoc.template_titre} »</p>
-                <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-3 space-y-2">
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setScheduleEditMode('immediate')}
-                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${scheduleEditMode === 'immediate' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
-                    >
-                      Manuel (comme avant)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScheduleEditMode('scheduled')}
-                      className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${scheduleEditMode === 'scheduled' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
-                    >
-                      📅 Programmer
-                    </button>
-                  </div>
-                  {scheduleEditMode === 'scheduled' && (
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Date d'envoi automatique</label>
-                      <input
-                        type="date"
-                        value={scheduleEditDate}
-                        onChange={(e) => setScheduleEditDate(e.target.value)}
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                      />
-                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là, sans action de votre part.</p>
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setScheduleEditDoc(null)}
-                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    onClick={() => handleUpdateAssignedDocSchedule(scheduleEditDoc.id, scheduleEditMode, scheduleEditDate)}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
-                  >
-                    Enregistrer
-                  </button>
-                </div>
               </div>
             </div>
           )}
@@ -5113,7 +3532,7 @@ const ClientDetailView = ({
       {activeTab === 'questionnaires' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires & Quiz du parcours</h3>
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires du parcours</h3>
             <span className="text-xs text-gray-400">{clientQuestionnaireResources.length} questionnaire{clientQuestionnaireResources.length > 1 ? 's' : ''} dans le module</span>
           </div>
           {clientQuestionnaireResources.length === 0 ? (
@@ -5127,30 +3546,22 @@ const ClientDetailView = ({
               {clientQuestionnaireResources.map(qResource => {
                 const meta = (() => { try { return typeof qResource.metadata === 'string' ? JSON.parse(qResource.metadata) : (qResource.metadata || {}); } catch { return {}; } })();
                 const questions = meta.questions || [];
-                const isQuizResource = !!meta.isQuiz;
                 const response = clientQuestionnaireResponses.find(r => r.questionnaire_id === qResource.id);
                 return (
                   <div key={qResource.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
                     <div className="p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
+                        <div className="w-9 h-9 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center text-lg shrink-0">📝</div>
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
-                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
+                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {response && isQuizResource && response.score_percent != null && (
-                          <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
-                            {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
-                          </span>
-                        )}
-                        {response ? (
-                          <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
-                        ) : (
-                          <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
-                        )}
-                      </div>
+                      {response ? (
+                        <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                      )}
                     </div>
                     {response && response.responses && (
                       <div className="border-t border-gray-50 p-4 bg-gray-50/50 space-y-3">
@@ -5158,19 +3569,9 @@ const ClientDetailView = ({
                         {questions.map((q, qi) => {
                           const answer = response.responses[q.id];
                           const hasAnswer = answer !== undefined && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
-                          const isQuestionCorrect = isQuizResource && (q.type === 'single' || q.type === 'multiple')
-                            ? (q.type === 'single'
-                                ? answer === q.correctAnswer
-                                : (Array.isArray(q.correctAnswer) && Array.isArray(answer) && q.correctAnswer.length === answer.length && q.correctAnswer.every(o => answer.includes(o))))
-                            : null;
                           return (
                             <div key={q.id} className="space-y-1">
-                              <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                                <span>{qi + 1}. {q.text}</span>
-                                {isQuestionCorrect !== null && (
-                                  <span className={`text-[10px] font-black ${isQuestionCorrect ? 'text-emerald-600' : 'text-red-500'}`}>{isQuestionCorrect ? '✓' : '✗'}</span>
-                                )}
-                              </p>
+                              <p className="text-xs font-bold text-gray-700">{qi + 1}. {q.text}</p>
                               {hasAnswer ? (
                                 <div className="bg-white rounded-lg px-3 py-2 border border-gray-100">
                                   {Array.isArray(answer) ? (
@@ -5335,10 +3736,10 @@ const ClientDetailView = ({
                                             )}
                                             {coachRequired ? (
                                               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                                Formateur: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
+                                                Coach: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
                                               </span>
                                             ) : (
-                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Formateur: N/A</span>
+                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Coach: N/A</span>
                                             )}
                                           </div>
                                         </div>
@@ -5436,43 +3837,22 @@ const ClientDetailView = ({
             {clientDocs.length > 0 ? clientDocs.map(doc => {
               const clientSigned = doc.signe_par_client;
               const formateurSigned = doc.signe_par_formateur;
-              const organismeSigned = doc.signe_par_organisme;
-              const _docMetaForBadge = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
-              const _docFieldsForBadge = Array.isArray(_docMetaForBadge.template_fields) ? _docMetaForBadge.template_fields : [];
-              // FIX (2026-09-07) : quand le document porte des destination_roles (écrits à la
-              // génération — voir instantiateDocument / handleGenerateDocx), ce sont EUX qui
-              // déterminent les signatures réellement attendues. Avant ce correctif, needsClientSign
-              // valait "vrai" par défaut pour TOUT document de cette liste — le badge "en attente de
-              // signature client" s'affichait donc même pour un document formateur+administrateur
-              // uniquement, où le client n'est jamais destinataire (bug remonté le 2026-09-07). Sans
-              // destination_roles (anciens documents), on garde l'ancien comportement (client par défaut).
-              const _destRolesForBadge = Array.isArray(_docMetaForBadge.destination_roles) && _docMetaForBadge.destination_roles.length > 0 ? _docMetaForBadge.destination_roles : null;
-              const needsClientSign = _destRolesForBadge ? _destRolesForBadge.includes('client') : (doc.requiresClientSignature !== false);
-              const needsFormateurSign = _destRolesForBadge
-                ? _destRolesForBadge.includes('formateur')
-                : (_docFieldsForBadge.some(f => ['signature_formateur', 'checkbox_formateur', 'texte_formateur'].includes(f.tag)) || doc.requiresTrainerSignature === true);
-              const needsOrganismeSign = !!(_destRolesForBadge && _destRolesForBadge.includes('organisme'));
-              const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned) && (!needsOrganismeSign || organismeSigned);
+              const needsClientSign = doc.requiresClientSignature !== false;
+              const needsFormateurSign = doc.requiresTrainerSignature === true;
+              const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned);
               return (
               <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 flex items-center justify-center rounded-xl ${fullySignedByAll ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}><FileText size={20} /></div>
                   <div>
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
-                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      {needsClientSign && (
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
-                        </span>
-                      )}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        {clientSigned ? '✓ Signé' : '⏳ En attente de signature'}
+                      </span>
                       {(needsFormateurSign || formateurSigned) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {formateurSigned ? '✓ Signature formateur reçue' : '⏳ En attente de signature formateur'}
-                        </span>
-                      )}
-                      {(needsOrganismeSign || organismeSigned) && (
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${organismeSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                          {organismeSigned ? '✓ Signature administrateur reçue' : '⏳ En attente de signature administrateur'}
+                          Formateur: {formateurSigned ? 'Signé ✓' : 'En attente'}
                         </span>
                       )}
                     </div>
@@ -5480,7 +3860,7 @@ const ClientDetailView = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
-                  <button onClick={() => openSecureStorageFile(doc.url || doc.file_url)} className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></button>
+                  <a href={doc.url || doc.file_url} target="_blank" rel="noopener noreferrer" className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></a>
                   <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
                 </div>
               </div>
@@ -5489,123 +3869,7 @@ const ClientDetailView = ({
               <div className="text-center py-10 text-gray-400">
                 <p className="text-2xl mb-2">✉️</p>
                 <p className="text-sm italic">Aucun document envoyé pour signature.</p>
-                <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer" sur un document ci-dessus (onglet "Documents de ce client").</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'finances' && (
-        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Euro size={20} className="text-emerald-600" /> Finances</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-xs font-bold text-gray-400 mb-1">Montant total de la prestation</label>
-              <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
-                {(parseFloat(clientInfo.montant_prestation) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 mb-1">Part reversée au formateur</label>
-              <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
-                {clientInfo.pourcentage_formateur || 0}% <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
-              </div>
-            </div>
-          </div>
-
-          {(() => {
-            const montantTotal = parseFloat(clientInfo.montant_prestation) || 0;
-            const montantPaye = clientPaiements.reduce((sum, p) => sum + (parseFloat(p.montant) || 0), 0);
-            const resteDu = montantTotal - montantPaye;
-            const pourcentageFormateur = parseFloat(clientInfo.pourcentage_formateur) || 0;
-            const partFormateur = montantTotal * pourcentageFormateur / 100;
-            const partOrganisme = montantTotal - partFormateur;
-            const fmt = (n) => (n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-            return (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
-                  <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Payé</p>
-                  <p className="text-lg font-black text-emerald-800">{fmt(montantPaye)}</p>
-                </div>
-                <div className={`rounded-2xl p-4 border ${resteDu > 0 ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
-                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${resteDu > 0 ? 'text-orange-700' : 'text-gray-500'}`}>Reste dû</p>
-                  <p className={`text-lg font-black ${resteDu > 0 ? 'text-orange-800' : 'text-gray-600'}`}>{fmt(resteDu)}</p>
-                </div>
-                {pourcentageFormateur > 0 && (
-                  <>
-                    <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-                      <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateur</p>
-                      <p className="text-lg font-black text-indigo-800">{fmt(partFormateur)}</p>
-                    </div>
-                    <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
-                      <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
-                      <p className="text-lg font-black text-violet-800">{fmt(partOrganisme)}</p>
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })()}
-
-          <div className="border-t border-gray-100 pt-6">
-            <h4 className="text-sm font-bold text-gray-700 mb-3">Ajouter un paiement reçu</h4>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Montant (€)</label>
-                <input type="number" step="0.01" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMontant} onChange={e => setNewPaiementMontant(e.target.value)} placeholder="Ex: 500" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Date</label>
-                <input type="date" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementDate} onChange={e => setNewPaiementDate(e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Mode</label>
-                <select className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMode} onChange={e => setNewPaiementMode(e.target.value)}>
-                  <option value="Virement">Virement</option>
-                  <option value="Carte bancaire">Carte bancaire</option>
-                  <option value="Chèque">Chèque</option>
-                  <option value="Espèces">Espèces</option>
-                  <option value="Autre">Autre</option>
-                </select>
-              </div>
-              <div>
-                <button
-                  onClick={handleAddPaiement}
-                  disabled={isSavingPaiement || !newPaiementMontant}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all disabled:opacity-50"
-                >
-                  {isSavingPaiement ? 'Ajout...' : '+ Ajouter'}
-                </button>
-              </div>
-            </div>
-            <div className="mt-3">
-              <input className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementNote} onChange={e => setNewPaiementNote(e.target.value)} placeholder="Note (optionnel, ex: 1er versement)" />
-            </div>
-          </div>
-
-          <div className="border-t border-gray-100 pt-6">
-            <h4 className="text-sm font-bold text-gray-700 mb-3">Historique des paiements</h4>
-            {isLoadingPaiements ? (
-              <p className="text-sm text-gray-400 italic">Chargement...</p>
-            ) : clientPaiements.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">Aucun paiement enregistré pour ce client.</p>
-            ) : (
-              <div className="space-y-2">
-                {clientPaiements.map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div>
-                      <span className="font-bold text-gray-800 text-sm">{(parseFloat(p.montant) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</span>
-                      <span className="text-xs text-gray-400 ml-3">{p.date_paiement ? new Date(p.date_paiement).toLocaleDateString('fr-FR') : ''}</span>
-                      {p.mode_paiement && <span className="text-xs text-gray-400 ml-3">{p.mode_paiement}</span>}
-                      {p.note && <span className="text-xs text-gray-400 ml-3 italic">{p.note}</span>}
-                    </div>
-                    <button onClick={() => handleDeletePaiement(p.id)} className="p-2 text-gray-300 hover:text-red-500 rounded-lg transition-colors" title="Supprimer">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
+                <p className="text-xs text-gray-300 mt-1">Utilisez le bouton "Envoyer pour signature" ci-dessus.</p>
               </div>
             )}
           </div>
@@ -5637,7 +3901,7 @@ const AdminClientsView = ({
   clients, formateurs, assignFormateur, handleModuleChange,
   modules, handleGenerateDocx, sessions, documentTemplates, supabase,
   expandedClientId, setExpandedClientId, fetchUtilisateurs, fetchDocuments,
-  activeTab, setActiveTab, setIsInviteModalOpen, setInviteDefaultRole, fetchSessions, documents,
+  activeTab, setActiveTab, setIsInviteModalOpen, fetchSessions, documents,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse,
   generateSessions, handleDeleteClient, setIsSessionItemModalOpen,
   setTargetSessionForAddition, setViewingSession,
@@ -5717,15 +3981,15 @@ const AdminClientsView = ({
               <Plus size={24} />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Client</h3>
-              <p className="text-sm text-gray-500">Invitez un nouveau client (bénéficiaire) par email.</p>
+              <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Membre</h3>
+              <p className="text-sm text-gray-500">Invitez de nouveaux clients ou formateurs par email.</p>
             </div>
           </div>
           <button
-            onClick={() => { setInviteDefaultRole('client'); setIsInviteModalOpen(true); }}
+            onClick={() => setIsInviteModalOpen(true)}
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
           >
-            <Plus size={20} /> Ajouter un client
+            <Plus size={20} /> Inviter l'utilisateur
           </button>
         </div>
       </div>
@@ -5794,81 +4058,21 @@ const AdminClientsView = ({
 const FormateurDetailView = ({
   formateur, onBack, supabase, fetchUtilisateurs, modules, clients,
   handleDeleteFormateur, documents, documentTemplates, handleGenerateDocx,
-  setViewingDocId, fetchDocuments, isSelfAdmin = false, currentOrgId
+  setViewingDocId, fetchDocuments
 }) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = React.useState(false);
   const [docToDelete, setDocToDelete] = React.useState(null);
-  // NOUVEAU (2026-09-04) : "Documents du dossier formateur" — ajout libre d'un document par l'admin,
-  // sans passer par un modèle de signature (ex: carte d'identité, diplôme scanné, attestation...).
-  const [showFormateurDocModal, setShowFormateurDocModal] = React.useState(false);
-  const [formateurDocFile, setFormateurDocFile] = React.useState(null);
-  const [formateurDocName, setFormateurDocName] = React.useState('');
-  const [formateurDocType, setFormateurDocType] = React.useState('Administratif');
-  const [isUploadingFormateurDoc, setIsUploadingFormateurDoc] = React.useState(false);
 
-  // FIX (2026-09-04, corrigé) : remonte en haut de page à l'ouverture de la fiche formateur — même
-  // correctif que ClientDetailView (voir commentaire là-bas) : on cible le vrai conteneur défilant
-  // (<main overflow-y-auto>), pas window.
-  React.useEffect(() => {
-    const mainEl = document.querySelector('main');
-    if (mainEl) mainEl.scrollTo(0, 0);
-    window.scrollTo(0, 0);
-  }, []);
   React.useEffect(() => { fetchDocuments(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteDoc = async () => {
     if (!docToDelete) return;
-    // Scopé strictement à l'organisme courant — plus aucune tolérance pour les lignes historiques
-    // sans organisation_id (elles ont été rattachées à leur organisme d'origine par migration SQL).
-    if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
-    const delQuery = supabase.from('documents').delete().eq('id', docToDelete.id).eq('organisation_id', currentOrgId);
-    const { error } = await delQuery;
+    const { error } = await supabase.from('documents').delete().eq('id', docToDelete.id);
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); console.error('[handleDeleteDoc]', error); }
     else { toast.success('Document supprimé.'); }
     await fetchDocuments();
     setDocToDelete(null);
-  };
-
-  // NOUVEAU (2026-09-04) : ajoute un document librement au dossier de CE formateur, sans signature —
-  // même logique que handleUploadAdminDoc (ClientDetailView), adaptée à assigned_formateur_id.
-  const handleUploadFormateurDoc = async () => {
-    if (!formateurDocFile || !formateurDocName.trim()) { toast.error('Veuillez renseigner un nom et choisir un fichier.'); return; }
-    setIsUploadingFormateurDoc(true);
-    try {
-      const ext = formateurDocFile.name.split('.').pop();
-      const safeN = formateurDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileName = `dossier_formateur/${formateur.id}/${Date.now()}_${safeN}.${ext}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, formateurDocFile);
-      if (uploadError) throw uploadError;
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-
-      // user_id volontairement absent : ce document n'est lié à aucun client, seulement au formateur
-      // lui-même (assigned_formateur_id) — c'est ce qui le distingue des documents de dossier client.
-      const { error: insertError } = await supabase.from('documents').insert([{
-        nom: formateurDocName.trim(),
-        type_document: formateurDocType,
-        url: publicUrl,
-        assigned_formateur_id: formateur.id,
-        organisation_id: formateur.organisation_id || currentOrgId,
-        visible_client: false,
-        visible_formateur: true,
-        signe_par_client: false,
-        signe_par_formateur: false,
-      }]);
-      if (insertError) throw insertError;
-
-      toast.success('Document ajouté au dossier du formateur.');
-      setShowFormateurDocModal(false);
-      setFormateurDocFile(null);
-      setFormateurDocName('');
-      setFormateurDocType('Administratif');
-      await fetchDocuments();
-    } catch (e) {
-      console.error('Erreur upload document dossier formateur:', e);
-      toast.error("Erreur lors de l'ajout : " + e.message);
-    }
-    setIsUploadingFormateurDoc(false);
   };
   const [legalInfo, setLegalInfo] = React.useState({
     nom: formateur.nom || '',
@@ -5876,7 +4080,6 @@ const FormateurDetailView = ({
     formateur_nda: formateur.formateur_nda || formateur.nda || '',
     adresse_formateur: formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '',
     adresse_session: formateur.adresse_session || '',
-    region: formateur.region || '',
     email: formateur.email || '',
     telephone: formateur.telephone || '',
     compagnie_assurance: formateur.compagnie_assurance || '',
@@ -5886,10 +4089,7 @@ const FormateurDetailView = ({
     !formateur.adresse_session || formateur.adresse_session === (formateur.adresse_formateur || formateur.adresse_pro || formateur.adresse_client || '')
   );
 
-  // FIX (2026-09-04) : exclut les documents des CLIENTS de ce formateur (ils ont un user_id, jamais
-  // les documents personnels du formateur — voir handleGenerateDocx) — cette section est réservée à
-  // ses propres documents administratifs (contrat, NDA...), pas à ceux de ses clients.
-  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && !isDossierDoc(d)) : [];
+  const trainerDocs = documents ? documents.filter(d => d.assigned_formateur_id === formateur.id) : [];
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -5901,7 +4101,6 @@ const FormateurDetailView = ({
         formateur_nda: legalInfo.formateur_nda,
         adresse_formateur: legalInfo.adresse_formateur,
         adresse_session: sameAddress ? legalInfo.adresse_formateur : legalInfo.adresse_session,
-        region: legalInfo.region,
         email: legalInfo.email,
         telephone: legalInfo.telephone,
         compagnie_assurance: legalInfo.compagnie_assurance,
@@ -5978,12 +4177,9 @@ const FormateurDetailView = ({
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse Siège Social</label>
-                <AddressAutocomplete
+                <AddressInput
                   value={legalInfo.adresse_formateur}
                   onChange={val => setLegalInfo({ ...legalInfo, adresse_formateur: val })}
-                  onSelect={({ label, region }) => setLegalInfo(prev => ({ ...prev, adresse_formateur: label, region: region || prev.region }))}
-                  placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
-                  className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -6001,30 +4197,17 @@ const FormateurDetailView = ({
               {!sameAddress && (
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Adresse de Pratique</label>
-                  <AddressAutocomplete
+                  <AddressInput
                     value={legalInfo.adresse_session}
                     onChange={val => setLegalInfo({ ...legalInfo, adresse_session: val })}
-                    placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
-                    className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
                   />
                 </div>
               )}
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Région</label>
-                <input list="region-list-formateur" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" value={legalInfo.region} onChange={e => setLegalInfo({ ...legalInfo, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
-                <datalist id="region-list-formateur">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Email</label>
-                  <input
-                    className={`w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all ${isSelfAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
-                    value={legalInfo.email}
-                    disabled={isSelfAdmin}
-                    title={isSelfAdmin ? "Cet email est lié à votre connexion — modifiez-le depuis vos paramètres de compte." : undefined}
-                    onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })}
-                    placeholder="Email pro"
-                  />
+                  <input className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
+                    value={legalInfo.email} onChange={e => setLegalInfo({ ...legalInfo, email: e.target.value })} placeholder="Email pro" />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Téléphone</label>
@@ -6037,38 +4220,30 @@ const FormateurDetailView = ({
         </div>
 
         <div className="mt-12 flex justify-end items-center gap-4">
-          {isSelfAdmin ? (
-            <p className="text-xs text-gray-400 italic max-w-xs text-right">
-              Ceci est votre propre compte administrateur — il ne peut pas être supprimé depuis cet écran.
-            </p>
-          ) : (
-            <button
-              onClick={() => setIsConfirmDeleteOpen(true)}
-              className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
-            >
-              <Trash2 size={20} />
-              Supprimer le formateur
-            </button>
-          )}
+          <button
+            onClick={() => setIsConfirmDeleteOpen(true)}
+            className="px-6 py-4 text-red-600 font-bold hover:bg-red-50 rounded-2xl transition-all flex items-center gap-2"
+          >
+            <Trash2 size={20} />
+            Supprimer le formateur
+          </button>
           <button onClick={handleSave} disabled={isSaving} className="bg-violet-700 hover:bg-violet-700 text-white font-bold py-4 px-10 rounded-2xl shadow-xl transition-all flex items-center gap-3 disabled:opacity-50">
             <Save size={20} />
             {isSaving ? 'Enregistrement...' : 'Enregistrer les informations légales'}
           </button>
         </div>
 
-        {!isSelfAdmin && (
-          <DeleteConfirmationModal
-            isOpen={isConfirmDeleteOpen}
-            onClose={() => setIsConfirmDeleteOpen(false)}
-            onConfirm={() => {
-              setIsConfirmDeleteOpen(false);
-              handleDeleteFormateur(formateur.id);
-              onBack();
-            }}
-            itemName={legalInfo.nom || "ce formateur"}
-            title="Supprimer ce formateur ?"
-          />
-        )}
+        <DeleteConfirmationModal
+          isOpen={isConfirmDeleteOpen}
+          onClose={() => setIsConfirmDeleteOpen(false)}
+          onConfirm={() => {
+            setIsConfirmDeleteOpen(false);
+            handleDeleteFormateur(formateur.id);
+            onBack();
+          }}
+          itemName={legalInfo.nom || "ce formateur"}
+          title="Supprimer ce formateur ?"
+        />
         <div className="mt-12 pt-12 border-t border-gray-100">
           <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
             <Archive className="text-violet-600" /> Documents Administratifs (Contrats / NDA...)
@@ -6079,16 +4254,7 @@ const FormateurDetailView = ({
             {/* ── Bibliothèque de modèles disponibles ── */}
             {(() => {
               // Filtre : seuls les modèles avec destination='formateur' apparaissent dans la fiche formateur
-              // FIX (2026-09-04) : la destination est stockée en chaîne "role1,role2..." dès qu'il y a
-              // plusieurs destinataires (ex: "formateur,organisme" pour un contrat signé par les deux) —
-              // une égalité stricte avec 'formateur' ratait donc tout modèle combinant formateur +
-              // organisme. On vérifie maintenant l'appartenance du rôle 'formateur', en excluant les
-              // modèles qui concernent aussi le client (ceux-là relèvent du dossier client, pas de
-              // cette section réservée aux documents formateur ↔ organisme).
-              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => {
-                const tplRoles = parseDestinationRoles(tpl.destination);
-                return tplRoles.includes('formateur') && !tplRoles.includes('client');
-              });
+              const availableTpls = Object.entries(documentTemplates || {}).filter(([, tpl]) => (tpl.destination || 'client') === 'formateur');
               return (
                 <div>
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Envoyer un document pour signature</h4>
@@ -6160,13 +4326,15 @@ const FormateurDetailView = ({
                       <Eye size={20} />
                     </button>
                     {isSigned && doc.signed_pdf_url && (
-                      <button
-                        onClick={() => openSecureStorageFile(doc.signed_pdf_url)}
+                      <a
+                        href={doc.signed_pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
                         title="Télécharger le PDF signé"
                       >
                         <Download size={14} /> PDF signé
-                      </button>
+                      </a>
                     )}
                     <button
                       onClick={() => setDocToDelete(doc)}
@@ -6189,125 +4357,6 @@ const FormateurDetailView = ({
                 itemName={docToDelete?.nom || 'ce document'}
                 title="Supprimer ce document ?"
               />
-            </div>
-
-            {/* ── NOUVEAU (2026-09-04) : Documents du dossier formateur (ajout libre, sans signature) ── */}
-            <div className="space-y-3 pt-2 border-t border-gray-100">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Documents du dossier formateur</h4>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Pièces administratives archivées sans demande de signature (assurance, diplôme...).</p>
-                </div>
-                <button
-                  onClick={() => setShowFormateurDocModal(true)}
-                  className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Ajouter un document
-                </button>
-              </div>
-              {documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && isDossierDoc(d)).length === 0 ? (
-                <p className="text-sm text-gray-400 italic">Aucun document dans le dossier de ce formateur.</p>
-              ) : (
-                <div className="space-y-2">
-                  {documents.filter(d => d.assigned_formateur_id === formateur.id && !d.user_id && isDossierDoc(d)).map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between bg-white p-4 rounded-2xl border border-gray-100 group">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <FileText className="w-4 h-4 text-violet-500 shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => openSecureStorageFile(doc.url)}
-                          className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
-                        >
-                          Ouvrir
-                        </button>
-                        <button
-                          onClick={() => handleDownloadNamedFile(doc)}
-                          className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
-                          title="Télécharger sous le nom indiqué"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setDocToDelete(doc)}
-                          className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                          title="Supprimer ce document"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {showFormateurDocModal && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                  <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                    <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document au dossier</h4>
-                    <p className="text-xs text-gray-400 mb-4">Ce fichier sera archivé dans le dossier administratif de {formateur.nom || 'ce formateur'}, sans demande de signature.</p>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
-                        <input
-                          type="file"
-                          onChange={(e) => {
-                            const f = e.target.files[0] || null;
-                            setFormateurDocFile(f);
-                            if (f && !formateurDocName.trim()) {
-                              setFormateurDocName(f.name.replace(/\.[^/.]+$/, ''));
-                            }
-                          }}
-                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
-                        <input
-                          type="text"
-                          value={formateurDocName}
-                          onChange={(e) => setFormateurDocName(e.target.value)}
-                          placeholder="Ex : Attestation d'assurance RCP"
-                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
-                        <select
-                          value={formateurDocType}
-                          onChange={(e) => setFormateurDocType(e.target.value)}
-                          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                        >
-                          <option value="Administratif">Administratif</option>
-                          <option value="Contrat">Contrat</option>
-                          <option value="Mission">Mission</option>
-                          <option value="Pièce justificative">Pièce justificative</option>
-                          <option value="Autre">Autre</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 mt-5">
-                      <button
-                        onClick={() => { setShowFormateurDocModal(false); setFormateurDocFile(null); setFormateurDocName(''); setFormateurDocType('Administratif'); }}
-                        className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
-                      >
-                        Annuler
-                      </button>
-                      <button
-                        onClick={handleUploadFormateurDoc}
-                        disabled={isUploadingFormateurDoc || !formateurDocFile || !formateurDocName.trim()}
-                        className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
-                      >
-                        {isUploadingFormateurDoc ? 'Envoi...' : 'Ajouter au dossier'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -6354,21 +4403,10 @@ const AdminFormateursView = ({
   supabase, fetchUtilisateurs, fetchDocuments, activeTab, setActiveTab,
   modules, sessions, handleDownloadResource, handleDeleteFormateur,
   documentTemplates, handleGenerateDocx, setViewingDocId,
-  handleUploadDocxTemplate, newTemplateName, setNewTemplateName, adminSelfId,
-  currentOrgId, setIsInviteModalOpen, setInviteDefaultRole
+  handleUploadDocxTemplate, newTemplateName, setNewTemplateName
 }) => {
   const [selectedFormateurId, setSelectedFormateurId] = React.useState(null);
   const [selectedClientSummary, setSelectedClientSummary] = React.useState(null);
-  // Recherche + tri alphabétique de la liste des formateurs (ajouté 2026-08-05) — la liste
-  // était auparavant affichée dans l'ordre brut renvoyé par la base (ordre de création), sans
-  // moyen de retrouver rapidement un formateur une fois qu'il y en a beaucoup.
-  const [formateurSearchQuery, setFormateurSearchQuery] = React.useState('');
-  const sortedFilteredFormateurs = React.useMemo(() => {
-    const q = formateurSearchQuery.trim().toLowerCase();
-    return [...(formateurs || [])]
-      .filter(f => !q || (f.nom || '').toLowerCase().includes(q) || (f.email || '').toLowerCase().includes(q))
-      .sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' }));
-  }, [formateurs, formateurSearchQuery]);
 
   if (selectedFormateurId) {
     const formateur = formateurs.find(f => f.id === selectedFormateurId);
@@ -6386,9 +4424,7 @@ const AdminFormateursView = ({
           documents={documents}
           documentTemplates={documentTemplates}
           handleGenerateDocx={handleGenerateDocx}
-          currentOrgId={currentOrgId}
           setViewingDocId={setViewingDocId}
-          isSelfAdmin={adminSelfId != null && String(formateur.id) === String(adminSelfId)}
         />
       );
     }
@@ -6397,9 +4433,7 @@ const AdminFormateursView = ({
   // --- Modal de Résumé de Planning pour l'Admin ---
   const renderClientSummary = () => {
     if (!selectedClientSummary) return null;
-    // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de ce
-    // récapitulatif d'émargements Qualiopi — ce ne sont pas des séances planifiées à émarger.
-    const clientSessions = sessions.filter(s => s.client_id === selectedClientSummary.id && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+    const clientSessions = sessions.filter(s => s.client_id === selectedClientSummary.id).sort((a, b) => a.numero_seance - b.numero_seance);
 
     return (
       <div className="fixed inset-0 bg-gray-950/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
@@ -6431,7 +4465,7 @@ const AdminFormateursView = ({
                     <th className="p-4">Date & Heures</th>
                     <th className="p-4">Activité</th>
                     <th className="p-4 text-center">Émargement Client</th>
-                    <th className="p-4 text-center">Émargement Formateur</th>
+                    <th className="p-4 text-center">Émargement Coach</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -6486,58 +4520,17 @@ const AdminFormateursView = ({
   return (
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
 
-      {/* Ajouté 2026-08-05 : bouton d'invitation dédié aux formateurs, pré-sélectionnant le rôle
-          "Formateur" — auparavant, le seul bouton d'invitation ("Nouveau Membre") se trouvait sur
-          l'onglet Clients, avec un sélecteur de rôle à changer manuellement. */}
-      <div className="bg-violet-50 border border-violet-100 p-6 rounded-3xl flex items-center justify-between mb-2 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-violet-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
-            <Plus size={24} />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-gray-900 leading-tight">Nouveau Formateur</h3>
-            <p className="text-sm text-gray-500">Invitez un nouveau formateur par email.</p>
-          </div>
-        </div>
-        <button
-          onClick={() => { setInviteDefaultRole('formateur'); setIsInviteModalOpen(true); }}
-          className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
-        >
-          <Plus size={20} /> Ajouter un formateur
-        </button>
-      </div>
-
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span> Liste des Formateurs
-          <span className="ml-3 text-sm font-bold text-violet-600 bg-violet-50 px-2.5 py-0.5 rounded-full">
-            {formateurs.length}
-          </span>
         </h2>
         <div className="flex border-b border-gray-200 mb-6 font-sans">
           <button onClick={() => setActiveTab('clients')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Clients</button>
           <button onClick={() => setActiveTab('formateurs')} className={`px-6 py-3 font-bold text-sm transition-all border-b-2 ${activeTab === 'formateurs' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Formateurs</button>
         </div>
 
-        <div className="relative mb-6">
-          <Search className="w-4 h-4 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={formateurSearchQuery}
-            onChange={e => setFormateurSearchQuery(e.target.value)}
-            placeholder="Rechercher un formateur par nom ou email..."
-            className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-violet-300 bg-white"
-          />
-        </div>
-
-        {sortedFilteredFormateurs.length === 0 && (
-          <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-            <p className="text-sm text-gray-400 italic">Aucun formateur ne correspond à "{formateurSearchQuery}".</p>
-          </div>
-        )}
-
         <ul className="space-y-6">
-          {sortedFilteredFormateurs.map(f => {
+          {formateurs.map(f => {
             const sesClients = clients.filter(c => c.formateur_id === f.id);
             const isExpanded = expandedClientId === f.id;
             return (
@@ -6549,9 +4542,6 @@ const AdminFormateursView = ({
                       <div className="flex items-center justify-between pr-4">
                         <div>
                           <span className="font-bold text-gray-900 text-lg hover:text-violet-700 transition-colors">{f.nom}</span>
-                          {adminSelfId != null && String(f.id) === String(adminSelfId) && (
-                            <span className="ml-2 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 align-middle">Vous — Admin</span>
-                          )}
                           <span className="text-sm text-gray-500 block">{f.email}</span>
                         </div>
                         <span className="text-violet-400 bg-violet-50 px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -6638,13 +4628,10 @@ const DroppableMomentZone = ({ id, children, className }) => {
 };
 
 const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
-  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({ id: `drag-grp-${resourceId}` });
-  // CORRECTIF (2026-08-31) : même correctif que SessDragItem/FDragItemRow (transform jamais appliqué).
-  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `drag-grp-${resourceId}` });
   return (
     <div
       ref={setNodeRef}
-      style={style}
       {...attributes}
       className={`flex items-center justify-between p-3 rounded-xl border border-indigo-200 text-sm hover:bg-indigo-100 transition-all shadow-sm ${isDragging ? 'opacity-40 bg-indigo-50' : 'bg-white'}`}
     >
@@ -6664,71 +4651,12 @@ const DraggableGroupBlock = ({ resourceId, group, onDelete }) => {
   );
 };
 
-// AJOUT (2026-09-30) : ligne d'un document/émargement/questionnaire à l'intérieur d'un dossier de
-// séance, rendue glissable vers un autre dossier — même correctif transform que DraggableGroupBlock
-// ci-dessus (sinon l'élément reste visuellement figé à l'écran pendant le glisser).
-const DraggableStepResourceRow = ({ res, editingId, setEditingId, editValue, setEditValue, handleRenameResource, setSignatureSettingsTarget, setIsSignatureSettingsOpen, handleDeleteStepResource }) => {
-  const { attributes, listeners, setNodeRef, isDragging, transform } = useDraggable({ id: `drag-res-${res.id}` });
-  const style = transform ? { transform: CSS.Translate.toString(transform), zIndex: 30, position: 'relative' } : undefined;
-  return (
-    <div ref={setNodeRef} style={style} className={`flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px] transition-all ${isDragging ? 'opacity-40' : ''}`}>
-      <div className="flex items-center gap-2">
-        <span {...attributes} {...listeners} className="text-gray-300 hover:text-indigo-500 cursor-grab active:cursor-grabbing" title="Glisser pour déplacer vers une autre séance">⠿</span>
-        <span className="text-gray-400">
-          {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : res.type === 'questionnaire' ? '📝' : '⚙️'}
-        </span>
-        <div className="flex flex-col flex-1">
-          {editingId === res.id ? (
-            <div className="flex items-center gap-2">
-              <input
-                autoFocus
-                className="bg-white border border-indigo-200 rounded text-[11px] p-0.5 font-bold text-gray-800 w-full outline-none"
-                value={editValue}
-                onChange={e => setEditValue(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    handleRenameResource(res.id, editValue);
-                    setEditingId(null);
-                  } else if (e.key === 'Escape') setEditingId(null);
-                }}
-              />
-              <button onClick={() => { handleRenameResource(res.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={12} /></button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 group/restitle leading-none">
-              <span className="font-bold text-gray-800">{res.titre}</span>
-              <button
-                onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
-                className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
-              >
-                <Pencil size={10} />
-              </button>
-            </div>
-          )}
-          <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-1">
-        {res.type === 'signature' && (
-          <button
-            onClick={() => { setSignatureSettingsTarget(res); setIsSignatureSettingsOpen(true); }}
-            className="text-gray-300 hover:text-violet-600"
-            title="Qui doit signer ?"
-          >
-            <Settings size={12} />
-          </button>
-        )}
-        <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
-          <Trash2 size={12} />
-        </button>
-      </div>
-    </div>
-  );
-};
-
 const IngenierieView = ({
-  modules, handleAddModule, handleDeleteModule,
+  modules, moduleDocuments, handleAddModule, handleLinkDocument,
   newModuleName, setNewModuleName, newModuleSeances, setNewModuleSeances,
+  newModDocName, setNewModDocName, newModDocType, setNewModDocType,
+  newModDocFile, setNewModDocFile,
+  addingToModuleId, setAddingToModuleId,
   handleUploadDocxTemplate, newTemplateName, setNewTemplateName,
   handleUploadResource, newResourceName, setNewResourceName, isUploadingResource,
   modelingModuleId, setModelingModuleId, moduleSessionTemplates, moduleStepResources, fetchModules,
@@ -6736,19 +4664,10 @@ const IngenierieView = ({
   selectedResourceId, setSelectedResourceId, pedagogicalResources, isAddingStep,
   setIsAddingStep, isAddingStepResource, setIsAddingStepResource, supabase,
   createSessionFolder, handleDeleteFolder, handleDeleteStepResource, handleAddStepResource,
-  handleRenameFolder, handleRenameResource, handleRenameModule, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates,
-  handleUpdateStepResourceSignatures
+  handleRenameFolder, handleRenameResource, handleAddModuleMomentResource, handleRedistributeModuleDocs, documentTemplates
 }) => {
   const [isResourceModalOpen, setIsResourceModalOpen] = React.useState(false);
   const [activeFolderId, setActiveFolderId] = React.useState(null);
-  // AJOUT (2026-09-25) : modale "Qui doit signer ?" pour éditer un émargement de module déjà créé.
-  const [isSignatureSettingsOpen, setIsSignatureSettingsOpen] = React.useState(false);
-  const [signatureSettingsTarget, setSignatureSettingsTarget] = React.useState(null);
-  // AJOUT (2026-09-17) : édition inline du nom d'un module (même principe que editingId/editValue
-  // plus bas pour les "dossiers de séance", mais état séparé pour éviter toute collision d'id entre
-  // un module et un dossier de séance — les deux sont des entités différentes en base).
-  const [editingModuleId, setEditingModuleId] = React.useState(null);
-  const [editModuleValue, setEditModuleValue] = React.useState('');
   const [activeMoment, setActiveMoment] = React.useState(null);
   const [activeMomentModuleId, setActiveMomentModuleId] = React.useState(null);
   const [editingId, setEditingId] = React.useState(null);
@@ -6768,36 +4687,12 @@ const IngenierieView = ({
   const handleGroupDragEnd = async (event) => {
     const { active, over } = event;
     if (!over) return;
-    if (!currentOrgId) return;
-    const activeIdStr = String(active.id);
-    const overIdStr = String(over.id);
-
-    // AJOUT (2026-09-30) : déplace un document/émargement/questionnaire d'un dossier de séance vers
-    // un autre (over.id = `drop-tpl-{templateId}`) — jusqu'ici seul le déplacement de groupes de
-    // documents entre Début/Fin existait.
-    if (activeIdStr.startsWith('drag-res-')) {
-      if (overIdStr.startsWith('drop-tpl-')) {
-        const resourceId = activeIdStr.replace('drag-res-', '');
-        const targetTemplateId = overIdStr.replace('drop-tpl-', '');
-        const { error } = await supabase.from('module_step_resources').update({ template_id: targetTemplateId }).eq('id', resourceId).eq('organisation_id', currentOrgId);
-        if (!error) fetchModules();
-      }
-      return;
-    }
-
-    // Déplacement d'un groupe de documents entre les zones Début/Fin de parcours (comportement
-    // existant, inchangé) — ignore explicitement un dépôt sur un dossier de séance (drop-tpl-),
-    // qui n'a pas de sens pour un groupe de documents.
-    if (activeIdStr.startsWith('drag-grp-') && overIdStr.startsWith('drop-') && !overIdStr.startsWith('drop-tpl-')) {
-      const resourceId = activeIdStr.replace('drag-grp-', '');
-      const overIdParts = overIdStr.split('-'); // expected 'drop-{moduleId}-{moment}'
-      if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
-        const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
-        // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un
-        // glisser-déposer aurait pu modifier la ressource de module d'un AUTRE organisme si l'id était deviné.
-        const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId).eq('organisation_id', currentOrgId);
-        if (!error) fetchModules();
-      }
+    const resourceId = String(active.id).replace('drag-grp-', '');
+    const overIdParts = String(over.id).split('-'); // expected 'drop-{moduleId}-{moment}'
+    if (overIdParts[0] === 'drop' && overIdParts.length >= 3) {
+      const targetMoment = overIdParts[2]; // 'debut' ou 'fin'
+      const { error } = await supabase.from('module_step_resources').update({ moment: targetMoment }).eq('id', resourceId);
+      if (!error) fetchModules();
     }
   };
 
@@ -6829,46 +4724,44 @@ const IngenierieView = ({
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {modules.map(mod => {
+            const docs = moduleDocuments.filter(md => md.module_id === mod.id);
             const templates = moduleSessionTemplates.filter(t => String(t.module_id) === String(mod.id));
 
             return (
               <div key={mod.id} className="border border-purple-100 bg-purple-50/20 p-5 rounded-2xl relative shadow-sm h-fit">
-                {editingModuleId === mod.id ? (
-                  <div className="flex items-center gap-2 pr-24">
-                    <input
-                      autoFocus
-                      className="bg-white border border-purple-300 rounded text-lg font-bold text-gray-900 p-1 w-full outline-none"
-                      value={editModuleValue}
-                      onChange={e => setEditModuleValue(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') { handleRenameModule(mod.id, editModuleValue); setEditingModuleId(null); }
-                        else if (e.key === 'Escape') setEditingModuleId(null);
-                      }}
-                    />
-                    <button onClick={() => { handleRenameModule(mod.id, editModuleValue); setEditingModuleId(null); }} className="text-green-600 hover:text-green-700 shrink-0"><Check size={16} /></button>
-                    <button onClick={() => setEditingModuleId(null)} className="text-gray-400 hover:text-gray-600 shrink-0"><X size={16} /></button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 pr-24 group/modtitle">
-                    <h3 className="font-bold text-gray-900 text-lg">{mod.nom}</h3>
-                    <button
-                      onClick={() => { setEditingModuleId(mod.id); setEditModuleValue(mod.nom); }}
-                      className="text-gray-300 hover:text-purple-600 opacity-0 group-hover/modtitle:opacity-100 transition-opacity"
-                      title="Renommer ce module"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  </div>
-                )}
+                <h3 className="font-bold text-gray-900 text-lg pr-24">{mod.nom}</h3>
                 <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
 
-                <div className="flex gap-2 flex-wrap mt-6">
-                  <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
-                  <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
-                  <button onClick={() => handleDeleteModule(mod.id, mod.nom)} className="text-xs font-bold text-red-600 hover:text-white hover:bg-red-600 flex items-center gap-1.5 bg-white border border-red-200 px-4 py-2 rounded-lg transition-all ml-auto" title="Supprimer ce module">
-                    <Trash2 size={14} /> Supprimer
-                  </button>
-                </div>
+                <h4 className="text-sm font-bold text-gray-600 mt-6 mb-3">Documents types ({docs.length})</h4>
+                <ul className="space-y-2 mb-4">
+                  {docs.map(d => (
+                    <li key={d.id} className="text-xs flex items-center bg-white p-2.5 rounded-lg border border-gray-100 shadow-sm">
+                      <strong className="w-24 shrink-0 text-gray-400 font-bold">{d.type_document}</strong>
+                      <span className="text-gray-900 font-medium truncate">{d.nom}</span>
+                    </li>
+                  ))}
+                  {docs.length === 0 && <li className="text-xs text-gray-400 italic">Aucun document type lié.</li>}
+                </ul>
+
+                {addingToModuleId === mod.id ? (
+                  <form onSubmit={(e) => handleLinkDocument(e, mod)} className="bg-white p-4 rounded-xl shadow-sm border border-purple-200 flex flex-col gap-3 animate-fade-in">
+                    <input required type="text" placeholder="Nom du document (Ex: Contrat)" value={newModDocName} onChange={e => setNewModDocName(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500" />
+                    <input type="file" onChange={(e) => setNewModDocFile(e.target.files[0] || null)} className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500 bg-gray-50 text-gray-700" accept=".pdf,image/*" />
+                    <div className="flex gap-2">
+                      <select value={newModDocType} onChange={e => setNewModDocType(e.target.value)} className="flex-1 text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-purple-500">
+                        <option value="Autre">Autre</option><option value="Contrat">Contrat</option><option value="Évaluation">Évaluation</option>
+                      </select>
+                      <button type="submit" className="bg-gray-900 text-white px-4 rounded-lg text-sm shrink-0 font-medium hover:bg-gray-800">Lier</button>
+                      <button type="button" onClick={() => setAddingToModuleId(null)} className="text-gray-400 hover:text-gray-600 px-2 shrink-0">✕</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => { setAddingToModuleId(mod.id); setNewModDocName(''); setNewModDocType('Contrat'); setNewModDocFile?.(null); }} className="text-xs font-bold text-purple-600 hover:text-white hover:bg-purple-600 flex items-center bg-white border border-purple-200 px-4 py-2 rounded-lg transition-all">+ Doc. Type</button>
+                    <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
+                    <button onClick={() => handleRedistributeModuleDocs(mod.id)} className="text-xs font-bold text-emerald-600 hover:text-white hover:bg-emerald-600 flex items-center bg-white border border-emerald-200 px-4 py-2 rounded-lg transition-all" title="Envoyer les documents de début/fin aux clients déjà assignés à ce module">🔄 Sync documents clients</button>
+                  </div>
+                )}
 
                 {/* Interface de Modélisation du Parcours */}
                 {modelingModuleId === mod.id && (
@@ -6979,20 +4872,48 @@ const IngenierieView = ({
                               >✕</button>
                             </div>
 
-                            <DroppableMomentZone id={`drop-tpl-${template.id}`} className="p-4 space-y-2">
+                            <div className="p-4 space-y-2">
                               {resources.map((res) => (
-                                <DraggableStepResourceRow
-                                  key={res.id}
-                                  res={res}
-                                  editingId={editingId}
-                                  setEditingId={setEditingId}
-                                  editValue={editValue}
-                                  setEditValue={setEditValue}
-                                  handleRenameResource={handleRenameResource}
-                                  setSignatureSettingsTarget={setSignatureSettingsTarget}
-                                  setIsSignatureSettingsOpen={setIsSignatureSettingsOpen}
-                                  handleDeleteStepResource={handleDeleteStepResource}
-                                />
+                                <div key={res.id} className="flex items-center justify-between bg-gray-50/50 p-3 rounded-xl border border-gray-100 text-[11px]">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-gray-400">
+                                      {res.type === 'signature' ? '✍️' : res.type === 'document' ? '📄' : res.type === 'questionnaire' ? '📝' : '⚙️'}
+                                    </span>
+                                    <div className="flex flex-col flex-1">
+                                      {editingId === res.id ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            autoFocus
+                                            className="bg-white border border-indigo-200 rounded text-[11px] p-0.5 font-bold text-gray-800 w-full outline-none"
+                                            value={editValue}
+                                            onChange={e => setEditValue(e.target.value)}
+                                            onKeyDown={e => {
+                                              if (e.key === 'Enter') {
+                                                handleRenameResource(res.id, editValue);
+                                                setEditingId(null);
+                                              } else if (e.key === 'Escape') setEditingId(null);
+                                            }}
+                                          />
+                                          <button onClick={() => { handleRenameResource(res.id, editValue); setEditingId(null); }} className="text-green-600 hover:text-green-700"><Check size={12} /></button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2 group/restitle leading-none">
+                                          <span className="font-bold text-gray-800">{res.titre}</span>
+                                          <button 
+                                            onClick={() => { setEditingId(res.id); setEditValue(res.titre); }}
+                                            className="text-gray-300 hover:text-indigo-600 opacity-0 group-hover/restitle:opacity-100 transition-opacity"
+                                          >
+                                            <Pencil size={10} />
+                                          </button>
+                                        </div>
+                                      )}
+                                      <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
+                                    </div>
+                                  </div>
+                                  <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400">
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
                               ))}
 
                               <button
@@ -7001,7 +4922,7 @@ const IngenierieView = ({
                               >
                                 <Plus size={14} /> Ajouter un élément
                               </button>
-                            </DroppableMomentZone>
+                            </div>
                           </div>
                         );
                       })}
@@ -7108,19 +5029,6 @@ const IngenierieView = ({
           }
         }}
       />
-
-      <StepResourceSignatureModal
-        isOpen={isSignatureSettingsOpen}
-        resource={signatureSettingsTarget}
-        onClose={() => { setIsSignatureSettingsOpen(false); setSignatureSettingsTarget(null); }}
-        onSave={async (data) => {
-          if (signatureSettingsTarget) {
-            await handleUpdateStepResourceSignatures(signatureSettingsTarget.id, data);
-          }
-          setIsSignatureSettingsOpen(false);
-          setSignatureSettingsTarget(null);
-        }}
-      />
     </div>
   );
 };
@@ -7135,54 +5043,25 @@ const FormateurView = ({
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
-  handleMoveSessionItem, handleSaveCorrection, currentOrgId
+  handleMoveSessionItem, handleSaveCorrection
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
-  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
-  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
-  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
   const [formateurClientTab, setFormateurClientTab] = React.useState('seances');
   const [formateurMainSection, setFormateurMainSection] = React.useState('clients'); // 'clients' | 'mes_docs'
   const [uploadingClientId, setUploadingClientId] = React.useState(null);
   const [clientDocFile, setClientDocFile] = React.useState(null);
   const [clientDocName, setClientDocName] = React.useState('');
   const [isUploadingClientDoc, setIsUploadingClientDoc] = React.useState(false);
-  // NOUVEAU (2026-09-04) : "Mon dossier administratif" — le formateur ajoute lui-même un document qui
-  // le concerne personnellement (assurance, diplôme...), en lien avec l'organisme, sans passer par le
-  // dossier d'un client (jusqu'ici il ne pouvait ajouter un document QUE dans le dossier d'un client).
-  const [showOwnDocModal, setShowOwnDocModal] = React.useState(false);
-  const [ownDocFile, setOwnDocFile] = React.useState(null);
-  const [ownDocName, setOwnDocName] = React.useState('');
-  const [ownDocType, setOwnDocType] = React.useState('Administratif');
-  const [isUploadingOwnDoc, setIsUploadingOwnDoc] = React.useState(false);
   const [fActiveId, setFActiveId] = React.useState(null);
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
-
-  // AJOUT (2026-09-30) : résultats de quiz des propres clients du formateur — jamais ceux des
-  // autres formateurs (myClientIds ci-dessous est dérivé du même filtre formateur_id === currentUserId
-  // qu'assignedClients juste au-dessus).
-  const [formateurQuizResources, setFormateurQuizResources] = React.useState([]);
-  const [formateurQuizResponses, setFormateurQuizResponses] = React.useState([]);
-  React.useEffect(() => {
-    if (!currentOrgId || !supabase) return;
-    supabase.from('module_step_resources').select('id, titre, metadata, module_id').eq('type', 'questionnaire').eq('organisation_id', currentOrgId)
-      .then(({ data }) => { if (data) setFormateurQuizResources(data); });
-    const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
-    if (myClientIds.length > 0) {
-      supabase.from('questionnaire_responses').select('*').in('client_id', myClientIds)
-        .then(({ data }) => { if (data) setFormateurQuizResponses(data); });
-    } else {
-      setFormateurQuizResponses([]);
-    }
-  }, [currentOrgId, supabase, clients, currentUserId]);
 
   // Documents à signer par le formateur : uniquement ceux qui lui sont explicitement assignés
   // (assigned_formateur_id = ce formateur). Le champ est posé par instantiateDocument quand
   // la destination inclut le formateur (visFormateur=true).
   const myAdminDocs = React.useMemo(() =>
-    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d)),
+    (documents || []).filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false),
     [documents, currentUserId]
   );
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
@@ -7230,14 +5109,6 @@ const FormateurView = ({
       toast.error('Veuillez renseigner un nom et choisir un fichier.');
       return;
     }
-    // Vérification d'appartenance : le client ciblé doit être un client réel visible par ce formateur
-    // (liste déjà scopée par organisme) — avant ce correctif, un clientId arbitraire aurait été accepté
-    // sans aucune vérification.
-    const targetClient = (clients || []).find(c => String(c.id) === String(clientId));
-    if (!targetClient) {
-      toast.error("Client introuvable — impossible d'ajouter le document.");
-      return;
-    }
     setIsUploadingClientDoc(true);
     const ext = clientDocFile.name.split('.').pop();
     const safeN = clientDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -7256,10 +5127,7 @@ const FormateurView = ({
       assigned_formateur_id: currentUserId,
       url: publicUrl,
       visible_client: false,
-      visible_formateur: true,
-      // organisation_id manquait ici : sans lui, ce document échappait au cloisonnement par organisme
-      // appliqué partout ailleurs.
-      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
+      visible_formateur: true
     });
     if (!dbErr) {
       toast.success('Document ajouté au dossier client !');
@@ -7271,52 +5139,6 @@ const FormateurView = ({
       toast.error('Erreur base de données : ' + dbErr.message);
     }
     setIsUploadingClientDoc(false);
-  };
-
-  const handleDeleteDossierDoc = async (docId) => {
-    const { error } = await supabase.from('documents').delete().eq('id', docId);
-    if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
-    toast.success('Document supprimé.');
-    if (fetchDocuments) await fetchDocuments();
-  };
-
-  // NOUVEAU (2026-09-04) : ajoute un document à SON PROPRE dossier administratif — pas de client visé
-  // (assigned_formateur_id = soi-même, user_id absent), visible uniquement par l'organisme.
-  const handleUploadOwnAdminDoc = async () => {
-    if (!ownDocFile || !ownDocName.trim()) {
-      toast.error('Veuillez renseigner un nom et choisir un fichier.');
-      return;
-    }
-    setIsUploadingOwnDoc(true);
-    const ext = ownDocFile.name.split('.').pop();
-    const safeN = ownDocName.trim().replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    const fileName = `formateur_${currentUserId}/dossier/${Date.now()}_${safeN}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('documents').upload(fileName, ownDocFile);
-    if (upErr) {
-      toast.error('Erreur upload : ' + upErr.message);
-      setIsUploadingOwnDoc(false);
-      return;
-    }
-    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
-    const { error: dbErr } = await supabase.from('documents').insert({
-      nom: ownDocName.trim(),
-      type_document: ownDocType,
-      assigned_formateur_id: currentUserId,
-      url: publicUrl,
-      visible_client: false,
-      visible_formateur: true,
-      ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
-    });
-    if (!dbErr) {
-      toast.success('Document ajouté à votre dossier administratif !');
-      setOwnDocFile(null);
-      setOwnDocName('');
-      setShowOwnDocModal(false);
-      if (fetchDocuments) fetchDocuments();
-    } else {
-      toast.error('Erreur base de données : ' + dbErr.message);
-    }
-    setIsUploadingOwnDoc(false);
   };
 
   return (
@@ -7412,122 +5234,8 @@ const FormateurView = ({
           );
         };
 
-        const myDossierDocs = (documents || []).filter(d => d.assigned_formateur_id === currentUserId && !d.user_id && isDossierDoc(d));
-
         return (
           <div className="space-y-4">
-            {/* ── NOUVEAU (2026-09-04) : Mon dossier administratif — documents personnels, sans client, sans signature ── */}
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-3 gap-3">
-                <div>
-                  <h3 className="font-black text-gray-900 text-sm">Mon dossier administratif</h3>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Vos propres documents partagés avec l'organisme (assurance, diplôme...) — sans lien avec un client.</p>
-                </div>
-                <button
-                  onClick={() => setShowOwnDocModal(true)}
-                  className="bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Ajouter un document
-                </button>
-              </div>
-              {myDossierDocs.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">Aucun document dans votre dossier.</p>
-              ) : (
-                <div className="space-y-2">
-                  {myDossierDocs.map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <FileText className="w-4 h-4 text-violet-500 shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => openSecureStorageFile(doc.url)}
-                          className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
-                        >
-                          Ouvrir
-                        </button>
-                        <button
-                          onClick={() => handleDeleteDossierDoc(doc.id)}
-                          className="text-gray-300 hover:text-red-500 transition-colors p-1.5 rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                          title="Supprimer ce document"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {showOwnDocModal && (
-              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                  <h4 className="text-base font-black text-gray-900 mb-1">Ajouter un document à mon dossier</h4>
-                  <p className="text-xs text-gray-400 mb-4">Ce fichier sera visible par l'organisme, sans lien avec un client précis.</p>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Fichier</label>
-                      <input
-                        type="file"
-                        onChange={(e) => {
-                          const f = e.target.files[0] || null;
-                          setOwnDocFile(f);
-                          if (f && !ownDocName.trim()) {
-                            setOwnDocName(f.name.replace(/\.[^/.]+$/, ''));
-                          }
-                        }}
-                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Nom du document</label>
-                      <input
-                        type="text"
-                        value={ownDocName}
-                        onChange={(e) => setOwnDocName(e.target.value)}
-                        placeholder="Ex : Attestation d'assurance RCP"
-                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">Type de document</label>
-                      <select
-                        value={ownDocType}
-                        onChange={(e) => setOwnDocType(e.target.value)}
-                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-violet-300"
-                      >
-                        <option value="Administratif">Administratif</option>
-                        <option value="Contrat">Contrat</option>
-                        <option value="Mission">Mission</option>
-                        <option value="Pièce justificative">Pièce justificative</option>
-                        <option value="Autre">Autre</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-5">
-                    <button
-                      onClick={() => { setShowOwnDocModal(false); setOwnDocFile(null); setOwnDocName(''); setOwnDocType('Administratif'); }}
-                      className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      onClick={handleUploadOwnAdminDoc}
-                      disabled={isUploadingOwnDoc || !ownDocFile || !ownDocName.trim()}
-                      className="flex-1 bg-violet-700 hover:bg-violet-800 disabled:opacity-50 text-white font-bold text-sm py-2.5 rounded-xl transition-all"
-                    >
-                      {isUploadingOwnDoc ? 'Envoi...' : 'Ajouter au dossier'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {myAdminDocs.length === 0 ? (
               <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
                 <Archive className="mx-auto mb-4 text-gray-300" size={40} />
@@ -7571,14 +5279,9 @@ const FormateurView = ({
       {formateurMainSection === 'clients' && (
       <div className="grid grid-cols-1 gap-6">
         {assignedClients.length > 0 ? assignedClients.map(client => {
-          // AJOUT (2026-09-19) : voir le même commentaire dans ClientDetailView — `clientSessions` ne
-          // garde que les vraies séances calendrier (numero_seance renseigné) pour que les exercices
-          // synthétiques de début/fin de module n'apparaissent plus comme une "séance" à dater ; les
-          // compteurs d'exercices utilisent `allClientSessions` pour continuer à tout inclure.
-          const allClientSessions = sessions.filter(s => s.client_id === client.id);
-          const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined);
-          const clientExercisesCount = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
-          const clientPendingCorrections = allClientSessions.filter(s =>
+          const clientSessions = sessions.filter(s => s.client_id === client.id);
+          const clientExercisesCount = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
+          const clientPendingCorrections = clientSessions.filter(s =>
             (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
             s.reponse_url && s.correction_statut !== 'Validé' && s.correction_statut !== 'À corriger'
           ).length;
@@ -7609,31 +5312,6 @@ const FormateurView = ({
 
                 <div className="flex gap-2">
                   <button
-                    onClick={async () => {
-                      const email = client.email || client.email_contact || client.client_email;
-                      if (!email) return toast.error("Aucun email trouvé pour ce client.");
-                      try {
-                        const { data: { session: authSession } } = await supabase.auth.getSession();
-                        const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authSession.access_token}` },
-                          body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin })
-                        });
-                        const result = await res.json();
-                        if (!res.ok) return toast.error(`Erreur : ${result.error}`);
-                        toast.success(result.method === 'reset'
-                          ? `Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`
-                          : `Email d'invitation envoyé à ${email}.`, { duration: 6000 });
-                      } catch (err) {
-                        toast.error(`Erreur : ${err.message}`);
-                      }
-                    }}
-                    title="Renvoyer le lien de connexion à ce client"
-                    className="px-4 py-2.5 rounded-xl text-sm font-bold transition-all bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5"
-                  >
-                    <Mail size={15} /> Renvoyer le lien
-                  </button>
-                  <button
                     onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
                     className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-700' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'}`}
                   >
@@ -7656,154 +5334,66 @@ const FormateurView = ({
                         </span>
                       )}
                     </button>
-                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Quiz</button>
                   </div>
-
-                  {formateurClientTab === 'quiz' && (
-                    <div className="space-y-3">
-                      {(() => {
-                        const quizItems = formateurQuizResources
-                          .filter(r => String(r.module_id) === String(client.module_id))
-                          .map(r => {
-                            const meta = (() => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } })();
-                            return { resource: r, meta };
-                          })
-                          .filter(({ meta }) => meta.isQuiz);
-                        if (quizItems.length === 0) {
-                          return (
-                            <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                              <p className="text-2xl mb-2">🎯</p>
-                              <p className="text-gray-400 text-sm">Aucun quiz dans le module de ce client.</p>
-                            </div>
-                          );
-                        }
-                        return quizItems.map(({ resource, meta }) => {
-                          const response = formateurQuizResponses.find(r => r.questionnaire_id === resource.id && r.client_id === client.id);
-                          return (
-                            <div key={resource.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
-                              <div>
-                                <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-                                <p className="text-[10px] text-gray-500">Seuil de réussite : {meta.seuilReussite ?? 50}%</p>
-                              </div>
-                              {response && response.score_percent != null ? (
-                                <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
-                                  {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
-                                </span>
-                              ) : (
-                                <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
-                              )}
-                            </div>
-                          );
-                        });
-                      })()}
-                    </div>
-                  )}
 
                   {formateurClientTab === 'administratif' && (
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 mb-4">
                         <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
-                        <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Documents du dossier client</h4>
+                        <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Documents Administratifs & Contrats</h4>
                       </div>
                       
                       {(() => {
-                        // Liste partagée avec l'onglet "Administratif" de l'espace organisme (ClientDetailView) —
-                        // les mêmes types de documents et la même exclusion des documents déjà signés par le client
-                        // (qui, eux, s'affichent dans l'onglet "Documents Signés").
-                        const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
                         const adminDocs = documents.filter(d =>
                           d.user_id === client.id &&
-                          DOSSIER_DOC_TYPES.includes(d.type_document) &&
-                          !(d.statut === 'Signé')
+                          (d.type_document === 'Administratif' || d.type_document === 'Contrat' || d.type_document === 'Mission')
                         );
                         
                         if (adminDocs.length === 0) return (
                           <div className="py-12 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
                             <Archive className="mx-auto mb-3 text-gray-300" size={32} />
-                            <p className="text-gray-400 text-sm italic">Aucun document dans le dossier de ce client.</p>
+                            <p className="text-gray-400 text-sm italic">Aucun document administratif en attente.</p>
                           </div>
                         );
 
-                        // Seuls les documents générés depuis un modèle (template_id renseigné) demandent
-                        // une signature du formateur — un document simplement déposé ici (upload manuel,
-                        // organisme ou formateur) n'en a jamais besoin : il propose juste Ouvrir/Télécharger.
-                        const formatDocDate = (d) => {
-                          if (!d) return null;
-                          const parsed = new Date(d);
-                          return isNaN(parsed) ? null : parsed.toLocaleDateString('fr-FR');
-                        };
-
                         return (
                           <div className="grid grid-cols-1 gap-3">
-                            {adminDocs.map(doc => {
-                              const needsSignature = !!doc.template_id;
-                              const dateLabel = formatDocDate(doc.created_at);
-                              return (
-                                <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
-                                  <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
-                                      <FileText size={20} />
-                                    </div>
-                                    <div>
-                                      <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-                                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
-                                        {dateLabel ? `${needsSignature ? 'Généré' : 'Ajouté'} le ${dateLabel}` : (doc.type_document || 'Document')}
-                                      </p>
-                                    </div>
+                            {adminDocs.map(doc => (
+                              <div key={doc.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-violet-200 transition-all shadow-sm">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 bg-violet-50 text-violet-700 rounded-xl flex items-center justify-center">
+                                    <FileText size={20} />
                                   </div>
-                                  {needsSignature ? (
-                                    <div className="flex items-center gap-2">
-                                      <button 
-                                        onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'view' })}
-                                        className="p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
-                                        title="Consulter"
-                                      >
-                                        <Eye size={20} />
-                                      </button>
-                                      {!doc.signe_par_formateur ? (
-                                        <button 
-                                          onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
-                                          className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all transform active:scale-95"
-                                        >
-                                          <PenTool size={14} /> Signer le document
-                                        </button>
-                                      ) : (
-                                        <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-xs font-black border border-green-100">
-                                          <Check size={14} strokeWidth={4} /> Signé
-                                        </div>
-                                      )}
-                                    </div>
+                                  <div>
+                                    <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
+                                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
+                                      Généré le {new Date(doc.created_at).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button 
+                                    onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'view' })}
+                                    className="p-2.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                    title="Consulter"
+                                  >
+                                    <Eye size={20} />
+                                  </button>
+                                  {!doc.signe_par_formateur ? (
+                                    <button 
+                                      onClick={() => setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
+                                      className="bg-violet-700 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-lg shadow-violet-100 flex items-center gap-2 transition-all transform active:scale-95"
+                                    >
+                                      <PenTool size={14} /> Signer le document
+                                    </button>
                                   ) : (
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        onClick={() => openSecureStorageFile(doc.url)}
-                                        className="bg-white text-violet-700 hover:bg-violet-600 hover:text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-violet-200 transition-all"
-                                      >
-                                        Ouvrir
-                                      </button>
-                                      <button
-                                        onClick={() => handleDownloadNamedFile(doc)}
-                                        className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-2 rounded-lg transition-all"
-                                        title="Télécharger sous le nom indiqué"
-                                      >
-                                        <Download size={18} />
-                                      </button>
-                                      <button
-                                        onClick={() => showDeleteConfirm(
-                                          `Supprimer "${doc.nom}" ?`,
-                                          'Ce document sera définitivement retiré du dossier du client.',
-                                          async () => { hideDeleteConfirm(); await handleDeleteDossierDoc(doc.id); }
-                                        )}
-                                        className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-all"
-                                        title="Supprimer ce document"
-                                      >
-                                        <Trash2 size={18} />
-                                      </button>
+                                    <div className="flex items-center gap-1.5 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-xs font-black border border-green-100">
+                                      <Check size={14} strokeWidth={4} /> Signé
                                     </div>
                                   )}
                                 </div>
-                              );
-                            })}
+                              </div>
+                            ))}
                           </div>
                         );
                       })()}
@@ -7825,15 +5415,7 @@ const FormateurView = ({
                             />
                             <input
                               type="file"
-                              onChange={e => {
-                                const f = e.target.files[0] || null;
-                                setClientDocFile(f);
-                                // Pré-remplit le nom avec celui du fichier (sans l'extension) — le formateur peut
-                                // ensuite le modifier librement ; on ne remplace pas un nom déjà saisi à la main.
-                                if (f && !clientDocName.trim()) {
-                                  setClientDocName(f.name.replace(/\.[^/.]+$/, ''));
-                                }
-                              }}
+                              onChange={e => setClientDocFile(e.target.files[0] || null)}
                               className="w-full bg-white border border-gray-200 text-sm rounded-xl p-2 outline-none"
                               accept=".pdf,.doc,.docx,image/*"
                             />
@@ -7908,12 +5490,14 @@ const FormateurView = ({
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                           {fileUrl && (
-                                            <button
-                                              onClick={() => openSecureStorageFile(fileUrl)}
+                                            <a
+                                              href={fileUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
                                               className="inline-flex items-center gap-1.5 bg-white text-indigo-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
                                             >
                                               <Eye size={13} /> Consulter
-                                            </button>
+                                            </a>
                                           )}
                                         </td>
                                       </tr>
@@ -7963,12 +5547,14 @@ const FormateurView = ({
                                           {dateSign ? new Date(dateSign).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
                                         </td>
                                         <td className="px-4 py-3 text-right">
-                                          <button
-                                            onClick={() => openSecureStorageFile(signedUrl)}
+                                          <a
+                                            href={signedUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
                                             className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                                           >
                                             <Download size={13} /> Télécharger
-                                          </button>
+                                          </a>
                                         </td>
                                       </tr>
                                     );
@@ -8126,7 +5712,7 @@ const FormateurView = ({
                                         {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         )}
                                       </div>
@@ -8140,12 +5726,7 @@ const FormateurView = ({
                                           const metadata = session.metadata || {};
                                           const signedUrl = session.file_url_signed || metadata.file_url_signed;
                                           const isToSign = metadata.isToSign || session.type_activite === 'signature';
-                                          // FIX (2026-09-25 bis) : le bouton "Signer" du formateur ne doit refléter QUE
-                                          // sa propre signature (statut_formateur), jamais le statut global "statut" —
-                                          // sinon il apparaît "Signé ✓" dès que le CLIENT a signé, alors que le
-                                          // formateur lui-même n'a rien signé (bug repéré le 25/09/2026, séance déjà
-                                          // corrigée côté écriture mais toujours affichée à tort ici côté lecture).
-                                          const isSigned = session.statut_formateur === 'Signé';
+                                          const isSigned = session.statut_formateur === 'Signé' || session.statut === 'Signé';
 
                                           return (
                                             <div className="flex gap-2 items-center">
@@ -8269,7 +5850,7 @@ const FormateurView = ({
                 )}
 
                   {formateurClientTab === 'exercices' && (() => {
-                    const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+                    const clientExercises = clientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
                     if (clientExercises.length === 0) return (
                       <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
                         <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
@@ -8319,7 +5900,7 @@ const FormateurView = ({
                                     <td className="px-4 py-3">
                                       <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom}</span>
                                     </td>
-                                    <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
+                                    <td className="px-4 py-3 text-xs text-gray-400">Séance {session.numero_seance}</td>
                                     <td className="px-4 py-3">{badge}</td>
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
@@ -8365,13 +5946,6 @@ const FormateurView = ({
         session={correctionModalSession}
         onSave={handleSaveCorrection}
       />
-      <ConfirmModal
-        isOpen={confirmState.open}
-        title={confirmState.title}
-        message={confirmState.message}
-        onConfirm={confirmState.onConfirm}
-        onCancel={hideDeleteConfirm}
-      />
     </div>
   );
 };
@@ -8388,118 +5962,43 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   const [fields, setFields] = React.useState([]); // [{id, tag, page, xPct, yPct}]
   const [dragTag, setDragTag] = React.useState(null);
   const [draggingFieldId, setDraggingFieldId] = React.useState(null); // repositionnement d'un champ existant
-  // FIX (2026-09-04) : redimensionnement d'une case "texte libre" (largeur/hauteur, en % de la page,
-  // comme x/y) via une poignée glissable — voir le rendu isTxt plus bas et l'effet ci-dessous.
-  const [resizingFieldId, setResizingFieldId] = React.useState(null);
-  const resizeStartRef = React.useRef(null);
   const [clickPlaceTag, setClickPlaceTag] = React.useState(null); // { tag } ou { fieldId } — mode clic-pour-placer
   const [hoverPos, setHoverPos] = React.useState(null); // position survol pour ghost cursor
-  // AJOUT (2026-09-18) : sélection multiple par "lasso" (cliquer-glisser sur le fond de page pour
-  // entourer plusieurs balises) + déplacement groupé — demandé par l'utilisateur pour pouvoir bouger
-  // toute une ligne (ex. les 3 balises d'un calendrier prévisionnel) d'un seul geste au lieu de les
-  // glisser une par une. Voir startRubberBand/handleDuplicateRow (déplacement groupé) plus bas.
-  const [selectedFieldIds, setSelectedFieldIds] = React.useState(() => new Set());
-  const [rubberBandActive, setRubberBandActive] = React.useState(false);
-  const [rubberBandRect, setRubberBandRect] = React.useState(null); // {minX, maxX, minY, maxY} en % — pour le rectangle affiché
-  const rubberBandStartRef = React.useRef(null); // {xPct, yPct} figé au mousedown
-  // FIX (2026-09-18) : remplace l'ancien glissement natif du navigateur (draggable/onDragStart/onDrop)
-  // pour repositionner une balise déjà posée — ce dernier ne montrait AUCUN aperçu pendant le geste (la
-  // balise "sautait" à sa nouvelle position seulement au relâchement), ce qui était gênant pour juger où
-  // atterrirait un déplacement, surtout en groupe. On suit désormais la souris nous-mêmes (mousedown +
-  // mousemove + mouseup, comme la poignée de redimensionnement ou le lasso) et on met à jour la position
-  // réelle de la ou des balises à CHAQUE mouvement, aimantation comprise — déplacement 100% visible en
-  // direct. Ne concerne que le déplacement d'une balise déjà posée (seule ou en groupe sélectionné) ;
-  // le dépôt d'une NOUVELLE balise depuis le panneau de droite reste en glissement natif (dragTag).
-  const moveDragRef = React.useRef(null); // { fieldId, origins: Map<id,{xPct,yPct}>, startClientX, startClientY }
-  const [isMoveDragging, setIsMoveDragging] = React.useState(false);
-  const justDraggedRef = React.useRef(false); // évite qu'un vrai glissement ne déclenche aussi le clic (mode clic-pour-placer) au relâchement
   const [templateName, setTemplateName] = React.useState('');
-  // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme, cochables librement
-  // (remplace l'ancien choix unique 'client' | 'formateur' | 'both'). Stocké en base sous forme de
-  // chaîne "client,formateur,organisme" via stringifyDestinationRoles/parseDestinationRoles (module-level).
-  const [destinationRoles, setDestinationRoles] = React.useState(['client']);
-  // Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) : réglé une fois sur
-  // le modèle, propagé à chaque document instancié (voir instantiateDocument) et lu par
-  // isBlockedBySigningOrder pour masquer un document à la partie qui doit attendre son tour.
-  const [signingMode, setSigningMode] = React.useState('simultane'); // 'simultane' | 'sequentiel'
-  const [signingOrder, setSigningOrder] = React.useState(['client', 'formateur']); // tableau de rôles, dans l'ordre de signature
+  const [destination, setDestination] = React.useState('client');
   const [isSaving, setIsSaving] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const pageRef = React.useRef(null);
-  // AJOUT (2026-09-18) : map id de balise → élément DOM réel, pour tester l'intersection du lasso avec
-  // la vraie zone affichée de chaque balise (et non un simple point) — voir startRubberBand plus bas.
-  const fieldRefs = React.useRef({});
   const pdfBlobRef = React.useRef(null); // stocke le blob PDF pour prévisualisation
 
-  // Garde signingOrder cohérent avec les destinataires cochés : retire les rôles décochés, ajoute
-  // les rôles nouvellement cochés à la fin de l'ordre existant (plutôt que de tout réinitialiser).
-  React.useEffect(() => {
-    setSigningOrder(prev => {
-      const kept = prev.filter(r => destinationRoles.includes(r));
-      const added = destinationRoles.filter(r => !kept.includes(r));
-      return [...kept, ...added];
-    });
-  }, [destinationRoles]);
-
-  // AJOUT (2026-09-15) : 'date_signature' existait déjà pour le Client, mais pas d'équivalent pour
-  // le Formateur ni l'Organisme (Administrateur) — demandé par l'utilisateur le 15/09/2026. On ajoute
-  // 'date_signature_formateur' et 'date_signature_organisme' (même valeur : la date du jour où le
-  // document est généré, exactement comme 'date_signature' pour le client — voir dataValues/
-  // resolvedValues/dataToMerge plus bas, tous mis à jour en conséquence). On NE renomme PAS
-  // 'date_signature' en 'date_signature_client' pour ne pas casser les modèles déjà créés qui
-  // utilisent cette balise.
-  // AJOUT (2026-09-16) : balises "initiales" (client, formateur, organisme), demandé par l'utilisateur
-  // — voir computeInitials() en haut du fichier. Pour 'initiales_organisme', confirmé avec
-  // l'utilisateur (16/09/2026) : basé sur le NOM DE L'ORGANISME (org_nom, ex. "VB Coaching" → "VC"),
-  // pas sur une personne admin précise — cohérent avec les autres balises Organisme (toutes au niveau
-  // société), et fonctionne pour tout organisme sans configuration supplémentaire.
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature', 'initiales_client'],
-    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur', 'initiales_formateur'],
-    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme', 'initiales_organisme'],
+    'Client': ['nomcomplet_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature'],
+    'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp'],
+    'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_site_web'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
     { tag: 'signature_client', label: 'Signature client', color: 'blue' },
     { tag: 'signature_formateur', label: 'Signature formateur', color: 'orange' },
-    { tag: 'signature_organisme', label: 'Signature administrateur', color: 'emerald' },
   ];
-  const isSignatureTag = (tag) => !!roleFromTag(tag) && tag.startsWith('signature_');
-  const sigTagColor = (tag) => {
-    const role = roleFromTag(tag) || 'client';
-    return role === 'client'
-      ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
-      : role === 'formateur'
-      ? { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' }
-      : { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', badge: 'bg-emerald-600', badgeTxt: 'text-white' };
-  };
+  const isSignatureTag = (tag) => tag === 'signature_client' || tag === 'signature_formateur';
+  const sigTagColor = (tag) => tag === 'signature_client'
+    ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', badge: 'bg-blue-600', badgeTxt: 'text-white' }
+    : { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-500', badgeTxt: 'text-white' };
 
   // ── Cases à cocher (sans texte — le texte est déjà imprimé dans le document) ──
   // Peuvent être posées plusieurs fois, comme n'importe quelle balise, pour ajouter plusieurs cases distinctes.
   const CHECKBOX_TAGS = [
     { tag: 'checkbox_client', label: 'Case à cocher client', color: 'blue' },
     { tag: 'checkbox_formateur', label: 'Case à cocher formateur', color: 'orange' },
-    { tag: 'checkbox_organisme', label: 'Case à cocher administrateur', color: 'emerald' },
   ];
-  const isCheckboxTag = (tag) => !!roleFromTag(tag) && tag.startsWith('checkbox_');
-
-  // ── Champs texte libre (rempli par le signataire au moment de signer, façon Yousign) ──
-  // Comme les cases à cocher : peuvent être posés plusieurs fois, et sont identifiés par fieldKey()
-  // (pas par leur tag) puisqu'un même tag peut désigner plusieurs champs distincts sur un document.
-  const TEXT_INPUT_TAGS = [
-    { tag: 'texte_client', label: 'Texte libre client', color: 'blue' },
-    { tag: 'texte_formateur', label: 'Texte libre formateur', color: 'orange' },
-    { tag: 'texte_organisme', label: 'Texte libre administrateur', color: 'emerald' },
-  ];
-  const isTextInputTag = (tag) => !!roleFromTag(tag) && tag.startsWith('texte_');
+  const isCheckboxTag = (tag) => tag === 'checkbox_client' || tag === 'checkbox_formateur';
 
   // Pré-chargement quand on édite un template existant (initialData fourni)
   React.useEffect(() => {
     if (!isOpen || !initialData?.url) return;
     setTemplateName(initialData.name || '');
-    setDestinationRoles(parseDestinationRoles(initialData.destination));
-    setSigningMode(initialData.signingMode || 'simultane');
-    setSigningOrder(normalizeSigningOrder({ signing_order: initialData.signingOrder }));
+    setDestination(initialData.destination || 'client');
     setStep('converting');
     (async () => {
       try {
@@ -8599,56 +6098,34 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     }
   };
 
-  // FIX (2026-09-04) : suit la souris pendant le glissement de la poignée de redimensionnement
-  // (mousedown posé directement sur la poignée, voir le rendu isTxt plus bas) et met à jour
-  // width_percent/height_percent du champ en cours de redimensionnement en temps réel.
-  React.useEffect(() => {
-    if (!resizingFieldId) return;
-    const onMove = (e) => {
-      const st = resizeStartRef.current;
-      if (!st || st.fieldId !== resizingFieldId) return;
-      const dxPct = ((e.clientX - st.startClientX) / st.rectWidth) * 100;
-      const dyPct = ((e.clientY - st.startClientY) / st.rectHeight) * 100;
-      const newWidth = Math.max(6, Math.min(90, st.startWidthPct + dxPct));
-      const newHeight = Math.max(1.5, Math.min(40, st.startHeightPct + dyPct));
-      setFields(prev => prev.map(f => f.id === st.fieldId ? { ...f, width_percent: newWidth, height_percent: newHeight } : f));
-    };
-    const onUp = () => { setResizingFieldId(null); resizeStartRef.current = null; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  }, [resizingFieldId]);
-
-  // FIX (2026-09-18) : ne gère plus QUE le dépôt d'une NOUVELLE balise depuis le panneau de droite
-  // (dragTag, toujours en glissement natif du navigateur) — le repositionnement d'une balise déjà
-  // posée (seule ou en groupe) est désormais géré en direct par le glissement "maison" (voir
-  // moveDragRef / handleFieldMouseDown plus bas), qui affiche la balise bouger en temps réel au lieu
-  // d'attendre le dépôt pour la faire apparaître à sa nouvelle position.
   const handlePageDrop = (e) => {
     e.preventDefault();
-    if (!pageRef.current || !dragTag) return;
+    if (!pageRef.current) return;
     const rect = pageRef.current.getBoundingClientRect();
     const xPct = Math.max(2, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
     const yPct = Math.max(2, Math.min(97, ((e.clientY - rect.top) / rect.height) * 100));
-    // Nouveau champ depuis la sidebar — taille par défaut posée sur les champs texte libre
-    // (redimensionnable ensuite via la poignée, voir le rendu isTxt plus bas), avec alignement
-    // magnétique (2026-09-18) sur une balise existante proche.
-    const snappedY = findSnappedY(yPct, currentPage + 1, []);
-    setFields(prev => [...prev, {
-      id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      tag: dragTag,
-      page: currentPage + 1,
-      xPct,
-      yPct: snappedY,
-      ...(isTextInputTag(dragTag) ? { width_percent: 28, height_percent: 3.5 } : {}),
-    }]);
-    setDragTag(null);
+
+    if (draggingFieldId) {
+      // Repositionnement d'un champ déjà posé
+      setFields(prev => prev.map(f => f.id === draggingFieldId ? { ...f, xPct, yPct } : f));
+      setDraggingFieldId(null);
+    } else if (dragTag) {
+      // Nouveau champ depuis la sidebar
+      setFields(prev => [...prev, {
+        id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        tag: dragTag,
+        page: currentPage + 1,
+        xPct,
+        yPct,
+      }]);
+      setDragTag(null);
+    }
   };
 
   // Touche Escape pour annuler le mode clic-pour-placer
   React.useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e) => { if (e.key === 'Escape') { setClickPlaceTag(null); setSelectedFieldIds(new Set()); } };
+    const onKey = (e) => { if (e.key === 'Escape') setClickPlaceTag(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen]);
@@ -8662,275 +6139,47 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     const yPct = Math.max(2, Math.min(98, ((e.clientY - rect.top) / rect.height) * 100));
 
     if (clickPlaceTag.fieldId) {
-      // Repositionner un champ déjà posé — alignement magnétique (2026-09-18).
-      const movedField = fields.find(f => f.id === clickPlaceTag.fieldId);
-      const snappedY = movedField ? findSnappedY(yPct, movedField.page, [clickPlaceTag.fieldId]) : yPct;
-      setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct: snappedY } : f));
+      // Repositionner un champ déjà posé
+      setFields(prev => prev.map(f => f.id === clickPlaceTag.fieldId ? { ...f, xPct, yPct } : f));
     } else if (clickPlaceTag.tag) {
       // Chaque clic ajoute une nouvelle occurrence de la balise — une même balise peut être
       // posée plusieurs fois (ex: signature sur plusieurs pages, adresse rappelée 2x, etc.).
       // Pour repositionner une occurrence déjà posée, on clique directement dessus (mode fieldId ci-dessus).
-      // Alignement magnétique (2026-09-18) sur une balise existante proche.
-      const snappedY = findSnappedY(yPct, currentPage + 1, []);
       setFields(prev => [...prev, {
         id: `f_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         tag: clickPlaceTag.tag,
         page: currentPage + 1,
-        xPct, yPct: snappedY,
-        ...(isTextInputTag(clickPlaceTag.tag) ? { width_percent: 28, height_percent: 3.5 } : {}),
+        xPct, yPct,
       }]);
     }
     setClickPlaceTag(null);
-  };
-
-  // AJOUT (2026-09-18) : alignement magnétique — quand on pose ou déplace une balise et qu'elle
-  // s'approche du Y d'une autre balise déjà posée sur la même page (tolérance SNAP_Y_TOLERANCE_PCT),
-  // elle se cale automatiquement sur cette même ligne au lieu de rester légèrement décalée. Demandé par
-  // l'utilisateur pour obtenir des lignes parfaitement alignées sans réglage manuel au pixel près.
-  const SNAP_Y_TOLERANCE_PCT = 1.4;
-  const findSnappedY = (yPct, page, excludeIds = []) => {
-    let best = null;
-    let bestDist = SNAP_Y_TOLERANCE_PCT;
-    for (const f of fields) {
-      if (f.page !== page || excludeIds.includes(f.id)) continue;
-      const d = Math.abs(f.yPct - yPct);
-      if (d <= bestDist) { bestDist = d; best = f.yPct; }
-    }
-    return best !== null ? best : yPct;
-  };
-
-  // AJOUT (2026-09-18) : sélection multiple par "lasso" — cliquer-glisser sur une zone vide de la page
-  // dessine un rectangle de sélection ; toutes les balises qu'il survole (au moment du relâchement)
-  // deviennent sélectionnées (selectedFieldIds). Un clic simple (rectangle minuscule) désélectionne tout.
-  // On démarre le lasso uniquement sur le fond de la page — chaque balise a son propre onMouseDown qui
-  // stoppe la propagation pour ne pas déclencher de lasso quand on clique/glisse dessus.
-  const rubberBandRectRef = React.useRef(null); // valeur "live" du rectangle, lue par onUp (évite de faire dépendre l'effet des coordonnées qui changent à chaque mousemove)
-  const startRubberBand = (e) => {
-    if (clickPlaceTag || !pageRef.current || e.button !== 0) return;
-    const rect = pageRef.current.getBoundingClientRect();
-    const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-    const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-    rubberBandStartRef.current = { xPct, yPct };
-    const initRect = { minX: xPct, maxX: xPct, minY: yPct, maxY: yPct };
-    rubberBandRectRef.current = initRect;
-    setRubberBandRect(initRect);
-    setRubberBandActive(true);
-  };
-  React.useEffect(() => {
-    if (!rubberBandActive) return;
-    const onMove = (e) => {
-      if (!pageRef.current || !rubberBandStartRef.current) return;
-      const rect = pageRef.current.getBoundingClientRect();
-      const xPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-      const yPct = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-      const start = rubberBandStartRef.current;
-      const next = {
-        minX: Math.min(start.xPct, xPct), maxX: Math.max(start.xPct, xPct),
-        minY: Math.min(start.yPct, yPct), maxY: Math.max(start.yPct, yPct),
-      };
-      rubberBandRectRef.current = next;
-      setRubberBandRect(next);
-    };
-    const onUp = () => {
-      const r = rubberBandRectRef.current;
-      setRubberBandActive(false);
-      rubberBandStartRef.current = null;
-      rubberBandRectRef.current = null;
-      setRubberBandRect(null);
-      if (!r || (r.maxX - r.minX < 0.6 && r.maxY - r.minY < 0.6)) {
-        // Rectangle minuscule = simple clic sur le fond → on désélectionne tout.
-        setSelectedFieldIds(new Set());
-        return;
-      }
-      if (!pageRef.current) return;
-      // FIX (2026-09-18) : sélectionner une balise si le lasso touche sa zone RÉELLEMENT AFFICHÉE
-      // (intersection de rectangles, via son élément DOM réel), et non plus seulement son point
-      // d'ancrage (xPct/yPct) — ce dernier est parfois le bord gauche ou le coin bas d'une balise
-      // (texte libre, balise de fusion...), donc un lasso qui recouvre visuellement toute une balise
-      // pouvait la manquer si son point d'ancrage précis tombait juste hors du rectangle.
-      const pageRect = pageRef.current.getBoundingClientRect();
-      const selRect = {
-        left: pageRect.left + (r.minX / 100) * pageRect.width,
-        right: pageRect.left + (r.maxX / 100) * pageRect.width,
-        top: pageRect.top + (r.minY / 100) * pageRect.height,
-        bottom: pageRect.top + (r.maxY / 100) * pageRect.height,
-      };
-      const ids = fields
-        .filter(f => f.page === currentPage + 1)
-        .filter(f => {
-          const el = fieldRefs.current[f.id];
-          if (!el) return false;
-          const b = el.getBoundingClientRect();
-          return selRect.left < b.right && selRect.right > b.left && selRect.top < b.bottom && selRect.bottom > b.top;
-        })
-        .map(f => f.id);
-      setSelectedFieldIds(new Set(ids));
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rubberBandActive, fields, currentPage]);
-
-  // Les deux modes de placement/sélection sont mutuellement exclusifs.
-  React.useEffect(() => {
-    if (clickPlaceTag) setSelectedFieldIds(new Set());
-  }, [clickPlaceTag]);
-
-  // Une sélection multiple ne doit pas survivre à un changement de page (les balises sélectionnées
-  // n'existent plus visuellement sur la nouvelle page).
-  React.useEffect(() => {
-    setSelectedFieldIds(new Set());
-  }, [currentPage]);
-
-  // FIX (2026-09-18) : démarre le glissement "maison" d'une balise déjà posée (voir moveDragRef
-  // ci-dessus) — remplace le glissement natif du navigateur qui ne montrait aucun aperçu pendant le
-  // geste. Appelé au mousedown sur une balise (seule ou faisant partie d'une sélection multiple).
-  const handleFieldMouseDown = (e, field) => {
-    e.stopPropagation();
-    if (e.button !== 0 || clickPlaceTag) return; // le mode clic-pour-placer gère son propre déplacement
-    justDraggedRef.current = false;
-    const isGroup = selectedFieldIds.size > 1 && selectedFieldIds.has(field.id);
-    if (isGroup) {
-      const origins = new Map();
-      fields.forEach(f => { if (selectedFieldIds.has(f.id)) origins.set(f.id, { xPct: f.xPct, yPct: f.yPct }); });
-      moveDragRef.current = { fieldId: field.id, page: field.page, startClientX: e.clientX, startClientY: e.clientY, origins };
-    } else {
-      // Glisser une balise non sélectionnée annule toute sélection multiple en cours.
-      if (selectedFieldIds.size > 0) setSelectedFieldIds(new Set());
-      moveDragRef.current = {
-        fieldId: field.id,
-        page: field.page,
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        origins: new Map([[field.id, { xPct: field.xPct, yPct: field.yPct }]]),
-      };
-    }
-    setDraggingFieldId(field.id);
-    setIsMoveDragging(true);
-  };
-
-  React.useEffect(() => {
-    if (!isMoveDragging) return;
-    const onMove = (e) => {
-      const st = moveDragRef.current;
-      if (!st || !pageRef.current) return;
-      const dxClient = e.clientX - st.startClientX;
-      const dyClient = e.clientY - st.startClientY;
-      if (Math.abs(dxClient) > 3 || Math.abs(dyClient) > 3) justDraggedRef.current = true;
-      const rect = pageRef.current.getBoundingClientRect();
-      const rawDeltaXPct = (dxClient / rect.width) * 100;
-      const rawDeltaYPct = (dyClient / rect.height) * 100;
-      const leaderOrigin = st.origins.get(st.fieldId);
-      if (!leaderOrigin) return;
-      // Alignement magnétique (2026-09-18) : calculé sur la nouvelle position du champ "meneur" (celui
-      // réellement saisi), en excluant du calcul toutes les balises qui bougent avec lui — puis la même
-      // correction est appliquée à tout le groupe pour garder les positions relatives.
-      const leaderNewYRaw = leaderOrigin.yPct + rawDeltaYPct;
-      const excludeIds = Array.from(st.origins.keys());
-      const snappedLeaderY = findSnappedY(leaderNewYRaw, st.page, excludeIds);
-      const snapCorrection = snappedLeaderY - leaderNewYRaw;
-      setFields(prev => prev.map(f => {
-        const origin = st.origins.get(f.id);
-        if (!origin) return f;
-        return {
-          ...f,
-          xPct: Math.max(2, Math.min(95, origin.xPct + rawDeltaXPct)),
-          yPct: Math.max(2, Math.min(97, origin.yPct + rawDeltaYPct + snapCorrection)),
-        };
-      }));
-    };
-    const onUp = () => {
-      moveDragRef.current = null;
-      setIsMoveDragging(false);
-      setDraggingFieldId(null);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMoveDragging]);
-
-  // AJOUT (2026-09-18) : "Dupliquer la ligne" — demandé par l'utilisateur pour les documents avec
-  // beaucoup de balises répétées côte à côte (ex. un calendrier prévisionnel où chaque séance a sa
-  // propre ligne "date | durée | lieu" en texte libre) : jusqu'ici il fallait reposer et redimensionner
-  // une balise à chaque case, puis l'aligner à la main sur la même ligne que ses voisines — fastidieux
-  // dès qu'il y a beaucoup de lignes. Un clic sur ce bouton repère TOUTES les balises de la page dont
-  // le Y est proche de celle cliquée (= "la même ligne", tolérance ROW_Y_TOLERANCE_PCT) et en pose une
-  // copie identique (même X, même largeur/hauteur) juste en dessous — la ligne suivante est donc déjà
-  // parfaitement alignée avec la précédente, sans aucun réglage manuel.
-  // FIX (2026-09-18) : tolérance resserrée (était 2.5) — elle ne doit repérer QUE les balises
-  // réellement alignées sur la même ligne (même Y au pixel près), jamais une autre ligne juste
-  // au-dessus ou en dessous. Avec l'ancienne tolérance plus large, si l'utilisateur cliquait plusieurs
-  // fois sur le bouton "dupliquer" de la ligne D'ORIGINE (au lieu de celui de la toute dernière ligne
-  // créée), la nouvelle ligne recalculée à partir de cette même origine atterrissait exactement au même
-  // endroit que la précédente copie — les deux lignes se retrouvaient empilées l'une sur l'autre, puis
-  // un clic sur l'une d'elles les repérait TOUTES comme "la même ligne" et les dupliquait d'un coup
-  // (signalé par l'utilisateur : "ça duplique tout ce qu'il y a au-dessus aussi").
-  const ROW_Y_TOLERANCE_PCT = 0.5;
-  const handleDuplicateRow = (fieldId) => {
-    const ref = fields.find(f => f.id === fieldId);
-    if (!ref) return;
-    const rowFields = fields.filter(f => f.page === ref.page && Math.abs(f.yPct - ref.yPct) <= ROW_Y_TOLERANCE_PCT);
-    // Décalage vertical = hauteur de la balise la plus haute de la ligne (+ une petite marge) ; 4%
-    // par défaut pour les balises sans hauteur propre (signature, case à cocher, balise de fusion).
-    const rowHeightPct = Math.max(...rowFields.map(f => (typeof f.height_percent === 'number' ? f.height_percent : 4)), 4);
-    const offsetPct = rowHeightPct + 1.5;
-    // FIX (2026-09-18) : si l'emplacement calculé tombe déjà sur une ligne existante, on ne l'empile
-    // plus dessus — on descend automatiquement d'un cran de plus jusqu'à trouver un emplacement libre,
-    // pour empêcher à la source la superposition de lignes décrite ci-dessus.
-    let newYPct = ref.yPct + offsetPct;
-    const isRowOccupied = (y) => fields.some(f => f.page === ref.page && Math.abs(f.yPct - y) <= ROW_Y_TOLERANCE_PCT);
-    let guard = 0;
-    while (isRowOccupied(newYPct) && guard < 40) {
-      newYPct += offsetPct;
-      guard++;
-    }
-    if (newYPct > 97) {
-      toast.error("Plus de place en bas de la page pour une nouvelle ligne — repositionnez-la manuellement ou passez à la page suivante.");
-      return;
-    }
-    const newFields = rowFields.map((f, i) => ({
-      ...f,
-      id: `f_${Date.now()}_${i}_${Math.random().toString(36).slice(2)}`,
-      yPct: newYPct,
-    }));
-    setFields(prev => [...prev, ...newFields]);
-    toast.success(`Ligne dupliquée (${newFields.length} balise${newFields.length > 1 ? 's' : ''}) !`);
   };
 
   const handleReset = () => {
     setFile(null); setPdfPages([]); setFields([]);
     setCurrentPage(0); setStep('upload');
     setClickPlaceTag(null); setHoverPos(null);
-    setSelectedFieldIds(new Set()); setRubberBandActive(false); setRubberBandRect(null);
-    moveDragRef.current = null; setIsMoveDragging(false); setDraggingFieldId(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleClose = () => {
     handleReset();
-    setTemplateName(''); setDestinationRoles(['client']);
-    setSigningMode('simultane'); setSigningOrder(['client', 'formateur']);
+    setTemplateName(''); setDestination('client');
     onClose();
   };
 
   const handleSave = async () => {
     if (!file || !templateName.trim()) { toast.error('Nom requis.'); return; }
     if (fields.length === 0) { toast.error('Placez au moins une balise sur le document.'); return; }
-    if (destinationRoles.length === 0) { toast.error('Choisissez au moins un destinataire (client, formateur ou organisme).'); return; }
     setIsSaving(true);
     // Classification automatique selon les balises posées
-    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'signature_organisme', 'checkbox_client', 'checkbox_formateur', 'checkbox_organisme', 'texte_client', 'texte_formateur', 'texte_organisme'];
+    const SIGNATURE_TAGS = ['signature_client', 'signature_formateur'];
+    const INTERACTIVE_TAGS = ['signature_client', 'signature_formateur', 'checkbox_client', 'checkbox_formateur'];
     const hasDataFields = fields.some(f => !INTERACTIVE_TAGS.includes(f.tag));
     const hasSignature = fields.some(f => INTERACTIVE_TAGS.includes(f.tag));
     const autoClassification = hasDataFields ? 'a_generer' : hasSignature ? 'a_signer' : 'telechargeable';
-    // L'ordre n'a de sens qu'entre les rôles effectivement sélectionnés — on filtre pour ne jamais
-    // envoyer un rôle décoché dans signingOrder (ex: organisme décoché après avoir réglé un ordre).
-    const effectiveOrder = signingOrder.filter(r => destinationRoles.includes(r));
-    const signingConfig = { mode: signingMode, order: signingMode === 'sequentiel' && destinationRoles.length > 1 ? effectiveOrder : null };
     try {
-      await onSave(file, templateName.trim(), stringifyDestinationRoles(destinationRoles), fields, autoClassification, initialData?.templateId || null, signingConfig);
+      await onSave(file, templateName.trim(), destination, fields, autoClassification, initialData?.templateId || null);
       handleClose();
     } catch (err) {
       toast.error('Erreur : ' + err.message);
@@ -8948,42 +6197,28 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     setIsPreviewing(true);
     try {
       const testValues = {
-        nomcomplet_client: 'Jean DUPONT', numero_dossier_client: 'DOS-2026-001', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
+        nomcomplet_client: 'Jean DUPONT', ville_client: 'Vannes', date_du_jour: new Date().toLocaleDateString('fr-FR'),
         client_email: 'jean@exemple.fr', client_phone: '06 12 34 56 78',
         rue_client: '12 rue de la Paix', code_postal_client: '56000',
         adresse_client: '12 rue de la Paix, 56000 Vannes',
         adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
         formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
         date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
-        initiales_client: computeInitials('Jean DUPONT'),
         nom_formateur: 'Marie LEROY', email_formateur: 'marie@formateur.fr', tel_formateur: '06 00 00 00 00',
         adresse_formateur: '5 av. Victor Hugo, 75008 Paris', rue_formateur: '5 av. Victor Hugo', code_postal_formateur: '75008', ville_formateur: 'Paris',
         formateur_siret: '123 456 789 00012', formateur_nda: '75 12 34567 89',
         compagnie_assurance: 'AXA', numero_assurance_rcp: 'RCP-2026-001',
-        date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
-        initiales_formateur: computeInitials('Marie LEROY'),
         org_nom: 'VB Coaching', org_siret: '399 146 067 00034', org_nda: '53560969356',
         org_adresse: '2 rue du Général Baron Fabre', org_code_postal: '56000', org_ville: 'Vannes',
         org_site_web: 'www.vbcoaching56.com',
-        date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
-        initiales_organisme: computeInitials('VB Coaching'),
       };
       const tplFields = fields.map(f => ({
-        template_id: 0, client_key: f.id, tag: f.tag, page: f.page || 1,
+        template_id: 0, tag: f.tag, page: f.page || 1,
         x_percent: f.xPct, y_percent: f.yPct,
-        width_percent: f.width_percent, height_percent: f.height_percent,
-        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur' || f.tag === 'signature_organisme') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur' || f.tag === 'checkbox_organisme') ? 'checkbox' : (f.tag === 'texte_client' || f.tag === 'texte_formateur' || f.tag === 'texte_organisme') ? 'text_input' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
         font_size: 11,
       }));
-      // Aperçu des champs texte libre avec une valeur d'exemple (le vrai contenu n'est saisi
-      // qu'au moment de la signature — voir handleSignSave/handleSignDocument).
-      const previewTextInputMap = {};
-      tplFields.forEach(f => {
-        if (f.field_type === 'text_input') {
-          previewTextInputMap[fieldKey(f)] = f.tag === 'texte_client' ? 'Exemple : réponse du client…' : f.tag === 'texte_organisme' ? 'Exemple : réponse de l\'administrateur…' : 'Exemple : réponse du formateur…';
-        }
-      });
-      const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {}, {}, previewTextInputMap);
+      const resultBlob = await overlayFieldsOnPdf(pdfBlobRef.current, tplFields, testValues, {});
       const url = URL.createObjectURL(resultBlob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 120000);
@@ -9111,7 +6346,6 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     outlineOffset: clickPlaceTag ? '-3px' : '',
                   }}
                   onClick={handlePageClick}
-                  onMouseDown={startRubberBand}
                   onMouseMove={e => {
                     if (!clickPlaceTag || !pageRef.current) { if (hoverPos) setHoverPos(null); return; }
                     const rect = pageRef.current.getBoundingClientRect();
@@ -9122,12 +6356,10 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   }}
                   onMouseLeave={() => setHoverPos(null)}
                   onDragOver={e => {
-                    // FIX (2026-09-18) : ne concerne plus que le dépôt d'une NOUVELLE balise depuis la
-                    // sidebar (dragTag) — le repositionnement d'une balise déjà posée ne passe plus par
-                    // le glissement natif du navigateur, voir handleFieldMouseDown/moveDragRef plus haut.
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = 'copy';
-                    e.currentTarget.style.outline = '3px dashed #7C3AED';
+                    e.dataTransfer.dropEffect = draggingFieldId ? 'move' : 'copy';
+                    const color = draggingFieldId ? '#6b7280' : '#7C3AED';
+                    e.currentTarget.style.outline = `3px dashed ${color}`;
                     e.currentTarget.style.outlineOffset = '-3px';
                   }}
                   onDragLeave={e => {
@@ -9145,34 +6377,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     draggable={false}
                   />
 
-                  {/* AJOUT (2026-09-18) : rectangle de sélection "lasso" — visible pendant le glisser */}
-                  {rubberBandActive && rubberBandRect && (
-                    <div
-                      className="absolute border-2 border-violet-500 bg-violet-500/10 pointer-events-none"
-                      style={{
-                        left: `${rubberBandRect.minX}%`,
-                        top: `${rubberBandRect.minY}%`,
-                        width: `${rubberBandRect.maxX - rubberBandRect.minX}%`,
-                        height: `${rubberBandRect.maxY - rubberBandRect.minY}%`,
-                        zIndex: 40,
-                      }}
-                    />
-                  )}
-
                   {/* Ghost cursor — balise fantôme qui suit la souris en mode clic-pour-placer */}
                   {clickPlaceTag && hoverPos && (() => {
                     const tag = clickPlaceTag.tag || fields.find(f => f.id === clickPlaceTag.fieldId)?.tag;
                     if (!tag) return null;
                     const isSig = isSignatureTag(tag);
                     const isChk = isCheckboxTag(tag);
-                    const isTxt = isTextInputTag(tag);
-                    // Ancrage réel dans le PDF : signature/case = centré sur le point ; texte libre = point
-                    // cliqué = coin gauche exact où le texte commencera (corrigé le 2026-07-24, voir
-                    // overlayFieldsOnPdf) ; balise texte de fusion = le point est le coin bas-gauche de la
-                    // ligne de base (comportement de drawText dans pdf-lib). On sépare donc la croix
-                    // (toujours centrée sur le point exact) de l'étiquette (ancrée différemment selon le
-                    // type) pour que l'aperçu corresponde au rendu réel.
-                    const labelTransform = (isSig || isChk) ? 'translate(-50%, -50%)' : isTxt ? 'translate(0%, -50%)' : 'translate(0%, -100%)';
+                    // Ancrage réel dans le PDF : signature/case = centré sur le point ; balise texte = le point
+                    // est le coin bas-gauche de la ligne de base (comportement de drawText dans pdf-lib).
+                    // On sépare donc la croix (toujours centrée sur le point exact) de l'étiquette
+                    // (ancrée différemment selon le type) pour que l'aperçu corresponde au rendu réel.
+                    const labelTransform = (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)';
                     return (
                       <div
                         key="ghost"
@@ -9180,24 +6395,16 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       >
                         <div style={{ position: 'absolute', top: 0, left: 0, transform: labelTransform }}>
                           {isSig ? (
-                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`} style={{ minWidth: 140 }}>
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${tag === 'signature_client' ? 'bg-blue-100 border-blue-500' : 'bg-orange-100 border-orange-500'}`} style={{ minWidth: 140 }}>
                               <span className="text-base">✍️</span>
-                              <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Signature {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
+                              <p className={`text-[10px] font-black ${tag === 'signature_client' ? 'text-blue-800' : 'text-orange-800'}`}>{tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}</p>
                             </div>
                           ) : isChk ? (
                             // Carré compact — même taille que le rendu final (~12pt) pour un cadrage précis
                             <div
-                              className={`rounded-sm shadow-lg ring-2 ring-white ${roleFromTag(tag) === 'organisme' ? 'border-2 border-emerald-500 bg-emerald-500/20' : roleFromTag(tag) === 'formateur' ? 'border-2 border-orange-500 bg-orange-500/20' : 'border-2 border-blue-500 bg-blue-500/20'}`}
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
-                          ) : isTxt ? (
-                            <div className="flex items-center select-none">
-                              <div className={`w-0.5 self-stretch rounded-full shrink-0 ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-500' : 'bg-blue-500'}`} style={{ minHeight: 18 }} />
-                              <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-xl ring-2 ring-white whitespace-nowrap ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`}>
-                                <span className="text-sm">📝</span>
-                                <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Texte {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
-                              </div>
-                            </div>
                           ) : (
                             <div className="bg-violet-700 text-white text-[11px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-xl ring-2 ring-white">
                               <span className="font-mono">{tag === 'date_du_jour' ? '📅 date_du_jour' : `{${tag}}`}</span>
@@ -9217,22 +6424,28 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   {fieldsOnPage.map(field => {
                     const isSig = isSignatureTag(field.tag);
                     const isChk = isCheckboxTag(field.tag);
-                    const isTxt = isTextInputTag(field.tag);
                     const isBeingMoved = draggingFieldId === field.id;
                     const isSelectedForMove = clickPlaceTag?.fieldId === field.id;
-                    // AJOUT (2026-09-18) : sélection multiple (lasso) — surbrillance distincte du mode
-                    // "clic-pour-déplacer" ci-dessus, pour bien montrer quelles balises bougeront ensemble.
-                    const isLassoSelected = selectedFieldIds.has(field.id);
                     return (
                       <div
                         key={field.id}
-                        ref={el => { if (el) fieldRefs.current[field.id] = el; else delete fieldRefs.current[field.id]; }}
-                        onMouseDown={e => handleFieldMouseDown(e, field)}
+                        draggable
+                        onDragStart={e => {
+                          e.stopPropagation();
+                          setDraggingFieldId(field.id);
+                          setDragTag(null);
+                          setClickPlaceTag(null);
+                          e.dataTransfer.effectAllowed = 'move';
+                          // Image fantôme transparente pour éviter l'aperçu natif
+                          const ghost = document.createElement('div');
+                          ghost.style.width = '1px'; ghost.style.height = '1px'; ghost.style.opacity = '0';
+                          document.body.appendChild(ghost);
+                          e.dataTransfer.setDragImage(ghost, 0, 0);
+                          setTimeout(() => document.body.removeChild(ghost), 0);
+                        }}
+                        onDragEnd={() => setDraggingFieldId(null)}
                         onClick={e => {
                           e.stopPropagation();
-                          // FIX (2026-09-18) : un vrai glissement (voir handleFieldMouseDown) ne doit pas
-                          // en plus armer le mode clic-pour-placer au relâchement.
-                          if (justDraggedRef.current) { justDraggedRef.current = false; return; }
                           // Clic sur balise posée → activer mode repositionnement
                           if (!clickPlaceTag) setClickPlaceTag({ fieldId: field.id });
                           else if (clickPlaceTag.fieldId === field.id) setClickPlaceTag(null);
@@ -9241,50 +6454,28 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           position: 'absolute',
                           left: `${field.xPct}%`,
                           top: `${field.yPct}%`,
-                          // FIX (2026-09-04) : la case "texte libre" occupe désormais sa taille réelle
-                          // (width_percent/height_percent, redimensionnable via la poignée) au lieu d'un
-                          // petit repère à taille fixe — les autres types de balises gardent leur taille
-                          // intrinsèque (pas de width/height forcée).
-                          ...(isTxt ? { width: `${field.width_percent || 28}%`, height: `${field.height_percent || 3.5}%` } : {}),
-                          // Signature/case = centrées sur le point ; texte libre = point cliqué = coin
-                          // gauche exact où le texte commencera (ancrage aligné sur overlayFieldsOnPdf,
-                          // corrigé le 2026-07-24 pour ne plus centrer la balise autour du point) ; balise
-                          // texte de fusion = le point est le coin bas-gauche de la ligne de base
-                          // (comportement réel de drawText/pdf-lib).
-                          transform: (isSig || isChk) ? 'translate(-50%, -50%)' : isTxt ? 'translate(0%, -50%)' : 'translate(0%, -100%)',
-                          // FIX (2026-09-18) : la balise reste pleinement visible pendant le glissement
-                          // "maison" (elle EST désormais ce qui bouge réellement à l'écran, plus besoin de
-                          // l'estomper comme du temps du glissement natif) — juste une légère ombre + un
-                          // z-index relevé pour bien la distinguer des autres pendant qu'on la tient.
-                          zIndex: isBeingMoved ? 25 : 10,
-                          cursor: isBeingMoved ? 'grabbing' : isSelectedForMove ? 'crosshair' : 'grab',
-                          opacity: 1,
-                          boxShadow: isBeingMoved ? '0 8px 20px rgba(0,0,0,0.28)' : undefined,
-                          outline: isSelectedForMove ? '2px solid #7C3AED' : isLassoSelected ? '2px dashed #2563EB' : 'none',
-                          outlineOffset: isLassoSelected ? 2 : 0,
+                          // Signature/case = centrées sur le point ; balise texte = le point est le coin
+                          // bas-gauche de la ligne de base du texte (comportement réel de drawText/pdf-lib).
+                          transform: (isSig || isChk) ? 'translate(-50%, -50%)' : 'translate(0%, -100%)',
+                          zIndex: 10,
+                          cursor: isSelectedForMove ? 'crosshair' : 'grab',
+                          opacity: isBeingMoved ? 0.35 : 1,
+                          transition: 'opacity 0.15s',
+                          outline: isSelectedForMove ? '2px solid #7C3AED' : 'none',
                           borderRadius: 4,
                         }}
-                        title={(isSig || isChk || isTxt) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
+                        title={(isSig || isChk) ? 'Glissez pour repositionner — centré exactement sur le point choisi' : 'Glissez pour repositionner — le coin bas-gauche indique la position exacte du texte'}
                       >
                         {isSig ? (
-                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50 border-emerald-400' : roleFromTag(field.tag) === 'formateur' ? 'bg-orange-50 border-orange-400' : 'bg-blue-50 border-blue-400'}`} style={{ minWidth: 140 }}>
+                          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${field.tag === 'signature_client' ? 'bg-blue-50 border-blue-400' : 'bg-orange-50 border-orange-400'}`} style={{ minWidth: 140 }}>
                             <span className="text-base select-none">✍️</span>
                             <div className="flex-1 select-none">
-                              <p className={`text-[10px] font-black ${roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : roleFromTag(field.tag) === 'formateur' ? 'text-orange-700' : 'text-blue-700'}`}>
-                                Signature {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
+                              <p className={`text-[10px] font-black ${field.tag === 'signature_client' ? 'text-blue-700' : 'text-orange-700'}`}>
+                                {field.tag === 'signature_client' ? 'Signature client' : 'Signature formateur'}
                               </p>
                               <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
                             </div>
                             <button
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
-                              title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous"
-                              className="w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
-                            >
-                              <Copy size={8} />
-                            </button>
-                            <button
-                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors shrink-0"
                             >
@@ -9296,113 +6487,22 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           // Le bouton de suppression n'apparaît qu'au survol pour ne pas gêner l'alignement.
                           <div className="group/chk relative select-none" style={{ width: 16, height: 16 }}>
                             <div
-                              className={`rounded-sm shadow-lg ring-2 ring-white ${roleFromTag(field.tag) === 'organisme' ? 'border-2 border-emerald-500 bg-emerald-500/20' : roleFromTag(field.tag) === 'formateur' ? 'border-2 border-orange-500 bg-orange-500/20' : 'border-2 border-blue-500 bg-blue-500/20'}`}
+                              className={`rounded-sm shadow-lg ring-2 ring-white ${field.tag === 'checkbox_client' ? 'border-2 border-blue-500 bg-blue-500/20' : 'border-2 border-orange-500 bg-orange-500/20'}`}
                               style={{ width: 16, height: 16 }}
                             />
                             <button
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
-                              title="Dupliquer la ligne juste en dessous"
-                              className="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
-                            >
-                              <Copy size={8} />
-                            </button>
-                            <button
-                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover/chk:opacity-100 shrink-0"
                             >
                               <X size={8} />
                             </button>
                           </div>
-                        ) : isTxt ? (
-                          // FIX (2026-09-04) : la case est désormais affichée à sa taille RÉELLE
-                          // (width_percent/height_percent du champ, en % de la page — comme x/y) et
-                          // peut être étirée directement depuis la poignée en bas à droite, au lieu
-                          // d'un petit repère à taille fixe. Le point posé reste le coin haut-gauche
-                          // de la case (ancrage identique à overlayFieldsOnPdf).
-                          //
-                          // FIX (2026-09-10) : la croix de suppression et la poignée de redimensionnement
-                          // étaient auparavant DANS la div `overflow-hidden` (nécessaire pour tronquer le
-                          // texte qui dépasserait de la case) — or elles sont volontairement positionnées
-                          // À CHEVAL sur le bord (-top-2.5/-right-2.5, -bottom-1.5/-right-1.5), donc
-                          // `overflow-hidden` les rognait aux 3/4. On sort maintenant ces deux éléments de
-                          // la div tronquée pour en faire des frères positionnés par rapport au conteneur
-                          // extérieur (celui avec `position: 'absolute'`, sans overflow-hidden) : la case
-                          // continue de tronquer son propre contenu, mais la croix et la poignée restent
-                          // entièrement visibles.
-                          <>
-                            <div
-                              className={`w-full h-full min-w-[60px] min-h-[20px] rounded-lg border-2 shadow-lg ring-2 ring-white flex items-start gap-1 px-1.5 py-1 select-none overflow-hidden ${
-                                roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50/90 border-emerald-400' : field.tag === 'texte_formateur' ? 'bg-orange-50/90 border-orange-400' : 'bg-blue-50/90 border-blue-400'
-                              }`}
-                            >
-                              <span className="text-xs select-none shrink-0">📝</span>
-                              <p className={`text-[9px] font-black leading-tight truncate ${
-                                roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : field.tag === 'texte_formateur' ? 'text-orange-700' : 'text-blue-700'
-                              }`}>
-                                Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
-                              </p>
-                            </div>
-                            <button
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
-                              title="Dupliquer la ligne (toutes les balises alignées avec celle-ci) juste en dessous — pratique pour un calendrier prévisionnel, une liste de séances, etc."
-                              className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-white border-2 border-violet-300 text-violet-500 hover:bg-violet-500 hover:text-white hover:border-violet-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
-                              style={{ zIndex: 30 }}
-                            >
-                              <Copy size={12} strokeWidth={2.5} />
-                            </button>
-                            <button
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
-                              title="Supprimer cette balise"
-                              className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-white border-2 border-red-300 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 flex items-center justify-center transition-colors shrink-0 shadow-md"
-                              style={{ zIndex: 30 }}
-                            >
-                              <X size={13} strokeWidth={3} />
-                            </button>
-                            {/* Poignée de redimensionnement — glisser pour étirer largeur/hauteur */}
-                            <div
-                              draggable={false}
-                              onDragStart={e => e.preventDefault()}
-                              onClick={e => e.stopPropagation()}
-                              onMouseDown={e => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                if (!pageRef.current) return;
-                                const rect = pageRef.current.getBoundingClientRect();
-                                resizeStartRef.current = {
-                                  fieldId: field.id,
-                                  startClientX: e.clientX,
-                                  startClientY: e.clientY,
-                                  startWidthPct: field.width_percent || 28,
-                                  startHeightPct: field.height_percent || 3.5,
-                                  rectWidth: rect.width,
-                                  rectHeight: rect.height,
-                                };
-                                setResizingFieldId(field.id);
-                              }}
-                              title="Glisser pour redimensionner la case"
-                              className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-sm bg-white border-2 border-gray-400 hover:border-violet-600 hover:bg-violet-50 cursor-nwse-resize shadow-sm"
-                              style={{ zIndex: 20 }}
-                            />
-                          </>
                         ) : (
                           <div className="group relative inline-flex select-none">
                             <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
                               <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
                             </div>
                             <button
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); handleDuplicateRow(field.id); }}
-                              title="Dupliquer la ligne juste en dessous"
-                              className="absolute -top-2 -left-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-violet-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
-                            >
-                              <Copy size={8} />
-                            </button>
-                            <button
-                              onMouseDown={e => e.stopPropagation()}
                               onClick={e => { e.stopPropagation(); setFields(prev => prev.filter(f => f.id !== field.id)); }}
                               className="absolute -top-2 -right-2 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 shrink-0"
                             >
@@ -9413,17 +6513,6 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       </div>
                     );
                   })}
-
-                  {/* AJOUT (2026-09-18) : bannière de confirmation de sélection multiple — indique
-                      combien de balises sont sélectionnées et qu'on peut les glisser ensemble. */}
-                  {!clickPlaceTag && selectedFieldIds.size > 1 && (
-                    <div className="absolute inset-x-0 top-2 pointer-events-none flex items-center justify-center">
-                      <div className="bg-blue-600/95 text-white text-xs font-bold px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2">
-                        <span>🔗</span>
-                        <span>{selectedFieldIds.size} balises sélectionnées — glissez-en une pour déplacer le groupe · Échap pour désélectionner</span>
-                      </div>
-                    </div>
-                  )}
 
                   {/* Bannière mode clic-pour-placer */}
                   {clickPlaceTag && (
@@ -9440,23 +6529,21 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     </div>
                   )}
 
-                  {/* Hint zone de dépôt — ne concerne que le dépôt d'une NOUVELLE balise depuis la
-                      sidebar (dragTag) : le repositionnement d'une balise déjà posée (draggingFieldId)
-                      n'en a plus besoin depuis le 2026-09-18, la balise elle-même bouge en direct sous
-                      le curseur et indique déjà clairement où elle va atterrir. */}
-                  {dragTag && (
+                  {/* Hint zone de dépôt */}
+                  {(dragTag || draggingFieldId) && (
                     <div className="absolute inset-0 pointer-events-none bg-gray-900/5 flex items-end justify-center pb-4">
                       <div className={`text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-xl ${
-                        dragTag === 'signature_client' || dragTag === 'checkbox_client' || dragTag === 'texte_client' ? 'bg-blue-600/90' :
-                        dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' || dragTag === 'texte_formateur' ? 'bg-orange-500/90' :
+                        draggingFieldId ? 'bg-gray-700/90' :
+                        dragTag === 'signature_client' || dragTag === 'checkbox_client' ? 'bg-blue-600/90' :
+                        dragTag === 'signature_formateur' || dragTag === 'checkbox_formateur' ? 'bg-orange-500/90' :
                         'bg-violet-700/90'
                       }`}>
-                        {isSignatureTag(dragTag)
-                          ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
-                          : isCheckboxTag(dragTag)
-                            ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
-                            : isTextInputTag(dragTag)
-                              ? `📝 Déposez le champ texte libre ${dragTag === 'texte_client' ? 'client' : 'formateur'}`
+                        {draggingFieldId
+                          ? '↕ Déposez pour repositionner'
+                          : isSignatureTag(dragTag)
+                            ? `✍️ Déposez la zone de ${dragTag === 'signature_client' ? 'signature client' : 'signature formateur'}`
+                            : isCheckboxTag(dragTag)
+                              ? `☑️ Déposez la case à cocher ${dragTag === 'checkbox_client' ? 'client' : 'formateur'}`
                               : <>Déposez ici → <span className="font-mono">{dragTag === 'date_du_jour' ? '📅 date_du_jour' : `{${dragTag}}`}</span></>
                         }
                       </div>
@@ -9550,42 +6637,6 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     </div>
                   </div>
 
-                  {/* ── Champs texte libre (remplis par le signataire, façon Yousign) ── */}
-                  <div>
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Texte libre —</p>
-                    <div className="flex flex-col gap-1.5">
-                      {TEXT_INPUT_TAGS.map(({ tag, label, color }) => {
-                        const isPlaced = placedTags.has(tag);
-                        const isDraggingThis = dragTag === tag;
-                        const isClickSelected = clickPlaceTag?.tag === tag;
-                        const isBlue = color === 'blue';
-                        return (
-                          <div
-                            key={tag}
-                            draggable
-                            onDragStart={e => { setDragTag(tag); setClickPlaceTag(null); e.dataTransfer.effectAllowed = 'copy'; }}
-                            onDragEnd={() => setDragTag(null)}
-                            onClick={() => setClickPlaceTag(isClickSelected ? null : { tag })}
-                            className={`flex items-center gap-2 px-2.5 py-2.5 rounded-lg border-2 border-dashed select-none cursor-pointer transition-all ${
-                              isClickSelected ? 'bg-violet-600 text-white border-violet-600 scale-95 shadow-inner' :
-                              isDraggingThis ? 'opacity-40 scale-95' :
-                              isBlue
-                                ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-400'
-                                : 'bg-orange-50 border-orange-200 text-orange-700 hover:border-orange-400'
-                            }`}
-                          >
-                            <span className="text-base shrink-0">📝</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[11px] font-bold truncate">{label}</p>
-                              <p className="text-[9px] opacity-60">Champ à remplir · peut être posé plusieurs fois</p>
-                            </div>
-                            {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
                   {/* ── Balises texte ── */}
                   {Object.entries(ALL_TAGS).map(([group, tags]) => (
                     <div key={group}>
@@ -9635,74 +6686,16 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destinataires (un ou plusieurs)</label>
+                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destination</label>
                     <div className="flex gap-2">
-                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['organisme', '🏢 Administrateur']].map(([val, label]) => {
-                        const checked = destinationRoles.includes(val);
-                        return (
-                          <button key={val} onClick={() => setDestinationRoles(prev => {
-                              const next = checked ? prev.filter(r => r !== val) : [...prev, val];
-                              return next.length ? next : prev; // au moins un destinataire doit rester coché
-                            })}
-                            className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${checked ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
-                            {label}
-                          </button>
-                        );
-                      })}
+                      {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['both', '👥 Les deux']].map(([val, label]) => (
+                        <button key={val} onClick={() => setDestination(val)}
+                          className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${destination === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
+                          {label}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  {/* Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) —
-                      n'a de sens que si plusieurs destinataires sont cochés : sinon il n'y a qu'un
-                      seul signataire, rien à séquencer. */}
-                  {destinationRoles.length > 1 && (
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Mode de signature</label>
-                      <div className="flex gap-2 mb-2">
-                        {[['simultane', '⇄ Simultané'], ['sequentiel', '→ Séquentiel']].map(([val, label]) => (
-                          <button key={val} onClick={() => setSigningMode(val)}
-                            className={`flex-1 py-2 rounded-xl text-[11px] font-bold border transition-all ${signingMode === val ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-100 hover:border-violet-200'}`}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-gray-400 mb-2">
-                        {signingMode === 'sequentiel'
-                          ? "Chaque partie ne verra le document qu'une fois son tour arrivé, dans l'ordre ci-dessous."
-                          : 'Toutes les parties cochées peuvent signer indépendamment, dans n\'importe quel ordre.'}
-                      </p>
-                      {signingMode === 'sequentiel' && (
-                        <div className="space-y-1.5">
-                          <p className="text-[9px] text-gray-400 mb-0.5">Ordre de signature (▲▼ pour réordonner) :</p>
-                          {signingOrder.filter(r => destinationRoles.includes(r)).map((role, idx, arr) => (
-                            <div key={role} className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
-                              <span className="text-[10px] font-black text-gray-400 w-4">{idx + 1}.</span>
-                              <span className="flex-1 text-[11px] font-bold text-gray-700">
-                                {role === 'client' ? '📁 Client' : role === 'formateur' ? '📋 Formateur' : '🏢 Administrateur'}
-                              </span>
-                              <button type="button" disabled={idx === 0}
-                                onClick={() => setSigningOrder(prev => {
-                                  const cur = prev.filter(r => destinationRoles.includes(r));
-                                  const i = cur.indexOf(role);
-                                  if (i <= 0) return prev;
-                                  const next = [...cur]; [next[i - 1], next[i]] = [next[i], next[i - 1]];
-                                  return next;
-                                })}
-                                className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-400 hover:text-violet-600 disabled:opacity-30">▲</button>
-                              <button type="button" disabled={idx === arr.length - 1}
-                                onClick={() => setSigningOrder(prev => {
-                                  const cur = prev.filter(r => destinationRoles.includes(r));
-                                  const i = cur.indexOf(role);
-                                  if (i === -1 || i >= cur.length - 1) return prev;
-                                  const next = [...cur]; [next[i + 1], next[i]] = [next[i], next[i + 1]];
-                                  return next;
-                                })}
-                                className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-400 hover:text-violet-600 disabled:opacity-30">▼</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <button
                     onClick={handlePreview}
                     disabled={isPreviewing || fields.length === 0 || !pdfBlobRef.current}
@@ -9741,973 +6734,6 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   );
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AJOUT (2026-10-01) : onglet admin "Questionnaires & Quiz" (demande utilisateur, besoin Qualiopi).
-// La création / modification / rattachement aux groupes des questionnaires et quiz est DÉPLACÉE
-// ici depuis la page Documents (même code qu'avant, voir DocumentsView), et chaque questionnaire
-// ou quiz ouvre désormais une page de STATISTIQUES (QuestionnaireStatsPanel) calculée à partir
-// de la table questionnaire_responses : nombre de réponses, répartition des réponses question par
-// question, réponses libres (verbatims), note moyenne et taux de réussite pour les quiz — avec
-// filtres période / formateur / module et export PDF (preuve pour l'audit Qualiopi).
-// Réservé à l'administrateur (voir ROLE_TABS et le menu latéral).
-// ═══════════════════════════════════════════════════════════════════════════
-const parseQMeta = (q) => {
-  try { return typeof q?.metadata === 'string' ? JSON.parse(q.metadata) : (q?.metadata || {}); }
-  catch { return {}; }
-};
-const parseQAnswers = (r) => {
-  try { return typeof r?.responses === 'string' ? JSON.parse(r.responses) : (r?.responses || {}); }
-  catch { return {}; }
-};
-// Date LOCALE au format AAAA-MM-JJ (comparaisons de filtres) et JJ/MM/AAAA (affichage).
-const qLocalDay = (value) => {
-  if (!value) return '';
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return String(value).slice(0, 10);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-const qFrDate = (value) => {
-  const day = qLocalDay(value);
-  if (!day) return '—';
-  const [y, m, d] = day.split('-');
-  return `${d}/${m}/${y}`;
-};
-// Une réponse "unique" ou "multiple" est-elle correcte ? (même règle que QuestionnaireFillerModal :
-// tout ou rien par question)
-const qIsAnswerCorrect = (q, answer) => {
-  if (q.type === 'single') return answer !== undefined && answer !== null && answer !== '' && answer === q.correctAnswer;
-  if (q.type === 'multiple') {
-    const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-    const given = Array.isArray(answer) ? answer : [];
-    return correct.length > 0 && correct.length === given.length && correct.every(o => given.includes(o));
-  }
-  return false;
-};
-// Note d'une réponse de quiz : on reprend la note enregistrée au moment du passage (score_percent /
-// passed, enregistrés depuis le 2026-09-30) ; à défaut (anciennes réponses), on la recalcule.
-const qQuizResult = (response, questions, seuil) => {
-  if (typeof response.score_percent === 'number') {
-    return { score: response.score_percent, passed: typeof response.passed === 'boolean' ? response.passed : response.score_percent >= seuil };
-  }
-  const gradable = questions.filter(q => q.type === 'single' || q.type === 'multiple');
-  if (questions.length === 0) return { score: null, passed: null };
-  const answers = parseQAnswers(response);
-  const correctCount = gradable.filter(q => qIsAnswerCorrect(q, answers[q.id])).length;
-  const score = Math.round((correctCount / questions.length) * 100);
-  return { score, passed: score >= seuil };
-};
-
-// Calcule toutes les statistiques d'un questionnaire pour une liste de réponses déjà filtrées.
-const computeQuestionnaireStats = (questionnaire, responses) => {
-  const meta = parseQMeta(questionnaire);
-  const questions = meta.questions || [];
-  const isQuiz = !!meta.isQuiz;
-  const seuil = meta.seuilReussite ?? 50;
-  const parsed = responses.map(r => ({ ...r, _answers: parseQAnswers(r), _quiz: isQuiz ? qQuizResult(r, questions, seuil) : null }));
-
-  const questionStats = questions.map((q, qi) => {
-    const answered = parsed.filter(r => {
-      const a = r._answers[q.id];
-      if (q.type === 'text') return typeof a === 'string' && a.trim().length > 0;
-      if (q.type === 'multiple') return Array.isArray(a) && a.length > 0;
-      return a !== undefined && a !== null && a !== '';
-    });
-    const base = { index: qi + 1, question: q, answeredCount: answered.length };
-    if (q.type === 'text') {
-      return { ...base, texts: answered.map(r => ({ text: String(r._answers[q.id]).trim(), clientId: r.client_id, date: r.completed_at || r.created_at })) };
-    }
-    const counts = new Map();
-    (q.options || []).filter(o => o !== '').forEach(o => counts.set(o, 0));
-    answered.forEach(r => {
-      const a = r._answers[q.id];
-      (Array.isArray(a) ? a : [a]).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
-    });
-    const correctSet = new Set(q.type === 'multiple' ? (Array.isArray(q.correctAnswer) ? q.correctAnswer : []) : (q.correctAnswer ? [q.correctAnswer] : []));
-    const options = Array.from(counts.entries()).map(([label, count]) => ({
-      label,
-      count,
-      percent: answered.length > 0 ? Math.round((count / answered.length) * 100) : 0,
-      isCorrect: isQuiz && correctSet.has(label),
-      isLegacy: !(q.options || []).includes(label), // option supprimée/renommée depuis
-    }));
-    const correctCount = isQuiz ? answered.filter(r => qIsAnswerCorrect(q, r._answers[q.id])).length : null;
-    return {
-      ...base,
-      options,
-      correctPercent: isQuiz && answered.length > 0 ? Math.round((correctCount / answered.length) * 100) : null,
-    };
-  });
-
-  const days = parsed.map(r => qLocalDay(r.completed_at || r.created_at)).filter(Boolean).sort();
-  const quizScores = parsed.map(r => r._quiz).filter(x => x && typeof x.score === 'number');
-  const passedCount = quizScores.filter(x => x.passed).length;
-  return {
-    meta, questions, isQuiz, seuil, parsed, questionStats,
-    total: parsed.length,
-    distinctClients: new Set(parsed.map(r => String(r.client_id))).size,
-    firstDay: days[0] || null,
-    lastDay: days[days.length - 1] || null,
-    avgScore: quizScores.length > 0 ? Math.round(quizScores.reduce((s, x) => s + x.score, 0) / quizScores.length) : null,
-    minScore: quizScores.length > 0 ? Math.min(...quizScores.map(x => x.score)) : null,
-    maxScore: quizScores.length > 0 ? Math.max(...quizScores.map(x => x.score)) : null,
-    passedCount,
-    failedCount: quizScores.length - passedCount,
-    passRate: quizScores.length > 0 ? Math.round((passedCount / quizScores.length) * 100) : null,
-  };
-};
-
-// Export PDF "natif" (jsPDF, texte vectoriel) — volontairement sans capture d'écran html2canvas :
-// rendu net, texte sélectionnable, et aucune dépendance aux couleurs CSS de Tailwind.
-// NB : polices standard PDF → pas d'émojis ni de caractères hors Latin-1 dans les libellés fixes.
-const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, formateurOfClient, moduleOfClient, orgName }) => {
-  const pdf = new jsPDF('p', 'mm', 'a4');
-  const W = 210, H = 297, M = 15, CW = W - 2 * M;
-  const VIOLET = [109, 40, 217], GREEN = [5, 150, 105], RED = [220, 38, 38], DARK = [31, 41, 55], GREY = [107, 114, 128], LIGHT = [237, 233, 254];
-  let y = M;
-  const clean = (s) => String(s ?? '')
-    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-')
-    .replace(/\u0153/g, 'oe').replace(/\u0152/g, 'OE').replace(/\u2026/g, '...').replace(/\u202F/g, ' ')
-    .replace(/[^\x20-\xFF\n]/g, '');
-  const ensure = (h) => { if (y + h > H - M - 8) { pdf.addPage(); y = M; } };
-  const write = (str, { size = 10, bold = false, color = DARK, indent = 0, width = CW - indent, gap = 0 } = {}) => {
-    pdf.setFont('helvetica', bold ? 'bold' : 'normal');
-    pdf.setFontSize(size);
-    pdf.setTextColor(...color);
-    const lineH = size * 0.45;
-    pdf.splitTextToSize(clean(str), width).forEach(line => {
-      ensure(lineH);
-      pdf.text(line, M + indent, y + lineH * 0.75);
-      y += lineH;
-    });
-    y += gap;
-  };
-
-  // En-tête
-  write(orgName ? `${orgName} - Statistiques questionnaire` : 'Statistiques questionnaire', { size: 9, color: GREY, gap: 1 });
-  write(titre, { size: 16, bold: true, color: VIOLET, gap: 1 });
-  write(`${stats.isQuiz ? `Quiz noté (seuil de réussite : ${stats.seuil} %)` : 'Questionnaire'} - ${stats.questions.length} question(s)`, { size: 9, color: GREY });
-  write(`Filtres : ${filtersLabel}`, { size: 9, color: GREY });
-  write(`Édité le ${qFrDate(new Date())}`, { size: 9, color: GREY, gap: 4 });
-
-  // Indicateurs clés
-  const kpis = [
-    ['Réponses', String(stats.total)],
-    ['Bénéficiaires', String(stats.distinctClients)],
-    ['Période des réponses', stats.firstDay ? `${qFrDate(stats.firstDay)} au ${qFrDate(stats.lastDay)}` : '-'],
-  ];
-  if (stats.isQuiz) {
-    kpis.push(['Note moyenne', stats.avgScore != null ? `${stats.avgScore} %` : '-']);
-    kpis.push(['Taux de réussite', stats.passRate != null ? `${stats.passRate} % (${stats.passedCount} acquis / ${stats.failedCount} non acquis)` : '-']);
-    kpis.push(['Note min / max', stats.minScore != null ? `${stats.minScore} % / ${stats.maxScore} %` : '-']);
-  }
-  ensure(8 + kpis.length * 6);
-  pdf.setFillColor(...LIGHT);
-  pdf.roundedRect(M, y, CW, 4 + kpis.length * 6, 2, 2, 'F');
-  y += 2;
-  kpis.forEach(([label, value]) => {
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...GREY);
-    pdf.text(clean(label), M + 4, y + 4);
-    pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...DARK);
-    pdf.text(clean(value), M + 60, y + 4);
-    y += 6;
-  });
-  y += 6;
-
-  // Détail question par question
-  write('Détail par question', { size: 12, bold: true, color: VIOLET, gap: 2 });
-  stats.questionStats.forEach(qs => {
-    ensure(18);
-    pdf.setDrawColor(229, 231, 235);
-    pdf.line(M, y, M + CW, y);
-    y += 3;
-    write(`Q${qs.index}. ${qs.question.text || '(question sans titre)'}`, { size: 10.5, bold: true, gap: 0.5 });
-    const typeLabel = qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples (plusieurs réponses possibles)' : 'Choix unique';
-    write(`${typeLabel} - ${qs.answeredCount} réponse(s)${qs.correctPercent != null ? ` - ${qs.correctPercent} % de bonnes réponses` : ''}`, { size: 8.5, color: GREY, gap: 2 });
-
-    if (qs.question.type === 'text') {
-      if (qs.texts.length === 0) write('Aucune réponse.', { size: 9, color: GREY, indent: 3, gap: 2 });
-      qs.texts.forEach(t => {
-        write(`"${t.text}"`, { size: 9, indent: 3 });
-        write(`- ${clientName(t.clientId)}, le ${qFrDate(t.date)}`, { size: 8, color: GREY, indent: 3, gap: 1.5 });
-      });
-      y += 2;
-      return;
-    }
-    const labelW = 88, barX = M + 3 + labelW + 2, barW = 52;
-    qs.options.forEach(o => {
-      pdf.setFont('helvetica', o.isCorrect ? 'bold' : 'normal'); pdf.setFontSize(9);
-      const lines = pdf.splitTextToSize(clean(o.label + (o.isCorrect ? '  (bonne réponse)' : '') + (o.isLegacy ? '  (option retirée)' : '')), labelW);
-      const rowH = Math.max(lines.length * 4.1, 5);
-      ensure(rowH + 1);
-      pdf.setTextColor(...(o.isCorrect ? GREEN : DARK));
-      lines.forEach((line, li) => pdf.text(line, M + 3, y + 3.4 + li * 4.1));
-      pdf.setFillColor(243, 244, 246);
-      pdf.roundedRect(barX, y + 0.8, barW, 3.4, 1, 1, 'F');
-      if (o.percent > 0) {
-        pdf.setFillColor(...(o.isCorrect ? GREEN : VIOLET));
-        pdf.roundedRect(barX, y + 0.8, Math.max(1.5, (barW * o.percent) / 100), 3.4, 1, 1, 'F');
-      }
-      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...DARK);
-      pdf.text(`${o.percent} %`, barX + barW + 3, y + 3.4);
-      pdf.setFont('helvetica', 'normal'); pdf.setTextColor(...GREY);
-      pdf.text(`(${o.count})`, barX + barW + 15, y + 3.4);
-      y += rowH + 1;
-    });
-    y += 3;
-  });
-
-  // Liste des répondants
-  y += 2;
-  write('Liste des réponses', { size: 12, bold: true, color: VIOLET, gap: 2 });
-  const cols = stats.isQuiz
-    ? [['Bénéficiaire', 44], ['Formateur', 36], ['Module', 44], ['Date', 22], ['Résultat', 34]]
-    : [['Bénéficiaire', 52], ['Formateur', 44], ['Module', 58], ['Date', 26]];
-  const header = () => {
-    ensure(7);
-    pdf.setFillColor(...LIGHT);
-    pdf.rect(M, y, CW, 6, 'F');
-    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(...VIOLET);
-    let x = M + 2;
-    cols.forEach(([label, w]) => { pdf.text(label, x, y + 4.2); x += w; });
-    y += 7;
-  };
-  header();
-  if (stats.parsed.length === 0) write('Aucune réponse pour ces filtres.', { size: 9, color: GREY });
-  [...stats.parsed]
-    .sort((a, b) => String(b.completed_at || b.created_at || '').localeCompare(String(a.completed_at || a.created_at || '')))
-    .forEach(r => {
-      if (y + 6 > H - M - 8) { pdf.addPage(); y = M; header(); }
-      const values = [clientName(r.client_id), formateurOfClient(r.client_id), moduleOfClient(r.client_id), qFrDate(r.completed_at || r.created_at)];
-      if (stats.isQuiz) values.push(r._quiz && r._quiz.score != null ? `${r._quiz.score} % - ${r._quiz.passed ? 'Acquis' : 'Non acquis'}` : '-');
-      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5);
-      let x = M + 2;
-      cols.forEach(([, w], ci) => {
-        const isResult = stats.isQuiz && ci === cols.length - 1 && r._quiz && r._quiz.score != null;
-        pdf.setTextColor(...(isResult ? (r._quiz.passed ? GREEN : RED) : DARK));
-        pdf.text(pdf.splitTextToSize(clean(values[ci]), w - 3)[0] || '', x, y + 3.8);
-        x += w;
-      });
-      pdf.setDrawColor(243, 244, 246);
-      pdf.line(M, y + 5.5, M + CW, y + 5.5);
-      y += 6;
-    });
-
-  // Pied de page : numérotation
-  const pages = pdf.getNumberOfPages();
-  for (let p = 1; p <= pages; p++) {
-    pdf.setPage(p);
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...GREY);
-    pdf.text(clean(`${titre} - page ${p}/${pages}`), W / 2, H - 8, { align: 'center' });
-  }
-  const safeName = clean(titre).replace(/[\\/:*?"<>|]/g, '-').trim() || 'questionnaire';
-  pdf.save(`Statistiques - ${safeName}.pdf`);
-};
-
-const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit }) => {
-  const [dateFrom, setDateFrom] = React.useState('');
-  const [dateTo, setDateTo] = React.useState('');
-  const [formateurFilter, setFormateurFilter] = React.useState('');
-  const [moduleFilter, setModuleFilter] = React.useState('');
-  const [expandedTexts, setExpandedTexts] = React.useState({});
-
-  const clientById = React.useMemo(() => {
-    const m = new Map();
-    (clients || []).forEach(c => m.set(String(c.id), c));
-    return m;
-  }, [clients]);
-  const formateurNameById = (id) => (formateurs || []).find(f => String(f.id) === String(id))?.nom || '—';
-  const moduleNameById = (id) => (modules || []).find(m => String(m.id) === String(id))?.nom || '—';
-  const clientName = (clientId) => clientById.get(String(clientId))?.nom || 'Bénéficiaire supprimé';
-  const formateurOfClient = (clientId) => { const c = clientById.get(String(clientId)); return c?.formateur_id ? formateurNameById(c.formateur_id) : '—'; };
-  const moduleOfClient = (clientId) => { const c = clientById.get(String(clientId)); return c?.module_id ? moduleNameById(c.module_id) : '—'; };
-
-  const allForQ = React.useMemo(
-    () => (responses || []).filter(r => String(r.questionnaire_id) === String(questionnaire.id)),
-    [responses, questionnaire.id]
-  );
-  const filtered = React.useMemo(() => allForQ.filter(r => {
-    const c = clientById.get(String(r.client_id));
-    const day = qLocalDay(r.completed_at || r.created_at);
-    if (dateFrom && (!day || day < dateFrom)) return false;
-    if (dateTo && (!day || day > dateTo)) return false;
-    if (formateurFilter && String(c?.formateur_id ?? '') !== formateurFilter) return false;
-    if (moduleFilter && String(c?.module_id ?? '') !== moduleFilter) return false;
-    return true;
-  }), [allForQ, clientById, dateFrom, dateTo, formateurFilter, moduleFilter]);
-  const stats = React.useMemo(() => computeQuestionnaireStats(questionnaire, filtered), [questionnaire, filtered]);
-
-  // Ne proposer dans les filtres que les formateurs / modules réellement concernés par des réponses
-  const formateurOptions = React.useMemo(() => {
-    const ids = new Set(allForQ.map(r => clientById.get(String(r.client_id))?.formateur_id).filter(Boolean).map(String));
-    return (formateurs || []).filter(f => ids.has(String(f.id)));
-  }, [allForQ, clientById, formateurs]);
-  const moduleOptions = React.useMemo(() => {
-    const ids = new Set(allForQ.map(r => clientById.get(String(r.client_id))?.module_id).filter(Boolean).map(String));
-    return (modules || []).filter(m => ids.has(String(m.id)));
-  }, [allForQ, clientById, modules]);
-
-  const hasFilters = !!(dateFrom || dateTo || formateurFilter || moduleFilter);
-  const filtersLabel = [
-    dateFrom || dateTo ? `période ${dateFrom ? 'du ' + qFrDate(dateFrom) : ''}${dateTo ? ' au ' + qFrDate(dateTo) : ''}`.trim() : null,
-    formateurFilter ? `formateur : ${formateurNameById(formateurFilter)}` : null,
-    moduleFilter ? `module : ${moduleNameById(moduleFilter)}` : null,
-  ].filter(Boolean).join(' · ') || 'aucun (toutes les réponses)';
-
-  const handleExport = () => {
-    try {
-      exportQuestionnaireStatsPdf({ titre: questionnaire.titre, stats, filtersLabel: filtersLabel.replace(/·/g, '-'), clientName, formateurOfClient, moduleOfClient, orgName });
-    } catch (e) {
-      console.error('[QuestionnaireStatsPanel] export PDF :', e);
-      toast.error('Erreur export PDF : ' + e.message);
-    }
-  };
-
-  const Kpi = ({ label, value, sub, tone = 'violet' }) => (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>
-      <p className={`text-2xl font-black mt-1 ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-500' : 'text-violet-700'}`}>{value}</p>
-      {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
-    </div>
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <button onClick={onBack} className="text-sm text-gray-500 hover:text-violet-700 font-bold flex items-center gap-1 mb-2">
-            <ChevronLeft size={16} /> Retour aux questionnaires
-          </button>
-          <h2 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
-            <span>{stats.isQuiz ? '🎯' : '📝'}</span> {questionnaire.titre}
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            {stats.isQuiz ? `Quiz noté · seuil de réussite ${stats.seuil} %` : 'Questionnaire'} · {stats.questions.length} question{stats.questions.length > 1 ? 's' : ''}
-            {questionnaire.module_id ? ` · intégré au module « ${moduleNameById(questionnaire.module_id)} »` : ''}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {onEdit && (
-            <button onClick={onEdit} className="px-4 py-2 rounded-xl border border-violet-200 bg-white text-violet-700 text-sm font-bold hover:bg-violet-50">✏️ Modifier</button>
-          )}
-          <button onClick={handleExport} disabled={loadingResponses}
-            className="px-4 py-2 rounded-xl bg-violet-700 text-white text-sm font-bold hover:bg-violet-800 shadow-sm flex items-center gap-2 disabled:opacity-50">
-            <Download size={15} /> Exporter en PDF
-          </button>
-        </div>
-      </div>
-
-      {/* Filtres */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-        <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Du</label>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
-        </div>
-        <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Au</label>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
-        </div>
-        <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Formateur</label>
-          <select value={formateurFilter} onChange={e => setFormateurFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
-            <option value="">Tous</option>
-            {formateurOptions.map(f => <option key={f.id} value={String(f.id)}>{f.nom}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Module</label>
-          <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
-            <option value="">Tous</option>
-            {moduleOptions.map(m => <option key={m.id} value={String(m.id)}>{m.nom}</option>)}
-          </select>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => { const y = new Date().getFullYear(); setDateFrom(`${y}-01-01`); setDateTo(`${y}-12-31`); }}
-            className="flex-1 p-2 rounded-xl bg-violet-50 text-violet-700 text-xs font-bold hover:bg-violet-100">Année en cours</button>
-          {hasFilters && (
-            <button onClick={() => { setDateFrom(''); setDateTo(''); setFormateurFilter(''); setModuleFilter(''); }}
-              className="p-2 rounded-xl bg-gray-100 text-gray-600 text-xs font-bold hover:bg-gray-200">Effacer</button>
-          )}
-        </div>
-      </div>
-
-      {loadingResponses ? (
-        <div className="py-16 text-center text-gray-400 text-sm">Chargement des réponses…</div>
-      ) : (
-        <>
-          {/* Indicateurs clés */}
-          <div className={`grid grid-cols-2 ${stats.isQuiz ? 'lg:grid-cols-5' : 'lg:grid-cols-3'} gap-3`}>
-            <Kpi label="Réponses" value={stats.total} sub={hasFilters ? `sur ${allForQ.length} au total` : null} />
-            <Kpi label="Bénéficiaires" value={stats.distinctClients} />
-            <Kpi label="Période" value={stats.firstDay ? qFrDate(stats.lastDay) : '—'} sub={stats.firstDay ? `1re réponse le ${qFrDate(stats.firstDay)}` : 'aucune réponse'} />
-            {stats.isQuiz && <Kpi label="Note moyenne" value={stats.avgScore != null ? `${stats.avgScore} %` : '—'} sub={stats.minScore != null ? `min ${stats.minScore} % · max ${stats.maxScore} %` : null} />}
-            {stats.isQuiz && <Kpi label="Taux de réussite" value={stats.passRate != null ? `${stats.passRate} %` : '—'} tone={stats.passRate == null ? 'violet' : stats.passRate >= 50 ? 'green' : 'red'} sub={`${stats.passedCount} acquis · ${stats.failedCount} non acquis`} />}
-          </div>
-
-          {stats.total === 0 ? (
-            <div className="py-12 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-              <p className="text-3xl mb-2">📭</p>
-              <p className="text-gray-500 text-sm font-bold">Aucune réponse {hasFilters ? 'pour ces filtres' : 'pour le moment'}.</p>
-            </div>
-          ) : (
-            <>
-              {/* Détail par question */}
-              <div className="space-y-4">
-                {stats.questionStats.map(qs => (
-                  <div key={qs.question.id || qs.index} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-                      <div>
-                        <p className="text-[10px] font-black text-violet-600 uppercase tracking-widest">Question {qs.index}</p>
-                        <p className="font-bold text-gray-900">{qs.question.text || '(question sans titre)'}</p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">
-                          {qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples — plusieurs réponses possibles' : 'Choix unique'} · {qs.answeredCount} réponse{qs.answeredCount > 1 ? 's' : ''}
-                        </p>
-                      </div>
-                      {qs.correctPercent != null && (
-                        <span className={`text-xs font-black px-3 py-1 rounded-full ${qs.correctPercent >= 50 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                          {qs.correctPercent} % de bonnes réponses
-                        </span>
-                      )}
-                    </div>
-
-                    {qs.question.type === 'text' ? (
-                      qs.texts.length === 0 ? <p className="text-sm text-gray-400 italic">Aucune réponse.</p> : (
-                        <div className="space-y-2">
-                          {(expandedTexts[qs.index] ? qs.texts : qs.texts.slice(0, 5)).map((t, i) => (
-                            <div key={i} className="bg-gray-50 rounded-xl p-3">
-                              <p className="text-sm text-gray-800 whitespace-pre-wrap">« {t.text} »</p>
-                              <p className="text-[10px] text-gray-400 mt-1">{clientName(t.clientId)} · {qFrDate(t.date)}</p>
-                            </div>
-                          ))}
-                          {qs.texts.length > 5 && (
-                            <button onClick={() => setExpandedTexts(prev => ({ ...prev, [qs.index]: !prev[qs.index] }))} className="text-xs font-bold text-violet-600 hover:underline">
-                              {expandedTexts[qs.index] ? 'Réduire' : `Voir les ${qs.texts.length} réponses`}
-                            </button>
-                          )}
-                        </div>
-                      )
-                    ) : (
-                      <div className="space-y-2">
-                        {qs.options.map(o => (
-                          <div key={o.label} className="grid grid-cols-12 items-center gap-3">
-                            <p className={`col-span-12 sm:col-span-5 text-sm ${o.isCorrect ? 'font-bold text-emerald-700' : 'text-gray-700'}`}>
-                              {o.isCorrect && '✓ '}{o.label}{o.isLegacy && <span className="text-[10px] text-gray-400 ml-1">(option retirée)</span>}
-                            </p>
-                            <div className="col-span-9 sm:col-span-5 h-3 bg-gray-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${o.isCorrect ? 'bg-emerald-500' : 'bg-violet-500'}`} style={{ width: `${o.percent}%` }} />
-                            </div>
-                            <p className="col-span-3 sm:col-span-2 text-sm text-right">
-                              <span className="font-black text-gray-900">{o.percent} %</span> <span className="text-gray-400 text-xs">({o.count})</span>
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Liste des réponses */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="p-4 border-b border-gray-100">
-                  <h3 className="font-bold text-gray-900">Liste des réponses ({stats.total})</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 text-[10px] uppercase tracking-widest text-gray-400">
-                      <tr>
-                        <th className="text-left px-4 py-2">Bénéficiaire</th>
-                        <th className="text-left px-4 py-2">Formateur</th>
-                        <th className="text-left px-4 py-2">Module</th>
-                        <th className="text-left px-4 py-2">Date</th>
-                        {stats.isQuiz && <th className="text-left px-4 py-2">Résultat</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...stats.parsed]
-                        .sort((a, b) => String(b.completed_at || b.created_at || '').localeCompare(String(a.completed_at || a.created_at || '')))
-                        .map(r => (
-                          <tr key={r.id} className="border-t border-gray-50">
-                            <td className="px-4 py-2 font-medium text-gray-800">{clientName(r.client_id)}</td>
-                            <td className="px-4 py-2 text-gray-600">{formateurOfClient(r.client_id)}</td>
-                            <td className="px-4 py-2 text-gray-600">{moduleOfClient(r.client_id)}</td>
-                            <td className="px-4 py-2 text-gray-600">{qFrDate(r.completed_at || r.created_at)}</td>
-                            {stats.isQuiz && (
-                              <td className="px-4 py-2">
-                                {r._quiz && r._quiz.score != null ? (
-                                  <span className={`text-xs font-black px-2 py-1 rounded-full ${r._quiz.passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                                    {r._quiz.score} % · {r._quiz.passed ? 'Acquis' : 'Non acquis'}
-                                  </span>
-                                ) : '—'}
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-};
-
-const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modules, orgName }) => {
-  // Modale de confirmation suppression (même mécanisme que DocumentsView)
-  const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
-  const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
-  const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
-
-  // Groupes de documents (pour rattacher un questionnaire à un groupe, comme avant dans Documents)
-  const [documentGroups, setDocumentGroups] = React.useState([]);
-  React.useEffect(() => {
-    if (!currentOrgId || !supabase) return;
-    supabase.from('document_groups').select('*').eq('organisation_id', currentOrgId).order('nom', { ascending: true })
-      .then(({ data }) => { if (data) setDocumentGroups(data); });
-  }, [currentOrgId, supabase]);
-
-  // Questionnaires intégrés directement à un module (créés depuis l'éditeur de module, module_id
-  // renseigné) — leurs statistiques sont consultables ici, leur modification reste dans Modules.
-  const [moduleQuestionnaires, setModuleQuestionnaires] = React.useState([]);
-  const [selectedStatsId, setSelectedStatsId] = React.useState(null);
-
-  // ── Réponses de tous les bénéficiaires de l'organisme ──
-  const [responses, setResponses] = React.useState([]);
-  const [loadingResponses, setLoadingResponses] = React.useState(true);
-  const clientIdsKey = React.useMemo(() => (clients || []).map(c => c.id).join(','), [clients]);
-  React.useEffect(() => {
-    const ids = clientIdsKey ? clientIdsKey.split(',') : [];
-    if (!supabase || ids.length === 0) { setResponses([]); setLoadingResponses(false); return; }
-    let cancelled = false;
-    (async () => {
-      setLoadingResponses(true);
-      const all = [];
-      // Par paquets de 100 clients (longueur d'URL) et pages de 1000 lignes (limite Supabase)
-      for (let i = 0; i < ids.length; i += 100) {
-        const chunk = ids.slice(i, i + 100);
-        for (let from = 0; ; from += 1000) {
-          const { data, error } = await supabase.from('questionnaire_responses').select('*')
-            .in('client_id', chunk).order('id', { ascending: true }).range(from, from + 999);
-          if (error) { console.error('[QuestionnairesView] réponses :', error); toast.error('Erreur chargement des réponses : ' + error.message); break; }
-          all.push(...(data || []));
-          if (!data || data.length < 1000) break;
-        }
-      }
-      if (!cancelled) { setResponses(all); setLoadingResponses(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [supabase, clientIdsKey]);
-
-  const responseCountById = React.useMemo(() => {
-    const m = new Map();
-    responses.forEach(r => m.set(String(r.questionnaire_id), (m.get(String(r.questionnaire_id)) || 0) + 1));
-    return m;
-  }, [responses]);
-
-  // ── États Questionnaires (déplacés depuis DocumentsView le 2026-10-01) ────────────────────────────────
-  const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
-  const [showQBuilder, setShowQBuilder] = React.useState(false);
-  const [qName, setQName] = React.useState('');
-  const [qQuestions, setQQuestions] = React.useState([]);
-  const [editingQId, setEditingQId] = React.useState(null);
-  const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
-  // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
-  // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
-  const [qIsQuiz, setQIsQuiz] = React.useState(false);
-  const [qSeuilReussite, setQSeuilReussite] = React.useState(50);
-  const [qDescription, setQDescription] = React.useState('');
-  const [qClosingMessage, setQClosingMessage] = React.useState('');
-
-  const fetchQTemplates = React.useCallback(async () => {
-    if (!currentOrgId) return;
-    try {
-      const { data, error } = await supabase
-        .from('module_step_resources')
-        .select('id, titre, metadata, document_group_id, module_id')
-        .eq('type', 'questionnaire')
-        .eq('organisation_id', currentOrgId)
-        .order('titre', { ascending: true });
-      if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
-      const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
-      setQuestionnaireTemplates(templates);
-      setModuleQuestionnaires((data || []).filter(r => r.module_id !== null && r.module_id !== undefined));
-    } catch(e) { console.error('[fetchQTemplates] exception:', e); }
-  }, [currentOrgId]);
-
-  React.useEffect(() => {
-    fetchQTemplates();
-  }, [fetchQTemplates]);
-
-  const qAddQuestion = () => {
-    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '' }]);
-  };
-  const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
-  const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
-  // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
-  // format (chaîne pour "unique", tableau pour "multiple").
-  const qSetQuestionType = (id, newType) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, type: newType, correctAnswer: newType === 'multiple' ? [] : '' } : q));
-  const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  // AJOUT (2026-09-30) : correctAnswer est stocké par VALEUR (le texte de l'option) — on le
-  // resynchronise ici si l'option qu'il désignait vient d'être renommée.
-  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    const oldVal = q.options[oi];
-    const options = q.options.map((o, i) => i === oi ? val : o);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === oldVal) correctAnswer = val;
-    if (q.type === 'multiple' && Array.isArray(correctAnswer) && correctAnswer.includes(oldVal)) correctAnswer = correctAnswer.map(o => o === oldVal ? val : o);
-    return { ...q, options, correctAnswer };
-  }));
-  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    const removedVal = q.options[oi];
-    const options = q.options.filter((_, i) => i !== oi);
-    let correctAnswer = q.correctAnswer;
-    if (q.type === 'single' && correctAnswer === removedVal) correctAnswer = '';
-    if (q.type === 'multiple' && Array.isArray(correctAnswer)) correctAnswer = correctAnswer.filter(o => o !== removedVal);
-    return { ...q, options, correctAnswer };
-  }));
-  const qToggleCorrectOption = (qId, opt) => setQQuestions(prev => prev.map(q => {
-    if (q.id !== qId) return q;
-    if (q.type === 'single') return { ...q, correctAnswer: opt };
-    const current = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-    return { ...q, correctAnswer: current.includes(opt) ? current.filter(o => o !== opt) : [...current, opt] };
-  }));
-
-  const handleSaveQTemplate = async () => {
-    if (!qName.trim() || qQuestions.length === 0) return;
-    try {
-      // Préserver les group_ids existants lors d'une mise à jour
-      const existingMeta = editingQId
-        ? (() => { const tpl = questionnaireTemplates.find(t => t.id === editingQId); try { return typeof tpl?.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl?.metadata || {}); } catch { return {}; } })()
-        : {};
-      const payload = {
-        titre: qName.trim(),
-        type: 'questionnaire',
-        metadata: JSON.stringify({
-          ...existingMeta,
-          questions: qQuestions,
-          isQuiz: qIsQuiz,
-          seuilReussite: qIsQuiz ? qSeuilReussite : undefined,
-          description: qDescription.trim() || undefined,
-          closingMessage: qClosingMessage.trim() || undefined,
-        }),
-        module_id: null,
-        organisation_id: currentOrgId,
-      };
-      if (editingQId) {
-        const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
-        if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
-      } else {
-        const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
-        if (error) { toast.error('Erreur création : ' + error.message); return; }
-      }
-      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
-      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
-      setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
-      await fetchQTemplates();
-    } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
-  };
-
-  const handleEditQTemplate = (q) => {
-    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
-    setQName(q.titre || '');
-    setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
-    setQIsQuiz(!!meta.isQuiz);
-    setQSeuilReussite(meta.seuilReussite ?? 50);
-    setQDescription(meta.description || '');
-    setQClosingMessage(meta.closingMessage || '');
-    setEditingQId(q.id);
-    setShowQBuilder(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleDeleteQTemplate = (id) => {
-    showDeleteConfirm(
-      'Supprimer ce questionnaire ?',
-      'Ce questionnaire sera définitivement supprimé.',
-      async () => {
-        hideDeleteConfirm();
-        const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
-        if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
-      }
-    );
-  };
-
-  const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
-    const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
-    const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
-    const { error } = await supabase.from('module_step_resources').update({
-      document_group_id: primaryGroup,
-      metadata: JSON.stringify(newMeta),
-    }).eq('id', qId);
-    if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
-  };
-
-
-  const allQuestionnaires = [...questionnaireTemplates, ...moduleQuestionnaires];
-  const selectedQuestionnaire = selectedStatsId != null ? allQuestionnaires.find(q => String(q.id) === String(selectedStatsId)) : null;
-  const moduleNameById = (id) => (modules || []).find(m => String(m.id) === String(id))?.nom || 'Module supprimé';
-
-  if (selectedQuestionnaire) {
-    return (
-      <div className="max-w-6xl mx-auto animate-fade-in">
-        <QuestionnaireStatsPanel
-          questionnaire={selectedQuestionnaire}
-          responses={responses}
-          loadingResponses={loadingResponses}
-          clients={clients}
-          formateurs={formateurs}
-          modules={modules}
-          orgName={orgName}
-          onBack={() => setSelectedStatsId(null)}
-          onEdit={selectedQuestionnaire.module_id == null ? () => { setSelectedStatsId(null); handleEditQTemplate(selectedQuestionnaire); } : null}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Questionnaires & Quiz</h1>
-        <p className="text-gray-500 mt-1">Créez vos questionnaires et quiz, puis cliquez sur l'un d'eux pour consulter ses statistiques (indicateurs Qualiopi) et les exporter en PDF.</p>
-      </div>
-
-          {/* ── Section Questionnaires & Quiz ── */}
-          <div className="p-5 bg-violet-50 rounded-2xl border border-violet-100">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires & Quiz</h3>
-              <button
-                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
-                className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
-              >
-                <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
-              </button>
-            </div>
-
-            {showQBuilder && (
-              <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
-                  <input type="text" placeholder="Ex : Questionnaire de satisfaction"
-                    value={qName} onChange={e => setQName(e.target.value)}
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
-                  <textarea
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
-                    placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
-                    rows={2}
-                    value={qDescription} onChange={e => setQDescription(e.target.value)} />
-                </div>
-
-                <div className="flex items-center justify-between bg-violet-100/60 border border-violet-200 rounded-2xl p-3">
-                  <div>
-                    <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
-                    <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
-                  </div>
-                  <button type="button" onClick={() => setQIsQuiz(v => !v)}
-                    className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${qIsQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
-                    <span className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow transition-all ${qIsQuiz ? 'left-6' : 'left-1'}`}></span>
-                  </button>
-                </div>
-
-                {qIsQuiz && (
-                  <div>
-                    <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
-                    <input type="number" min="0" max="100" value={qSeuilReussite}
-                      onChange={e => setQSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-                      className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                  </div>
-                )}
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
-                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
-                  </div>
-                  {qQuestions.length === 0 && (
-                    <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                      <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
-                    </div>
-                  )}
-                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-                    {qQuestions.map((q, qi) => (
-                      <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
-                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
-                        </div>
-                        <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
-                          className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
-                        <div className="flex gap-1.5">
-                          {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
-                            <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
-                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
-                          ))}
-                        </div>
-                        {(q.type === 'single' || q.type === 'multiple') && (
-                          <div className="space-y-1">
-                            {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
-                            {q.options.map((opt, oi) => {
-                              const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
-                              return (
-                                <div key={oi} className="flex items-center gap-2">
-                                  {qIsQuiz ? (
-                                    <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
-                                      title="Marquer comme bonne réponse"
-                                      className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
-                                      <span className="text-[9px] leading-none">✓</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                                  )}
-                                  <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
-                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qIsQuiz && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
-                                  {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
-                                </div>
-                              );
-                            })}
-                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
-                  <textarea
-                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
-                    placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
-                    rows={2}
-                    value={qClosingMessage} onChange={e => setQClosingMessage(e.target.value)} />
-                </div>
-
-                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuestions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
-                  className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
-                  {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
-                </button>
-              </div>
-            )}
-
-            {/* Grille des questionnaires */}
-            {questionnaireTemplates.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {questionnaireTemplates.map(q => {
-                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
-                  const nbQ = (qMeta.questions || []).length;
-                  const rawGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
-                  // FIX (2026-09-30) : ignore les ids de groupes qui n'existent plus (groupe supprimé
-                  // depuis), sinon le badge affiche un nombre de groupes dont aucun n'est coché.
-                  const qGroupIds = rawGroupIds.filter(id => documentGroups.some(g => g.id === id));
-                  return (
-                        <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
-                              <div>
-                                <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
-                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
-                              <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
-                            </div>
-                          </div>
-                          <button type="button" onClick={() => setSelectedStatsId(q.id)}
-                            className="w-full flex items-center justify-between mt-1 px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-800 transition-colors">
-                            <span className="text-[11px] font-black uppercase tracking-widest">📊 Voir les statistiques</span>
-                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${responseCountById.get(String(q.id)) || 0} réponse${(responseCountById.get(String(q.id)) || 0) > 1 ? 's' : ''}`}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
-                            className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
-                          >
-                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
-                              📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
-                            </span>
-                            <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
-                          </button>
-                          {expandedQGroupId === q.id && (
-                            <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
-                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
-                              {documentGroups.map(g => {
-                                const checked = qGroupIds.includes(g.id);
-                                return (
-                                  <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
-                                    <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
-                                      onChange={() => {
-                                        const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
-                                        handleQSetGroups(q.id, next, qMeta);
-                                      }} />
-                                    <span className="text-xs text-gray-700">{g.nom}</span>
-                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                  );
-                })}
-              </div>
-            ) : !showQBuilder && (
-              <div className="py-8 text-center bg-white rounded-2xl border border-dashed border-violet-200">
-                <p className="text-2xl mb-1">📝</p>
-                <p className="text-gray-400 text-sm">Aucun questionnaire créé.</p>
-                <p className="text-gray-300 text-xs mt-0.5">Cliquez sur "Nouveau questionnaire" pour commencer.</p>
-              </div>
-            )}
-          </div>
-
-
-      {moduleQuestionnaires.length > 0 && (
-        <div className="p-5 bg-white rounded-2xl border border-gray-100 shadow-sm">
-          <h3 className="font-bold text-gray-900 mb-1">Questionnaires intégrés aux modules</h3>
-          <p className="text-xs text-gray-400 mb-4">Créés directement dans un module (onglet Modules, où ils se modifient). Cliquez pour voir leurs statistiques.</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {moduleQuestionnaires.map(q => {
-              const qMeta = parseQMeta(q);
-              const nbQ = (qMeta.questions || []).length;
-              const nbR = responseCountById.get(String(q.id)) || 0;
-              return (
-                <button key={q.id} type="button" onClick={() => setSelectedStatsId(q.id)}
-                  className="text-left bg-white p-4 rounded-2xl border border-gray-100 hover:border-violet-300 hover:shadow-sm transition-all">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
-                    <div className="min-w-0">
-                      <p className="font-bold text-gray-900 text-sm truncate">{q.titre}</p>
-                      <p className="text-[10px] text-gray-500">{moduleNameById(q.module_id)} · {nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
-                    </div>
-                    <span className="ml-auto shrink-0 text-[10px] font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''}`}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <ConfirmModal
-        isOpen={confirmState.open}
-        title={confirmState.title}
-        message={confirmState.message}
-        onConfirm={confirmState.onConfirm}
-        onCancel={hideDeleteConfirm}
-      />
-    </div>
-  );
-};
-
 const DocumentsView = ({
   sessions, documents, clients, formateurs, userRole, currentUserId, currentOrgId,
   handleSignDocument, handleDownloadPDF, handleAddDocument,
@@ -10721,18 +6747,11 @@ const DocumentsView = ({
   newTemplateName, setNewTemplateName, setIsDeleteModalOpen, setTargetToDelete,
   newTemplateDestination, setNewTemplateDestination, supabase,
   onUpdateTemplateDestination,
-  newTemplateClassification, setNewTemplateClassification, fetchDocuments,
-  onOpenQuestionnaires
+  newTemplateClassification, setNewTemplateClassification, fetchDocuments
 }) => {
   const [expandedId, setExpandedId] = React.useState(null);
   const [clientDocTab, setClientDocTab] = React.useState('avant');
-  // FIX (2026-09-07) : "historique" remplace les anciens onglets séparés "client"/"formateur" —
-  // un seul onglet listant tous les documents envoyés, quel que soit le destinataire.
-  const [docAudienceTab, setDocAudienceTab] = React.useState('historique');
-  // FIX (2026-09-07) : pagination de la grille de documents émis (15 par page), pour que
-  // l'historique reste lisible même avec beaucoup de documents.
-  const [docsPage, setDocsPage] = React.useState(1);
-  const DOCS_PER_PAGE = 15;
+  const [docAudienceTab, setDocAudienceTab] = React.useState('client');
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
@@ -10744,16 +6763,8 @@ const DocumentsView = ({
     const newName = editingNameValue.trim();
     if (!newName || newName === oldName) { setEditingName(null); return; }
     try {
-      // Scopé strictement à l'organisme courant — un modèle du même nom appartenant à un AUTRE
-      // organisme ne doit jamais pouvoir être renommé (plus de tolérance pour organisation_id NULL,
-      // toutes les lignes historiques ont été rattachées à leur organisme d'origine par migration SQL).
-      if (!currentOrgId) { setEditingName(null); return; }
-      const msrRenameQuery = supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName).eq('organisation_id', currentOrgId);
-      await msrRenameQuery;
-
-      const docRenameQuery = supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null).eq('organisation_id', currentOrgId);
-      await docRenameQuery;
-
+      await supabase.from('module_step_resources').update({ titre: newName }).eq('titre', oldName);
+      await supabase.from('documents').update({ nom: newName }).eq('nom', oldName).is('user_id', null);
       if (fetchDocuments) await fetchDocuments();
       toast.success(`Renommé en "${newName}"`);
     } catch(e) { toast.error('Erreur renommage : ' + e.message); }
@@ -10782,10 +6793,8 @@ const DocumentsView = ({
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
       const metadataObj = { has_visual_fields: false, classification: 'a_signer' };
-      // Scoping toujours appliqué (avant : uniquement si currentOrgId était renseigné, sinon la
-      // recherche portait silencieusement sur TOUS les organismes).
       let msrQuery = supabase.from('module_step_resources').select('id').eq('titre', name).eq('type', 'document');
-      msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
+      if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
       const { data: existingMsr } = await msrQuery;
       if (existingMsr && existingMsr.length > 0) {
         await supabase.from('module_step_resources').update({
@@ -10800,7 +6809,7 @@ const DocumentsView = ({
         if (msrErr) throw msrErr;
       }
       let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
-      docQuery = currentOrgId ? docQuery.eq('organisation_id', currentOrgId) : docQuery.limit(0);
+      if (currentOrgId) docQuery = docQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docQuery;
       if (existingDoc && existingDoc.length > 0) {
         await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
@@ -10899,7 +6908,7 @@ const DocumentsView = ({
           type_action: 'Modèle Référence',
           metadata: tpl.metadata || {},
           extension: ext,
-          visible_formateur: parseDestinationRoles(tpl.destination).includes('formateur'),
+          visible_formateur: tpl.destination === 'formateur',
           group_ids: [],
           group_id: null,
           _fromMsrOnly: true,
@@ -10972,25 +6981,10 @@ const DocumentsView = ({
         await supabase.from('module_step_resources').update({ document_group_id: null }).eq('document_group_id', groupId);
         // Détacher les documents dont group_id = ce groupe (évite FK orpheline)
         await supabase.from('documents').update({ group_id: null }).eq('group_id', groupId).is('user_id', null);
-        // FIX (2026-09-30) : nettoie aussi metadata.group_ids des questionnaires/quiz rattachés à ce
-        // groupe — sinon leur badge "X groupes" restait gonflé indéfiniment après cette suppression
-        // (voir qGroupIds plus bas, qui filtre déjà les ids orphelins à l'affichage, mais autant
-        // nettoyer la donnée elle-même pour les prochaines fois).
-        const { data: questTemplatesWithGroup } = await supabase.from('module_step_resources').select('id, metadata').eq('type', 'questionnaire').eq('organisation_id', currentOrgId);
-        if (questTemplatesWithGroup) {
-          for (const tpl of questTemplatesWithGroup) {
-            const meta = (() => { try { return typeof tpl.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl.metadata || {}); } catch { return {}; } })();
-            if (Array.isArray(meta.group_ids) && meta.group_ids.includes(groupId)) {
-              const newGroupIds = meta.group_ids.filter(id => id !== groupId);
-              await supabase.from('module_step_resources').update({ metadata: JSON.stringify({ ...meta, group_ids: newGroupIds }) }).eq('id', tpl.id);
-            }
-          }
-        }
         const { error } = await supabase.from('document_groups').delete().eq('id', groupId);
         if (!error) {
           fetchDocumentGroups();
           if (fetchDocuments) fetchDocuments();
-          fetchQTemplates();
           toast.success("Groupe supprimé.");
         } else {
           toast.error("Erreur lors de la suppression : " + error.message);
@@ -11051,26 +7045,99 @@ const DocumentsView = ({
     }
   };
 
-  // ── Questionnaires (lecture seule ici) ──────────────────────────────────
-  // DÉPLACÉ (2026-10-01) : la création / modification / suppression des questionnaires et quiz et leur
-  // rattachement aux groupes se font désormais dans l'onglet "Questionnaires & Quiz"
-  // (QuestionnairesView). On garde ici uniquement la liste, utilisée pour afficher les questionnaires
-  // contenus dans chaque groupe de documents.
+  // ── États Questionnaires (DocumentsView) ────────────────────────────────
   const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
+  const [showQBuilder, setShowQBuilder] = React.useState(false);
+  const [qName, setQName] = React.useState('');
+  const [qQuestions, setQQuestions] = React.useState([]);
+  const [editingQId, setEditingQId] = React.useState(null);
+  const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
+
   const fetchQTemplates = React.useCallback(async () => {
     if (!currentOrgId) return;
-    const { data, error } = await supabase
-      .from('module_step_resources')
-      .select('id, titre, metadata, document_group_id, module_id')
-      .eq('type', 'questionnaire')
-      .eq('organisation_id', currentOrgId)
-      .order('titre', { ascending: true });
-    if (error) { console.error('[fetchQTemplates] error:', error); return; }
-    setQuestionnaireTemplates((data || []).filter(r => r.module_id === null || r.module_id === undefined));
+    try {
+      const { data, error } = await supabase
+        .from('module_step_resources')
+        .select('id, titre, metadata, document_group_id, module_id')
+        .eq('type', 'questionnaire')
+        .eq('organisation_id', currentOrgId)
+        .order('titre', { ascending: true });
+      if (error) { console.error('[fetchQTemplates] error:', error); toast.error('Erreur chargement questionnaires : ' + error.message); return; }
+      const templates = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
+      setQuestionnaireTemplates(templates);
+    } catch(e) { console.error('[fetchQTemplates] exception:', e); }
   }, [currentOrgId]);
+
   React.useEffect(() => {
     if (isAdmin) fetchQTemplates();
   }, [isAdmin, fetchQTemplates]);
+
+  const qAddQuestion = () => {
+    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''] }]);
+  };
+  const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
+  const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  const qAddOption = (qId) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
+  const qUpdateOption = (qId, oi, val) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
+  const qRemoveOption = (qId, oi) => setQQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
+
+  const handleSaveQTemplate = async () => {
+    if (!qName.trim() || qQuestions.length === 0) return;
+    try {
+      // Préserver les group_ids existants lors d'une mise à jour
+      const existingMeta = editingQId
+        ? (() => { const tpl = questionnaireTemplates.find(t => t.id === editingQId); try { return typeof tpl?.metadata === 'string' ? JSON.parse(tpl.metadata) : (tpl?.metadata || {}); } catch { return {}; } })()
+        : {};
+      const payload = {
+        titre: qName.trim(),
+        type: 'questionnaire',
+        metadata: JSON.stringify({ ...existingMeta, questions: qQuestions }),
+        module_id: null,
+        organisation_id: currentOrgId,
+      };
+      if (editingQId) {
+        const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
+        if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
+      } else {
+        const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
+        if (error) { toast.error('Erreur création : ' + error.message); return; }
+      }
+      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
+      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+      await fetchQTemplates();
+    } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
+  };
+
+  const handleEditQTemplate = (q) => {
+    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+    setQName(q.titre || '');
+    setQQuestions((meta.questions || []).map(qq => ({ ...qq, id: qq.id || Date.now() + Math.random() })));
+    setEditingQId(q.id);
+    setShowQBuilder(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteQTemplate = (id) => {
+    showDeleteConfirm(
+      'Supprimer ce questionnaire ?',
+      'Ce questionnaire sera définitivement supprimé.',
+      async () => {
+        hideDeleteConfirm();
+        const { error } = await supabase.from('module_step_resources').delete().eq('id', id);
+        if (error) { toast.error('Erreur : ' + error.message); } else { toast.success('Questionnaire supprimé.'); fetchQTemplates(); }
+      }
+    );
+  };
+
+  const handleQSetGroups = async (qId, selectedGroupIds, currentMeta) => {
+    const newMeta = { ...(currentMeta || {}), group_ids: selectedGroupIds };
+    const primaryGroup = selectedGroupIds.length > 0 ? selectedGroupIds[0] : null;
+    const { error } = await supabase.from('module_step_resources').update({
+      document_group_id: primaryGroup,
+      metadata: JSON.stringify(newMeta),
+    }).eq('id', qId);
+    if (error) { toast.error('Erreur : ' + error.message); } else { fetchQTemplates(); }
+  };
 
   // Group clients by their documents
   const clientsWithDocs = React.useMemo(() => {
@@ -11095,33 +7162,10 @@ const DocumentsView = ({
   const issuedClientDocs = displayedDocs.filter(d => !!d.user_id && !d.assigned_formateur_id);
   const issuedFormateurDocs = displayedDocs.filter(d => !!d.assigned_formateur_id);
   const sharedTemplateDocs = displayedDocs.filter(d => !d.user_id && !d.assigned_formateur_id);
-  // FIX (2026-09-07) : "Historique" unifié — union dédupliquée de issuedClientDocs et
-  // issuedFormateurDocs (un même document ne peut être compté qu'une fois même s'il porte à la
-  // fois user_id et assigned_formateur_id), triée du plus récent au plus ancien (id décroissant —
-  // la table `documents` n'a pas de colonne created_at, l'id auto-incrémenté sert de proxy fiable).
-  const issuedAllDocs = React.useMemo(() => {
-    const byId = new Map();
-    [...issuedClientDocs, ...issuedFormateurDocs].forEach(d => byId.set(d.id, d));
-    return Array.from(byId.values()).sort((a, b) => {
-      const an = Number(a.id), bn = Number(b.id);
-      if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
-      return String(b.id).localeCompare(String(a.id));
-    });
-  }, [issuedClientDocs, issuedFormateurDocs]);
-  // NOUVEAU (2026-09-07) : documents en attente de la signature de l'ADMINISTRATEUR (rôle "organisme")
-  // — l'action de signer existait déjà (bouton "Signer pour l'organisme" sur chaque carte) mais n'était
-  // visible qu'en parcourant les 3 onglets un par un. On l'isole ici dans son propre onglet.
-  const organismeToSignDocs = isAdmin
-    ? documents.filter(d => (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && !isBlockedBySigningOrder(d, 'organisme'))
-    : [];
   const currentAudienceDocs =
-    docAudienceTab === 'historique' ? issuedAllDocs :
-    docAudienceTab === 'a_signer' ? organismeToSignDocs :
+    docAudienceTab === 'client' ? issuedClientDocs :
+    docAudienceTab === 'formateur' ? issuedFormateurDocs :
     sharedTemplateDocs;
-  // FIX (2026-09-07) : pagination — 15 documents par page, quel que soit l'onglet actif.
-  const totalDocsPages = Math.max(1, Math.ceil(currentAudienceDocs.length / DOCS_PER_PAGE));
-  const safeDocsPage = Math.min(docsPage, totalDocsPages);
-  const pagedAudienceDocs = currentAudienceDocs.slice((safeDocsPage - 1) * DOCS_PER_PAGE, safeDocsPage * DOCS_PER_PAGE);
 
 
   return (
@@ -11148,43 +7192,7 @@ const DocumentsView = ({
       </div>
 
 
-      {/* NOUVEAU (2026-09-07) : bannière "Mes documents à signer" déplacée tout en haut de la
-          page (au-dessus de "Gestion des documents"), à la demande explicite de l'utilisateur —
-          l'ancien bouton "À signer par moi", noyé dans la barre d'onglets de "Documents émis" plus
-          bas sur la page, passait inaperçu. C'est désormais le seul point d'entrée vers le mode
-          dédié docAudienceTab === 'a_signer' (la barre d'onglets normale, plus bas, devient dans ce
-          mode un en-tête dédié avec bouton "Retour" — voir plus bas dans ce fichier). */}
       {isAdmin && (
-        <button
-          onClick={() => { setDocAudienceTab('a_signer'); setDocsPage(1); }}
-          className={`w-full flex items-center justify-between gap-4 px-6 py-4 rounded-3xl border-2 transition-all text-left ${
-            organismeToSignDocs.length > 0
-              ? 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm'
-              : 'bg-gray-50 border-gray-100 hover:border-gray-200'
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            <span className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${organismeToSignDocs.length > 0 ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
-              <PenTool size={20} />
-            </span>
-            <div>
-              <p className="font-black text-gray-900 text-sm">Mes documents à signer</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {organismeToSignDocs.length > 0
-                  ? `${organismeToSignDocs.length} document${organismeToSignDocs.length > 1 ? 's' : ''} en attente de votre signature (administrateur)`
-                  : 'Vous êtes à jour — aucun document en attente de votre signature'}
-              </p>
-            </div>
-          </div>
-          {organismeToSignDocs.length > 0 && (
-            <span className="shrink-0 min-w-[28px] h-7 px-2 bg-red-600 text-white text-xs font-black rounded-full flex items-center justify-center shadow-md">
-              {organismeToSignDocs.length}
-            </span>
-          )}
-        </button>
-      )}
-
-      {isAdmin && docAudienceTab !== 'a_signer' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
             <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
@@ -11313,17 +7321,138 @@ const DocumentsView = ({
             initialData={editingTemplate}
           />
 
-          {/* DÉPLACÉ (2026-10-01) : les questionnaires & quiz ont désormais leur propre onglet. */}
-          {onOpenQuestionnaires && (
-            <button type="button" onClick={onOpenQuestionnaires}
-              className="w-full mb-8 p-4 bg-violet-50 rounded-2xl border border-violet-100 flex items-center justify-between text-left hover:bg-violet-100 transition-all">
-              <span>
-                <span className="block font-bold text-gray-900 text-sm">📝 Questionnaires & Quiz</span>
-                <span className="block text-xs text-gray-500 mt-0.5">Ils se créent et se gèrent désormais dans leur propre onglet, avec leurs statistiques.</span>
-              </span>
-              <span className="text-xs font-black text-violet-700">Ouvrir →</span>
-            </button>
-          )}
+          {/* ── Section Questionnaires ── */}
+          <div className="mb-8 p-5 bg-violet-50 rounded-2xl border border-violet-100">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires</h3>
+              <button
+                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); } }}
+                className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
+              >
+                <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
+              </button>
+            </div>
+
+            {showQBuilder && (
+              <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
+                <div>
+                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
+                  <input type="text" placeholder="Ex : Questionnaire de satisfaction"
+                    value={qName} onChange={e => setQName(e.target.value)}
+                    className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
+                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                  </div>
+                  {qQuestions.length === 0 && (
+                    <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
+                    </div>
+                  )}
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {qQuestions.map((q, qi) => (
+                      <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                        </div>
+                        <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
+                          className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
+                        <div className="flex gap-1.5">
+                          {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
+                            <button key={val} type="button" onClick={() => qUpdateQuestion(q.id, 'type', val)}
+                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                          ))}
+                        </div>
+                        {(q.type === 'single' || q.type === 'multiple') && (
+                          <div className="space-y-1">
+                            {q.options.map((opt, oi) => (
+                              <div key={oi} className="flex items-center gap-2">
+                                <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
+                                <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
+                                  className="flex-1 p-1.5 bg-white border border-violet-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400" />
+                                {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0}
+                  className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
+                  {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
+                </button>
+              </div>
+            )}
+
+            {/* Grille des questionnaires */}
+            {questionnaireTemplates.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {questionnaireTemplates.map(q => {
+                  const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                  const nbQ = (qMeta.questions || []).length;
+                  const qGroupIds = qMeta.group_ids && qMeta.group_ids.length > 0 ? qMeta.group_ids : (q.document_group_id ? [q.document_group_id] : []);
+                  return (
+                        <div key={q.id} className="bg-white p-4 rounded-2xl border border-violet-100 shadow-sm hover:border-violet-300 transition-all">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl">📝</span>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
+                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''}</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1">
+                              <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
+                              <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
+                            className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
+                          >
+                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
+                              📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
+                            </span>
+                            <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
+                          </button>
+                          {expandedQGroupId === q.id && (
+                            <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
+                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
+                              {documentGroups.map(g => {
+                                const checked = qGroupIds.includes(g.id);
+                                return (
+                                  <label key={g.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition-colors ${checked ? 'bg-violet-100' : 'hover:bg-gray-50'}`}>
+                                    <input type="checkbox" checked={checked} className="accent-violet-600 w-3.5 h-3.5"
+                                      onChange={() => {
+                                        const next = checked ? qGroupIds.filter(id => id !== g.id) : [...qGroupIds, g.id];
+                                        handleQSetGroups(q.id, next, qMeta);
+                                      }} />
+                                    <span className="text-xs text-gray-700">{g.nom}</span>
+                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                  );
+                })}
+              </div>
+            ) : !showQBuilder && (
+              <div className="py-8 text-center bg-white rounded-2xl border border-dashed border-violet-200">
+                <p className="text-2xl mb-1">📝</p>
+                <p className="text-gray-400 text-sm">Aucun questionnaire créé.</p>
+                <p className="text-gray-300 text-xs mt-0.5">Cliquez sur "Nouveau questionnaire" pour commencer.</p>
+              </div>
+            )}
+          </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayTemplates.map((doc) => {
@@ -11331,15 +7460,13 @@ const DocumentsView = ({
               // Lire la destination réelle depuis documentTemplates (MSR) en priorité
               const tplInfo = (documentTemplates || {})[doc.nom];
               const dest = tplInfo?.destination || (doc.visible_formateur ? 'formateur' : 'client');
-              const destRolesForBadge = parseDestinationRoles(dest);
-              const destBadgeLabel = destRolesForBadge.map(r => r === 'client' ? '📁 Client' : r === 'formateur' ? '📋 Formateur' : '🏢 Administrateur').join(' + ');
               return (
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
-                      destRolesForBadge.length > 1 ? 'bg-teal-100 text-teal-700' : destRolesForBadge[0] === 'formateur' ? 'bg-violet-100 text-violet-700' : destRolesForBadge[0] === 'organisme' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-600'
+                      dest === 'formateur' ? 'bg-violet-100 text-violet-700' : dest === 'both' ? 'bg-teal-100 text-teal-700' : 'bg-indigo-100 text-indigo-600'
                     }`}>
-                      {destBadgeLabel}
+                      {dest === 'formateur' ? '📋 Formateur' : dest === 'both' ? '👥 Les deux' : '📁 Client'}
                     </span>
                     <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
@@ -11372,31 +7499,12 @@ const DocumentsView = ({
                               // Charger les champs existants depuis la DB
                               const { data: existingFields } = await supabase
                                 .from('template_fields').select('*').eq('template_id', tpl.id).order('page');
-                              // FIX (2026-09-04) : width_percent/height_percent (taille des cases "texte libre"
-                              // redimensionnées) ne sont PAS stockées dans la table SQL template_fields — seulement
-                              // dans la copie embarquée tpl.metadata.template_fields. On les retrouve ici par
-                              // correspondance balise + page + position (x/y), les id étant régénérés à chaque
-                              // ouverture de l'éditeur et donc non réutilisables comme clé de correspondance.
-                              const embeddedFieldsMeta = tpl?.metadata?.template_fields || [];
-                              const mappedFields = (existingFields || []).map(f => {
-                                const xP = parseFloat(f.x_percent), yP = parseFloat(f.y_percent);
-                                const sizeMatch = embeddedFieldsMeta.find(e =>
-                                  e.tag === f.tag && (e.page || 1) === (f.page || 1) &&
-                                  Math.abs(parseFloat(e.x_percent) - xP) < 0.05 && Math.abs(parseFloat(e.y_percent) - yP) < 0.05
-                                );
-                                return {
-                                  id: `f_${f.id || Date.now()}_${Math.random().toString(36).slice(2)}`,
-                                  tag: f.tag, page: f.page || 1,
-                                  xPct: xP, yPct: yP,
-                                  ...(sizeMatch && typeof sizeMatch.width_percent === 'number' ? { width_percent: sizeMatch.width_percent } : {}),
-                                  ...(sizeMatch && typeof sizeMatch.height_percent === 'number' ? { height_percent: sizeMatch.height_percent } : {}),
-                                };
-                              });
-                              setEditingTemplate({
-                                url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id,
-                                signingMode: tpl?.metadata?.signing_mode || 'simultane',
-                                signingOrder: tpl?.metadata?.signing_order || 'client_first',
-                              });
+                              const mappedFields = (existingFields || []).map(f => ({
+                                id: `f_${f.id || Date.now()}_${Math.random().toString(36).slice(2)}`,
+                                tag: f.tag, page: f.page || 1,
+                                xPct: parseFloat(f.x_percent), yPct: parseFloat(f.y_percent),
+                              }));
+                              setEditingTemplate({ url: tpl.url, fields: mappedFields, name: doc.nom, destination: tpl.destination || 'client', templateId: tpl.id });
                               setIsTemplateEditorOpen(true);
                             }}
                             className="p-1.5 text-gray-300 hover:text-amber-500 transition-colors opacity-0 group-hover:opacity-100"
@@ -11729,9 +7837,9 @@ const DocumentsView = ({
                                     <p className="text-[10px] text-violet-700 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
                                   </div>
                                 </div>
-                                <button onClick={() => openSecureStorageFile(s.ressource_url)} className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
+                                <a href={s.ressource_url} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
                                   Accéder au contenu ↗
-                                </button>
+                                </a>
                               </div>
                             ))}
                           </div>
@@ -11776,58 +7884,39 @@ const DocumentsView = ({
 
         ) : (
           <div className="space-y-5">
-            {/* ── Sélecteur d'onglets (ou en-tête dédiée quand "Mes documents à signer" est actif) ── */}
-            {docAudienceTab === 'a_signer' ? (
-              <div className="flex items-center gap-3 flex-wrap">
+            {/* ── Sélecteur d'onglets ────────────────────────────────────── */}
+            <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
+              {[
+                { key: 'client', label: 'Clients', count: issuedClientDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
+                { key: 'formateur', label: 'Formateurs', count: issuedFormateurDocs.length, activeColor: 'text-violet-700 bg-violet-100' },
+                { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
+              ].map(tab => (
                 <button
-                  onClick={() => { setDocAudienceTab('historique'); setDocsPage(1); }}
-                  className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-xl transition-all shrink-0"
+                  key={tab.key}
+                  onClick={() => setDocAudienceTab(tab.key)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                    docAudienceTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+                  }`}
                 >
-                  ← Retour
+                  {tab.label}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-black ${
+                    docAudienceTab === tab.key ? tab.activeColor : 'bg-gray-200 text-gray-500'
+                  }`}>{tab.count}</span>
                 </button>
-                <div className="flex items-center gap-2">
-                  <span className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0"><PenTool size={16} /></span>
-                  <div>
-                    <h2 className="text-base font-black text-gray-900">Mes documents à signer</h2>
-                    <p className="text-xs text-gray-400">{organismeToSignDocs.length} document{organismeToSignDocs.length > 1 ? 's' : ''} en attente de votre signature (administrateur)</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 bg-gray-100 p-1.5 rounded-2xl w-fit">
-                {[
-                  { key: 'historique', label: 'Historique', count: issuedAllDocs.length, activeColor: 'text-indigo-600 bg-indigo-100' },
-                  { key: 'commun', label: 'Modèles partagés', count: sharedTemplateDocs.length, activeColor: 'text-gray-600 bg-gray-200' },
-                ].map(tab => (
-                  <button
-                    key={tab.key}
-                    onClick={() => { setDocAudienceTab(tab.key); setDocsPage(1); }}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                      docAudienceTab === tab.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {tab.label}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-black ${
-                      docAudienceTab === tab.key ? tab.activeColor : 'bg-gray-200 text-gray-500'
-                    }`}>{tab.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+              ))}
+            </div>
 
             {/* ── Grille de cartes ───────────────────────────────────────── */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {pagedAudienceDocs.map(doc => {
+              {currentAudienceDocs.map(doc => {
                 const clientAssocie = clients.find(c => c.id === doc.user_id);
                 const formateurAssocie = (formateurs || []).find(f => f.id === doc.assigned_formateur_id);
                 const beneficiaire = clientAssocie?.nom || formateurAssocie?.nom || null;
                 const classif = typeof doc.metadata === 'object' && doc.metadata !== null ? doc.metadata.classification : null;
-                const requiresOrganisme = (parseDocMetadata(doc).destination_roles || []).includes('organisme');
-                const allSigned = doc.signe_par_client && doc.signe_par_formateur && (!requiresOrganisme || doc.signe_par_organisme);
+                const allSigned = doc.signe_par_client && doc.signe_par_formateur;
                 const needsClientSig = doc.visible_client && !doc.signe_par_client;
                 const needsFormateurSig = doc.visible_formateur && !doc.signe_par_formateur;
-                const needsOrganismeSig = requiresOrganisme && !doc.signe_par_organisme;
-                const pendingCount = (needsClientSig ? 1 : 0) + (needsFormateurSig ? 1 : 0) + (needsOrganismeSig ? 1 : 0);
+                const pendingCount = (needsClientSig ? 1 : 0) + (needsFormateurSig ? 1 : 0);
 
                 return (
                   <div
@@ -11886,16 +7975,6 @@ const DocumentsView = ({
                             Formateur {doc.signe_par_formateur ? '✓' : '–'}
                           </span>
                         )}
-                        {requiresOrganisme && (
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
-                            doc.signe_par_organisme
-                              ? 'bg-teal-50 text-teal-700 border-teal-100'
-                              : 'bg-amber-50 text-amber-700 border-amber-100'
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${doc.signe_par_organisme ? 'bg-teal-500' : 'bg-amber-400'}`}></span>
-                            Administrateur {doc.signe_par_organisme ? '✓' : '–'}
-                          </span>
-                        )}
                         {classif === 'a_signer' && (
                           <span className="inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-purple-50 text-purple-700 border border-purple-100">
                             ✍️ À signer
@@ -11928,14 +8007,6 @@ const DocumentsView = ({
                       )}
 
                       {/* Actions */}
-                      {needsOrganismeSig && !isBlockedBySigningOrder(doc, 'organisme') && (
-                        <button
-                          onClick={() => setSigningDocId(doc.id)}
-                          className="w-full py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white transition-colors text-center"
-                        >
-                          Signer pour l'organisme
-                        </button>
-                      )}
                       <div className="flex gap-2 mt-auto pt-3 border-t border-gray-50">
                         {doc.url && (
                           <button
@@ -11970,39 +8041,18 @@ const DocumentsView = ({
                     <FileText size={26} className="text-gray-200" />
                   </div>
                   <p className="text-gray-400 text-sm font-semibold">
-                    {docAudienceTab === 'historique' ? 'Aucun document envoyé pour le moment.' :
-                     docAudienceTab === 'a_signer' ? 'Aucun document en attente de votre signature.' :
+                    {docAudienceTab === 'client' ? 'Aucun document émis pour des clients.' :
+                     docAudienceTab === 'formateur' ? 'Aucun document émis pour des formateurs.' :
                      'Aucun modèle partagé enregistré.'}
                   </p>
                   <p className="text-gray-300 text-xs mt-1">
-                    {docAudienceTab === 'historique' ? 'Générez des documents depuis les fiches clients ou formateurs.' :
-                     docAudienceTab === 'a_signer' ? 'Vous êtes à jour 🎉' :
+                    {docAudienceTab === 'client' ? 'Générez des documents depuis les fiches clients.' :
+                     docAudienceTab === 'formateur' ? 'Générez des documents depuis les fiches formateurs.' :
                      'Uploadez des modèles depuis la bibliothèque.'}
                   </p>
                 </div>
               )}
             </div>
-
-            {/* FIX (2026-09-07) : pagination — 15 documents par page, sur l'onglet actif. */}
-            {currentAudienceDocs.length > DOCS_PER_PAGE && (
-              <div className="flex items-center justify-center gap-3 pt-1">
-                <button
-                  onClick={() => setDocsPage(p => Math.max(1, p - 1))}
-                  disabled={safeDocsPage <= 1}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  ← Précédent
-                </button>
-                <span className="text-xs font-bold text-gray-400">Page {safeDocsPage} / {totalDocsPages}</span>
-                <button
-                  onClick={() => setDocsPage(p => Math.min(totalDocsPages, p + 1))}
-                  disabled={safeDocsPage >= totalDocsPages}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  Suivant →
-                </button>
-              </div>
-            )}
 
             <DeleteConfirmationModal
               isOpen={!!issuedDocToDelete}
@@ -12112,16 +8162,11 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     if (userRole === 'admin') {
       const pendingDocs = documents.filter(d => (d.user_id || d.assigned_formateur_id) && (!d.signe_par_client || !d.signe_par_formateur));
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} en attente de signature`, action: 'gestion_documents' });
-      // NOUVEAU (2026-09-07) : documents en attente de la signature de L'ADMINISTRATEUR lui-même
-      // (rôle "organisme") — jusqu'ici absents de la cloche, alors que l'action existe bel et bien
-      // (voir le nouvel onglet "À signer par moi" dans Gestion des documents).
-      const pendingOrganismeDocs = documents.filter(d => (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && !isBlockedBySigningOrder(d, 'organisme'));
-      if (pendingOrganismeDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingOrganismeDocs.length} document${pendingOrganismeDocs.length > 1 ? 's' : ''} à signer par vous`, action: 'gestion_documents' });
       const weekSessions = sessions.filter(s => s.date >= today && s.date <= in7Days);
       if (weekSessions.length > 0) notifs.push({ type: 'info', message: `${weekSessions.length} séance${weekSessions.length > 1 ? 's' : ''} cette semaine`, action: 'calendrier' });
     } else if (userRole === 'formateur') {
       const myClientIds = clients.filter(c => c.formateur_id === currentUserId).map(c => c.id);
-      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d));
+      const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} à signer`, action: 'clients' });
       // Exercices rendus par un client, pas encore corrigés — visibilité auparavant nulle en dehors
       // d'aller ouvrir chaque client une par une pour vérifier.
@@ -12141,7 +8186,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
         const effectivelySigned = documents.some(other =>
           String(other.user_id) === String(currentUserId) && other.nom === d.nom && other.signe_par_client
         );
-        return !effectivelySigned && !isBlockedBySigningOrder(d, 'client');
+        return !effectivelySigned;
       });
       if (trulyPending.length > 0) notifs.push({ type: 'warning', message: `${trulyPending.length} document${trulyPending.length > 1 ? 's' : ''} à signer`, action: 'mes_documents' });
       const nextSess = sessions.filter(s => String(s.client_id) === String(currentUserId) && s.date >= today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
@@ -12291,39 +8336,9 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
 };
 
 // ─── Calendrier des séances ────────────────────────────────────────────────────
-const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId, fetchSessions }) => {
+const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId }) => {
   const [currentMonth, setCurrentMonth] = React.useState(new Date());
   const [selectedDay, setSelectedDay] = React.useState(null);
-  const [editingSeanceSession, setEditingSeanceSession] = React.useState(null);
-
-  const isSafeVisioUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim());
-
-  // Enregistre le lien visio / la note sur TOUTES les lignes de la séance (même client + même numero_seance),
-  // pour que l'info reste cohérente quelle que soit la vue (Calendrier, Mes Séances...).
-  const handleSaveSeanceInfo = async (session, info) => {
-    const { data: rows, error } = await supabase
-      .from('sessions')
-      .select('id, metadata')
-      .eq('client_id', session.client_id)
-      .eq('numero_seance', session.numero_seance);
-    if (error) { toast.error("Erreur lors de l'enregistrement"); return; }
-    const targets = (rows && rows.length > 0) ? rows : [{ id: session.id, metadata: session.metadata }];
-    try {
-      await Promise.all(targets.map(r => {
-        const existingMeta = (typeof r.metadata === 'string')
-          ? (() => { try { return JSON.parse(r.metadata); } catch { return {}; } })()
-          : (r.metadata || {});
-        return supabase.from('sessions').update({
-          metadata: { ...existingMeta, lien_visio: info.lien_visio || null, note_seance: info.note_seance || null }
-        }).eq('id', r.id);
-      }));
-      toast.success('Informations de séance enregistrées');
-      fetchSessions && fetchSessions();
-      syncSeanceToCalendar(session.client_id, session.numero_seance);
-    } catch (e) {
-      toast.error("Erreur lors de l'enregistrement");
-    }
-  };
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -12403,139 +8418,31 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
             {sessionsByDate[selectedDay].map(s => {
               const client = clients.find(c => c.id === s.client_id);
               const formateur = formateurs.find(f => f.id === client?.formateur_id);
-              const meta = (typeof s.metadata === 'string')
-                ? (() => { try { return JSON.parse(s.metadata); } catch { return {}; } })()
-                : (s.metadata || {});
-              const lienVisio = meta.lien_visio;
-              const noteSeance = meta.note_seance;
-              const canEdit = userRole === 'formateur' || userRole === 'admin';
               return (
-                <div key={s.id} className="px-5 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 text-sm truncate">{s.ressource_titre || s.nom}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {client?.nom}
-                        {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
-                        {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                        {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
-                      </span>
-                      {canEdit && (
-                        <button
-                          onClick={() => setEditingSeanceSession(s)}
-                          title="Ajouter un lien / une note"
-                          className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-violet-600 hover:border-violet-200 transition-colors shrink-0"
-                        >
-                          <Pencil size={13} />
-                        </button>
-                      )}
-                    </div>
+                <div key={s.id} className="px-5 py-4 flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">{s.ressource_titre || s.nom}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {client?.nom}
+                      {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
+                      {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
+                    </p>
                   </div>
-                  {(isSafeVisioUrl(lienVisio) || noteSeance) && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      {isSafeVisioUrl(lienVisio) && (
-                        <a
-                          href={lienVisio}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
-                        >
-                          🎥 Rejoindre la visio
-                        </a>
-                      )}
-                      {noteSeance && <p className="text-xs text-gray-500 italic">{noteSeance}</p>}
-                    </div>
-                  )}
+                  <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                    {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
+                  </span>
                 </div>
               );
             })}
           </div>
         </div>
       )}
-
-      <SeanceInfoModal
-        isOpen={!!editingSeanceSession}
-        onClose={() => setEditingSeanceSession(null)}
-        session={editingSeanceSession}
-        onSave={handleSaveSeanceInfo}
-      />
-    </div>
-  );
-};
-
-// ─── Modale d'informations de séance (lien visio / note) ───────────────────────
-const SeanceInfoModal = ({ isOpen, onClose, session, onSave }) => {
-  const [lienVisio, setLienVisio] = React.useState('');
-  const [note, setNote] = React.useState('');
-  const [isSaving, setIsSaving] = React.useState(false);
-
-  React.useEffect(() => {
-    if (isOpen && session) {
-      const meta = (typeof session.metadata === 'string')
-        ? (() => { try { return JSON.parse(session.metadata); } catch { return {}; } })()
-        : (session.metadata || {});
-      setLienVisio(meta.lien_visio || '');
-      setNote(meta.note_seance || '');
-      setIsSaving(false);
-    }
-  }, [isOpen, session]);
-
-  if (!isOpen || !session) return null;
-
-  const handleSubmit = async () => {
-    setIsSaving(true);
-    await onSave(session, { lien_visio: lienVisio.trim(), note_seance: note.trim() });
-    setIsSaving(false);
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
-      <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl border border-gray-100 overflow-hidden animate-slide-up">
-        <div className="bg-violet-600 p-6 text-white relative">
-          <p className="text-violet-200 text-[10px] font-black uppercase tracking-widest mb-1">📅 Informations de séance</p>
-          <h2 className="text-lg font-black leading-tight">{session.ressource_titre || session.nom || 'Séance'}</h2>
-          <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
-        </div>
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Lien de visioconférence (optionnel)</label>
-            <input
-              type="url"
-              value={lienVisio}
-              onChange={(e) => setLienVisio(e.target.value)}
-              placeholder="https://meet.google.com/..."
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Note / information pour le client (optionnel)</label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-              placeholder="Ex : Merci de vous connecter 5 min avant..."
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
-            />
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">Annuler</button>
-            <button onClick={handleSubmit} disabled={isSaving} className="flex-1 py-3 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-50">
-              {isSaving ? 'Enregistrement...' : 'Enregistrer'}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
 
 // ─── Accueil Formateur ─────────────────────────────────────────────────────────
-const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab, setSigningDocId, setViewingSession, handleSaveCorrection }) => {
+const FormateurAccueilView = ({ formateurs, clients, sessions, documents, currentUserId, setActiveTab, setSigningDocId, handleSaveCorrection }) => {
   const formateur = formateurs.find(f => f.id === currentUserId);
   const myClients = clients.filter(c => c.formateur_id === currentUserId);
   const myClientIds = myClients.map(c => c.id);
@@ -12543,7 +8450,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
-  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d));
+  const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && !d.signe_par_formateur);
   // Exercices rendus par un client mais pas encore corrigés — auparavant on ne le voyait qu'en
   // ouvrant chaque client une par une dans "Mes Clients". On le remonte ici, bien visible.
   const pendingCorrections = sessions.filter(s =>
@@ -12633,10 +8540,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
                     <button
                       key={doc.id}
                       type="button"
-                      // Ouvre la même visionneuse riche (avec aperçu du document et balises) que
-                      // l'onglet "Documents administratifs", au lieu de l'ancienne fenêtre nue
-                      // "Émargement Électronique" (setSigningDocId) qui n'affichait aucun aperçu.
-                      onClick={() => setViewingSession && setViewingSession({ session: { ...doc, file_url: doc.url }, mode: 'sign' })}
+                      onClick={() => setSigningDocId && setSigningDocId(doc.id)}
                       className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-amber-50/60 transition-colors"
                     >
                       <div className="min-w-0">
@@ -12707,7 +8611,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         {brandSettings?.welcome_message || `Bienvenue sur l'espace ${brandSettings?.org_name}`}
       </p>
     )}
-    {coachName && <p className="text-sm text-gray-400 mb-4">Votre formateur : <span className="font-bold text-gray-600">{coachName}</span></p>}
+    {coachName && <p className="text-sm text-gray-400 mb-4">Votre coach : <span className="font-bold text-gray-600">{coachName}</span></p>}
 
     {/* Info cards : prochaine séance + docs en attente */}
     {(nextSession || pendingDocsCount > 0) && (
@@ -12771,17 +8675,8 @@ const SessionsView = ({
   sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole,
   pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
 }) => {
-  // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de "Mes
-  // Séances" — ils vivent désormais uniquement dans l'onglet "Exercices", jamais ici comme séance à venir.
-  const mySessions = sessions.filter(s => s.client_id === currentUserId && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+  const mySessions = sessions.filter(s => s.client_id === currentUserId).sort((a, b) => a.numero_seance - b.numero_seance);
   const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
-
-  const parseSessionMeta = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
-  const isSafeVisioUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u.trim());
-  const getGroupVisioInfo = (group) => ({
-    lienVisio: group.items.map(i => parseSessionMeta(i.metadata).lien_visio).find(isSafeVisioUrl),
-    note: group.items.map(i => parseSessionMeta(i.metadata).note_seance).find(Boolean),
-  });
 
   const calculateDuration = (start, end) => {
     if (!start || !end) return null;
@@ -12794,112 +8689,6 @@ const SessionsView = ({
     return `${h}h${m > 0 ? ` ${m}min` : ''}`;
   };
 
-  // Boutons d'action (Consulter / Signer / Exercice) — partagés entre la vue tableau (desktop) et la vue cartes (mobile).
-  const renderActions = (session, group) => {
-    const today = new Date().toISOString().split('T')[0];
-    const sessionDate = session.date || group.date;
-    const isDateLocked = sessionDate && today < sessionDate;
-    const metadata = session.metadata || {};
-
-    const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
-
-    if (isSignatureCondition) {
-      const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-      const docUrl = session.file_url || session.ressource_url;
-      return (
-        <div className="flex flex-wrap gap-2 items-center justify-end w-full">
-          {docUrl && (
-            <button
-              onClick={() => {
-                const fileUrl = signedUrl || docUrl;
-                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
-              }}
-              className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
-            >
-              Consulter
-            </button>
-          )}
-          <button
-            disabled={session.statut_client === 'Signé' || isDateLocked}
-            onClick={() => {
-              if (session.statut_client === 'Signé') return;
-              if (session.type_activite === 'signature') {
-                signSession && signSession(session);
-              } else {
-                const fileUrl = docUrl || null;
-                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
-              }
-            }}
-            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-              session.statut_client === 'Signé'
-                ? 'bg-green-50 text-green-600 border-green-200'
-                : isDateLocked
-                ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
-            }`}
-          >
-            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
-          </button>
-        </div>
-      );
-    }
-
-    if (session.type_activite === 'document') {
-      const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
-      const docUrl = signedUrl || session.file_url || session.ressource_url;
-      return (
-        <div className="flex flex-wrap gap-2 items-center justify-end w-full">
-          <button
-            onClick={() => {
-              setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
-            }}
-            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
-              signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-            }`}
-          >
-            {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
-          </button>
-        </div>
-      );
-    }
-
-    if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
-      return (
-        <div className="flex flex-wrap gap-2 items-center">
-          {session.reponse_url && (
-            <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
-              {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
-            </span>
-          )}
-          <button
-            onClick={() => setExerciceModalSession(session)}
-            className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-          >
-            {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
-          </button>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  // Badges de statut (Moi / Formateur) — partagés entre les deux vues.
-  const renderStatus = (session) => (
-    <div className="flex flex-col gap-1 items-start md:items-center">
-      <div className="flex items-center gap-1.5">
-        <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-      </div>
-      {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
-      <div className="flex items-center gap-1.5">
-        <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
-      </div>
-      )}
-    </div>
-  );
-
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Séances d'Accompagnement</h1>
@@ -12911,156 +8700,188 @@ const SessionsView = ({
             <span className="w-2 h-6 bg-gray-900 rounded-full mr-3"></span> Liste des Séances
           </h2>
         </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
+                <th className="pb-4">Séance</th>
+                <th className="pb-4">Planification (Date & Heures)</th>
+                <th className="pb-4 text-center">Statut</th>
+                <th className="pb-4 text-right">Émargement</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(() => {
+                const grouped = mySessions.reduce((acc, s) => {
+                  const key = s.numero_seance;
+                  if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: s.nom.split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
+                  acc[key].items.push(s);
+                  return acc;
+                }, {});
 
-        {(() => {
-          const grouped = mySessions.reduce((acc, s) => {
-            const key = s.numero_seance;
-            if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
-            acc[key].items.push(s);
-            return acc;
-          }, {});
+                const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
 
-          const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
-
-          if (sortedGroups.length === 0) {
-            return <p className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre formateur les générera prochainement.</p>;
-          }
-
-          return (
-            <>
-              {/* --- Vue tableau : écrans md et plus --- */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200 text-sm text-gray-500 uppercase tracking-widest font-bold">
-                      <th className="pb-4">Séance</th>
-                      <th className="pb-4">Planification (Date & Heures)</th>
-                      <th className="pb-4 text-center">Statut</th>
-                      <th className="pb-4 text-right">Émargement</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {sortedGroups.map((group, gIdx) => {
-                      const today = new Date().toISOString().split('T')[0];
-                      const isFuture = group.date && group.date > today;
-                      // Seules les séances avec une date future sont verrouillées.
-                      // Les séances passées restent toujours accessibles pour que le client puisse signer.
-                      const isLocked = isFuture;
-                      const { lienVisio, note } = getGroupVisioInfo(group);
-
-                      return (
-                        <React.Fragment key={gIdx}>
-                          <tr className={`bg-gray-50/50 ${isLocked ? 'opacity-50' : ''}`}>
-                            <td colSpan="4" className={`py-3 px-4 border-l-4 ${isLocked ? 'border-gray-300' : 'border-gray-900'}`}>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center">
-                                  <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
-                                  <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
-                                </div>
-                                <div className="text-[10px] font-bold text-gray-500">
-                                  {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
-                                  {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
-                                </div>
-                              </div>
-                              {!isLocked && (lienVisio || note) && (
-                                <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
-                                  {lienVisio && (
-                                    <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
-                                      🎥 Rejoindre la visio
-                                    </a>
-                                  )}
-                                  {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                          {group.items.map(session => (
-                            <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
-                            <td className="py-4 pl-12">
-                              <div className="flex items-center gap-3">
-                                <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
-                                <div className="flex flex-col">
-                                  <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
-                                  {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                    <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-4"></td>
-                            <td className="py-4 text-center">{renderStatus(session)}</td>
-                            <td className="py-4 text-right pr-4">
-                              <div className="flex justify-end gap-2">{renderActions(session, group)}</div>
-                            </td>
-                          </tr>
-                        ))}
-                        </React.Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* --- Vue cartes : mobile (< md) --- */}
-              <div className="md:hidden space-y-4">
-                {sortedGroups.map((group, gIdx) => {
+                return sortedGroups.map((group, gIdx) => {
                   const today = new Date().toISOString().split('T')[0];
                   const isFuture = group.date && group.date > today;
+                  // Seules les séances avec une date future sont verrouillées.
+                  // Les séances passées restent toujours accessibles pour que le client puisse signer.
                   const isLocked = isFuture;
-                  const { lienVisio, note } = getGroupVisioInfo(group);
 
                   return (
-                    <div key={gIdx} className={`rounded-2xl border overflow-hidden ${isLocked ? 'border-gray-100 opacity-50' : 'border-gray-200'}`}>
-                      <div className={`px-4 py-3 ${isLocked ? 'bg-gray-100' : 'bg-gray-900'}`}>
-                        <div className="flex items-center min-w-0">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-3 text-xs font-black shrink-0 ${isLocked ? 'bg-gray-300 text-gray-500' : 'bg-white/10 text-white'}`}>#{group.numero}</div>
-                          <span className={`font-black text-xs uppercase tracking-tight truncate ${isLocked ? 'text-gray-400' : 'text-white'}`}>{group.nom}</span>
-                        </div>
-                      </div>
-                      <div className="px-4 py-2 bg-gray-50 text-[10px] font-bold text-gray-500 flex items-center justify-between flex-wrap gap-1">
-                        {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 VERROUILLÉ</span>}
-                        <span>{group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}</span>
-                      </div>
-                      {!isLocked && (lienVisio || note) && (
-                        <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-gray-50">
-                          {lienVisio && (
-                            <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
-                              🎥 Rejoindre la visio
-                            </a>
-                          )}
-                          {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
-                        </div>
-                      )}
-                      <div className={`divide-y divide-gray-100 ${isLocked ? 'pointer-events-none' : ''}`}>
-                        {group.items.map(session => (
-                          <div key={session.id} className={`p-4 space-y-3 ${isLocked ? 'grayscale' : ''}`}>
-                            <div className="flex items-start gap-3">
-                              <span className="text-lg shrink-0">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
-                              <div className="flex flex-col min-w-0">
-                                <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
-                                {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                  <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">{session.instructions}</p>
-                                )}
-                              </div>
+                    <React.Fragment key={gIdx}>
+                      <tr className={`bg-gray-50/50 ${isLocked ? 'opacity-50' : ''}`}>
+                        <td colSpan="4" className={`py-3 px-4 border-l-4 ${isLocked ? 'border-gray-300' : 'border-gray-900'}`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
+                              <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
                             </div>
-                            <div className="flex items-center justify-between flex-wrap gap-2">
-                              {renderStatus(session)}
-                            </div>
-                            <div className="flex justify-start">
-                              {renderActions(session, group)}
+                            <div className="text-[10px] font-bold text-gray-500">
+                              {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
+                              {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </td>
+                      </tr>
+                      {group.items.map(session => (
+                        <tr key={session.id} className={`transition-all ${isLocked ? 'opacity-40 grayscale pointer-events-none bg-gray-50/10' : 'hover:bg-gray-50/30'}`}>
+                        <td className="py-4 pl-12">
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
+                            <div className="flex flex-col">
+                              <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
+                              <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                              {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
+                                <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4"></td>
+                        <td className="py-4 text-center">
+                          <div className="flex flex-col gap-1 items-center">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                            </div>
+                            {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
+                              <span className="text-[9px] font-black uppercase text-gray-500">Coach: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                            </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-4 text-right pr-4">
+                          <div className="flex justify-end gap-2">
+                            {(() => {
+                              const today = new Date().toISOString().split('T')[0];
+                              const sessionDate = session.date || group.date;
+                              const isDateLocked = sessionDate && today < sessionDate;
+                              const metadata = session.metadata || {};
+
+                              const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
+
+                              if (isSignatureCondition) {
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = session.file_url || session.ressource_url;
+                                return (
+                                  <div className="flex gap-2 items-center justify-end w-full">
+                                    {docUrl && (
+                                      <button
+                                        onClick={() => {
+                                          const fileUrl = signedUrl || docUrl;
+                                          console.log('[Consulter] URL envoyée au visualiseur:', fileUrl);
+                                          console.log('[Consulter] session:', session.id, session.ressource_titre);
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
+                                        }}
+                                        className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                                      >
+                                        Consulter
+                                      </button>
+                                    )}
+                                    <button
+                                      disabled={session.statut_client === 'Signé' || isDateLocked}
+                                      onClick={() => {
+                                        if (session.statut_client === 'Signé') return;
+                                        if (session.type_activite === 'signature') {
+                                          signSession && signSession(session);
+                                        } else {
+                                          const fileUrl = docUrl || null;
+                                          setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                                        }
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        session.statut_client === 'Signé'
+                                          ? 'bg-green-50 text-green-600 border-green-200'
+                                          : isDateLocked
+                                          ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                                          : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
+                                      }`}
+                                    >
+                                      {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              if (session.type_activite === 'document') {
+                                const signedUrl = session.file_url_signed || session.signed_pdf_url || metadata.file_url_signed;
+                                const docUrl = signedUrl || session.file_url || session.ressource_url;
+                                return (
+                                  <div className="flex gap-2 items-center justify-end w-full">
+                                    <button
+                                      onClick={() => {
+                                        console.log('[Consulter Document] URL envoyée au visualiseur:', docUrl);
+                                        setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
+                                      }}
+                                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+                                        signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                      }`}
+                                    >
+                                      {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              if (session.type_activite === 'exercice' || session.type_activite === 'Exercice') {
+                                return (
+                                  <div className="flex gap-2 items-center">
+                                    {session.reponse_url && (
+                                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                        {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
+                                      </span>
+                                    )}
+                                    <button
+                                      onClick={() => setExerciceModalSession(session)}
+                                      className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                                    >
+                                      {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              return null;
+                            })()}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    </React.Fragment>
                   );
-                })}
-              </div>
-            </>
-          );
-        })()}
+                });
+              })()}
+              {mySessions.length === 0 && (
+                <tr>
+                  <td colSpan="4" className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre coach les générera prochainement.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <ExerciceModal
@@ -13328,13 +9149,8 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
     catch { return {}; }
   }, [questionnaire]);
   const questions = meta.questions || [];
-  const isQuiz = !!meta.isQuiz;
   const [answers, setAnswers] = React.useState({});
   const [submitting, setSubmitting] = React.useState(false);
-  // AJOUT (2026-09-30) : résultat affiché après soumission — note/statut pour un quiz noté (calculée
-  // ici même, tout ou rien par question, avant l'enregistrement), ou simple écran de remerciement si
-  // un message de fin a été configuré (questionnaire classique ou quiz).
-  const [result, setResult] = React.useState(null); // null | 'done' | { scorePercent, passed, correctCount, total }
 
   const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
   const toggleMultiple = (qId, option) => {
@@ -13351,66 +9167,11 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
     return true;
   });
 
-  const computeQuizScore = () => {
-    if (!isQuiz || questions.length === 0) return null;
-    let correctCount = 0;
-    questions.forEach(q => {
-      const answer = answers[q.id];
-      if (q.type === 'single') {
-        if (answer !== undefined && answer === q.correctAnswer) correctCount++;
-      } else if (q.type === 'multiple') {
-        const correct = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-        const given = Array.isArray(answer) ? answer : [];
-        if (correct.length > 0 && correct.length === given.length && correct.every(o => given.includes(o))) correctCount++;
-      }
-    });
-    const scorePercent = Math.round((correctCount / questions.length) * 100);
-    const passed = scorePercent >= (meta.seuilReussite ?? 50);
-    return { scorePercent, passed, correctCount, total: questions.length };
-  };
-
   const handleSubmit = async () => {
     setSubmitting(true);
-    const scoreInfo = computeQuizScore();
-    try {
-      await onSubmit(answers, scoreInfo);
-      if (isQuiz && scoreInfo) setResult(scoreInfo);
-      else if (meta.closingMessage) setResult('done');
-      else onClose();
-    } finally {
-      setSubmitting(false);
-    }
+    await onSubmit(answers);
+    setSubmitting(false);
   };
-
-  if (result) {
-    const isQuizResult = isQuiz && result !== 'done';
-    return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-        <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden">
-          <div className={`p-8 text-white text-center ${isQuizResult ? (result.passed ? 'bg-emerald-600' : 'bg-red-500') : 'bg-violet-600'}`}>
-            {isQuizResult ? (
-              <>
-                <p className="text-5xl mb-2">{result.passed ? '✅' : '❌'}</p>
-                <h2 className="text-2xl font-black">{result.passed ? 'Acquis' : 'Non acquis'}</h2>
-                <p className="text-white/80 text-sm mt-1">{result.correctCount}/{result.total} bonnes réponses · {result.scorePercent}%</p>
-              </>
-            ) : (
-              <>
-                <p className="text-5xl mb-2">🎉</p>
-                <h2 className="text-2xl font-black">Merci !</h2>
-              </>
-            )}
-          </div>
-          {meta.closingMessage && (
-            <div className="p-6 text-center text-gray-700 text-sm whitespace-pre-wrap">{meta.closingMessage}</div>
-          )}
-          <div className="p-6 pt-0">
-            <button onClick={onClose} className="w-full bg-gray-900 hover:bg-black text-white font-black py-3.5 rounded-2xl transition-all">Fermer</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
@@ -13420,9 +9181,6 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
           <h2 className="text-xl font-black flex items-center gap-2">📝 {questionnaire.titre}</h2>
           <p className="text-violet-200 text-sm mt-1">{questions.length} question{questions.length > 1 ? 's' : ''} à compléter</p>
           <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
-          {meta.description && (
-            <p className="text-violet-100 text-xs mt-3 bg-white/10 rounded-xl p-3 whitespace-pre-wrap">{meta.description}</p>
-          )}
         </div>
         {/* Questions */}
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
@@ -13486,7 +9244,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
   );
 };
 
-const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings, sessions, fetchSessions }) => {
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
@@ -13501,16 +9259,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Cases à cocher requises avant signature côté client (extraites du template en cours de signature)
   const [signingCheckboxFields, setSigningCheckboxFields] = React.useState([]);
   const isClientCheckboxField = (f) => (f.tag || '') === 'checkbox_client' || (f.field_type === 'checkbox' && (f.tag || '').includes('client'));
-  // Champs "texte libre" à remplir par le client avant signature (extraits du template en cours de signature)
-  const [signingTextFields, setSigningTextFields] = React.useState([]);
-  const isClientTextField = (f) => (f.tag || '') === 'texte_client' || (f.field_type === 'text_input' && (f.tag || '').includes('client'));
-  // Le document exige-t-il une signature manuscrite du client ? Par défaut oui (comportement
-  // historique, pour les documents sans balises visuelles) — passe à false uniquement quand on a pu
-  // résoudre les champs du template ET qu'aucun d'eux n'est une balise "signature_client" (sinon on
-  // forçait une signature qui n'a ensuite nulle part où s'accrocher dans le PDF final — bug constaté
-  // 2026-07-24 : "il n'y a pas de balise signature... alors le document a demandé une signature").
-  const [signingRequiresSignature, setSigningRequiresSignature] = React.useState(true);
-  const isClientSignatureField = (f) => (f.tag || '') === 'signature_client' || (f.field_type === 'signature' && (f.tag || '').includes('client'));
   const [viewingResource, setViewingResource] = React.useState(null);
   const [debugInfo, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
@@ -13520,10 +9268,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [questionnaireResponses, setQuestionnaireResponses] = React.useState([]);
   const [activeQuestionnaire, setActiveQuestionnaire] = React.useState(null);
   const [groupQuestionnaires, setGroupQuestionnaires] = React.useState([]);
-  // AJOUT (2026-09-18) : ressources de type "exercice" posées en Documents de début/fin — sorties de
-  // moduleResources (qui n'affiche plus que document/questionnaire/document_group, voir plus bas) et
-  // traitées à part pour être basculées vers l'onglet "Exercices" du client (voir l'effet plus bas).
-  const [moduleExerciceResources, setModuleExerciceResources] = React.useState([]);
 
   // Sécurité : on cherche UNIQUEMENT le client dont l'id correspond à l'utilisateur connecté
   const currentClient = React.useMemo(() => (clients || []).find(c => String(c.id) === String(currentUserId)), [clients, currentUserId]);
@@ -13535,24 +9279,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       .then(({ data }) => { if (data) setQuestionnaireResponses(data); });
   }, [currentUserId, supabase]);
   const moduleId = currentClient?.module_id;
-
-  // AJOUT (2026-09-18) : le parcours est-il terminé pour CE client ? Détermine si les documents,
-  // questionnaires et exercices de FIN de parcours doivent être accessibles (voir isModuleCompletedForClient
-  // plus haut). Les ressources de DÉBUT restent, elles, toujours accessibles dès l'assignation du module.
-  // FIX (2026-09-30) : on recharge aussi DIRECTEMENT les séances de ce client (filtre client_id) —
-  // la liste globale `sessions` est filtrée sur organisation_id, si bien que des séances anciennes sans
-  // organisation_id n'y figuraient pas et que la fin de parcours ne pouvait jamais être détectée.
-  const [ownSessions, setOwnSessions] = React.useState([]);
-  React.useEffect(() => {
-    if (!currentUserId || !supabase) return;
-    supabase.from('sessions').select('id, client_id, numero_seance, date').eq('client_id', currentUserId)
-      .then(({ data, error }) => { if (!error && data) setOwnSessions(data); });
-  }, [currentUserId, supabase, sessions]);
-  const moduleCompleted = React.useMemo(() => {
-    const byId = new Map();
-    [...(sessions || []), ...ownSessions].forEach(s => { if (s && s.id != null) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s }); });
-    return isModuleCompletedForClient(currentUserId, Array.from(byId.values()));
-  }, [currentUserId, sessions, ownSessions]);
 
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
@@ -13572,14 +9298,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           console.error('[ClientDocumentsView] Erreur requête:', error);
           setDebugInfo({ error: error.message, moduleId });
         } else {
-          // Filtre JS : exclure les signatures (inclut les NULL et document_group) ET les exercices —
-          // ces derniers sont désormais traités séparément (voir moduleExerciceResources plus bas) pour
-          // n'apparaître QUE dans l'onglet "Exercices" du client, plus dans "Mes Documents" (décision
-          // 2026-09-18, pour éviter le doublon signalé par l'utilisateur).
-          const filtered = (data || []).filter(r => r.type !== 'signature' && r.type !== 'exercice');
+          // Filtre JS : exclure les signatures (inclut les NULL et document_group)
+          const filtered = (data || []).filter(r => r.type !== 'signature');
           console.log('[ClientDocumentsView] après filtre signature:', filtered.length, 'ressources');
           setModuleResources(filtered);
-          setModuleExerciceResources((data || []).filter(r => r.type === 'exercice'));
           setDebugInfo({ count: filtered.length, moduleId, rawCount: data?.length });
 
           // ─── Résolution des noms de groupes via document_groups ───
@@ -13615,53 +9337,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     })();
   }, [moduleId, supabase, currentUserId]);
 
-  // AJOUT (2026-09-18) : bascule les exercices posés en "Documents de début/fin" (module_step_resources)
-  // vers l'onglet "Exercices" du client (ExercicesView, qui ne lit que la table `sessions`) — jusqu'ici
-  // ils n'y apparaissaient jamais, quel que soit le module assigné. On crée donc, pour chaque exercice
-  // éligible, une séance "synthétique" (numero_seance: null — pour la distinguer des vraies séances du
-  // calendrier et ne pas fausser isModuleCompletedForClient) : les exercices de DÉBUT sont créés dès
-  // que le module est chargé, ceux de FIN uniquement une fois le parcours détecté "terminé". Protégé
-  // contre les doublons par le titre (comme generateSessions le fait déjà pour les vraies séances).
-  React.useEffect(() => {
-    if (!currentUserId || !moduleId || !supabase || moduleExerciceResources.length === 0) return;
-    const eligible = moduleExerciceResources.filter(res => res.moment === 'debut' || moduleCompleted);
-    if (eligible.length === 0) return;
-    (async () => {
-      try {
-        const { data: existing, error: existErr } = await supabase
-          .from('sessions').select('nom').eq('client_id', currentUserId);
-        if (existErr) { console.error('[ClientDocumentsView] Erreur vérification exercices existants:', existErr); return; }
-        const existingNames = new Set((existing || []).map(s => s.nom));
-        const toCreate = eligible.filter(res => !existingNames.has(res.titre));
-        if (toCreate.length === 0) return;
-        const rows = toCreate.map(res => {
-          const meta = typeof res.metadata === 'string' && res.metadata.startsWith('{')
-            ? (() => { try { return JSON.parse(res.metadata); } catch { return {}; } })()
-            : (res.metadata || {});
-          return {
-            client_id: currentUserId,
-            module_id: moduleId,
-            numero_seance: null,
-            nom: res.titre,
-            type_activite: 'exercice',
-            ressource_titre: res.titre,
-            file_url: res.file_url || null,
-            metadata: { ...meta, moment: res.moment },
-            statut: 'À venir',
-            statut_client: 'À venir',
-            statut_formateur: 'À venir',
-            organisation_id: currentClient?.organisation_id || null,
-          };
-        });
-        const { error: insertErr } = await supabase.from('sessions').insert(rows);
-        if (insertErr) { console.error('[ClientDocumentsView] Erreur création exercices début/fin:', insertErr); return; }
-        if (typeof fetchSessions === 'function') await fetchSessions();
-      } catch (e) {
-        console.error('[ClientDocumentsView] Exception création exercices début/fin:', e);
-      }
-    })();
-  }, [moduleExerciceResources, moduleCompleted, currentUserId, moduleId, supabase, currentClient, fetchSessions]);
-
   // ─── Source 2 : documents per-client déjà dans la table documents ───
   // Capture les docs assignés manuellement ou via l'ancienne méthode de synchronisation
   const clientVisibleDocs = React.useMemo(() => {
@@ -13687,7 +9362,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const extraDebutDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
-    if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
@@ -13696,26 +9370,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
   const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
-    if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     return meta.moment === 'fin';
   }), [clientVisibleDocs, allKnownTitles]);
-
-  // Filet de sécurité (ajouté le 2026-09-02) : tout document visible du client qui n'est ni dans
-  // extraDebutDocs ni dans extraFinDocs (ex: envoyé via "Ajouts personnalisés" → "Envoyer", qui ne
-  // renseigne ni metadata.moment ni un type_document reconnu) — sans ce filet, ces documents
-  // comptaient dans le badge "X documents à signer" de la page d'accueil (qui ne filtre que sur
-  // visible_client/signe_par_client) mais n'apparaissaient nulle part sur "Mes Documents".
-  const extraOtherDocs = React.useMemo(() => {
-    const shownIds = new Set([...extraDebutDocs, ...extraFinDocs].map(d => d.id));
-    return clientVisibleDocs.filter(d => {
-      if (shownIds.has(d.id)) return false;
-      if (allKnownTitles.has(d.nom)) return false;
-      if (isBlockedBySigningOrder(d, 'client')) return false;
-      return true;
-    });
-  }, [clientVisibleDocs, extraDebutDocs, extraFinDocs, allKnownTitles]);
 
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
@@ -13725,20 +9383,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // Nécessaire car signingResource.id peut être l'id de la table `documents` (per-client)
   // alors que template_fields.template_id est l'id de module_step_resources
   const resolveVisualTemplate = React.useCallback(async (titre) => {
-    // Scopé à l'organisme du client courant (+ lignes historiques sans organisation_id) : avant ce
-    // correctif, la recherche par titre seul pouvait remonter le modèle visuel d'un AUTRE organisme
-    // partageant le même nom de document, exposant potentiellement ses champs/positions de signature.
-    const myOrgId = (clients || []).find(c => String(c.id) === String(currentUserId))?.organisation_id || null;
     // Use .limit() instead of .maybeSingle() to handle cases where
     // multiple MSR rows share the same title (standalone template + module-linked copy)
-    let rowsQuery = supabase
+    const { data: rows } = await supabase
       .from('module_step_resources')
       .select('id, metadata')
       .eq('titre', titre)
       .eq('type', 'document')
       .limit(10);
-    rowsQuery = myOrgId ? rowsQuery.eq('organisation_id', myOrgId) : rowsQuery.limit(0);
-    const { data: rows } = await rowsQuery;
     if (!rows || rows.length === 0) return { templateId: null, hasVisualFields: false };
     // Prefer the row that has has_visual_fields: true
     const parseMeta = (r) => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } };
@@ -13749,7 +9401,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     const vizMeta = parseMeta(visualRow);
     const realTemplateId = vizMeta.visual_template_id || visualRow.id;
     return { templateId: realTemplateId, hasVisualFields: true, embeddedFields: vizMeta.template_fields || null };
-  }, [supabase, clients, currentUserId]);
+  }, [supabase]);
 
   // ─── Nettoyage de la modal de signature ─────────────────────────────────────
   const handleCloseSigningModal = React.useCallback(() => {
@@ -13761,8 +9413,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     prefilledSignBlob.current = null;
     setSigningResource(null);
     setSigningCheckboxFields([]);
-    setSigningTextFields([]);
-    setSigningRequiresSignature(true);
   }, []);
 
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
@@ -13777,8 +9427,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     setPrefilledSignUrl(null);
     prefilledSignBlob.current = null;
     setSigningCheckboxFields([]);
-    setSigningTextFields([]);
-    setSigningRequiresSignature(true);
 
     const toastId = 'prefill-sign';
 
@@ -13812,8 +9460,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
-          setSigningTextFields((pregenMeta.signature_fields || []).filter(isClientTextField));
-          setSigningRequiresSignature((pregenMeta.signature_fields || []).some(isClientSignatureField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -13831,7 +9477,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           const resp = await fetch(tplUrl);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
+          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
           }
@@ -13841,8 +9487,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           setPrefilledSignUrl(blobUrl);
           toast.dismiss(toastId);
           setSigningCheckboxFields((pregenMeta.fields || []).filter(isClientCheckboxField));
-          setSigningTextFields((pregenMeta.fields || []).filter(isClientTextField));
-          setSigningRequiresSignature((pregenMeta.fields || []).some(isClientSignatureField));
           setSigningResource(resource);
           return;
         } catch(e) {
@@ -13925,13 +9569,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
         const dataValues = {
           nomcomplet_client:  (currentClient?.nom_complet || currentClient?.nom || '').trim(),
-          numero_dossier_client: currentClient?.numero_dossier || '',
           client_email:       currentClient?.email_contact || currentClient?.email || '',
           client_phone:       currentClient?.telephone || '',
           rue_client:         currentClient?.adresse || currentClient?.rue || '',
           code_postal_client: currentClient?.code_postal || '',
           ville_client:       currentClient?.ville || '',
-          region_client:      currentClient?.region || '',
           adresse_session:    currentClient?.adresse || currentClient?.rue || '',
           prix_prestation:    currentClient?.prix_prestation || currentClient?.montant_prestation || '',
           formation_nom:      '',
@@ -13953,19 +9595,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           tel_formateur:         formateur?.telephone || '',
           telephone_formateur:   formateur?.telephone || '',
           adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
-          region_formateur:      formateur?.region || '',
           formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
           formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance:   formateur?.compagnie_assurance || '',
           numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
-          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme —
-          // même valeur (date du jour de génération), demandé par l'utilisateur.
-          date_signature_formateur: today,
-          date_signature_organisme: today,
-          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
-          initiales_client:      computeInitials(currentClient?.nom_complet || currentClient?.nom || ''),
-          initiales_formateur:   computeInitials(formateur?.nom || ''),
-          initiales_organisme:   computeInitials(orgSettings?.nom || ''),
           // Alias consultant (même données)
           nom_consultant:        formateur?.nom || '',
           email_consultant:      formateur?.email || '',
@@ -13977,19 +9610,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           dataValues.rue_formateur = _fAddr.rue;
           dataValues.code_postal_formateur = _fAddr.codePostal;
           dataValues.ville_formateur = _fAddr.ville; }
-        // Overlay données (balises de fusion) UNIQUEMENT — les champs interactifs (signature, case,
-        // texte libre) ne doivent JAMAIS recevoir de rendu ici, pas même un placeholder vide : ce
-        // pré-remplissage a lieu dès l'OUVERTURE du document (avant toute signature), donc graver un
-        // placeholder à ce stade le fige définitivement dans le PDF de base réutilisé pour la
-        // signature — y compris pour les champs qui appartiennent à l'AUTRE partie (bug constaté
-        // 2026-07-24 : champ "texte libre formateur" resté visible/figé sous la saisie du formateur).
-        const dataOnlyFields = tplFields.filter(f => {
-          const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-          return !isInteractive;
-        });
-        if (dataOnlyFields.length > 0) {
-          pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataOnlyFields, dataValues, {});
-        }
+        // Overlay données uniquement — pas de signature (affichée comme placeholder)
+        pdfBlob = await overlayFieldsOnPdf(pdfBlob, tplFields, dataValues, {});
       }
 
       prefilledSignBlob.current = pdfBlob;
@@ -13998,8 +9620,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setPrefilledSignUrl(blobUrl);
       toast.dismiss(toastId);
       setSigningCheckboxFields((tplFields || []).filter(isClientCheckboxField));
-      setSigningTextFields((tplFields || []).filter(isClientTextField));
-      setSigningRequiresSignature((tplFields || []).some(isClientSignatureField));
       // Ouvrir la modal — le blob est déjà prêt, le client verra ses données immédiatement
       setSigningResource(resource);
     } catch(e) {
@@ -14008,16 +9628,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // Fallback : ouvrir avec template brut
       setSigningResource(resource);
     }
-  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings]);
+  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs]);
 
-  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => {
+  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null) => {
     if (!signingResource || !currentClient) return;
     const _checkedIdSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
-    // Valeurs tapées dans les balises "texte libre" (clé = fieldKey(field) → texte saisi)
-    const _textValueMap = {};
-    if (textValues) {
-      (textValues instanceof Map ? Array.from(textValues.entries()) : Object.entries(textValues)).forEach(([k, v]) => { if (v) _textValueMap[k] = v; });
-    }
 
     const toastId = 'pdf-sign';
     let signedPdfUrl = signingResource.file_url; // fallback ultime
@@ -14069,35 +9684,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // ── Chemin visuel : données déjà overlayées dans handleOpenSigning → ajouter la signature ──
         toast.loading('Génération du document signé…', { id: toastId });
 
-        // Revérifier auprès de Supabase la toute dernière version du PDF avant de construire par-dessus :
-        // l'AUTRE partie (le formateur, pour un document destination=both) a pu signer PENDANT que ce
-        // document était ouvert dans cette fenêtre — le blob mis en cache dans prefilledSignBlob.current
-        // (capturé à l'OUVERTURE du document) serait alors périmé, et l'utiliser tel quel écraserait
-        // silencieusement sa contribution déjà enregistrée (bug constaté 2026-07-24 : le texte du
-        // formateur disparaissait du document final après que le client signe à son tour).
-        let baseBlob = prefilledSignBlob.current;
-        try {
-          if (existingGeneratedDoc?.id) {
-            const { data: freshDoc } = await supabase.from('documents').select('url').eq('id', existingGeneratedDoc.id).maybeSingle();
-            if (freshDoc?.url) {
-              const freshResp = await fetch(freshDoc.url);
-              if (freshResp.ok) baseBlob = new Blob([await freshResp.arrayBuffer()], { type: 'application/pdf' });
-            }
-          }
-        } catch (e) {
-          console.warn('[handleSignSave] Impossible de récupérer la dernière version du PDF, utilisation du cache local :', e.message);
-        }
-
-        if (baseBlob) {
+        if (prefilledSignBlob.current) {
           // ✅ Blob pré-rempli disponible (données déjà dans le PDF) → ajouter la signature + les cases à cocher
-          pdfBlob = baseBlob;
+          pdfBlob = prefilledSignBlob.current;
           {
-            // Uniquement les champs APPARTENANT AU CLIENT (suffixe _client) : un champ "texte_formateur"/
-            // "checkbox_formateur" pas encore rempli par le formateur ne doit RECEVOIR AUCUN overlay ici
-            // (ni valeur, ni case, ni placeholder vide) — sinon sa case vide se retrouve gravée en dur
-            // dans le PDF à l'instant où le CLIENT signe, et reste visible/figée sous le champ de saisie
-            // du formateur quand il complète son propre champ plus tard (bug constaté en test 2026-07-24).
-            const _isSigOrChk = f => (f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')) && (f.tag || '').endsWith('_client');
+            const _isSigOrChk = f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_');
             // Chercher les champs signature/case à cocher : P1 = signature_fields (nouveau format pré-généré)
             //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
@@ -14120,11 +9711,9 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             }
             const checkedMap = {};
             sigFields.forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
-            const textInputMap = {};
-            sigFields.forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
-            if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0 || Object.keys(textInputMap).length > 0)) {
+            if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0)) {
               const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
-              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap, textInputMap);
+              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap);
               signatureEmbeddedByOverlay = true;
             }
           }
@@ -14152,13 +9741,11 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             const formateur = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id));
             const dataValues = {
               nomcomplet_client:  currentClient.nom_complet || currentClient.nom || '',
-              numero_dossier_client: currentClient.numero_dossier || '',
               client_email:       currentClient.email_contact || currentClient.email || '',
               client_phone:       currentClient.telephone || '',
               rue_client:         currentClient.adresse || currentClient.rue || '',
               code_postal_client: currentClient.code_postal || '',
               ville_client:       currentClient.ville || '',
-              region_client:      currentClient.region || '',
               adresse_session:    currentClient.adresse || currentClient.rue || '',
               prix_prestation:    currentClient.prix_prestation || currentClient.montant_prestation || '',
               formation_nom:      '',
@@ -14179,18 +9766,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               tel_formateur:         formateur?.telephone || '',
               telephone_formateur:   formateur?.telephone || '',
               adresse_formateur:     formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse_client || formateur?.adresse || '',
-              region_formateur:      formateur?.region || '',
               formateur_siret:       formateur?.formateur_siret || formateur?.siret || '',
               formateur_nda:         formateur?.formateur_nda || formateur?.nda || '',
               compagnie_assurance:   formateur?.compagnie_assurance || '',
               numero_assurance_rcp:  formateur?.numero_assurance_rcp || '',
-              // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-              date_signature_formateur: today,
-              date_signature_organisme: today,
-              // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
-              initiales_client:      computeInitials(currentClient.nom_complet || currentClient.nom || ''),
-              initiales_formateur:   computeInitials(formateur?.nom || ''),
-              initiales_organisme:   computeInitials(orgSettings?.nom || ''),
               nom_consultant:        formateur?.nom || '',
               email_consultant:      formateur?.email || '',
               tel_consultant:        formateur?.telephone || '',
@@ -14205,17 +9784,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
             const checkedMap = {};
             (templateFields || []).forEach(f => { const k = fieldKey(f); if (_checkedIdSet.has(k)) checkedMap[k] = true; });
-            const textInputMap = {};
-            (templateFields || []).forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
-            // Ne jamais transmettre à overlayFieldsOnPdf les champs interactifs (signature/case/texte
-            // libre) qui appartiennent au FORMATEUR : sinon son champ pas encore rempli reçoit quand
-            // même un rendu "case vide/placeholder", gravé en dur dans le PDF au moment où le CLIENT
-            // signe — visible et figé plus tard sous la saisie du formateur (bug constaté 2026-07-24).
-            const fieldsForOverlay = (templateFields || []).filter(f => {
-              const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-              return !isInteractive || (f.tag || '').endsWith('_client');
-            });
-            pdfBlob = await overlayFieldsOnPdf(pdfBlob, fieldsForOverlay, dataValues, sigMap, checkedMap, textInputMap);
+            pdfBlob = await overlayFieldsOnPdf(pdfBlob, templateFields, dataValues, sigMap, checkedMap);
             signatureEmbeddedByOverlay = true;
           }
         }
@@ -14291,35 +9860,17 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     } catch (err) {
       console.error('[handleSignSave]', err);
       toast.error('Erreur lors de la préparation du document : ' + err.message, { id: toastId });
-      // Avant ce correctif, l'exécution continuait quand même jusqu'à l'étape 4 et enregistrait
-      // signe_par_client:true avec l'URL du template NON signé (signedPdfUrl retombait sur son
-      // fallback initial) : le document apparaissait "Signé ✓" côté client/formateur alors qu'aucun
-      // PDF signé n'avait réellement été généré/enregistré. On arrête ici pour ne PAS enregistrer une
-      // fausse signature — le client peut réessayer.
-      return;
+      // On continue quand même pour au moins enregistrer la signature en base
     }
 
     // ── Étape 4 : Enregistrer en base ─────────────────────────────────────
     let dbError;
-    // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis (pas seulement le
-    // client) ont signé — voir getRequiredSignerRoles/isDocFullySigned. existingGeneratedDoc suffit :
-    // getRequiredSignerRoles lit d'abord ses balises embarquées en metadata, puis se rabat sur la
-    // table technique template_fields via son propre template_id si besoin.
-    const _requiredRoles = await getRequiredSignerRoles(existingGeneratedDoc || {}, supabase);
-    const _statutAfterClientSign = isDocFullySigned({ ...(existingGeneratedDoc || {}), signe_par_client: true }, _requiredRoles)
-      ? 'Signé' : (existingGeneratedDoc?.statut || 'En attente de signature');
     const signatureData = {
       url: signedPdfUrl,
-      // Toujours refléter aussi 'signed_pdf_url' (bug racine identifié le 2026-07-24) : cette colonne sert
-      // de source pour certains écrans d'affichage (onglet "Documents Signés") ET est relue en priorité par
-      // handleSignDocument côté formateur. Si on ne la met pas à jour ici, elle reste figée sur un ancien
-      // snapshot pendant que 'url' avance — le prochain signataire (formateur) risque alors de construire
-      // par-dessus un PDF périmé et d'effacer silencieusement la contribution du client.
-      signed_pdf_url: signedPdfUrl,
       signe_par_client: true,
       date_signature_client: new Date().toISOString(),
       signature_client: signatureDataUrl,
-      statut: _statutAfterClientSign,
+      statut: 'Signé',
       visible_formateur: true,
       visible_admin: true,
     };
@@ -14540,29 +10091,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                 {groupQuestItems.map(q => {
                   const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
                   const nbQ = (qMeta.questions || []).length;
-                  const isQuizItem = !!qMeta.isQuiz;
-                  const qResponse = questionnaireResponses.find(r => r.questionnaire_id === q.id);
-                  const isQCompleted = !!qResponse;
+                  const isQCompleted = questionnaireResponses.some(r => r.questionnaire_id === q.id);
                   return (
                     <div key={q.id} className="px-4 py-3 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-base shrink-0">{isQuizItem ? '🎯' : '📝'}</span>
+                        <span className="text-base shrink-0">📝</span>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{q.titre}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {isQuizItem ? 'Quiz noté' : 'Questionnaire'}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · Questionnaire</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {isQCompleted ? (
-                          isQuizItem && qResponse.score_percent != null ? (
-                            <span className={`text-xs font-bold px-2 py-1 rounded border ${qResponse.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
-                              {qResponse.passed ? '✅' : '❌'} {Math.round(qResponse.score_percent)}%
-                            </span>
-                          ) : (
-                            <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Complété</span>
-                          )
+                          <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-100">✓ Complété</span>
                         ) : (
-                          <button onClick={() => setActiveQuestionnaire(q)} className="px-3 py-1.5 bg-amber-500 text-white font-bold rounded-lg text-xs hover:bg-amber-600 transition-colors shadow-sm">{isQuizItem ? 'Passer le quiz' : 'Remplir'}</button>
+                          <button onClick={() => setActiveQuestionnaire(q)} className="px-3 py-1.5 bg-amber-500 text-white font-bold rounded-lg text-xs hover:bg-amber-600 transition-colors shadow-sm">Remplir</button>
                         )}
                       </div>
                     </div>
@@ -14580,29 +10123,21 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const renderQuestionnaireCard = (resource) => {
     const meta = (() => { try { return typeof resource.metadata === 'string' ? JSON.parse(resource.metadata) : (resource.metadata || {}); } catch { return {}; } })();
     const nbQuestions = (meta.questions || []).length;
-    const isQuizResource = !!meta.isQuiz;
-    const response = questionnaireResponses.find(r => r.questionnaire_id === resource.id);
-    const isCompleted = !!response;
+    const isCompleted = questionnaireResponses.some(r => r.questionnaire_id === resource.id);
     return (
       <div key={resource.id} className="p-4 border border-gray-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:border-amber-200 transition-colors">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 text-xl ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
+          <div className="w-10 h-10 bg-amber-50 text-amber-600 flex items-center justify-center rounded-xl shrink-0 text-xl">📝</div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {isCompleted ? (
-            isQuizResource && response.score_percent != null ? (
-              <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
-                {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
-              </span>
-            ) : (
-              <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété</span>
-            )
+            <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété</span>
           ) : (
-            <button onClick={() => setActiveQuestionnaire(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">{isQuizResource ? 'Passer le quiz' : 'Remplir'}</button>
+            <button onClick={() => setActiveQuestionnaire(resource)} className="px-4 py-2 bg-violet-600 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors">Remplir</button>
           )}
         </div>
       </div>
@@ -14713,16 +10248,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   );
 
   const debutResources = moduleResources.filter(r => r.moment === 'debut');
-  // FIX (2026-09-18) : les ressources de FIN de parcours (documents, questionnaires, groupes) ne
-  // s'affichent désormais QUE si le parcours du client est détecté "terminé" (voir moduleCompleted /
-  // isModuleCompletedForClient plus haut) — auparavant elles étaient visibles immédiatement, comme
-  // celles de début, ce qui n'était pas voulu par l'utilisateur.
-  const allFinResources = moduleResources.filter(r => r.moment === 'fin');
-  const finResources = moduleCompleted ? allFinResources : [];
-  const finExercicesPending = !moduleCompleted && moduleExerciceResources.some(r => r.moment === 'fin');
-  const finLocked = !moduleCompleted && (allFinResources.length > 0 || finExercicesPending);
-  const visibleExtraFinDocs = moduleCompleted ? extraFinDocs : [];
-  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || visibleExtraFinDocs.length > 0 || extraOtherDocs.length > 0;
+  const finResources = moduleResources.filter(r => r.moment === 'fin');
+  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || extraFinDocs.length > 0;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
@@ -14730,22 +10257,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <QuestionnaireFillerModal
           questionnaire={activeQuestionnaire}
           onClose={() => setActiveQuestionnaire(null)}
-          onSubmit={async (answers, scoreInfo) => {
+          onSubmit={async (answers) => {
             const { error } = await supabase.from('questionnaire_responses').insert([{
               questionnaire_id: activeQuestionnaire.id,
               client_id: currentUserId,
               responses: answers,
-              completed_at: new Date().toISOString(),
-              // AJOUT (2026-09-30) : note du quiz (absent pour un questionnaire classique) — voir
-              // QuestionnaireFillerModal.computeQuizScore.
-              ...(scoreInfo ? { score_percent: scoreInfo.scorePercent, passed: scoreInfo.passed } : {})
+              completed_at: new Date().toISOString()
             }]);
-            if (error) { toast.error('Erreur lors de l\'envoi : ' + error.message); throw error; }
+            if (error) { toast.error('Erreur lors de l\'envoi : ' + error.message); return; }
             const { data } = await supabase.from('questionnaire_responses').select('*').eq('client_id', currentUserId);
             if (data) setQuestionnaireResponses(data);
-            toast.success(scoreInfo ? '✅ Quiz envoyé !' : '✅ Questionnaire envoyé !');
-            // NB : la fermeture de la modale est gérée par QuestionnaireFillerModal lui-même (affiche
-            // d'abord un écran de résultat/remerciement si besoin, avant d'appeler onClose()).
+            setActiveQuestionnaire(null);
+            toast.success('✅ Questionnaire envoyé !');
           }}
         />
       )}
@@ -14768,40 +10291,15 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         </div>
       )}
 
-      {(finResources.length > 0 || visibleExtraFinDocs.length > 0) && (
+      {(finResources.length > 0 || extraFinDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-violet-600 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
-            <span className="bg-violet-50 text-violet-600 text-[10px] font-bold px-2 py-1 rounded-full">Débloqués — parcours terminé</span>
           </div>
           <div className="space-y-3">
             {finResources.map(renderResourceCard)}
-            {visibleExtraFinDocs.map(renderDocumentCard)}
-          </div>
-        </div>
-      )}
-
-      {/* AJOUT (2026-09-18) : indique au client que des documents/exercices de fin de parcours
-          existent mais ne sont pas encore débloqués, plutôt que de les faire disparaître silencieusement. */}
-      {finLocked && (
-        <div className="bg-gray-50 border border-dashed border-gray-200 rounded-3xl p-6 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 text-gray-400">🔒</div>
-          <div>
-            <p className="font-bold text-gray-700 text-sm">Documents de fin de parcours</p>
-            <p className="text-xs text-gray-400 mt-0.5">Ils seront débloqués automatiquement à la date de votre dernière séance.</p>
-          </div>
-        </div>
-      )}
-
-      {extraOtherDocs.length > 0 && (
-        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-2 h-6 bg-gray-400 rounded-full"></div>
-            <h2 className="font-bold text-gray-900 text-lg">Documents supplémentaires</h2>
-          </div>
-          <div className="space-y-3">
-            {extraOtherDocs.map(renderDocumentCard)}
+            {extraFinDocs.map(renderDocumentCard)}
           </div>
         </div>
       )}
@@ -14830,8 +10328,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           mode="sign"
           isInteractiveConsent={false}
           requiredCheckboxes={signingCheckboxFields}
-          requiredTextFields={signingTextFields}
-          requiresSignature={signingRequiresSignature}
           onSave={handleSignSave}
         />
       )}
@@ -14903,7 +10399,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
                 </div>
                 {s.correction_commentaire && (
                   <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du formateur</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du coach</p>
                     <p className="text-xs text-gray-600 leading-relaxed">{s.correction_commentaire}</p>
                   </div>
                 )}
@@ -14931,145 +10427,6 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
   );
 };
 
-// ─── Connexion Google Agenda (2026-07-27) ────────────────────────────────────
-// Carte affichée dans "Mon Profil" (client et formateur) permettant de connecter/déconnecter
-// son Google Agenda. La connexion (tokens) est gérée côté serveur (api/calendar/google/*) ;
-// ici on ne fait que lire l'état (via RLS : chacun ne voit que sa propre ligne) et déclencher
-// la redirection OAuth ou la déconnexion.
-const GoogleCalendarCard = ({ supabase, currentUserId }) => {
-  const [status, setStatus] = useState('loading'); // 'loading' | 'connected' | 'disconnected'
-  const [connectedEmail, setConnectedEmail] = useState('');
-  const [isBusy, setIsBusy] = useState(false);
-
-  const loadStatus = React.useCallback(async () => {
-    if (!currentUserId) return;
-    const { data } = await supabase
-      .from('calendar_connections')
-      .select('connected_email')
-      .eq('owner_id', String(currentUserId))
-      .eq('provider', 'google')
-      .maybeSingle();
-    if (data) { setStatus('connected'); setConnectedEmail(data.connected_email || ''); }
-    else { setStatus('disconnected'); setConnectedEmail(''); }
-  }, [supabase, currentUserId]);
-
-  useEffect(() => { loadStatus(); }, [loadStatus]);
-
-  const handleSyncAll = React.useCallback(async (silent = false) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-    const toastId = silent ? undefined : toast.loading('Synchronisation de vos séances...');
-    try {
-      const resp = await fetch('/api/calendar/sync-all', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        if (toastId) toast.error(data.error || 'Échec de la synchronisation.', { id: toastId });
-        return;
-      }
-      if (toastId) {
-        if (data.total > 0 && data.synced < data.total) {
-          const detail = (data.errors && data.errors[0]) ? ` — ${data.errors[0]}` : '';
-          toast.error(`${data.synced}/${data.total} séance(s) synchronisée(s)${detail}`, { id: toastId, duration: 8000 });
-          if (data.errors?.length) console.error('[sync-all] erreurs :', data.errors);
-        } else {
-          toast.success(
-            data.total > 0 ? `${data.synced}/${data.total} séance(s) synchronisée(s) avec Google Agenda.` : 'Aucune séance à synchroniser pour le moment.',
-            { id: toastId }
-          );
-        }
-      }
-    } catch (e) {
-      if (toastId) toast.error('Erreur lors de la synchronisation.', { id: toastId });
-    }
-  }, [supabase]);
-
-  // Affiche un message une seule fois au retour du flux OAuth (?calendar=connected|error dans l'URL),
-  // et rattrape automatiquement les séances déjà créées AVANT la connexion (sync-seance.js ne pousse
-  // que ce qui est créé/modifié APRÈS coup — sans ce rattrapage, l'agenda semblerait vide).
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get('calendar');
-    if (!result) return;
-    if (result === 'connected') { toast.success('Google Agenda connecté !'); loadStatus(); handleSyncAll(); }
-    else if (result === 'error') { toast.error('La connexion à Google Agenda a échoué. Réessayez.'); }
-    params.delete('calendar');
-    const newSearch = params.toString();
-    window.history.replaceState(null, '', window.location.pathname + (newSearch ? `?${newSearch}` : ''));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleConnect = async () => {
-    setIsBusy(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { toast.error('Session expirée, reconnectez-vous.'); setIsBusy(false); return; }
-      const resp = await fetch('/api/calendar/google/start', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.url) {
-        toast.error(data.error || "Impossible de démarrer la connexion Google Agenda.");
-        setIsBusy(false);
-        return;
-      }
-      window.location.href = data.url;
-    } catch (e) {
-      toast.error("Erreur lors de la connexion à Google Agenda.");
-      setIsBusy(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    setIsBusy(true);
-    const { error } = await supabase.from('calendar_connections').delete().eq('owner_id', String(currentUserId)).eq('provider', 'google');
-    if (error) toast.error('Erreur lors de la déconnexion.');
-    else { toast.success('Google Agenda déconnecté.'); setStatus('disconnected'); setConnectedEmail(''); }
-    setIsBusy(false);
-  };
-
-  return (
-    <div>
-      <h3 className="text-base font-bold text-gray-700 mb-4 flex items-center gap-2">
-        <ExternalLink size={16} className="text-indigo-500" /> Google Agenda
-      </h3>
-      <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          {status === 'connected' ? (
-            <>
-              <p className="text-sm font-bold text-gray-800">✅ Connecté{connectedEmail ? ` — ${connectedEmail}` : ''}</p>
-              <p className="text-xs text-gray-400 mt-1">Vos séances sont ajoutées automatiquement à votre Google Agenda.</p>
-            </>
-          ) : status === 'disconnected' ? (
-            <>
-              <p className="text-sm font-bold text-gray-800">Non connecté</p>
-              <p className="text-xs text-gray-400 mt-1">Connectez votre Google Agenda pour y retrouver automatiquement vos séances.</p>
-            </>
-          ) : (
-            <p className="text-sm text-gray-400">Vérification...</p>
-          )}
-        </div>
-        {status === 'connected' ? (
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => handleSyncAll(false)} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50">
-              Resynchroniser
-            </button>
-            <button onClick={handleDisconnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors disabled:opacity-50">
-              {isBusy ? '...' : 'Déconnecter'}
-            </button>
-          </div>
-        ) : status === 'disconnected' ? (
-          <button onClick={handleConnect} disabled={isBusy} className="text-xs font-bold px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 shrink-0">
-            {isBusy ? 'Redirection...' : 'Connecter mon Google Agenda'}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-};
-
 const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, clients, userRole, orgSettings, onOrgSaved, currentOrgId }) => {
   const user = userRole === 'formateur' ? formateurs.find(f => f.id === currentUserId) : (userRole === 'client' ? clients.find(c => c.id === currentUserId) : null);
 
@@ -15081,11 +10438,9 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     nom_organisme: orgSettings?.nom || '',
     adresse_formateur: user?.adresse_formateur || user?.adresse_pro || '',
     adresse_session: user?.adresse_session || '',
-    region: user?.region || '',
     adresse_org: orgSettings?.adresse || '',
     code_postal_org: orgSettings?.code_postal || '',
     ville_org: orgSettings?.ville || '',
-    region_org: orgSettings?.region || '',
     siret: user?.formateur_siret || orgSettings?.siret || '',
     nda: user?.formateur_nda || orgSettings?.nda || '',
     email: user?.email || '',
@@ -15113,7 +10468,6 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
               telephone: data.telephone || '',
               adresse_formateur: data.adresse_formateur || '',
               adresse_session: data.adresse_session || '',
-              region: data.region || '',
               siret: data.formateur_siret || '',
               nda: data.formateur_nda || '',
               compagnie_assurance: data.compagnie_assurance || '',
@@ -15135,8 +10489,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         site_web: orgSettings.site_web || '',
         adresse_org: orgSettings.adresse || '',
         code_postal_org: orgSettings.code_postal || '',
-        ville_org: orgSettings.ville || '',
-        region_org: orgSettings.region || ''
+        ville_org: orgSettings.ville || ''
       }));
       setLogoUrl(orgSettings.logo_url || '');
     }
@@ -15178,7 +10531,6 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         telephone: profileData.telephone,
         adresse_formateur: profileData.adresse_formateur,
         adresse_session: sameAddress ? profileData.adresse_formateur : profileData.adresse_session,
-        region: profileData.region,
         formateur_siret: profileData.siret,
         formateur_nda: profileData.nda,
         compagnie_assurance: profileData.compagnie_assurance,
@@ -15193,8 +10545,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           site_web: profileData.site_web,
           adresse: profileData.adresse_org,
           code_postal: profileData.code_postal_org,
-          ville: profileData.ville_org,
-          region: profileData.region_org
+          ville: profileData.ville_org
         }).eq('id', orgSettings.id);
         if (orgResult.error) error = orgResult.error;
         else if (onOrgSaved) onOrgSaved({
@@ -15204,8 +10555,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           site_web: profileData.site_web,
           adresse: profileData.adresse_org,
           code_postal: profileData.code_postal_org,
-          ville: profileData.ville_org,
-          region: profileData.region_org
+          ville: profileData.ville_org
         });
       }
     }
@@ -15331,13 +10681,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                   <>
                     <div>
                       <label className={labelCls}>Adresse Siège Social</label>
-                      <AddressAutocomplete
-                        value={profileData.adresse_org}
-                        onChange={val => setProfileData({ ...profileData, adresse_org: val })}
-                        onSelect={({ rue, codePostal, ville, region }) => setProfileData(prev => ({ ...prev, adresse_org: rue, code_postal_org: codePostal || prev.code_postal_org, ville_org: ville || prev.ville_org, region_org: region || prev.region_org }))}
-                        placeholder="N° et nom de rue"
-                        className={inputCls}
-                      />
+                      <input className={inputCls} value={profileData.adresse_org} onChange={e => setProfileData({ ...profileData, adresse_org: e.target.value })} placeholder="N° et nom de rue" />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -15349,23 +10693,12 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                         <input className={inputCls} value={profileData.ville_org} onChange={e => setProfileData({ ...profileData, ville_org: e.target.value })} placeholder="Paris" />
                       </div>
                     </div>
-                    <div>
-                      <label className={labelCls}>Région</label>
-                      <input list="region-list-profile-org" className={inputCls} value={profileData.region_org} onChange={e => setProfileData({ ...profileData, region_org: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
-                      <datalist id="region-list-profile-org">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
-                    </div>
                   </>
                 ) : (
                   <>
                     <div>
                       <label className={labelCls}>Adresse Siège Social</label>
-                      <AddressAutocomplete
-                        value={profileData.adresse_formateur}
-                        onChange={val => setProfileData({ ...profileData, adresse_formateur: val })}
-                        onSelect={({ label, region }) => setProfileData(prev => ({ ...prev, adresse_formateur: label, region: region || prev.region }))}
-                        placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
-                        className={inputCls}
-                      />
+                      <AddressInput value={profileData.adresse_formateur} onChange={val => setProfileData({ ...profileData, adresse_formateur: val })} />
                     </div>
                     <div className="flex items-center gap-2">
                       <input type="checkbox" id="profSameAddress" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} className="w-4 h-4 accent-indigo-500 cursor-pointer rounded" />
@@ -15374,19 +10707,9 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
                     {!sameAddress && (
                       <div>
                         <label className={labelCls}>Adresse de Pratique</label>
-                        <AddressAutocomplete
-                          value={profileData.adresse_session}
-                          onChange={val => setProfileData({ ...profileData, adresse_session: val })}
-                          placeholder="Ex : 12 Rue de la Paix, 75001 Paris"
-                          className={inputCls}
-                        />
+                        <AddressInput value={profileData.adresse_session} onChange={val => setProfileData({ ...profileData, adresse_session: val })} />
                       </div>
                     )}
-                    <div>
-                      <label className={labelCls}>Région</label>
-                      <input list="region-list-profile-formateur" className={inputCls} value={profileData.region} onChange={e => setProfileData({ ...profileData, region: e.target.value })} placeholder="Ex : Bretagne" autoComplete="off" />
-                      <datalist id="region-list-profile-formateur">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
-                    </div>
                   </>
                 )}
               </div>
@@ -15404,12 +10727,6 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
           </button>
         </div>
       </div>
-
-      {(userRole === 'client' || userRole === 'formateur') && (
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
-          <GoogleCalendarCard supabase={supabase} currentUserId={currentUserId} />
-        </div>
-      )}
     </div>
   );
 };
@@ -15629,9 +10946,9 @@ const SetPasswordView = ({ supabase, onComplete }) => {
 
   if (isVerifying) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
+          <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -15640,7 +10957,7 @@ const SetPasswordView = ({ supabase, onComplete }) => {
 
   if (verifyError) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6 shadow-lg">!</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
@@ -15652,9 +10969,9 @@ const SetPasswordView = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
+        <div className="w-16 h-16 bg-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Finalisez votre accès</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre mot de passe pour accéder à SkorUp.</p>
         <form onSubmit={handleSetPassword} className="space-y-4">
@@ -15749,9 +11066,9 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 
   if (isVerifying) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md animate-fade-in text-center">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
+          <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg animate-pulse"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
           <p className="text-gray-500 font-medium">Vérification de votre lien en cours...</p>
         </div>
       </div>
@@ -15760,7 +11077,7 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 
   if (verifyError) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in text-center">
           <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-6">!</div>
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Lien expiré</h2>
@@ -15772,9 +11089,9 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   }
 
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-6">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 w-full max-w-md animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain" /></div>
+        <div className="w-16 h-16 bg-violet-700 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg"><svg width="32" height="25" viewBox="0 0 32 25" fill="none"><rect width="32" height="5.5" rx="2.75" fill="white"/><rect y="9.75" width="21" height="5.5" rx="2.75" fill="rgba(255,255,255,0.78)"/><rect y="19.5" width="13" height="5.5" rx="2.75" fill="rgba(255,255,255,0.5)"/></svg></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2 text-center">Nouveau mot de passe</h2>
         <p className="text-gray-500 text-sm mb-6 text-center">Créez votre nouveau mot de passe sécurisé.</p>
         <form onSubmit={handleUpdatePassword} className="space-y-4">
@@ -15833,23 +11150,8 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   );
 };
 
-const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole }) => {
+const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs }) => {
   const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
-
-  // FIX (2026-09-15) : le formulaire gardait le nom/email/formateur du DERNIER utilisateur créé
-  // quand on rouvrait la modale pour en créer un autre — car ce composant reste monté en permanence
-  // (il retourne juste `null` quand isOpen est faux, voir plus bas) donc son state React n'était
-  // jamais réinitialisé entre deux ouvertures. Signalé par l'utilisateur le 15/09/2026. On réinitialise
-  // maintenant TOUT le formulaire (pas seulement le rôle) à chaque ouverture — tout en gardant la
-  // pré-sélection du rôle depuis l'onglet d'origine (Clients → client, Formateurs → formateur, ajouté
-  // le 2026-08-05). En cas d'erreur d'envoi, la modale reste ouverte SANS se refermer (voir handleInvite
-  // plus bas) donc les données saisies ne sont pas perdues — seule une réouverture après un succès
-  // (fermeture automatique) repart bien de zéro.
-  React.useEffect(() => {
-    if (isOpen) {
-      setFormData({ nom: '', email: '', role: defaultRole || 'client', formateur_id: '' });
-    }
-  }, [isOpen, defaultRole]);
 
   if (!isOpen) return null;
 
@@ -15890,7 +11192,7 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
               onChange={e => setFormData({ ...formData, role: e.target.value })}
             >
               <option value="client">Client (Bénéficiaire)</option>
-              <option value="formateur">Formateur</option>
+              <option value="formateur">Formateur (Coach)</option>
             </select>
           </div>
 
@@ -15945,10 +11247,8 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
   const fetchProcesses = React.useCallback(async () => {
     setLoading(true);
     const db = supabase;
-    // Le filtre est désormais TOUJOURS appliqué (avant : seulement si currentOrgId était renseigné,
-    // sinon la requête remontait silencieusement les shared_processes de TOUS les organismes).
     let query = db.from('shared_processes').select('*').order('created_at', { ascending: false });
-    query = currentOrgId ? query.eq('organisation_id', currentOrgId) : query.limit(0);
+    if (currentOrgId) query = query.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
     const { data, error } = await query;
     if (!error && data) setProcesses(data);
     setLoading(false);
@@ -15995,11 +11295,7 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
   const handleDelete = async () => {
     if (!processToDelete) return;
     const db = supabase;
-    // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : avant ce correctif,
-    // la suppression ne filtrait que par id, sans aucune vérification d'appartenance à l'organisme.
-    if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
-    const delQuery = db.from('shared_processes').delete().eq('id', processToDelete.id).eq('organisation_id', currentOrgId);
-    await delQuery;
+    await db.from('shared_processes').delete().eq('id', processToDelete.id);
     toast.success('Ressource supprimée.');
     setProcessToDelete(null);
     fetchProcesses();
@@ -16138,9 +11434,9 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {p.url && (
-                    <button onClick={() => openSecureStorageFile(p.url)} className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded-xl transition-all" title="Ouvrir">
+                    <a href={p.url} target="_blank" rel="noreferrer" className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white rounded-xl transition-all" title="Ouvrir">
                       <Eye size={16} />
-                    </button>
+                    </a>
                   )}
                   {isAdmin && (
                     <button onClick={() => setProcessToDelete(p)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Supprimer">
@@ -16338,9 +11634,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
       </div>
 
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden" style={{ minHeight: '520px' }}>
-        <div className="flex h-[75vh] md:h-[600px]">
-          {/* Colonne gauche : conversations — masquée sur mobile dès qu'une conversation est ouverte */}
-          <div className={`w-full md:w-72 shrink-0 border-r border-gray-100 flex-col ${activeConvId ? 'hidden md:flex' : 'flex'}`}>
+        <div className="flex h-[600px]">
+          {/* Colonne gauche : conversations */}
+          <div className="w-72 shrink-0 border-r border-gray-100 flex flex-col">
             <div className="p-4 border-b border-gray-100">
               <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Conversations</p>
               {/* Démarrer nouvelle conversation */}
@@ -16411,8 +11707,8 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
             </div>
           </div>
 
-          {/* Colonne droite : messages — masquée sur mobile tant qu'aucune conversation n'est ouverte */}
-          <div className={`flex-1 flex-col min-w-0 ${activeConvId ? 'flex' : 'hidden md:flex'}`}>
+          {/* Colonne droite : messages */}
+          <div className="flex-1 flex flex-col min-w-0">
             {!activeConvId ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
                 <div className="text-5xl mb-4">💬</div>
@@ -16423,13 +11719,6 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
               <>
                 {/* En-tête conversation */}
                 <div className="p-4 border-b border-gray-100 flex items-center gap-3">
-                  <button
-                    onClick={() => setActiveConvId(null)}
-                    className="md:hidden p-1.5 -ml-1.5 text-gray-400 hover:text-gray-700 shrink-0"
-                    title="Retour aux conversations"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                  </button>
                   <div className={`w-9 h-9 rounded-full ${roleColor(activeOther?.role || 'client')} text-white flex items-center justify-center font-bold text-sm shrink-0`}>
                     {(activeOther?.label || '?').charAt(0).toUpperCase()}
                   </div>
@@ -16457,9 +11746,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                           <div className={`max-w-xs rounded-2xl px-4 py-2.5 shadow-sm ${isMine ? 'bg-teal-500 text-white rounded-br-sm' : 'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
                             {m.content && <p className="text-sm leading-relaxed">{m.content}</p>}
                             {m.attachment_url && (
-                              <button onClick={() => openSecureStorageFile(m.attachment_url)} className={`flex items-center gap-1.5 text-xs font-bold mt-1 underline ${isMine ? 'text-teal-100' : 'text-indigo-600'}`}>
+                              <a href={m.attachment_url} target="_blank" rel="noreferrer" className={`flex items-center gap-1.5 text-xs font-bold mt-1 underline ${isMine ? 'text-teal-100' : 'text-indigo-600'}`}>
                                 📎 {m.attachment_name || 'Pièce jointe'}
-                              </button>
+                              </a>
                             )}
                             <p className={`text-[9px] mt-1 ${isMine ? 'text-teal-100' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                           </div>
@@ -16521,7 +11810,6 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const [siteWeb, setSiteWeb] = useState(orgSettings?.site_web || '');
   const [codePostal, setCodePostal] = useState(orgSettings?.code_postal || '');
   const [ville, setVille] = useState(orgSettings?.ville || '');
-  const [region, setRegion] = useState(orgSettings?.region || '');
   const [emailContact, setEmailContact] = useState('');
   const [telephoneContact, setTelephoneContact] = useState('');
   const [compagnieAssurance, setCompagnieAssurance] = useState('');
@@ -16554,7 +11842,6 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       setSiteWeb(orgSettings.site_web || '');
       setCodePostal(orgSettings.code_postal || '');
       setVille(orgSettings.ville || '');
-      setRegion(orgSettings.region || '');
     }
   }, [orgSettings]);
 
@@ -16651,7 +11938,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
     // 1. Mise à jour de la table organisations
     const { error } = await supabase.from('organisations').update({
       nom, siret, adresse, logo_url: logoUrl,
-      nda, site_web: siteWeb, code_postal: codePostal, ville, region
+      nda, site_web: siteWeb, code_postal: codePostal, ville
     }).eq('id', currentOrgId);
     if (error) {
       toast.error("Erreur : " + error.message);
@@ -16669,7 +11956,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       }).eq('email', authUser.email);
     }
     toast.success("Paramètres sauvegardés !");
-    onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville, region });
+    onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville });
     setIsSaving(false);
   };
 
@@ -16682,13 +11969,12 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
         <div className="flex gap-1 mt-5 bg-gray-100 p-1 rounded-xl w-fit">
           {[
             { key: 'organisme', label: 'Organisme' },
-            { key: 'personnalisation', label: 'Personnalisation', proOnly: true },
+            { key: 'personnalisation', label: 'Personnalisation' },
             { key: 'abonnement', label: 'Abonnement' },
           ].map(tab => (
             <button key={tab.key} onClick={() => setSettingsTab(tab.key)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
               {tab.label}
-              {tab.proOnly && !hasFeatureAccess(orgSettings, 'pro') && <span className="text-[9px] font-black bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-md">PRO</span>}
             </button>
           ))}
         </div>
@@ -16794,13 +12080,8 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
           {/* Adresse siège */}
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Adresse Siège Social</label>
-            <AddressAutocomplete
-              value={adresse}
-              onChange={setAdresse}
-              onSelect={({ rue, codePostal: cp, ville: v, region: r }) => { setAdresse(rue); if (cp) setCodePostal(cp); if (v) setVille(v); if (r) setRegion(r); }}
-              placeholder="N° et nom de rue"
-              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all"
-            />
+            <input type="text" value={adresse} onChange={e => setAdresse(e.target.value)} placeholder="N° et nom de rue"
+              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
 
           {/* Code postal + Ville */}
@@ -16816,14 +12097,6 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
                 className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
             </div>
           </div>
-
-          {/* Région */}
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Région</label>
-            <input list="region-list-org" type="text" value={region} onChange={e => setRegion(e.target.value)} placeholder="Ex : Bretagne" autoComplete="off"
-              className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
-            <datalist id="region-list-org">{FRENCH_REGIONS.map(r => <option key={r} value={r} />)}</datalist>
-          </div>
         </div>
 
         {/* ── Bouton de sauvegarde ── */}
@@ -16835,22 +12108,8 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       </div>
       )}
 
-      {/* ── Onglet Personnalisation (réservé aux plans Pro et Illimité) ── */}
-      {settingsTab === 'personnalisation' && !hasFeatureAccess(orgSettings, 'pro') && (
-        <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
-            <Lock className="w-7 h-7 text-violet-600" />
-          </div>
-          <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
-          <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
-            La personnalisation de votre portail client (logo, couleurs, message d'accueil) est disponible à partir du plan Pro.
-          </p>
-          <button onClick={() => setSettingsTab('abonnement')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
-            Voir les plans →
-          </button>
-        </div>
-      )}
-      {settingsTab === 'personnalisation' && hasFeatureAccess(orgSettings, 'pro') && (
+      {/* ── Onglet Personnalisation ── */}
+      {settingsTab === 'personnalisation' && (
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-6">
         <div>
           <h3 className="text-lg font-black text-gray-900">🎨 Personnalisation du portail</h3>
@@ -16863,8 +12122,8 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
             {brandLogoUrl ? (
               <img src={brandLogoUrl} alt="Logo" className="w-8 h-8 rounded-lg object-contain bg-white/20 p-1" />
             ) : (
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{background:'#100524'}}>
-                <img src="/logo-mark.png" alt="SkorUp" className="h-4 w-auto object-contain" />
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                <svg width="18" height="14" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg>
               </div>
             )}
             <span className="text-white font-bold text-sm">{brandName || 'Nom de votre organisme'}</span>
@@ -17015,7 +12274,7 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
   const fetchAssignedJobSheets = async () => {
     setLoadingAssigned(true);
     let q = supabase.from('job_sheets').select('*').order('created_at', { ascending: false });
-    q = currentOrgId ? q.eq('organisation_id', currentOrgId) : q.limit(0);
+    if (currentOrgId) q = q.or(`organisation_id.eq.${currentOrgId},organisation_id.is.null`);
     const { data } = await q;
     if (data) setAssignedJobSheets(data);
     setLoadingAssigned(false);
@@ -17105,28 +12364,12 @@ const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, cl
       }
 
       // Associer au client
-      // CORRECTIF (2026-07-29) : client_job_sheets.assigned_by_formateur_id est une colonne de
-      // type uuid (l'auth_uid Supabase Auth du formateur), alors que currentUserId est l'id interne
-      // ENTIER de la table utilisateurs (ex: 22, visible dans l'URL/le state formateur) — les confondre
-      // provoquait "invalid input syntax for type uuid: '22'" et empêchait toute assignation de fiche
-      // métier depuis l'espace formateur. On récupère donc le véritable auth_uid du formateur avant
-      // l'insertion, comme pour clients.formateur_auth_uid ailleurs dans l'app.
-      let assignedByAuthUid = null;
-      if (userRole === 'formateur' && currentUserId) {
-        const { data: formateurRow } = await supabase
-          .from('utilisateurs')
-          .select('auth_uid')
-          .eq('id', currentUserId)
-          .maybeSingle();
-        assignedByAuthUid = formateurRow?.auth_uid || null;
-      }
-
       const { error: assignErr } = await supabase
         .from('client_job_sheets')
         .insert([{
           job_sheet_id: jobSheetId,
           client_id: selectedClientId,
-          assigned_by_formateur_id: assignedByAuthUid,
+          assigned_by_formateur_id: userRole === 'formateur' ? currentUserId : null,
         }]);
 
       if (assignErr) {
@@ -17772,68 +13015,11 @@ const TRIGGER_LABELS = {
 
 const getTriggerLabel = (type) => TRIGGER_LABELS[type] || type;
 
-// Traduction + style des statuts d'envoi (automation_logs.status), pour le "Journal des envois" —
-// avant ce correctif la valeur brute anglaise ("sent") s'affichait telle quelle.
-const LOG_STATUS_LABELS = {
-  sent: { label: 'Envoyé', className: 'bg-green-50 text-green-700 border-green-200' },
-  simulated: { label: 'Simulé (test)', className: 'bg-amber-50 text-amber-700 border-amber-200' },
-  error: { label: 'Échec', className: 'bg-red-50 text-red-700 border-red-200' },
-};
-const getLogStatusInfo = (status) =>
-  LOG_STATUS_LABELS[status] || { label: status || '—', className: 'bg-gray-50 text-gray-600 border-gray-200' };
-
-// Signification de chaque balise disponible dans les emails de relance — affichée dans le
-// panneau d'aide à côté de l'éditeur, pour que l'admin sache exactement ce que chaque balise
-// va afficher dans l'email réellement envoyé (voir api/automation/trigger-manual.js et
-// api/automation/process.js pour la logique de remplissage correspondante).
-const TAG_DEFINITIONS = {
-  '{{client_name}}': {
-    label: 'Nom du client',
-    example: 'Jean Dupont',
-    description: "Le nom complet du client, tel qu'enregistré dans sa fiche.",
-  },
-  '{{session_title}}': {
-    label: 'Titre de la séance',
-    example: 'Séance 2 - Émargement de présence',
-    description: "L'intitulé de la séance concernée.",
-  },
-  '{{session_date}}': {
-    label: 'Date de la séance',
-    example: 'jeudi 30 juillet 2026',
-    description: 'La date de la séance, écrite en toutes lettres.',
-  },
-  '{{session_time}}': {
-    label: 'Heure de la séance',
-    example: '11:00',
-    description: "L'heure de début de la séance.",
-  },
-  '{{session_number}}': {
-    label: 'Numéro de la séance',
-    example: '2',
-    description: "Le numéro d'ordre de la séance (ex : la 2ème séance du parcours).",
-  },
-  '{{numero_dossier}}': {
-    label: 'Numéro de dossier',
-    example: 'D-2026-014',
-    description: "Le numéro de dossier du client, si renseigné dans sa fiche.",
-  },
-  '{{module_name}}': {
-    label: 'Nom du module / de la formation',
-    example: 'Bilan de compétences',
-    description: "Le nom du module ou de la formation suivie par le client, si renseigné dans sa fiche.",
-  },
-};
-
 const TRIGGER_VARS = {
-  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'],
-  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'],
-  welcome: ['{{client_name}}', '{{numero_dossier}}', '{{module_name}}'],
+  no_signature: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  reminder_before_session: ['{{client_name}}', '{{session_title}}', '{{session_date}}'],
+  welcome: ['{{client_name}}'],
 };
-
-// Balises pour les types personnalisés (ajouté 2026-07-29) : depuis que ces relances sont
-// rattachées à une vraie séance (module + numéro de séance + avant/après), les mêmes balises
-// de séance que les relances prédéfinies sont désormais disponibles, plutôt que juste {{client_name}}.
-const CUSTOM_TAGS = ['{{client_name}}', '{{session_title}}', '{{session_date}}', '{{session_time}}', '{{session_number}}', '{{numero_dossier}}', '{{module_name}}'];
 
 const EMPTY_FORM = {
   trigger_type: 'no_signature',
@@ -17841,727 +13027,7 @@ const EMPTY_FORM = {
   email_subject: '',
   email_body: '',
   is_active: true,
-  // Champs utilisés uniquement par les types personnalisés (__custom__) — ajoutés 2026-07-29
-  // pour permettre de cibler un module/une séance précise et un moment avant/après.
-  target_module_id: '',
-  target_numero_seance: '',
-  timing_direction: 'before',
-  require_unsigned: false,
 };
-
-// ─── Vue Admin/Formateur : Questionnaires Prospects ────────────────────────────────────────────
-// Demandé par l'utilisateur le 22/09/2026 : envoyer un questionnaire d'entretien préalable à une
-// personne qui n'a pas (encore) de compte SkorUp, par email, sans qu'elle ait à se connecter.
-// Les MODÈLES (questions) sont gérés par l'admin uniquement ; l'admin ET le formateur peuvent
-// ENVOYER un questionnaire à un prospect en choisissant un modèle actif. L'envoi passe par
-// api/prospects.js (jamais un insert Supabase direct) car c'est cette fonction qui génère le
-// token aléatoire du lien public et envoie l'email — voir ce fichier pour le détail de sécurité.
-// --- Finances (2026-09-26) : vue d'ensemble admin des encaissements clients ---------------------
-function FinancesView({ supabase, currentOrgId, clients }) {
-  const [paiements, setPaiements] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    const fetchPaiements = async () => {
-      setLoading(true);
-      const { data, error } = await supabase.from('client_paiements').select('*').eq('organisation_id', currentOrgId);
-      if (!error) setPaiements(data || []);
-      setLoading(false);
-    };
-    if (currentOrgId) fetchPaiements();
-  }, [currentOrgId, supabase]);
-
-  const fmt = (n) => (n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
-
-  const paiementsByClient = paiements.reduce((acc, p) => {
-    acc[p.client_id] = (acc[p.client_id] || 0) + (parseFloat(p.montant) || 0);
-    return acc;
-  }, {});
-
-  const rows = (clients || [])
-    .filter(c => c.montant_prestation && parseFloat(c.montant_prestation) > 0)
-    .map(c => {
-      const montantTotal = parseFloat(c.montant_prestation) || 0;
-      const montantPaye = paiementsByClient[c.id] || 0;
-      const resteDu = montantTotal - montantPaye;
-      const pourcentageFormateur = parseFloat(c.pourcentage_formateur) || 0;
-      const partFormateur = montantTotal * pourcentageFormateur / 100;
-      const partOrganisme = montantTotal - partFormateur;
-      return { client: c, montantTotal, montantPaye, resteDu, pourcentageFormateur, partFormateur, partOrganisme };
-    })
-    .sort((a, b) => b.resteDu - a.resteDu);
-
-  const totals = rows.reduce((acc, r) => ({
-    montantTotal: acc.montantTotal + r.montantTotal,
-    montantPaye: acc.montantPaye + r.montantPaye,
-    resteDu: acc.resteDu + r.resteDu,
-    partFormateur: acc.partFormateur + r.partFormateur,
-    partOrganisme: acc.partOrganisme + r.partOrganisme,
-  }), { montantTotal: 0, montantPaye: 0, resteDu: 0, partFormateur: 0, partOrganisme: 0 });
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-black text-gray-900">Finances</h2>
-        <p className="text-sm text-gray-500 mt-1">Vue d'ensemble des encaissements clients. Les paiements se saisissent dans l'onglet "Finances" de chaque fiche client.</p>
-      </div>
-
-      {loading ? (
-        <p className="text-sm text-gray-400 italic">Chargement...</p>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
-              <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">CA prévisionnel</p>
-              <p className="text-lg font-black text-gray-800">{fmt(totals.montantTotal)}</p>
-            </div>
-            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Encaissé</p>
-              <p className="text-lg font-black text-emerald-800">{fmt(totals.montantPaye)}</p>
-            </div>
-            <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-orange-700 tracking-widest mb-1">Reste dû</p>
-              <p className="text-lg font-black text-orange-800">{fmt(totals.resteDu)}</p>
-            </div>
-            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateurs</p>
-              <p className="text-lg font-black text-indigo-800">{fmt(totals.partFormateur)}</p>
-            </div>
-            <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
-              <p className="text-lg font-black text-violet-800">{fmt(totals.partOrganisme)}</p>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left">
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest">Client</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Montant total</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Payé</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Reste dû</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">% Formateur</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part formateur</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part organisme</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr><td colSpan="7" className="p-8 text-center text-gray-400 italic">Aucun client avec un montant de prestation renseigné.</td></tr>
-                ) : rows.map(r => (
-                  <tr key={r.client.id} className="border-b border-gray-50 last:border-0">
-                    <td className="p-4 font-bold text-gray-800">{r.client.nomcomplet_client || r.client.nom_complet || 'Client'}</td>
-                    <td className="p-4 text-right">{fmt(r.montantTotal)}</td>
-                    <td className="p-4 text-right text-emerald-700 font-bold">{fmt(r.montantPaye)}</td>
-                    <td className={`p-4 text-right font-bold ${r.resteDu > 0 ? 'text-orange-700' : 'text-gray-400'}`}>{fmt(r.resteDu)}</td>
-                    <td className="p-4 text-right text-gray-500">{r.pourcentageFormateur ? `${r.pourcentageFormateur}%` : '—'}</td>
-                    <td className="p-4 text-right text-indigo-700">{r.pourcentageFormateur ? fmt(r.partFormateur) : '—'}</td>
-                    <td className="p-4 text-right text-violet-700">{r.pourcentageFormateur ? fmt(r.partOrganisme) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ProspectsView({ supabase, currentOrgId, userRole }) {
-  const isAdmin = userRole === 'admin';
-  const [templates, setTemplates] = useState([]);
-  const [envois, setEnvois] = useState([]);
-  const [loading, setLoading] = useState(true);
-  // Annuaire id -> nom (admins + formateurs de l'organisme), pour afficher qui a envoyé chaque
-  // questionnaire (2026-09-29). Fetché ici plutôt que de dépendre d'une liste "formateurs" passée
-  // en prop, car celle du composant parent exclut les admins alors qu'un admin peut aussi envoyer.
-  const [staffById, setStaffById] = useState({});
-
-  // --- Modale d'envoi ---
-  const [showSendModal, setShowSendModal] = useState(false);
-  const [sendForm, setSendForm] = useState({ nom: '', prenom: '', email: '', templateId: '' });
-  const [sending, setSending] = useState(false);
-
-  // --- Gestion des modèles (admin uniquement) ---
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [showBuilder, setShowBuilder] = useState(false);
-  const [editingTemplateId, setEditingTemplateId] = useState(null);
-  const [tTitre, setTTitre] = useState('');
-  const [tQuestions, setTQuestions] = useState([]);
-  const [savingTemplate, setSavingTemplate] = useState(false);
-
-  // --- Consultation des réponses d'un envoi rempli ---
-  const [viewingEnvoi, setViewingEnvoi] = useState(null);
-
-  // --- Statistiques par modèle (demande utilisateur, 2026-09-22, usage Qualiopi) ---
-  const [showStats, setShowStats] = useState(false);
-  const [statsTemplateId, setStatsTemplateId] = useState('');
-
-  const fetchTemplates = async () => {
-    if (!currentOrgId) return;
-    const { data, error } = await supabase
-      .from('prospect_questionnaire_templates')
-      .select('*')
-      .eq('organisation_id', currentOrgId)
-      .order('created_at', { ascending: false });
-    if (!error) setTemplates(data || []);
-  };
-
-  const fetchEnvois = async () => {
-    if (!currentOrgId) return;
-    const { data, error } = await supabase
-      .from('prospect_questionnaire_envois')
-      .select('*')
-      .eq('organisation_id', currentOrgId)
-      .order('envoye_at', { ascending: false });
-    if (!error) setEnvois(data || []);
-  };
-
-  const fetchStaff = async () => {
-    if (!currentOrgId) return;
-    const { data, error } = await supabase
-      .from('utilisateurs')
-      .select('id, nom')
-      .eq('organisation_id', currentOrgId);
-    if (!error && data) {
-      const map = {};
-      data.forEach(u => { map[u.id] = u.nom; });
-      setStaffById(map);
-    }
-  };
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      await Promise.all([fetchTemplates(), fetchEnvois(), fetchStaff()]);
-      setLoading(false);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrgId]);
-
-  const activeTemplates = templates.filter(t => t.actif);
-  const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
-
-  // ── Statistiques par modèle — calculées ici, côté navigateur, à partir des envois déjà en
-  //     base (aucune fonction serveur supplémentaire nécessaire) ──
-  React.useEffect(() => {
-    if (!statsTemplateId && templates.length > 0) setStatsTemplateId(templates[0].id);
-  }, [templates]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const statsTemplate = templates.find(t => t.id === statsTemplateId);
-  const statsEnvois = React.useMemo(
-    () => statsTemplate ? envois.filter(e => e.template_id === statsTemplate.id && e.statut === 'rempli') : [],
-    [statsTemplate, envois]
-  );
-  const questionStats = React.useMemo(() => {
-    if (!statsTemplate) return [];
-    const total = statsEnvois.length;
-    return (statsTemplate.questions || []).map(q => {
-      if (q.type === 'text') {
-        const answered = statsEnvois.filter(e => (e.reponses?.[q.id] || '').toString().trim().length > 0).length;
-        return { question: q, type: 'text', answered, total };
-      }
-      const counts = {};
-      (q.options || []).forEach(opt => { counts[opt] = 0; });
-      statsEnvois.forEach(e => {
-        const rep = e.reponses?.[q.id];
-        if (q.type === 'single') {
-          if (rep && Object.prototype.hasOwnProperty.call(counts, rep)) counts[rep]++;
-        } else if (q.type === 'multiple') {
-          (Array.isArray(rep) ? rep : []).forEach(opt => { if (Object.prototype.hasOwnProperty.call(counts, opt)) counts[opt]++; });
-        }
-      });
-      return { question: q, type: q.type, counts, total };
-    });
-  }, [statsTemplate, statsEnvois]);
-
-  // ── PDF des réponses d'un prospect (usage Qualiopi : trace du positionnement préalable) ──
-  // Génération 100% côté navigateur avec jsPDF (déjà utilisé ailleurs dans SkorUp pour d'autres
-  // PDF) — aucune fonction serveur supplémentaire nécessaire.
-  const handleDownloadResponsesPdf = (envoi) => {
-    const template = templates.find(t => t.id === envoi.template_id);
-    const questions = template?.questions || [];
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-    const marginX = 50;
-    const pageWidth = 595.28;
-    const pageHeight = 841.89;
-    const maxWidth = pageWidth - marginX * 2;
-    const lineHeight = 15;
-    let y = 60;
-
-    const ensureSpace = (needed) => {
-      if (y + needed > pageHeight - 50) { pdf.addPage(); y = 60; }
-    };
-
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(16);
-    pdf.setTextColor(20);
-    const titleLines = pdf.splitTextToSize(template?.titre || 'Questionnaire prospect', maxWidth);
-    pdf.text(titleLines, marginX, y);
-    y += titleLines.length * 20 + 10;
-
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
-    pdf.setTextColor(100);
-    pdf.text(`${envoi.prenom || ''} ${envoi.nom || ''} — ${envoi.email || ''}`, marginX, y);
-    y += 14;
-    pdf.text(`Répondu le ${envoi.rempli_at ? new Date(envoi.rempli_at).toLocaleDateString('fr-FR') : '—'}`, marginX, y);
-    y += 20;
-    pdf.setDrawColor(220);
-    pdf.line(marginX, y, pageWidth - marginX, y);
-    y += 24;
-
-    questions.forEach((q, qi) => {
-      const rep = envoi.reponses?.[q.id];
-      const repText = Array.isArray(rep) ? (rep.length > 0 ? rep.join(', ') : 'Sans réponse') : ((rep && String(rep).trim()) || 'Sans réponse');
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(11);
-      pdf.setTextColor(20);
-      const qLines = pdf.splitTextToSize(`${qi + 1}. ${q.text || ''}`, maxWidth);
-      ensureSpace(qLines.length * lineHeight + 20);
-      pdf.text(qLines, marginX, y);
-      y += qLines.length * lineHeight + 4;
-
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(10);
-      pdf.setTextColor(80);
-      const aLines = pdf.splitTextToSize(repText, maxWidth);
-      ensureSpace(aLines.length * lineHeight + 20);
-      pdf.text(aLines, marginX, y);
-      y += aLines.length * lineHeight + 18;
-    });
-
-    const safeName = `${envoi.prenom || ''}_${envoi.nom || ''}`.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '') || 'prospect';
-    pdf.save(`questionnaire_${safeName}.pdf`);
-  };
-
-  // ── Constructeur de modèle (admin) — reprend le même schéma de questions que les
-  //     questionnaires de module existants (text / single / multiple) ──
-  // FIX (demande utilisateur, 2026-09-22) : "obligatoire" par défaut à false — une question de
-  // questionnaire prospect n'empêche donc plus la soumission tant qu'elle n'est pas explicitement
-  // cochée comme obligatoire. S'applique aussi aux questions de modèles déjà créés (voir isComplete
-  // dans ProspectQuestionnaireView : un champ "obligatoire" absent est traité comme false).
-  const tAddQuestion = () => setTQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], obligatoire: false }]);
-  const tRemoveQuestion = (id) => setTQuestions(prev => prev.filter(q => q.id !== id));
-  const tUpdateQuestion = (id, field, val) => setTQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
-  const tAddOption = (qId) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: [...q.options, ''] } : q));
-  const tUpdateOption = (qId, oi, val) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
-  const tRemoveOption = (qId, oi) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
-
-  const resetBuilder = () => { setTTitre(''); setTQuestions([]); setEditingTemplateId(null); setShowBuilder(false); };
-
-  const handleSaveTemplate = async () => {
-    if (!tTitre.trim() || tQuestions.length === 0) return;
-    setSavingTemplate(true);
-    const questionsPayload = tQuestions.map(q => ({ id: String(q.id), text: q.text, type: q.type, options: q.options, obligatoire: !!q.obligatoire }));
-    if (editingTemplateId) {
-      const { error } = await supabase
-        .from('prospect_questionnaire_templates')
-        .update({ titre: tTitre.trim(), questions: questionsPayload, updated_at: new Date().toISOString() })
-        .eq('id', editingTemplateId);
-      if (error) { toast.error('Erreur mise à jour : ' + error.message); setSavingTemplate(false); return; }
-      toast.success('Modèle mis à jour.');
-    } else {
-      const { error } = await supabase
-        .from('prospect_questionnaire_templates')
-        .insert([{ titre: tTitre.trim(), questions: questionsPayload, organisation_id: currentOrgId, actif: true }]);
-      if (error) { toast.error('Erreur création : ' + error.message); setSavingTemplate(false); return; }
-      toast.success('Modèle créé.');
-    }
-    setSavingTemplate(false);
-    resetBuilder();
-    fetchTemplates();
-  };
-
-  const handleEditTemplate = (t) => {
-    setTTitre(t.titre || '');
-    setTQuestions((t.questions || []).map(q => ({ ...q, id: q.id || Date.now() + Math.random() })));
-    setEditingTemplateId(t.id);
-    setShowBuilder(true);
-    setShowTemplates(true);
-  };
-
-  const handleToggleActif = async (t) => {
-    const { error } = await supabase.from('prospect_questionnaire_templates').update({ actif: !t.actif }).eq('id', t.id);
-    if (error) { toast.error('Erreur : ' + error.message); return; }
-    fetchTemplates();
-  };
-
-  // ── Envoi d'un questionnaire à un prospect ──
-  const handleSend = async () => {
-    if (!sendForm.templateId) { toast.error('Choisissez un modèle de questionnaire.'); return; }
-    if (!sendForm.nom.trim() || !sendForm.prenom.trim()) { toast.error('Le nom et le prénom sont requis.'); return; }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sendForm.email.trim())) { toast.error('Adresse email invalide.'); return; }
-    setSending(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) { toast.error('Session expirée, reconnectez-vous.'); setSending(false); return; }
-      const resp = await fetch('/api/prospects?action=envoyer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          templateId: sendForm.templateId,
-          nom: sendForm.nom.trim(),
-          prenom: sendForm.prenom.trim(),
-          email: sendForm.email.trim(),
-          origin: window.location.origin,
-        }),
-      });
-      const result = await resp.json().catch(() => ({}));
-      if (!resp.ok) { toast.error(result.error || 'Erreur lors de l\'envoi.'); setSending(false); return; }
-      if (result.simulated) toast('Questionnaire créé, mais RESEND_API_KEY n\'est pas configurée côté serveur : aucun email envoyé.', { icon: '⚠️' });
-      else if (result.sent === false) toast.error('Le questionnaire est enregistré mais l\'email n\'a pas pu partir : ' + (result.error || ''));
-      else toast.success('Questionnaire envoyé à ' + sendForm.email.trim());
-      setShowSendModal(false);
-      setSendForm({ nom: '', prenom: '', email: '', templateId: '' });
-      fetchEnvois();
-    } catch (e) {
-      toast.error('Erreur réseau : ' + e.message);
-    }
-    setSending(false);
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="w-10 h-10 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* En-tête */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-violet-600 flex items-center justify-center">
-            <Send className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">Questionnaires Prospects</h1>
-            <p className="text-sm text-gray-500">Envoyez un questionnaire d'entretien préalable, sans que le prospect ait besoin d'un compte SkorUp</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {isAdmin && (
-            <button
-              onClick={() => setShowTemplates(v => !v)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all"
-            >
-              <Settings className="w-4 h-4" /> {showTemplates ? 'Masquer les modèles' : 'Gérer les modèles'}
-            </button>
-          )}
-          <button
-            onClick={() => setShowStats(v => !v)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all"
-          >
-            <TrendingUp className="w-4 h-4" /> {showStats ? 'Masquer les statistiques' : 'Statistiques'}
-          </button>
-          <button
-            onClick={() => setShowSendModal(true)}
-            disabled={activeTemplates.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            title={activeTemplates.length === 0 ? 'Aucun modèle actif disponible' : ''}
-          >
-            <Plus className="w-4 h-4" /> Envoyer un questionnaire
-          </button>
-        </div>
-      </div>
-
-      {activeTemplates.length === 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
-          {isAdmin
-            ? 'Aucun modèle de questionnaire actif pour le moment. Cliquez sur "Gérer les modèles" pour en créer un.'
-            : 'Aucun modèle de questionnaire n\'est disponible pour le moment — demandez à votre administrateur d\'en créer un.'}
-        </div>
-      )}
-
-      {/* ── Statistiques par modèle (usage Qualiopi) ── */}
-      {showStats && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <h2 className="text-base font-bold text-gray-800">Statistiques</h2>
-            {templates.length > 0 && (
-              <select value={statsTemplateId} onChange={e => setStatsTemplateId(e.target.value)}
-                className="p-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
-                {templates.map(t => <option key={t.id} value={t.id}>{t.titre}</option>)}
-              </select>
-            )}
-          </div>
-          {templates.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-6">Aucun modèle pour le moment.</p>
-          ) : statsEnvois.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-6">Aucune réponse reçue pour ce modèle pour le moment.</p>
-          ) : (
-            <div className="space-y-6">
-              <p className="text-sm text-gray-500">{statsEnvois.length} réponse{statsEnvois.length > 1 ? 's' : ''} reçue{statsEnvois.length > 1 ? 's' : ''}</p>
-              {questionStats.map(({ question, type, counts, answered, total }, qi) => (
-                <div key={question.id}>
-                  <p className="font-bold text-gray-800 text-sm mb-2">{qi + 1}. {question.text}</p>
-                  {type === 'text' ? (
-                    <p className="text-xs text-gray-500">{answered} / {total} ont répondu à cette question</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {Object.entries(counts).map(([opt, count]) => {
-                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                        return (
-                          <div key={opt}>
-                            <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                              <span>{opt || <span className="italic text-gray-400">Option vide</span>}</span>
-                              <span className="font-bold">{count} ({pct}%)</span>
-                            </div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-violet-600 transition-all duration-500" style={{ width: `${pct}%` }}></div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Gestion des modèles (admin) ── */}
-      {isAdmin && showTemplates && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold text-gray-800">Modèles de questionnaires</h2>
-            <button
-              onClick={() => { if (showBuilder) resetBuilder(); else setShowBuilder(true); }}
-              className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
-            >
-              <Plus size={13} /> {showBuilder ? 'Annuler' : 'Nouveau modèle'}
-            </button>
-          </div>
-
-          {showBuilder && (
-            <div className="bg-violet-50 rounded-2xl p-5 border border-violet-200 space-y-4 mb-5">
-              <div>
-                <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du modèle</label>
-                <input type="text" placeholder="Ex : Questionnaire d'entretien préalable"
-                  value={tTitre} onChange={e => setTTitre(e.target.value)}
-                  className="w-full p-3 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({tQuestions.length})</label>
-                  <button type="button" onClick={tAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
-                </div>
-                {tQuestions.length === 0 && (
-                  <div className="py-5 text-center bg-white rounded-xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-xs">Cliquez sur "+ Question" pour commencer</p>
-                  </div>
-                )}
-                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-                  {tQuestions.map((q, qi) => (
-                    <div key={q.id} className="bg-white rounded-xl p-3 border border-violet-100 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
-                        <button type="button" onClick={() => tRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
-                      </div>
-                      <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => tUpdateQuestion(q.id, 'text', e.target.value)}
-                        className="w-full p-2.5 bg-gray-50 border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
-                      <div className="flex gap-1.5">
-                        {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
-                          <button key={val} type="button" onClick={() => tUpdateQuestion(q.id, 'type', val)}
-                            className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
-                        ))}
-                      </div>
-                      <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
-                        <input type="checkbox" checked={!!q.obligatoire} onChange={e => tUpdateQuestion(q.id, 'obligatoire', e.target.checked)}
-                          className="w-3.5 h-3.5 rounded border-violet-300 text-violet-600 focus:ring-violet-400" />
-                        <span className="text-[10px] font-bold text-gray-500">Obligatoire — le prospect devra y répondre pour valider</span>
-                      </label>
-                      {(q.type === 'single' || q.type === 'multiple') && (
-                        <div className="space-y-1">
-                          {(q.options || []).map((opt, oi) => (
-                            <div key={oi} className="flex items-center gap-2">
-                              <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
-                              <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => tUpdateOption(q.id, oi, e.target.value)}
-                                className="flex-1 p-1.5 bg-gray-50 border border-violet-100 rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400" />
-                              {q.options.length > 1 && <button type="button" onClick={() => tRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
-                            </div>
-                          ))}
-                          <button type="button" onClick={() => tAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <button onClick={handleSaveTemplate} disabled={!tTitre.trim() || tQuestions.length === 0 || savingTemplate}
-                className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
-                {savingTemplate ? 'Enregistrement…' : editingTemplateId ? '✓ Mettre à jour le modèle' : '✓ Enregistrer le modèle'}
-              </button>
-            </div>
-          )}
-
-          {templates.length > 0 ? (
-            <div className="space-y-2">
-              {templates.map(t => (
-                <div key={t.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:border-violet-200 transition-all">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <button onClick={() => handleToggleActif(t)} className="focus:outline-none shrink-0" title={t.actif ? 'Désactiver' : 'Activer'}>
-                      {t.actif ? <ToggleRight className="w-6 h-6 text-violet-600" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
-                    </button>
-                    <div className="min-w-0">
-                      <p className="font-bold text-gray-800 text-sm truncate">{t.titre}</p>
-                      <p className="text-xs text-gray-400">{(t.questions || []).length} question{(t.questions || []).length > 1 ? 's' : ''} {!t.actif && '· Désactivé'}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => handleEditTemplate(t)} className="text-gray-400 hover:text-violet-600 shrink-0 p-1.5">
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-400 text-sm text-center py-4">Aucun modèle pour le moment.</p>
-          )}
-        </div>
-      )}
-
-      {/* ── Liste des envois ── */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h2 className="text-base font-bold text-gray-800 mb-4">Questionnaires envoyés ({envois.length})</h2>
-        {envois.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-8">Aucun questionnaire envoyé pour le moment.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                  <th className="pb-2 pr-3">Prospect</th>
-                  <th className="pb-2 pr-3">Modèle</th>
-                  <th className="pb-2 pr-3">Envoyé par</th>
-                  <th className="pb-2 pr-3">Envoyé le</th>
-                  <th className="pb-2 pr-3">Statut</th>
-                  <th className="pb-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {envois.map(e => (
-                  <tr key={e.id} className="border-b border-gray-50 last:border-0">
-                    <td className="py-3 pr-3">
-                      <p className="font-bold text-gray-800">{e.prenom} {e.nom}</p>
-                      <p className="text-xs text-gray-400">{e.email}</p>
-                    </td>
-                    <td className="py-3 pr-3 text-gray-600">{templateTitre(e.template_id)}</td>
-                    <td className="py-3 pr-3 text-gray-600 text-xs">{staffById[e.envoye_par] || '—'}</td>
-                    <td className="py-3 pr-3 text-gray-500 text-xs">{e.envoye_at ? new Date(e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
-                    <td className="py-3 pr-3">
-                      {e.statut === 'rempli'
-                        ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3" /> Rempli</span>
-                        : <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-full"><Clock className="w-3 h-3" /> En attente</span>}
-                    </td>
-                    <td className="py-3 text-right">
-                      {e.statut === 'rempli' && (
-                        <button onClick={() => setViewingEnvoi(e)} className="text-violet-600 hover:text-violet-800 text-xs font-bold flex items-center gap-1">
-                          <Eye className="w-3.5 h-3.5" /> Voir les réponses
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Modale d'envoi ── */}
-      {showSendModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="bg-violet-600 p-6 text-white relative">
-              <h2 className="text-lg font-black">Envoyer un questionnaire</h2>
-              <p className="text-violet-200 text-sm mt-1">Le prospect recevra un lien par email, sans avoir besoin de compte.</p>
-              <button onClick={() => setShowSendModal(false)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
-            </div>
-            <div className="p-6 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Prénom</label>
-                  <input type="text" value={sendForm.prenom} onChange={e => setSendForm(f => ({ ...f, prenom: e.target.value }))}
-                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Nom</label>
-                  <input type="text" value={sendForm.nom} onChange={e => setSendForm(f => ({ ...f, nom: e.target.value }))}
-                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Email</label>
-                <input type="email" value={sendForm.email} onChange={e => setSendForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Modèle de questionnaire</label>
-                <select value={sendForm.templateId} onChange={e => setSendForm(f => ({ ...f, templateId: e.target.value }))}
-                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
-                  <option value="">Choisir un modèle…</option>
-                  {activeTemplates.map(t => <option key={t.id} value={t.id}>{t.titre}</option>)}
-                </select>
-              </div>
-              <button onClick={handleSend} disabled={sending}
-                className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50 mt-2">
-                {sending ? 'Envoi en cours…' : 'Envoyer le questionnaire'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Modale de consultation des réponses ── */}
-      {viewingEnvoi && (() => {
-        const template = templates.find(t => t.id === viewingEnvoi.template_id);
-        const questions = template?.questions || [];
-        return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-            <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-              <div className="bg-violet-600 p-6 text-white relative shrink-0">
-                <h2 className="text-lg font-black">{viewingEnvoi.prenom} {viewingEnvoi.nom}</h2>
-                <p className="text-violet-200 text-sm mt-1">{template?.titre || 'Modèle supprimé'} · Répondu le {viewingEnvoi.rempli_at ? new Date(viewingEnvoi.rempli_at).toLocaleDateString('fr-FR') : '—'}</p>
-                <button onClick={() => setViewingEnvoi(null)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
-              </div>
-              <div className="p-6 space-y-5 overflow-y-auto flex-1">
-                {questions.map((q, qi) => {
-                  const rep = viewingEnvoi.reponses?.[q.id];
-                  return (
-                    <div key={q.id}>
-                      <p className="font-bold text-gray-900 text-sm mb-1.5"><span className="text-violet-500 font-black mr-1">{qi + 1}.</span>{q.text}</p>
-                      <p className="text-gray-600 text-sm bg-gray-50 rounded-xl p-3">
-                        {Array.isArray(rep) ? (rep.length > 0 ? rep.join(', ') : <span className="text-gray-300 italic">Sans réponse</span>) : (rep || <span className="text-gray-300 italic">Sans réponse</span>)}
-                      </p>
-                    </div>
-                  );
-                })}
-                {questions.length === 0 && <p className="text-gray-400 text-sm text-center py-6">Le modèle utilisé pour cet envoi a été supprimé — impossible d'afficher les questions.</p>}
-              </div>
-              {questions.length > 0 && (
-                <div className="p-4 border-t border-gray-100 shrink-0">
-                  <button onClick={() => handleDownloadResponsesPdf(viewingEnvoi)}
-                    className="w-full flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl transition-all text-sm">
-                    <Download className="w-4 h-4" /> Télécharger en PDF
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
 
 function AutomationSettingsView({ supabase, currentOrgId }) {
   const [settings, setSettings] = useState([]);
@@ -18573,14 +13039,6 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [customTriggerName, setCustomTriggerName] = useState('');
-  const [showTagHelp, setShowTagHelp] = useState(true);
-  // Modules et "dossiers de séance" (module_session_templates) de l'organisme — utilisés pour
-  // construire les sélecteurs "Module ciblé" / "Séance ciblée" des relances personnalisées
-  // (ajouté 2026-07-29). Chaque template a un "ordre" qui correspond exactement au numero_seance
-  // des vraies séances générées pour ce module (voir generateSessions).
-  const [modules, setModules] = useState([]);
-  const [moduleTemplates, setModuleTemplates] = useState([]);
-  const emailBodyRef = useRef(null);
   const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
   const showDeleteConfirm = (title, message, onConfirmFn) => setConfirmState({ open: true, title, message, onConfirm: onConfirmFn });
   const hideDeleteConfirm = () => setConfirmState(prev => ({ ...prev, open: false, onConfirm: null }));
@@ -18596,36 +13054,16 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   };
 
   const fetchLogs = async () => {
-    // automation_logs n'a pas sa propre colonne organisation_id — avant ce correctif, cette requête
-    // n'appliquait AUCUN filtre et le "Journal des envois" affichait les emails de TOUS les organismes.
-    // On passe par la relation automation_setting_id → automation_settings.organisation_id (jointure
-    // PostgREST via !inner) pour ne garder que les envois de l'organisme courant.
-    if (!currentOrgId) { setLogs([]); return; }
-    // On récupère aussi trigger_type et email_subject de la relance d'origine (jointure), pour
-    // afficher dans le journal un intitulé clair (ex: "Rappel avant séance") plutôt que le champ
-    // technique reference_type (toujours "session").
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('automation_logs')
-      .select('*, automation_settings!inner(organisation_id, trigger_type, email_subject)')
-      .eq('automation_settings.organisation_id', currentOrgId)
+      .select('*')
       .order('sent_at', { ascending: false })
       .limit(50);
-    if (!error && data) setLogs(data);
-  };
-
-  const fetchModulesAndTemplates = async () => {
-    if (!currentOrgId) return;
-    const [{ data: mData }, { data: tData }] = await Promise.all([
-      supabase.from('modules').select('id, nom').eq('organisation_id', currentOrgId).order('nom', { ascending: true }),
-      supabase.from('module_session_templates').select('id, module_id, titre, ordre').eq('organisation_id', currentOrgId).order('ordre', { ascending: true }),
-    ]);
-    if (mData) setModules(mData);
-    if (tData) setModuleTemplates(tData);
+    if (data) setLogs(data);
   };
 
   useEffect(() => {
     fetchSettings();
-    fetchModulesAndTemplates();
   }, []);
 
   useEffect(() => {
@@ -18647,10 +13085,6 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
       email_subject: s.email_subject,
       email_body: s.email_body,
       is_active: s.is_active,
-      target_module_id: s.target_module_id != null ? String(s.target_module_id) : '',
-      target_numero_seance: s.target_numero_seance != null ? String(s.target_numero_seance) : '',
-      timing_direction: s.timing_direction || 'before',
-      require_unsigned: !!s.require_unsigned,
     });
     setCustomTriggerName(isCustom ? s.trigger_type : '');
     setEditingId(s.id);
@@ -18674,23 +13108,10 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
       return;
     }
     setIsSaving(true);
-    const isCustom = form.trigger_type === '__custom__';
-    const resolvedTriggerType = isCustom
+    const resolvedTriggerType = form.trigger_type === '__custom__'
       ? customTriggerName.trim().toLowerCase().replace(/\s+/g, '_')
       : form.trigger_type;
-    // Les champs target_module_id/target_numero_seance/timing_direction/require_unsigned ne
-    // s'appliquent qu'aux types personnalisés — on les vide (null) pour les types prédéfinis, et on
-    // convertit les chaînes vides du formulaire en null pour les colonnes numériques (ajouté 2026-07-29).
-    const payload = {
-      ...form,
-      trigger_type: resolvedTriggerType,
-      target_module_id: isCustom && form.target_module_id !== '' ? Number(form.target_module_id) : null,
-      target_numero_seance: isCustom && form.target_numero_seance !== '' ? Number(form.target_numero_seance) : null,
-      timing_direction: isCustom ? form.timing_direction : null,
-      require_unsigned: isCustom ? !!form.require_unsigned : false,
-      updated_at: new Date().toISOString(),
-      organisation_id: currentOrgId,
-    };
+    const payload = { ...form, trigger_type: resolvedTriggerType, updated_at: new Date().toISOString(), organisation_id: currentOrgId };
     if (editingId) {
       const { error } = await supabase
         .from('automation_settings')
@@ -18731,37 +13152,137 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
     );
   };
 
-  // Depuis ce correctif, "Tester maintenant" appelle une fonction serverless (api/automation/trigger-manual.js)
-  // au lieu de tout faire dans le navigateur : avant, cette fonction lisait automation_settings/clients/sessions
-  // SANS AUCUN filtre organisation_id (un admin pouvait déclencher l'envoi d'emails à des clients d'un AUTRE
-  // organisme) et envoyait les emails via Resend avec une clé API exposée en clair dans le bundle JS
-  // (REACT_APP_RESEND_API_KEY). La fonction serverless vérifie l'admin appelant via son token Supabase, ne
-  // traite que SON organisme, et garde la clé Resend côté serveur uniquement.
   const triggerManual = async () => {
     setIsTesting(true);
     const toastId = 'automation-trigger';
     toast.loading('Analyse des relances en cours…', { id: toastId });
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) throw new Error('Session expirée — reconnectez-vous.');
+      // ── 1. Lire les relances actives ────────────────────────────────────────
+      const { data: activeSettings, error: settErr } = await supabase
+        .from('automation_settings').select('*').eq('is_active', true);
+      if (settErr) throw new Error('Lecture relances : ' + settErr.message);
+      if (!activeSettings?.length) {
+        toast.success('Aucune relance active configurée.', { id: toastId });
+        setIsTesting(false);
+        return;
+      }
 
-      const resp = await fetch('/api/automation/trigger-manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-      });
-      const result = await resp.json().catch(() => ({}));
-      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : affiche la réponse complète du serveur
-      // (y compris le détail "debug" en cas d'erreur 403) — à retirer une fois le problème identifié.
-      console.log('[triggerManual][DEBUG] Réponse complète du serveur :', result);
-      if (!resp.ok) throw new Error(result.error || `Erreur HTTP ${resp.status}`);
+      // ── 2. Lire clients + séances ────────────────────────────────────────────
+      const [{ data: clients }, { data: sessions }] = await Promise.all([
+        supabase.from('clients').select('id, nom, prenom, email_contact, formateur_id'),
+        supabase.from('sessions').select('id, date, client_id, type_activite, statut_client, numero_seance'),
+      ]);
 
-      if (result.simulated > 0) {
-        toast('⚠️ Simulation : ' + result.simulated + ' email(s) prêt(s) — la clé Resend n\'est pas configurée côté serveur (variable RESEND_API_KEY sur Vercel).', { id: toastId, icon: '⚠️', duration: 8000 });
-      } else if (result.sent > 0) {
-        toast.success(`✅ ${result.sent} email(s) envoyé(s) avec succès !`, { id: toastId });
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
+
+      // ── 3. Construire la liste des emails à envoyer ──────────────────────────
+      const emailQueue = [];
+      for (const setting of activeSettings) {
+        let targetSessions = [];
+
+        if (setting.trigger_type === 'reminder_before_session') {
+          const offset = Math.abs(setting.delay_days ?? 1);
+          const d = new Date(today); d.setDate(d.getDate() + offset);
+          const ds = d.toISOString().split('T')[0];
+          targetSessions = (sessions || []).filter(s => s.date === ds);
+        } else if (setting.trigger_type === 'no_signature') {
+          const offset = Math.abs(setting.delay_days ?? 2);
+          const d = new Date(today); d.setDate(d.getDate() - offset);
+          const ds = d.toISOString().split('T')[0];
+          targetSessions = (sessions || []).filter(s =>
+            s.date === ds && s.statut_client !== 'Signé' && s.statut_client !== 'signé'
+          );
+        }
+
+        for (const session of targetSessions) {
+          const client = (clients || []).find(c => String(c.id) === String(session.client_id));
+          if (!client?.email_contact) continue;
+
+          // Anti-doublon : déjà envoyé aujourd'hui ?
+          const { data: existing } = await supabase.from('automation_logs')
+            .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)
+            .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();
+          if (existing) continue;
+
+          const clientName = [client.prenom, client.nom].filter(Boolean).join(' ') || client.nom || '';
+          const sessionDate = session.date
+            ? new Date(session.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+            : '';
+          const sessionTitle = session.type_activite || `Séance n°${session.numero_seance ?? ''}`;
+          const rv = (s) => (s || '')
+            .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
+            .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
+            .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle);
+
+          emailQueue.push({ setting, client, clientName, subject: rv(setting.email_subject), body: rv(setting.email_body) });
+        }
+      }
+
+      if (emailQueue.length === 0) {
+        toast.success('✅ Aucun email à envoyer aujourd\'hui (aucune séance correspondante).', { id: toastId });
+        setIsTesting(false);
+        if (showLogs) fetchLogs();
+        return;
+      }
+
+      // ── 4. Envoyer les emails via Resend ────────────────────────────────────
+      const resendKey = process.env.REACT_APP_RESEND_API_KEY;
+      const fromEmail = process.env.REACT_APP_RESEND_FROM_EMAIL || 'SkorUp <onboarding@resend.dev>';
+      let sent = 0, simulated = 0;
+
+      for (const item of emailQueue) {
+        let ok = false; let errMsg = null;
+
+        if (resendKey) {
+          try {
+            const r = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: fromEmail,
+                to: [item.client.email_contact],
+                subject: item.subject,
+                html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+                  <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+                  <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+                    <p style="color:#111827;font-size:14px;line-height:1.7;">${item.body.replace(/\n/g, '<br>')}</p>
+                    <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+                    <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
+                  </div>
+                </div>`,
+              }),
+            });
+            ok = r.ok;
+            if (!r.ok) { const e = await r.json().catch(() => ({})); errMsg = e.message || `HTTP ${r.status}`; }
+          } catch (e) { errMsg = e.message; }
+        } else {
+          // Mode simulation (pas de clé Resend configurée)
+          ok = true; simulated++;
+          errMsg = 'Simulation — REACT_APP_RESEND_API_KEY non configurée';
+        }
+
+        if (ok && !simulated) sent++;
+
+        // Journaliser le résultat
+        await supabase.from('automation_logs').insert([{
+          automation_setting_id: item.setting.id,
+          client_id: item.client.id,
+          trigger_type: item.setting.trigger_type,
+          sent_at: new Date().toISOString(),
+          email_to: item.client.email_contact,
+          email_subject: item.subject,
+          status: ok ? (resendKey ? 'sent' : 'simulated') : 'error',
+          error_message: errMsg || null,
+        }]);
+      }
+
+      if (simulated > 0) {
+        toast('⚠️ Simulation : ' + simulated + ' email(s) prêt(s) — ajoutez REACT_APP_RESEND_API_KEY dans Vercel pour l\'envoi réel.', { id: toastId, icon: '⚠️', duration: 8000 });
+      } else if (sent > 0) {
+        toast.success(`✅ ${sent} email(s) envoyé(s) avec succès !`, { id: toastId });
       } else {
-        toast.success(result.message || 'Aucun email à envoyer.', { id: toastId });
+        toast.error('Aucun email envoyé — consultez le journal pour les erreurs.', { id: toastId });
       }
     } catch (e) {
       console.error('[triggerManual]', e);
@@ -18772,22 +13293,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
   };
 
   const insertVar = (varName) => {
-    const el = emailBodyRef.current;
-    // Si le curseur est positionné dans le champ, on insère la balise à cet endroit précis
-    // (plutôt que toujours à la fin) — plus pratique pour rédiger un email déjà en cours.
-    if (el && typeof el.selectionStart === 'number') {
-      const start = el.selectionStart;
-      const end = el.selectionEnd;
-      setForm(f => ({ ...f, email_body: f.email_body.slice(0, start) + varName + f.email_body.slice(end) }));
-      requestAnimationFrame(() => {
-        if (!el) return;
-        el.focus();
-        const pos = start + varName.length;
-        el.setSelectionRange(pos, pos);
-      });
-    } else {
-      setForm(f => ({ ...f, email_body: f.email_body + varName }));
-    }
+    setForm(f => ({ ...f, email_body: f.email_body + varName }));
   };
 
   return (
@@ -18823,8 +13329,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
 
       {/* Formulaire Ajout / Édition */}
       {isAdding && (
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-violet-100 flex-1 min-w-0 w-full">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-violet-100">
           <h2 className="text-base font-bold text-gray-800 mb-4">
             {editingId ? 'Modifier la relance' : 'Créer une relance'}
           </h2>
@@ -18851,100 +13356,25 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                 />
               )}
             </div>
-            {form.trigger_type !== '__custom__' && (
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">
-                  {form.trigger_type === 'no_signature'
-                    ? 'Délai après la séance (jours)'
-                    : form.trigger_type === 'reminder_before_session'
-                    ? 'Jours avant la séance'
-                    : 'Jours après la création du compte'}
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={form.delay_days}
-                  onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                />
-              </div>
-            )}
-          </div>
-
-          {form.trigger_type === '__custom__' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-4 rounded-xl bg-violet-50/50 border border-violet-100">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Module ciblé</label>
-                <select
-                  value={form.target_module_id}
-                  onChange={e => setForm(f => ({ ...f, target_module_id: e.target.value, target_numero_seance: '' }))}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                >
-                  <option value="">Tous les modules</option>
-                  {modules.map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Séance ciblée</label>
-                {form.target_module_id ? (
-                  <select
-                    value={form.target_numero_seance}
-                    onChange={e => setForm(f => ({ ...f, target_numero_seance: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                  >
-                    <option value="">Toutes les séances du module</option>
-                    {moduleTemplates
-                      .filter(t => String(t.module_id) === String(form.target_module_id))
-                      .map(t => <option key={t.id} value={t.ordre}>{`Séance ${t.ordre} - ${t.titre}`}</option>)}
-                  </select>
-                ) : (
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Toutes (laisser vide) ou un numéro précis"
-                    value={form.target_numero_seance}
-                    onChange={e => setForm(f => ({ ...f, target_numero_seance: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                  />
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Moment de l'envoi</label>
-                <select
-                  value={form.timing_direction}
-                  onChange={e => setForm(f => ({ ...f, timing_direction: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                >
-                  <option value="before">Avant la séance</option>
-                  <option value="after">Après la séance</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">
-                  Nombre de jours {form.timing_direction === 'after' ? 'après' : 'avant'}
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={form.delay_days}
-                  onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={form.require_unsigned}
-                    onChange={e => setForm(f => ({ ...f, require_unsigned: e.target.checked }))}
-                    className="rounded border-gray-300 text-violet-600 focus:ring-violet-400"
-                  />
-                  <span className="text-xs font-medium text-gray-700">Envoyer seulement si la séance n'est pas encore émargée/signée</span>
-                </label>
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">
+                {form.trigger_type === 'no_signature'
+                  ? 'Délai après la séance (jours)'
+                  : form.trigger_type === 'reminder_before_session'
+                  ? 'Jours avant la séance'
+                  : form.trigger_type === 'welcome'
+                  ? 'Jours après la création du compte'
+                  : 'Fréquence de répétition (jours)'}
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.delay_days}
+                onChange={e => setForm(f => ({ ...f, delay_days: parseInt(e.target.value) || 1 }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-300"
+              />
             </div>
-          )}
-
+          </div>
           <div className="mb-4">
             <label className="block text-xs font-semibold text-gray-500 mb-1">Objet du mail</label>
             <input
@@ -18956,23 +13386,12 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
             />
           </div>
           <div className="mb-2">
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-gray-500">Corps du mail</label>
-              <button
-                type="button"
-                onClick={() => setShowTagHelp(s => !s)}
-                className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 font-medium"
-              >
-                <HelpCircle className="w-3.5 h-3.5" />
-                {showTagHelp ? 'Masquer les balises' : 'Voir les balises disponibles'}
-              </button>
-            </div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Corps du mail</label>
             <div className="flex flex-wrap gap-1 mb-2">
-              {(TRIGGER_VARS[form.trigger_type] || CUSTOM_TAGS).map(v => (
+              {(TRIGGER_VARS[form.trigger_type] || ['{{client_name}}']).map(v => (
                 <button
                   key={v}
                   onClick={() => insertVar(v)}
-                  title={TAG_DEFINITIONS[v]?.description || ''}
                   className="text-xs px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 font-mono"
                 >
                   {v}
@@ -18980,7 +13399,6 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
               ))}
             </div>
             <textarea
-              ref={emailBodyRef}
               rows={6}
               placeholder="Bonjour {{client_name}},&#10;&#10;Nous n'avons pas encore reçu votre émargement pour {{session_title}} du {{session_date}}."
               value={form.email_body}
@@ -19012,39 +13430,6 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
             </div>
           </div>
         </div>
-
-        {showTagHelp && (
-          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 w-full lg:w-80 shrink-0 lg:sticky lg:top-4 overflow-hidden">
-            <div className="flex items-center gap-2 mb-1">
-              <HelpCircle className="w-4 h-4 text-violet-600" />
-              <h3 className="text-sm font-bold text-gray-800">Balises disponibles</h3>
-            </div>
-            <p className="text-xs text-gray-500 mb-3">
-              Cliquez sur une balise pour l'insérer dans le corps du mail à l'endroit du curseur.
-            </p>
-            <div className="space-y-2">
-              {(TRIGGER_VARS[form.trigger_type] || CUSTOM_TAGS).map(v => {
-                const def = TAG_DEFINITIONS[v] || {};
-                return (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => insertVar(v)}
-                    className="w-full text-left px-3 py-2 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-colors overflow-hidden"
-                  >
-                    <span className="text-xs font-mono font-semibold text-indigo-600 break-all">{v}</span>
-                    {def.example && (
-                      <div className="text-[10px] text-gray-400 italic mt-0.5 break-words">ex : {def.example}</div>
-                    )}
-                    {def.label && <div className="text-xs font-medium text-gray-700 mt-1 break-words">{def.label}</div>}
-                    {def.description && <div className="text-[11px] text-gray-500 mt-0.5 break-words">{def.description}</div>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        </div>
       )}
 
       {/* Liste des relances */}
@@ -19071,19 +13456,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                       ? `${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} avant la séance`
                       : s.trigger_type === 'welcome'
                       ? `Envoyé ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} après la création du compte`
-                      : (() => {
-                          // Relance personnalisée : décrire précisément la règle configurée
-                          // (module / séance / avant-après / jours / condition signature) — ajouté 2026-07-29.
-                          const moduleLabel = s.target_module_id
-                            ? (modules.find(m => String(m.id) === String(s.target_module_id))?.nom || 'module inconnu')
-                            : 'tous modules';
-                          const seanceLabel = (s.target_numero_seance !== null && s.target_numero_seance !== undefined)
-                            ? `séance ${s.target_numero_seance}`
-                            : 'toutes séances';
-                          const dirLabel = s.timing_direction === 'after' ? 'après' : 'avant';
-                          const unsignedLabel = s.require_unsigned ? ' · seulement si non signé' : '';
-                          return `${moduleLabel} · ${seanceLabel} · ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''} ${dirLabel}${unsignedLabel}`;
-                        })()}
+                      : `Envoi répété tous les ${s.delay_days} jour${s.delay_days > 1 ? 's' : ''}`}
                   </p>
                 </div>
               </div>
@@ -19135,32 +13508,25 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                   <tr>
                     <th className="text-left px-4 py-2 font-semibold">Date d'envoi</th>
                     <th className="text-left px-4 py-2 font-semibold">Email destinataire</th>
-                    <th className="text-left px-4 py-2 font-semibold">Relance</th>
-                    <th className="text-left px-4 py-2 font-semibold">Objet du mail</th>
+                    <th className="text-left px-4 py-2 font-semibold">Type</th>
                     <th className="text-left px-4 py-2 font-semibold">Statut</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map(log => {
-                    const statusInfo = getLogStatusInfo(log.status);
-                    return (
-                      <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
-                        <td className="px-4 py-2 text-gray-600">
-                          {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
-                        </td>
-                        <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
-                        <td className="px-4 py-2 text-gray-700">
-                          {getTriggerLabel(log.automation_settings?.trigger_type) || '—'}
-                        </td>
-                        <td className="px-4 py-2 text-gray-500">{log.automation_settings?.email_subject || '—'}</td>
-                        <td className="px-4 py-2">
-                          <span className={`border px-2 py-0.5 rounded-md font-medium ${statusInfo.className}`}>
-                            {statusInfo.label}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {logs.map(log => (
+                    <tr key={log.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                      <td className="px-4 py-2 text-gray-600">
+                        {new Date(log.sent_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                      </td>
+                      <td className="px-4 py-2 text-gray-800 font-medium">{log.client_email || '—'}</td>
+                      <td className="px-4 py-2 text-gray-500">{log.reference_type || '—'}</td>
+                      <td className="px-4 py-2">
+                        <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-md font-medium">
+                          {log.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
@@ -19203,27 +13569,7 @@ function TrialBanner({ orgSettings, onUpgrade }) {
 }
 
 // ─── PaywallScreen ───────────────────────────────────────────────────────────
-function PaywallScreen({ onSubscribe, isAdmin = true }) {
-  // Seul l'admin de l'organisme peut gérer l'abonnement : un formateur ou un client dont
-  // l'organisme a un abonnement expiré/impayé voit un message d'attente, pas le bouton de paiement
-  // (parametres_org, où mène onSubscribe, ne lui est de toute façon pas accessible).
-  if (!isAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
-        <div className="w-20 h-20 rounded-2xl bg-violet-100 flex items-center justify-center mb-6">
-          <svg className="w-10 h-10 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
-        <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Accès temporairement suspendu</h2>
-        <p className="text-gray-500 mb-8 max-w-md">
-          L'abonnement de votre organisme n'est plus actif. Merci de contacter votre administrateur
-          pour qu'il renouvelle l'abonnement — l'accès sera rétabli automatiquement dès que ce sera fait.
-        </p>
-      </div>
-    );
-  }
-
+function PaywallScreen({ onSubscribe }) {
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-6">
       <div className="w-20 h-20 rounded-2xl bg-violet-100 flex items-center justify-center mb-6">
@@ -19280,7 +13626,7 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
     {
       key: 'pro', name: 'Pro', monthlyPrice: 49, annualPrice: 44,
       limit: '200 dossiers clients', popular: true,
-      features: ['Tout Essentiel +', 'Relances automatiques', 'Personnalisation marque', 'Support prioritaire'],
+      features: ['Tout Essentiel +', 'Relances automatiques', 'Personnalisation marque', 'Rapports avancés', 'Support prioritaire'],
     },
     {
       key: 'illimite', name: 'Illimité', monthlyPrice: 89, annualPrice: 80,
@@ -19430,136 +13776,11 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
   );
 }
 
-// ─── Navigation par URL (2026-07-27) ──────────────────────────────────────────
-// Fait correspondre chaque valeur du `activeTab` DE App() (état interne existant, complètement
-// inchangé — aucun des ~50 appels setActiveTab() n'est modifié) à une URL propre et unique. Objectif :
-// bouton précédent/suivant du navigateur qui fonctionne réellement, liens partageables/à rafraîchir
-// sans perdre sa place, un vrai historique. Implémenté avec l'API History native (pushState/popstate),
-// sans nouvelle dépendance (pas de react-router) : le rewrite catch-all déjà présent dans vercel.json
-// ("/(.*)" → "/index.html") garantit qu'une actualisation ou un lien direct sur n'importe laquelle de
-// ces URLs sert bien l'app React (pas de 404), donc aucun changement de config serveur nécessaire.
-// N'INCLUT PAS les tabs internes à ClientDetailView (infos/seances/docs_signes/exercices/docs/
-// questionnaires) : ce sont des sous-onglets d'une fiche client, avec leur PROPRE état local
-// `activeTab` (composant différent) — hors-scope ici, uniquement la navigation principale de l'app.
-const TAB_TO_PATH = {
-  dashboard: '/tableau-de-bord',
-  accueil: '/accueil',
-  accueil_formateur: '/espace-formateur',
-  clients: '/clients',
-  formateurs: '/formateurs',
-  modules: '/modules',
-  processus: '/processus',
-  fiches_metiers: '/fiches-metiers',
-  calendrier: '/calendrier',
-  messagerie: '/messagerie',
-  gestion_documents: '/documents',
-  questionnaires: '/questionnaires',
-  mes_documents: '/mes-documents',
-  mes_seances: '/mes-seances',
-  bilan: '/mon-bilan',
-  parametres_org: '/parametres',
-  relances: '/relances',
-  profil: '/profil',
-  exercices: '/exercices',
-  prospects: '/prospects',
-};
-// Réciproque URL → onglet — 1:1, sans collision (chaque chemin ci-dessus n'a qu'un seul propriétaire).
-const PATH_TO_TAB = {};
-Object.entries(TAB_TO_PATH).forEach(([tab, path]) => { PATH_TO_TAB[path] = tab; });
-
-// Plafonds de dossiers clients par plan (décision produit du 2026-07-28 — auparavant
-// affiché sur la page tarifs mais jamais réellement appliqué nulle part dans le code).
-const CLIENT_LIMIT_BY_PLAN = { essentiel: 50, pro: 200, illimite: Infinity };
-
-// Donne le plafond de dossiers clients applicable à l'organisme, selon son abonnement.
-// Pendant la période d'essai gratuit, on applique par défaut le plafond du plan le moins
-// cher (Essentiel) plutôt que de laisser un essai illimité, pour éviter les abus.
-const getClientLimitForOrg = (orgSettings) => {
-  if (!orgSettings) return CLIENT_LIMIT_BY_PLAN.essentiel;
-  if (orgSettings.subscription_status === 'trialing') return CLIENT_LIMIT_BY_PLAN.essentiel;
-  const planKey = (orgSettings.subscribed_plan || '').split('_')[0]; // 'pro_annual' → 'pro'
-  return CLIENT_LIMIT_BY_PLAN[planKey] ?? CLIENT_LIMIT_BY_PLAN.essentiel;
-};
-
-// Verrouillage des fonctionnalités "Pro" (décision produit du 2026-07-28) : Relances Auto et
-// Personnalisation de marque sont désormais réservées aux plans Pro et Illimité, pour que la
-// page tarifs corresponde enfin à la réalité du logiciel. Pendant l'essai gratuit, on applique
-// les restrictions du plan Essentiel (cohérent avec le plafond de dossiers clients déjà appliqué
-// pendant l'essai) plutôt que de donner accès à tout.
-const PLAN_TIER_RANK = { essentiel: 0, pro: 1, illimite: 2 };
-const getPlanTier = (orgSettings) => {
-  if (!orgSettings) return 'essentiel';
-  if (orgSettings.subscription_status === 'trialing') return 'essentiel';
-  const planKey = (orgSettings.subscribed_plan || '').split('_')[0];
-  return PLAN_TIER_RANK[planKey] !== undefined ? planKey : 'essentiel';
-};
-const hasFeatureAccess = (orgSettings, minTier) => PLAN_TIER_RANK[getPlanTier(orgSettings)] >= PLAN_TIER_RANK[minTier];
-
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
   const [currentUserId, setCurrentUserId] = useState(null);
-  // true quand un compte admin visualise son espace formateur (via le bouton "Mon espace Formateur",
-  // ouvert dans un nouvel onglet avec ?view=formateur dans l'URL) — voir handleLogin plus bas.
-  const [isAdminActingAsFormateur, setIsAdminActingAsFormateur] = useState(false);
-  // Restaure l'onglet depuis l'URL au chargement (F5, lien direct, favori) — voir TAB_TO_PATH/
-  // PATH_TO_TAB ci-dessus. handleLogin() ci-dessous ne réécrase PAS cette valeur lors d'une simple
-  // restauration de session silencieuse (preserveTab=true), seulement lors d'une connexion fraîche.
-  const [activeTab, setActiveTab] = useState(() => PATH_TO_TAB[window.location.pathname] || 'accueil');
-
-  // ── Synchronisation URL ↔ onglet actif (2026-07-27) ──────────────────────────
-  // 1) Chaque changement d'activeTab pousse une VRAIE entrée d'historique navigateur (pushState),
-  //    avec l'URL propre correspondante (TAB_TO_PATH). Ignore le tout premier rendu (remplace au lieu
-  //    de pousser, pour ne pas créer une entrée en double avec celle déjà présente au chargement) et
-  //    ignore tant que userRole est vide (écran de connexion / reset / invitation : ces écrans gèrent
-  //    déjà leur propre état d'URL séparément, ne pas interférer).
-  const isFirstTabSync = React.useRef(true);
-  React.useEffect(() => {
-    if (!userRole) return;
-    const path = TAB_TO_PATH[activeTab];
-    if (!path) return; // onglet inconnu de la table (ex: valeur interne à un sous-composant) → ignoré
-    if (isFirstTabSync.current) {
-      isFirstTabSync.current = false;
-      if (window.location.pathname !== path) window.history.replaceState({ tab: activeTab }, '', path + window.location.search);
-      return;
-    }
-    if (window.location.pathname !== path) {
-      window.history.pushState({ tab: activeTab }, '', path + window.location.search);
-    }
-  }, [activeTab, userRole]);
-
-  // 2) Bouton précédent/suivant du navigateur : restaure l'onglet correspondant à la nouvelle URL au
-  //    lieu de ne rien faire (comportement d'avant ce correctif, source du "ça me déconnecte" —
-  //    en réalité rien n'était déconnecté, mais sans historique le bouton retour du navigateur n'avait
-  //    littéralement aucune page interne vers laquelle revenir).
-  React.useEffect(() => {
-    const onPopState = () => {
-      const tab = PATH_TO_TAB[window.location.pathname];
-      if (tab) setActiveTab(tab);
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
-
-  // 3) Filet de sécurité "page blanche" : un onglet restauré depuis l'URL (F5, ancien onglet de
-  //    navigateur resté ouvert, lien direct) peut ne correspondre à aucun rendu pour le rôle
-  //    réellement connecté (ex: /tableau-de-bord → 'dashboard', réservé aux admins). Dans ce cas,
-  //    aucune des conditions activeTab === 'xxx' && userRole === 'yyy' du rendu principal ne
-  //    matche : rien ne s'affiche. On revient alors sur l'onglet d'accueil du rôle concerné.
-  React.useEffect(() => {
-    if (!userRole) return;
-    const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
-      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
-      client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
-    };
-    const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
-    const allowed = ROLE_TABS[userRole];
-    if (allowed && !allowed.includes(activeTab)) {
-      setActiveTab(ROLE_DEFAULT_TAB[userRole] || 'accueil');
-    }
-  }, [userRole, activeTab]);
-
+  const [activeTab, setActiveTab] = useState('accueil');
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Détection synchrone au démarrage : lien invitation (token_hash ou access_token dans le hash)
@@ -19585,8 +13806,6 @@ export default function App() {
 
   const [resetSuccessMsg, setResetSuccessMsg] = useState('');
   const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
-  // Questionnaire prospect (sans compte SkorUp) : /questionnaire?t=<token> — voir ProspectQuestionnaireView.
-  const [isProspectQuestionnaire] = useState(() => window.location.pathname === '/questionnaire');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
@@ -19607,18 +13826,13 @@ export default function App() {
       if (session?.user?.email) {
     
         // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
-        const { data: userData, error: userDataErr } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
-        if (userDataErr) console.error('[initSession] Erreur lecture profil utilisateur (rôle) :', userDataErr);
+        const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
         if (userData && userData.role) {
-          // preserveTab=true : restauration SILENCIEUSE d'une session déjà ouverte (F5, réouverture
-          // d'onglet) — ne pas écraser l'onglet déjà restauré depuis l'URL (voir useState(activeTab)
-          // plus haut), sinon un lien profond ou un simple F5 ramènerait toujours à la page d'accueil.
-          handleLogin(userData.role, userData.id, userData.organisation_id, true);
+          handleLogin(userData.role, userData.id, userData.organisation_id);
         } else {
-          const { data: clientData, error: clientDataErr } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
-          if (clientDataErr) console.error('[initSession] Erreur lecture profil client :', clientDataErr);
+          const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
           if (clientData) {
-            handleLogin('client', clientData.id, clientData.organisation_id, true);
+            handleLogin('client', clientData.id, clientData.organisation_id);
           } else {
             // Session active mais aucun profil DB trouvé
             const metaRole = session.user?.user_metadata?.role;
@@ -19656,51 +13870,10 @@ export default function App() {
   const [formateurs, setFormateurs] = useState([]);
   const [clients, setClients] = useState([]);
   const [documents, setDocuments] = useState([]);
-  // Nombre de messages non lus adressés au compte connecté (badge menu "Messagerie") — voir les
-  // effets de chargement/rafraîchissement plus bas (montage, retour sur l'onglet, sondage 60s).
-  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
-
-  // --- Admin agissant aussi comme formateur (bouton "Mon espace Formateur") ---
-  // adminSelfProfile est chargé dès que le compte connecté est admin (pour le bouton lui-même)
-  // ou déjà en train de visualiser l'espace formateur via ce même compte (pour le "Bonjour, {nom}").
-  const [adminSelfProfile, setAdminSelfProfile] = useState(null); // { id, nom }
-  useEffect(() => {
-    if ((userRole === 'admin' || isAdminActingAsFormateur) && currentUserId) {
-      supabase.from('utilisateurs').select('id, nom').eq('id', currentUserId).single()
-        .then(({ data }) => { if (data) setAdminSelfProfile(data); });
-    } else if (!isAdminActingAsFormateur && userRole !== 'admin') {
-      setAdminSelfProfile(null);
-    }
-  }, [userRole, isAdminActingAsFormateur, currentUserId]);
-  // Cas symétrique côté CLIENT : si le formateur_id du client connecté correspond en
-  // réalité à un compte admin (coach = l'admin elle-même), il est absent du tableau
-  // `formateurs` (qui ne contient que role='formateur'). On va chercher ce profil pour
-  // que le client voie bien son coach (messagerie + "Votre coach" sur l'Accueil).
-  const [clientCoachFallback, setClientCoachFallback] = useState(null); // { id, nom }
-  useEffect(() => {
-    if (userRole !== 'client' || !currentUserId) { setClientCoachFallback(null); return; }
-    const me = (clients || []).find(c => String(c.id) === String(currentUserId));
-    const already = me?.formateur_id && (formateurs || []).find(f => String(f.id) === String(me.formateur_id));
-    if (!me?.formateur_id || already) { setClientCoachFallback(null); return; }
-    supabase.from('utilisateurs').select('id, nom').eq('id', me.formateur_id).maybeSingle()
-      .then(({ data }) => setClientCoachFallback(data || null));
-  }, [userRole, currentUserId, clients, formateurs]);
-  // Liste des formateurs "assignables" : les vrais formateurs + l'admin lui-même (pour qu'un client
-  // puisse lui être assigné comme coach, et pour que son propre espace formateur affiche son nom).
-  // Volontairement PAS utilisée pour AdminFormateursView (page de gestion avec suppression) afin
-  // d'éviter tout risque de suppression accidentelle du compte admin lui-même.
-  const assignableFormateurs = React.useMemo(() => {
-    if (adminSelfProfile) {
-      return [{ ...adminSelfProfile, role: 'formateur' }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
-    }
-    if (clientCoachFallback) {
-      return [{ ...clientCoachFallback, role: 'formateur' }, ...formateurs.filter(f => f.id !== clientCoachFallback.id)];
-    }
-    return formateurs;
-  }, [formateurs, adminSelfProfile, clientCoachFallback]);
 
   // États Modules Supabase
   const [modules, setModules] = useState([]);
+  const [moduleDocuments, setModuleDocuments] = useState([]);
   const [moduleSessionTemplates, setModuleSessionTemplates] = useState([]);
   const [moduleStepResources, setModuleStepResources] = useState([]);
 
@@ -19715,7 +13888,11 @@ export default function App() {
   // États formulaire "Ingénierie Modules" (Admin)
   const [newModuleName, setNewModuleName] = useState('');
   const [newModuleSeances, setNewModuleSeances] = useState(1);
+  const [newModDocName, setNewModDocName] = useState('');
+  const [newModDocType, setNewModDocType] = useState('Contrat');
   const [sessions, setSessions] = useState([]);
+  const [newModDocFile, setNewModDocFile] = useState(null);
+  const [addingToModuleId, setAddingToModuleId] = useState(null);
   const [modelingModuleId, setModelingModuleId] = useState(null);
 
   // États formulaire "Étape de Parcours"
@@ -19743,10 +13920,6 @@ export default function App() {
   const [newResourceName, setNewResourceName] = useState('');
   const [isUploadingResource, setIsUploadingResource] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  // Rôle pré-sélectionné à l'ouverture du modal d'invitation (ajouté 2026-08-05) — permet aux
-  // boutons "Nouveau Client" (onglet Clients) et "Nouveau Formateur" (onglet Formateurs) de
-  // pré-remplir le bon rôle, sans que l'admin ait à le changer manuellement à chaque fois.
-  const [inviteDefaultRole, setInviteDefaultRole] = useState('client');
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
   const [clientSkills, setClientSkills] = useState([]);
@@ -19755,25 +13928,29 @@ export default function App() {
 
   const fetchModules = async () => {
     let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
-    mQuery = currentOrgId ? mQuery.eq('organisation_id', currentOrgId) : mQuery.limit(0);
+    if (currentOrgId) mQuery = mQuery.eq('organisation_id', currentOrgId);
     const { data: mData, error: mErr } = await mQuery;
-    // AJOUT (2026-09-17) : tri alphabétique à la source, même logique que formateurs/clients ci-dessus.
-    if (!mErr && mData) setModules([...mData].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
+    if (!mErr && mData) setModules(mData);
+
+    let mdQuery = supabase.from('module_documents').select('*');
+    if (currentOrgId) mdQuery = mdQuery.eq('organisation_id', currentOrgId);
+    const { data: mdData, error: mdErr } = await mdQuery;
+    if (!mdErr && mdData) setModuleDocuments(mdData);
 
     let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
-    mstQuery = currentOrgId ? mstQuery.eq('organisation_id', currentOrgId) : mstQuery.limit(0);
+    if (currentOrgId) mstQuery = mstQuery.eq('organisation_id', currentOrgId);
     const { data: mstData, error: mstErr } = await mstQuery;
     if (!mstErr && mstData) setModuleSessionTemplates(mstData);
 
     let msrQuery = supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
-    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
+    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
     const { data: msrData, error: msrErr } = await msrQuery;
     if (!msrErr && msrData) setModuleStepResources(msrData);
   };
 
   const fetchSessions = async () => {
     let q = supabase.from('sessions').select('*');
-    q = currentOrgId ? q.eq('organisation_id', currentOrgId) : q.limit(0);
+    if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
     const { data, error } = await q;
     if (!error && data) setSessions(data);
   };
@@ -19784,26 +13961,19 @@ export default function App() {
       .from('utilisateurs')
       .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
       .eq('role', 'formateur');
-    fQuery = currentOrgId ? fQuery.eq('organisation_id', currentOrgId) : fQuery.limit(0);
+    if (currentOrgId) fQuery = fQuery.eq('organisation_id', currentOrgId);
     const { data: formateursData, error: formateursError } = await fQuery;
 
     // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
     let cQuery = supabase.from('clients').select('*');
-    cQuery = currentOrgId ? cQuery.eq('organisation_id', currentOrgId) : cQuery.limit(0);
+    if (currentOrgId) cQuery = cQuery.eq('organisation_id', currentOrgId);
     const { data: clientsData, error: clientsError } = await cQuery;
 
     if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
     if (clientsError) console.error("Erreur fetch clients:", clientsError);
 
     if (formateursData) {
-      // AJOUT (2026-09-17) : tri alphabétique à la source, demandé par l'utilisateur ("comme toutes
-      // les listes") — jusqu'ici les formateurs remontaient dans l'ordre brut de la base (ordre de
-      // création), d'où par exemple le sélecteur "Formateur Référent" (InviteModal, création client)
-      // affiché dans le désordre. En triant ICI, à la source, TOUTES les listes/menus déroulants qui
-      // consomment `formateurs` en héritent automatiquement, sans avoir à modifier chaque endroit un
-      // par un — une vue qui a déjà son propre tri local (ex. FormateurAdminView) n'est pas affectée
-      // négativement (trier un tableau déjà trié ne change rien).
-      setFormateurs([...formateursData].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
+      setFormateurs(formateursData);
     }
 
     if (clientsData) {
@@ -19833,12 +14003,9 @@ export default function App() {
         ville: c.ville || '',
         montant_prestation: c.montant_prestation,
         prix_prestation: c.montant_prestation || '',
-        pourcentage_formateur: c.pourcentage_formateur,
         modalite_formation: c.modalite_formation || 'Mixte',
         organisation_id: c.organisation_id || null
       }));
-      // AJOUT (2026-09-17) : tri alphabétique à la source (même logique que formateurs ci-dessus).
-      mappedClients.sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr', { sensitivity: 'base' }));
       setClients(mappedClients);
     }
   };
@@ -19846,13 +14013,13 @@ export default function App() {
   const fetchDocuments = async () => {
     // 1. Charger les documents classiques (contrats générés, preuves, etc.)
     let docsQuery = supabase.from('documents').select('*');
-    docsQuery = currentOrgId ? docsQuery.eq('organisation_id', currentOrgId) : docsQuery.limit(0);
+    if (currentOrgId) docsQuery = docsQuery.eq('organisation_id', currentOrgId);
     const { data: docsData, error } = await docsQuery;
     if (!error && docsData) setDocuments(docsData);
 
     // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
     let msrQuery = supabase.from('module_step_resources').select('*').eq('type', 'document');
-    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
+    if (currentOrgId) msrQuery = msrQuery.eq('organisation_id', currentOrgId);
     const { data: modsData, error: modErr } = await msrQuery;
     if (!modErr && modsData) {
       console.log(`[fetchDocuments] ${modsData.length} modèles documents récupérés.`);
@@ -19882,15 +14049,7 @@ export default function App() {
       oldRefs.forEach(r => {
         templates[r.nom] = { url: r.url, name: r.nom, destination: 'formateur', classification: 'a_signer' };
       });
-      // AJOUT (2026-09-17) : tri alphabétique du catalogue de modèles (demandé par l'utilisateur,
-      // "même les documents") — cette liste est un CATALOGUE (menu dans lequel on choisit un modèle à
-      // ajouter/envoyer), sans ordre intentionnel, contrairement aux documents DÉJÀ assignés à un
-      // client (module = ordre du parcours pédagogique, "Ajouts personnalisés" = ordre propre via son
-      // champ `ordre`, tous deux volontairement laissés inchangés). Les objets JS conservent l'ordre
-      // d'insertion des clés : reconstruire l'objet triées par titre suffit.
-      setDocumentTemplates(Object.fromEntries(
-        Object.entries(templates).sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }))
-      ));
+      setDocumentTemplates(templates);
     } else if (modErr) {
       console.error("[fetchDocuments] Erreur lors de la récupération des ressources modèles :", modErr);
       // Fallback : utiliser les Modèles Référence de la table documents
@@ -19899,32 +14058,21 @@ export default function App() {
       refs.forEach(r => {
         templates[r.nom] = { url: r.url, name: r.nom, destination: r.destination || 'formateur' };
       });
-      setDocumentTemplates(Object.fromEntries(
-        Object.entries(templates).sort((a, b) => a[0].localeCompare(b[0], 'fr', { sensitivity: 'base' }))
-      ));
+      setDocumentTemplates(templates);
     }
-  };
-
-  const fetchUnreadMessagesCount = async () => {
-    if (!currentUserId) { setUnreadMessagesCount(0); return; }
-    const { count, error } = await supabase.from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('receiver_id', String(currentUserId))
-      .is('read_at', null);
-    if (!error) setUnreadMessagesCount(count || 0);
   };
 
   const fetchClientSkills = async () => {
     // Filtre via la relation client → organisation (RLS + filtre explicite)
     let csQuery = supabase.from('client_skills').select('*, clients!inner(organisation_id)');
-    csQuery = currentOrgId ? csQuery.eq('clients.organisation_id', currentOrgId) : csQuery.limit(0);
+    if (currentOrgId) csQuery = csQuery.eq('clients.organisation_id', currentOrgId);
     const { data, error } = await csQuery;
     if (!error && data) setClientSkills(data);
   };
 
   const fetchOrgSettings = async () => {
     if (!currentOrgId) return;
-    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, region, nda, site_web, subscription_status, trial_ends_at, stripe_customer_id, subscribed_plan').eq('id', currentOrgId).single();
+    const { data } = await supabase.from('organisations').select('id, nom, logo_url, siret, adresse, code_postal, ville, nda, site_web, subscription_status, trial_ends_at, stripe_customer_id, subscribed_plan').eq('id', currentOrgId).single();
     if (data) setOrgSettings(data);
   };
 
@@ -19979,34 +14127,6 @@ export default function App() {
   const handleInviteUser = async (formData) => {
     const { email, nom, role } = formData;
     setIsAddingUser(true);
-
-    // 0. Plafond de dossiers clients selon le plan (décision produit du 2026-07-28) —
-    // ne s'applique qu'aux clients (les formateurs/admins ne comptent pas dans ce quota).
-    // On compte à la volée en base plutôt que de se fier à l'état local "clients", pour
-    // éviter tout contournement via une liste côté client pas encore rafraîchie.
-    if (role === 'client') {
-      const clientLimit = getClientLimitForOrg(orgSettings);
-      if (Number.isFinite(clientLimit)) {
-        const { count: currentClientCount, error: countError } = await supabase
-          .from('clients')
-          .select('id', { count: 'exact', head: true })
-          .eq('organisation_id', currentOrgId);
-        if (countError) {
-          console.error('Erreur vérification du quota de dossiers clients:', countError);
-          toast.error("Impossible de vérifier votre quota de dossiers clients pour le moment. Réessayez.");
-          setIsAddingUser(false);
-          return;
-        }
-        if ((currentClientCount || 0) >= clientLimit) {
-          toast.error(
-            `Vous avez atteint la limite de ${clientLimit} dossiers clients de votre plan actuel. Passez à un plan supérieur pour en ajouter davantage.`,
-            { duration: 8000 }
-          );
-          setIsAddingUser(false);
-          return;
-        }
-      }
-    }
 
     // 1. Inviter via Edge Function sécurisée (service_role côté serveur)
     const { data: { session: authSession } } = await supabase.auth.getSession();
@@ -20085,48 +14205,10 @@ export default function App() {
   };
 
   // --- Actions Navigation ---
-  // preserveTab (2026-07-27) : true UNIQUEMENT lors d'une restauration SILENCIEUSE de session déjà
-  // ouverte (F5, réouverture d'onglet — voir initSession ci-dessus) — dans ce cas on NE TOUCHE PAS à
-  // l'onglet, qui a déjà été correctement restauré depuis l'URL par le useState(activeTab) plus haut.
-  // Pour une connexion fraîche (formulaire de login, fin d'invitation/reset mot de passe), on continue
-  // de rediriger vers la page d'accueil du rôle comme avant — preserveTab reste false partout ailleurs.
-  const handleLogin = (role, id = null, orgId = null, preserveTab = false) => {
-    // Un admin qui clique sur "Mon espace Formateur" ouvre un nouvel onglet vers la même URL
-    // avec ?view=formateur — cette même session/compte se connecte alors normalement (role='admin'
-    // renvoyé par la DB), mais on affiche l'espace formateur à la place, avec le même currentUserId.
-    const wantsFormateurView = role === 'admin' && new URLSearchParams(window.location.search).get('view') === 'formateur';
-    setUserRole(wantsFormateurView ? 'formateur' : role);
-    setIsAdminActingAsFormateur(wantsFormateurView);
+  const handleLogin = (role, id = null, orgId = null) => {
+    setUserRole(role);
     setCurrentUserId(id);
     setCurrentOrgId(orgId);
-    // FIX (nouvelle fonctionnalité, 2026-09-11) : lien direct "?client=<id>" envoyé par email au
-    // formateur lors d'une assignation (voir assignFormateur / api/formateur/notify-assignment.js)
-    // — ouvre directement la fiche du client concerné (onglet "Mes clients", client déplié) plutôt
-    // que la page d'accueil habituelle. S'applique qu'il s'agisse d'un vrai compte formateur (role
-    // === 'formateur') ou de l'admin agissant comme son propre coach (wantsFormateurView) — mais
-    // jamais pour un client, qui n'a pas accès à cet onglet. Prioritaire même sur une restauration
-    // silencieuse de session (preserveTab) : un F5 sur ce lien doit rouvrir la même fiche.
-    const deepLinkClientId = new URLSearchParams(window.location.search).get('client');
-    if (deepLinkClientId && (role === 'formateur' || wantsFormateurView)) {
-      const parsedId = Number(deepLinkClientId);
-      setExpandedClientId(Number.isNaN(parsedId) ? deepLinkClientId : parsedId);
-      setActiveTab('clients');
-      window.history.replaceState({}, document.title, window.location.pathname + (wantsFormateurView ? '?view=formateur' : ''));
-      return;
-    }
-    // FIX (nouvelle fonctionnalité, 2026-09-11) : lien direct "?tab=mes_documents" envoyé par email
-    // au CLIENT lors de l'envoi d'un document (voir notifyClientNewDocument /
-    // api/client/notify-new-document.js) — ouvre directement son onglet "Mes Documents" plutôt que
-    // sa page d'accueil habituelle. Réservé au rôle client (seul rôle où cet onglet existe — voir
-    // ROLE_TABS plus haut dans le fichier).
-    const deepLinkTab = new URLSearchParams(window.location.search).get('tab');
-    if (deepLinkTab === 'mes_documents' && role === 'client') {
-      setActiveTab('mes_documents');
-      window.history.replaceState({}, document.title, window.location.pathname);
-      return;
-    }
-    if (preserveTab) return;
-    if (wantsFormateurView) { setActiveTab('accueil_formateur'); return; }
     if (role === 'admin') setActiveTab('dashboard');
     if (role === 'formateur') setActiveTab('accueil_formateur');
     if (role === 'client') setActiveTab('accueil');
@@ -20137,13 +14219,8 @@ export default function App() {
     setUserRole(null);
     setCurrentUserId(null);
     setCurrentOrgId(null);
-    setIsAdminActingAsFormateur(false);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
-    // Revenir explicitement à la racine (page de connexion) : le useEffect de synchronisation
-    // URL<->onglet ci-dessous ne s'exécute que lorsque userRole est renseigné (voir plus bas), donc il
-    // ne remettrait pas seul l'URL à '/' ici puisque userRole vient d'être mis à null.
-    window.history.replaceState(null, '', '/');
   };
 
   // --- Détection retour Stripe Checkout ---
@@ -20160,64 +14237,7 @@ export default function App() {
       toast('Paiement annulé. Vous pouvez réessayer depuis "Mon Abonnement".', { icon: 'ℹ️' });
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-    // Retour depuis le portail client Stripe (changement/annulation de plan en self-service).
-    if (params.get('billing') === 'return') {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      // Rafraîchir après 3s puis à nouveau après 8s (laisser le temps au webhook Stripe de
-      // mettre à jour Supabase — un changement de plan peut prendre un peu plus de temps
-      // qu'un premier paiement à se propager).
-      setTimeout(() => fetchOrgSettings(), 3000);
-      setTimeout(() => fetchOrgSettings(), 8000);
-    }
   }, [currentOrgId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // --- Rafraîchit les infos d'abonnement quand l'utilisateur revient sur l'onglet ---
-  // (le portail client Stripe s'ouvre dans un nouvel onglet ; sans ceci, l'onglet d'origine
-  // resterait affiché avec l'ancien plan tant que la page n'est pas rechargée manuellement,
-  // même après que le webhook Stripe ait correctement mis à jour Supabase.)
-  useEffect(() => {
-    if (!currentOrgId) return;
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') fetchOrgSettings();
-    };
-    window.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleVisibility);
-    return () => {
-      window.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleVisibility);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrgId]);
-
-  // --- Badge "messages non lus" (menu latéral) : retour sur l'onglet + sondage 60s ---
-  // Pas d'infra realtime dans ce projet (voir MessagesView) : le sondage périodique est le moyen
-  // le plus simple de signaler un nouveau message reçu pendant que l'app reste ouverte.
-  useEffect(() => {
-    if (!currentUserId) return;
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') fetchUnreadMessagesCount();
-    };
-    window.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleVisibility);
-    const interval = setInterval(fetchUnreadMessagesCount, 60000);
-    return () => {
-      window.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleVisibility);
-      clearInterval(interval);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId]);
-
-  // Rafraîchit aussi dès qu'on quitte l'onglet Messagerie (les conversations ouvertes y ont été
-  // marquées comme lues par MessagesView), pour que le badge redescende immédiatement.
-  const prevActiveTabForUnread = React.useRef(activeTab);
-  useEffect(() => {
-    if (prevActiveTabForUnread.current === 'messagerie' && activeTab !== 'messagerie') {
-      fetchUnreadMessagesCount();
-    }
-    prevActiveTabForUnread.current = activeTab;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
 
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
@@ -20242,45 +14262,18 @@ export default function App() {
       await fetchDocuments();
     } catch (err) {
       console.error("Erreur suppression client:", err);
-      // CORRECTIF (2026-08-05) : la fonction Edge "delete-user" supprime d'abord la fiche client
-      // (table clients + données liées) PUIS tente de supprimer le compte Auth Supabase correspondant.
-      // Pour certains clients (invitation jamais finalisée, compte déjà retiré côté Auth par ailleurs...),
-      // cette seconde étape échoue avec "User not found" alors que la fiche, elle, a bien été supprimée —
-      // l'admin voyait donc une erreur rouge malgré une suppression réellement effectuée. On vérifie ici
-      // si la fiche existe encore vraiment avant d'afficher une erreur : si elle a disparu, la suppression
-      // a fonctionné malgré le message technique renvoyé par la fonction.
-      const { data: stillExists } = await supabase.from('clients').select('id').eq('id', clientId).maybeSingle();
+      toast.error("Erreur lors de la suppression : " + err.message);
       setExpandedClientId(null);
       await fetchUtilisateurs();
-      await fetchSessions();
-      await fetchDocuments();
-      if (!stillExists) {
-        toast("Client supprimé — son compte de connexion avait déjà été retiré séparément (message technique sans conséquence).", { icon: '⚠️', duration: 6000 });
-      } else {
-        toast.error("Erreur lors de la suppression : " + err.message);
-      }
     }
   };
 
   const handleDeleteFormateur = async (formateurId) => {
-    // Garde-fou : ce compte peut apparaître dans la liste des formateurs (voir "assignableFormateurs")
-    // s'il s'agit d'un admin agissant aussi comme formateur — on ne le supprime jamais depuis cet écran,
-    // ce serait supprimer le compte admin lui-même (perte d'accès totale à l'organisme).
-    if (String(formateurId) === String(currentUserId) && userRole === 'admin') {
-      toast.error("Impossible de supprimer votre propre compte administrateur depuis cet écran.");
-      return;
-    }
-    // Garde-fou multi-tenant : on ne supprime/désassigne que dans le périmètre de l'organisation courante
-    // (cf. audit sécurité — ce endpoint acceptait n'importe quel formateurId sans vérifier son organisation_id).
-    if (!currentOrgId) {
-      toast.error("Organisation introuvable, suppression annulée.");
-      return;
-    }
     try {
-      // 1. Désassigner les clients (uniquement ceux de l'organisation courante)
-      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId).eq('organisation_id', currentOrgId);
-      // 2. Supprimer le formateur (uniquement s'il appartient à l'organisation courante)
-      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId).eq('organisation_id', currentOrgId);
+      // 1. Désassigner les clients
+      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId);
+      // 2. Supprimer le formateur
+      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId);
       // 3. Supprimer le compte Auth via Edge Function sécurisée
       const { data: { session } } = await supabase.auth.getSession();
       await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
@@ -20363,56 +14356,15 @@ export default function App() {
     }
     setIsAddingUser(false);
   };
-
-  // AJOUT (2026-09-18) : équivalent de instantiateDocument mais pour les ressources de type "exercice"
-  // posées en Documents de début/fin d'un module — crée une séance "synthétique" dans `sessions`
-  // (numero_seance: null, pour ne pas fausser isModuleCompletedForClient) afin que l'exercice apparaisse
-  // dans l'onglet "Exercices" du client (ExercicesView, qui ne lit QUE la table `sessions`), avec le
-  // vrai workflow de rendu/correction. Appelée immédiatement côté ADMIN — à l'assignation du module
-  // (distributeDocumentsForModule) et à l'ajout d'une nouvelle ressource à un module déjà assigné
-  // (handleAddModuleMomentResource) — plutôt que d'attendre que le client ouvre une page précise :
-  // signalé par l'utilisateur le 2026-09-18 ("il faut que les documents de début du module apparaissent
-  // chez TOUS les clients qui y sont assignés", sans dépendre de l'onglet visité par le client.
-  const instantiateExerciceSession = async (client, resource, moment) => {
-    if (moment === 'fin' && !isModuleCompletedForClient(client.id, sessions)) return; // pas encore débloqué
-    try {
-      const { data: existing } = await supabase.from('sessions').select('id').eq('client_id', client.id).eq('nom', resource.titre).maybeSingle();
-      if (existing) return; // anti-doublon (même principe que instantiateDocument)
-      const meta = typeof resource.metadata === 'string' && resource.metadata.startsWith('{')
-        ? (() => { try { return JSON.parse(resource.metadata); } catch { return {}; } })()
-        : (resource.metadata || {});
-      const { error } = await supabase.from('sessions').insert([{
-        client_id: client.id,
-        module_id: client.module_id,
-        numero_seance: null,
-        nom: resource.titre,
-        type_activite: 'exercice',
-        ressource_titre: resource.titre,
-        file_url: resource.file_url || null,
-        metadata: { ...meta, moment },
-        statut: 'À venir',
-        statut_client: 'À venir',
-        statut_formateur: 'À venir',
-        organisation_id: client.organisation_id || currentOrgId || null,
-      }]);
-      if (error) console.error('[instantiateExerciceSession] Erreur insertion:', error.message, { client: client.id, res: resource.titre });
-    } catch (e) {
-      console.error('[instantiateExerciceSession] Exception:', e.message);
-    }
-  };
-
   const instantiateDocument = async (client, templateResource, moment) => {
     const meta = typeof templateResource.metadata === 'string' && templateResource.metadata.startsWith('{') ? JSON.parse(templateResource.metadata) : (templateResource.metadata || {});
     const classification = meta.classification || 'telechargeable';
     const hasVisualFields = meta.has_visual_fields === true;
     const visualTemplateId = meta.visual_template_id || null;
-    // Destinataires (2026-07-27) : un ou plusieurs parmi client/formateur/organisme (n'importe quel
-    // admin de l'organisation) → détermine visible_client / visible_formateur / requiresOrganisme.
-    // parseDestinationRoles comprend aussi les anciennes valeurs 'client' | 'formateur' | 'both'.
-    const destRoles = parseDestinationRoles(templateResource.destination);
-    const visClient      = destRoles.includes('client');
-    const visFormateur   = destRoles.includes('formateur');
-    const requiresOrganisme = destRoles.includes('organisme');
+    // Destination : 'client' | 'formateur' | 'les_deux' → détermine visible_client / visible_formateur
+    const dest = templateResource.destination || 'client';
+    const visClient    = dest !== 'formateur';   // true pour 'client' et 'les_deux'
+    const visFormateur = dest !== 'client';      // true pour 'formateur' et 'les_deux'
     // Si le formateur doit signer, on lui assigne le document explicitement via assigned_formateur_id
     const assignedFormateurId = visFormateur ? (client.formateur_id || null) : null;
 
@@ -20454,13 +14406,11 @@ export default function App() {
         const today = new Date().toLocaleDateString('fr-FR');
         resolvedValues = {
           nomcomplet_client:   (client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || '').trim(),
-          numero_dossier_client: client.numero_dossier || '',
           client_email:        client.email_contact || client.email || '',
           client_phone:        client.telephone || '',
           rue_client:          client.adresse || client.adresse_postale || client.rue || '',
           code_postal_client:  client.code_postal || '',
           ville_client:        client.ville || '',
-          region_client:       client.region || '',
           adresse_session:     client.adresse || client.adresse_postale || client.rue || '',
           prix_prestation:     client.prix_prestation || client.montant_prestation || '',
           modalite_formation:  client.modalite_formation || '',
@@ -20480,18 +14430,10 @@ export default function App() {
           tel_formateur:       formateur?.telephone || '',
           telephone_formateur: formateur?.telephone || '',
           adresse_formateur:   formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
-          region_formateur:    formateur?.region || '',
           formateur_siret:     formateur?.formateur_siret || formateur?.siret || '',
           formateur_nda:       formateur?.formateur_nda || formateur?.nda || '',
           compagnie_assurance: formateur?.compagnie_assurance || '',
           numero_assurance_rcp: formateur?.numero_assurance_rcp || '',
-          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-          date_signature_formateur: today,
-          date_signature_organisme: today,
-          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
-          initiales_client:    computeInitials(client.nom_complet || ((client.prenom || '') + ' ' + (client.nom || '')).trim() || ''),
-          initiales_formateur: computeInitials(formateur?.nom || ''),
-          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           nom_consultant:      formateur?.nom || '',
           email_consultant:    formateur?.email || '',
           tel_consultant:      formateur?.telephone || '',
@@ -20508,11 +14450,7 @@ export default function App() {
         if (!templateResp.ok) throw new Error(`HTTP ${templateResp.status} pour ${templateResource.file_url}`);
         let pdfBlob = new Blob([await templateResp.arrayBuffer()], { type: 'application/pdf' });
 
-        // Les champs texte libre (texte_client/texte_formateur) sont comme les signatures/cases :
-        // remplis par le SIGNATAIRE au moment de signer, pas par l'admin à la génération — ils ne
-        // doivent donc PAS recevoir l'overlay "données" ici (sinon la boîte vide se retrouve gravée
-        // en dur, non modifiable, dans le PDF pré-généré).
-        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
+        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_'));
         if (dataFields.length > 0) {
           pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, resolvedValues, {});
         }
@@ -20528,20 +14466,14 @@ export default function App() {
         if (uploadErr) throw uploadErr;
         const { data: { publicUrl: prefilledUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
 
-        // 5. Stocker avec URL pré-remplie + positions des champs signature/case/texte libre pour l'étape de signature
-        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_'));
-        // Mode de signature (Stage 3, 2026-07-24) : copié depuis le modèle (meta.signing_mode/signing_order,
-        // réglé une fois dans VisualTemplateEditor) sur CHAQUE document instancié — isBlockedBySigningOrder
-        // lit ces champs directement sur la ligne `documents`, sans avoir à retourner interroger le modèle.
+        // 5. Stocker avec URL pré-remplie + positions des champs signature pour l'étape de signature
+        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_'));
         const docMetadata = JSON.stringify({
           has_visual_fields: true,
           visual_template_id: visualTemplateId,
           template_url: templateResource.file_url,
           prefilled: true,
           signature_fields: sigFields,
-          destination_roles: destRoles,
-          signing_mode: meta.signing_mode || 'simultane',
-          ...(meta.signing_mode === 'sequentiel' ? { signing_order: normalizeSigningOrder(meta) } : {}),
         });
 
         const { data: newDoc, error: insertErr } = await supabase.from('documents').insert([{
@@ -20553,7 +14485,6 @@ export default function App() {
           visible_client: visClient,
           visible_formateur: visFormateur,
           signe_par_client: false,
-          ...(requiresOrganisme ? { signe_par_organisme: false } : {}),
           metadata: docMetadata,
           ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
@@ -20571,9 +14502,6 @@ export default function App() {
           template_url: templateResource.file_url,
           fields: tplFields || [],
           resolved_values: resolvedValues || {},
-          destination_roles: destRoles,
-          signing_mode: meta.signing_mode || 'simultane',
-          ...(meta.signing_mode === 'sequentiel' ? { signing_order: normalizeSigningOrder(meta) } : {}),
         });
         const { data: newDoc, error: fallbackErr } = await supabase.from('documents').insert([{
           user_id: client.id,
@@ -20584,7 +14512,6 @@ export default function App() {
           visible_client: visClient,
           visible_formateur: visFormateur,
           signe_par_client: false,
-          ...(requiresOrganisme ? { signe_par_organisme: false } : {}),
           metadata: fallbackMeta,
           ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
         }]).select().single();
@@ -20648,35 +14575,10 @@ export default function App() {
 
         if (!existingFDoc) {
           // Reprendre les mêmes métadonnées enrichies (champs + valeurs résolues) si template visuel
-          // ── IMPORTANT : ce document (copie "formateur" d'un template destination=both) doit lui
-          // aussi porter signature_fields dans ses métadonnées, sinon la visionneuse de signature ne
-          // sait pas quels champs signature/case/texte-libre appartiennent au formateur → aucun champ
-          // interactif ne s'affiche (régression trouvée en test 2026-07-24 : "Texte libre formateur"
-          // non modifiable + "Texte libre client" visible alors qu'il ne devrait pas l'être).
-          let fDocSigFields = [];
-          if (hasVisualFields && visualTemplateId) {
-            try {
-              let fTplFields = (meta.template_fields && meta.template_fields.length > 0) ? meta.template_fields : null;
-              if (!fTplFields) {
-                const { data: fDbFields } = await supabase
-                  .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
-                fTplFields = fDbFields || [];
-              }
-              fDocSigFields = (fTplFields || []).filter(f =>
-                f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' ||
-                (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')
-              );
-            } catch (e) {
-              console.warn('[instantiateDocument] Impossible de résoudre les champs interactifs (doc formateur, destination=both) :', e.message);
-            }
-          }
           const fDocMetadata = (hasVisualFields && visualTemplateId) ? JSON.stringify({
             has_visual_fields: true,
             visual_template_id: visualTemplateId,
             template_url: templateResource.file_url,
-            signature_fields: fDocSigFields,
-            signing_mode: meta.signing_mode || 'simultane',
-            ...(meta.signing_mode === 'sequentiel' ? { signing_order: meta.signing_order || 'client_first' } : {}),
           }) : null;
 
           await supabase.from('documents').insert([{
@@ -20708,14 +14610,13 @@ export default function App() {
       
       if (resErr || !resources || resources.length === 0) return;
 
-      let hasExercices = false;
       for (const res of resources) {
         if (res.type === 'document_group' && res.document_group_id) {
           const { data: groupDocs, error: grpErr } = await supabase
             .from('module_step_resources')
             .select('*')
             .eq('document_group_id', res.document_group_id);
-
+            
           if (!grpErr && groupDocs) {
             for (const doc of groupDocs) {
               if (doc.type === 'document') await instantiateDocument(client, doc, res.moment);
@@ -20723,14 +14624,9 @@ export default function App() {
           }
         } else if (res.type === 'document') {
           await instantiateDocument(client, res, res.moment);
-        } else if (res.type === 'exercice') {
-          // AJOUT (2026-09-18) : distribue aussi les exercices de début/fin — voir instantiateExerciceSession.
-          hasExercices = true;
-          await instantiateExerciceSession(client, res, res.moment);
         }
       }
       fetchDocuments();
-      if (hasExercices && typeof fetchSessions === 'function') await fetchSessions();
     } catch (e) {
       console.error("[distributeDocuments] Erreur :", e);
     }
@@ -20768,17 +14664,6 @@ export default function App() {
           .eq('user_id', clientId)
           .eq('nom', res.titre)
           .eq('signe_par_client', false);
-
-        // Destination "Les deux" : une COPIE SÉPARÉE existe aussi pour le formateur assigné
-        // (user_id NULL, assigned_formateur_id renseigné à la place — voir instantiateDocument) —
-        // sans ce nettoyage, cette copie-là restait figée avec l'ancienne métadonnée (sans
-        // signature_fields) même après une "régénération" côté client.
-        if ((res.destination || 'client') === 'both' && fullClient.formateur_id) {
-          await supabase.from('documents').delete()
-            .eq('assigned_formateur_id', fullClient.formateur_id)
-            .eq('nom', res.titre)
-            .eq('signe_par_formateur', false);
-        }
       }
 
       // Relancer la distribution (instantiateDocument régénère les PDFs visuels)
@@ -20840,92 +14725,51 @@ export default function App() {
   const handleAddModule = async (e) => {
     e.preventDefault();
     if (!newModuleName.trim()) return;
-    const nbSeances = parseInt(newModuleSeances) || 1;
-    const { data: newModule, error } = await supabase.from('modules')
-      .insert([{ nom: newModuleName, seances_prevues: nbSeances, organisation_id: currentOrgId }])
-      .select().single();
-    if (!error) {
-      // Créer automatiquement les N dossiers de séance vides ("Séance 1", "Séance 2"...)
-      // correspondant au nombre saisi, pour éviter d'avoir à les ajouter un par un via
-      // "Modéliser Parcours" (décision produit du 2026-07-28, suite à une confusion
-      // remontée : le champ "Séances prévues" ne créait auparavant qu'une étiquette,
-      // sans générer les séances elles-mêmes).
-      if (newModule) {
-        const templatesToInsert = Array.from({ length: nbSeances }, (_, i) => ({
-          module_id: newModule.id,
-          titre: `Séance ${i + 1}`,
-          ordre: i + 1,
-          organisation_id: currentOrgId
-        }));
-        const { error: templatesError } = await supabase.from('module_session_templates').insert(templatesToInsert);
-        if (templatesError) {
-          console.error('Erreur création des séances par défaut:', templatesError);
-          toast.error("Module créé, mais la création automatique des séances a échoué : " + templatesError.message);
-        }
-      }
-      await fetchModules();
-      setNewModuleName('');
-      setNewModuleSeances(1);
+    const { error } = await supabase.from('modules').insert([{ nom: newModuleName, seances_prevues: parseInt(newModuleSeances), organisation_id: currentOrgId }]);
+    if (!error) { 
+      await fetchModules(); 
+      setNewModuleName(''); 
+      setNewModuleSeances(1); 
       toast.success("Module créé avec succès !");
     }
     else toast.error('Erreur lors de la création du module : ' + error.message);
   };
 
-  const handleDeleteModule = (moduleId, moduleName) => {
-    // Décision produit (2026-07-23) : plutôt que de bloquer la suppression tant que des
-    // clients/utilisateurs sont rattachés (comportement précédent), on les désassigne
-    // automatiquement (module_id -> NULL, ils repassent "Aucun module assigné") puis on
-    // supprime le module. Couvre à la fois clients.module_id et utilisateurs.module_id
-    // (cette dernière colonne porte une contrainte de clé étrangère "utilisateurs_module_id_fkey"
-    // découverte en production, jamais utilisée ailleurs dans l'app).
-    showAppConfirm(
-      `Supprimer le module "${moduleName}" ?`,
-      "Les clients et utilisateurs encore rattachés à ce module basculeront automatiquement sur \"Aucun module assigné\". Ce module et tout son contenu (parcours, étapes, ressources) seront ensuite définitivement supprimés. Cette action est irréversible.",
-      async () => {
-        hideAppConfirm();
-        if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
-        try {
-          // 1. Désassigner les clients rattachés (scopé strictement à l'organisme courant)
-          const clientsUnassignQuery = supabase.from('clients').update({ module_id: null }).eq('module_id', moduleId).eq('organisation_id', currentOrgId);
-          const { data: unassignedClients, error: clientsUnassignErr } = await clientsUnassignQuery.select('id');
-          if (clientsUnassignErr) throw clientsUnassignErr;
+  const handleLinkDocument = async (e, selectedModule) => {
+    e.preventDefault();
+    const modId = selectedModule.id;
 
-          // 2. Désassigner les utilisateurs (formateurs/admins) rattachés
-          const staffUnassignQuery = supabase.from('utilisateurs').update({ module_id: null }).eq('module_id', moduleId).eq('organisation_id', currentOrgId);
-          const { data: unassignedStaff, error: staffUnassignErr } = await staffUnassignQuery.select('id');
-          if (staffUnassignErr) throw staffUnassignErr;
+    if (!newModDocName.trim()) return;
 
-          // 3. Supprimer le contenu du module puis le module lui-même
-          const { error: msrErr } = await supabase.from('module_step_resources').delete().eq('module_id', moduleId);
-          if (msrErr) throw msrErr;
-          const { error: mstErr } = await supabase.from('module_session_templates').delete().eq('module_id', moduleId);
-          if (mstErr) throw mstErr;
-          const delQuery = supabase.from('modules').delete().eq('id', moduleId).eq('organisation_id', currentOrgId);
-          const { error } = await delQuery;
-          if (error) throw error;
-
-          await fetchModules();
-          await fetchUtilisateurs();
-          const n1 = unassignedClients?.length || 0;
-          const n2 = unassignedStaff?.length || 0;
-          const detail = (n1 || n2) ? ` (${n1} client(s) et ${n2} utilisateur(s) repassés en "Aucun module assigné")` : '';
-          toast.success(`Module supprimé avec succès.${detail}`);
-        } catch (err) {
-          console.error("Erreur suppression module:", err);
-          // Filet de sécurité : la désassignation ci-dessus est elle-même soumise aux règles de
-          // sécurité (RLS) — un compte historique sans organisation_id pourrait ne pas être
-          // désassignable par cette voie (même limite que la vérification RLS précédente). Dans
-          // ce cas la suppression du module échoue encore avec une violation de clé étrangère :
-          // on l'attrape ici pour afficher un message clair plutôt que le texte brut de Postgres.
-          const isForeignKeyViolation = err?.code === '23503' || /foreign key constraint/i.test(err?.message || '');
-          if (isForeignKeyViolation) {
-            toast.error("Impossible de supprimer ce module : un compte y est encore rattaché et n'a pas pu être désassigné automatiquement (probablement un compte historique sans organisation). Ce cas nécessite une correction manuelle en base — contactez le support technique.", { duration: 10000 });
-          } else {
-            toast.error("Erreur lors de la suppression : " + err.message);
-          }
-        }
+    let finalUrl = '';
+    if (newModDocFile) {
+      const fileExt = newModDocFile.name.split('.').pop();
+      const fileName = `module_${modId}_${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, newModDocFile);
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
+        finalUrl = publicUrl;
       }
-    );
+    }
+
+    const { error } = await supabase.from('module_documents').insert([{
+      module_id: Number(modId),
+      nom: newModDocName,
+      type_document: newModDocType,
+      url: finalUrl,
+      organisation_id: currentOrgId
+    }]);
+
+    if (!error) {
+      setAddingToModuleId(null);
+      setNewModDocName('');
+      setNewModDocType('Autre');
+      setNewModDocFile(null);
+      await fetchModules();
+      toast.success("Document lié au module !");
+    } else {
+      toast.error("Erreur liaison document : " + error.message);
+    }
   };
 
   const createSessionFolder = async (moduleId, title) => {
@@ -20961,20 +14805,6 @@ export default function App() {
     }
   };
 
-  // AJOUT (2026-09-17) : renommer un module APRÈS sa création — jusqu'ici seul le nom des "dossiers
-  // de séance" à l'intérieur d'un module était modifiable (voir handleRenameFolder ci-dessus), pas le
-  // nom du module lui-même. Demandé par l'utilisateur le 17/09/2026.
-  const handleRenameModule = async (moduleId, newTitle) => {
-    if (!newTitle.trim()) return;
-    const { error } = await supabase.from('modules').update({ nom: newTitle.trim() }).eq('id', moduleId);
-    if (!error) {
-      await fetchModules();
-      toast.success("Module renommé avec succès !");
-    } else {
-      toast.error("Erreur renommage : " + error.message);
-    }
-  };
-
   const handleRenameResource = async (resourceId, newTitle) => {
     if (!newTitle.trim()) return;
     const { error } = await supabase.from('module_step_resources').update({ titre: newTitle }).eq('id', resourceId);
@@ -20983,68 +14813,6 @@ export default function App() {
       toast.success("Élément renommé !");
     } else {
       toast.error("Erreur renommage : " + error.message);
-    }
-  };
-
-  // AJOUT (2026-09-25) : permet de changer QUI doit signer un émargement de module APRÈS sa
-  // création, sans avoir à le supprimer/recréer (demandé par l'utilisateur — jusqu'ici
-  // StepResourceModal ne proposait ce choix qu'à la création, et uniquement pour les documents,
-  // jamais pour les émargements).
-  //
-  // Règle de propagation volontairement asymétrique (validée avec l'utilisateur le 25/09/2026) :
-  //  - si on AJOUTE la signature formateur (false/absent -> true), on la propage aussi à tous les
-  //    dossiers clients déjà générés à partir de cet émargement (sans risque : ça ajoute juste une
-  //    case à signer en plus, aucune signature déjà obtenue n'est touchée) ;
-  //  - si on RETIRE la signature formateur (true -> false), on NE touche PAS aux dossiers déjà créés
-  //    (on ne veut jamais faire disparaître un suivi ou une signature déjà obtenue sur un dossier en
-  //    cours) — seuls les futurs dossiers générés après ce changement n'auront plus cette case.
-  //
-  // Le rattachement séance générée <-> ressource de modèle se fait par titre + module_id, comme le
-  // fait déjà generateSessions() pour sa dé-duplication (pas de clé étrangère directe
-  // sessions -> module_step_resources dans ce schéma).
-  const handleUpdateStepResourceSignatures = async (resourceId, { requiresClientSignature, requiresTrainerSignature }) => {
-    const resource = moduleStepResources.find(r => r.id === resourceId);
-    if (!resource) return;
-
-    const parseMeta = (m) => (typeof m === 'string' && m.startsWith('{')) ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
-    const currentMeta = parseMeta(resource.metadata);
-    const wasTrainerRequired = currentMeta.requiresTrainerSignature === true;
-    const newMeta = { ...currentMeta, requiresClientSignature, requiresTrainerSignature, documentType: 'signature' };
-
-    const { error } = await supabase.from('module_step_resources').update({ metadata: newMeta }).eq('id', resourceId);
-    if (error) {
-      toast.error('Erreur lors de la mise à jour : ' + error.message);
-      return;
-    }
-
-    // Propagation UNIQUEMENT dans le sens "ajout" — voir commentaire ci-dessus.
-    let propagatedCount = 0;
-    if (!wasTrainerRequired && requiresTrainerSignature === true) {
-      const template = moduleSessionTemplates.find(t => t.id === resource.template_id);
-      const moduleId = template?.module_id;
-      if (moduleId) {
-        const { data: matching, error: fetchErr } = await supabase
-          .from('sessions')
-          .select('id, metadata')
-          .eq('module_id', moduleId)
-          .eq('ressource_titre', resource.titre);
-        if (!fetchErr && matching && matching.length > 0) {
-          const toUpdate = matching.filter(s => parseMeta(s.metadata).requiresTrainerSignature !== true);
-          for (const s of toUpdate) {
-            const m = parseMeta(s.metadata);
-            await supabase.from('sessions').update({ metadata: { ...m, requiresTrainerSignature: true } }).eq('id', s.id);
-          }
-          propagatedCount = toUpdate.length;
-          if (propagatedCount > 0 && typeof fetchSessions === 'function') await fetchSessions();
-        }
-      }
-    }
-
-    await fetchModules();
-    if (propagatedCount > 0) {
-      toast.success(`Paramètres enregistrés — signature formateur ajoutée à ${propagatedCount} dossier(s) client déjà existant(s).`);
-    } else {
-      toast.success('Paramètres de signature enregistrés.');
     }
   };
 
@@ -21094,27 +14862,17 @@ export default function App() {
     if (error) {
       toast.error("Erreur lors de l'ajout : " + error.message);
     } else {
-      // Auto-distribuer cette ressource aux clients déjà assignés à ce module — pour que "Documents de
-      // début" (et "de fin", une fois le parcours terminé) apparaissent chez TOUS les clients concernés
-      // dès l'ajout, sans dépendre de la page que le client ouvre ensuite (corrigé le 2026-09-18, suite
-      // à un exercice de début resté invisible côté client).
-      if ((moment === 'debut' || moment === 'fin') && newResource && (stepData.type === 'document' || stepData.type === 'exercice')) {
+      // Auto-distribuer ce document aux clients déjà assignés à ce module
+      if ((moment === 'debut' || moment === 'fin') && newResource && stepData.type === 'document') {
         const assignedClients = clients.filter(c =>
           String(c.module_id) === String(moduleId) &&
           (!currentOrgId || String(c.organisation_id) === String(currentOrgId))
         );
-        if (stepData.type === 'document') {
-          for (const client of assignedClients) {
-            await instantiateDocument(client, newResource, moment);
-          }
-        } else {
-          for (const client of assignedClients) {
-            await instantiateExerciceSession(client, newResource, moment);
-          }
-          if (assignedClients.length > 0 && typeof fetchSessions === 'function') await fetchSessions();
+        for (const client of assignedClients) {
+          await instantiateDocument(client, newResource, moment);
         }
         if (assignedClients.length > 0) {
-          toast.success(`✅ ${stepData.type === 'exercice' ? 'Exercice' : 'Document'} distribué à ${assignedClients.length} client(s) existant(s)`);
+          toast.success(`✅ Document distribué à ${assignedClients.length} client(s) existant(s)`);
         }
       }
       await fetchModules();
@@ -21122,9 +14880,7 @@ export default function App() {
     setIsAddingStepResource(false);
   };
 
-  // Redistribue manuellement tous les documents ET exercices début/fin d'un module à ses clients (sans
-  // toucher aux séances du calendrier) — utile pour rattraper des clients déjà assignés avant l'ajout
-  // d'une ressource (voir distributeDocumentsForModule, qui gère désormais aussi les exercices).
+  // Redistribue manuellement tous les documents début/fin d'un module à ses clients (sans toucher aux séances)
   const handleRedistributeModuleDocs = async (moduleId) => {
     const assignedClients = clients.filter(c =>
       String(c.module_id) === String(moduleId) &&
@@ -21138,8 +14894,7 @@ export default function App() {
       await distributeDocumentsForModule(client, moduleId);
     }
     await fetchDocuments();
-    if (typeof fetchSessions === 'function') await fetchSessions();
-    toast.success(`✅ Documents et exercices redistribués à ${assignedClients.length} client(s)`);
+    toast.success(`✅ Documents redistribués à ${assignedClients.length} client(s)`);
   };
 
   const handleDeleteFolder = (folderId) => {
@@ -21516,25 +15271,14 @@ export default function App() {
     const updateData = {};
     const client = clients.find(c => c.id === session.client_id);
 
-    // FIX (2026-09-25) : même correctif que handleEmargementSave — voir son commentaire pour le
-    // détail. "statut" ne doit passer à 'Signé' que lorsque toutes les signatures EXIGÉES par la
-    // séance sont réunies, jamais dès qu'une seule partie a signé.
     if (userRole === 'formateur' || userRole === 'admin') {
       updateData.date_signature_formateur = new Date().toISOString();
       updateData.statut_formateur = 'Signé';
+      updateData.statut = 'Signé';
     } else {
       updateData.date_signature_client = new Date().toISOString();
       updateData.statut_client = 'Signé';
-    }
-    {
-      const sigMeta = session.metadata || {};
-      const requiresClientSig = sigMeta.requiresClientSignature !== false;
-      const requiresTrainerSig = sigMeta.requiresTrainerSignature === true;
-      const clientNowSigned = updateData.statut_client === 'Signé' || session.statut_client === 'Signé';
-      const trainerNowSigned = updateData.statut_formateur === 'Signé' || session.statut_formateur === 'Signé';
-      if ((!requiresClientSig || clientNowSigned) && (!requiresTrainerSig || trainerNowSigned)) {
-        updateData.statut = 'Signé';
-      }
+      updateData.statut = 'Signé';
     }
 
     if (documentChoice) {
@@ -21580,47 +15324,18 @@ export default function App() {
       updateData.signature_formateur = formateurSig;
       updateData.statut_formateur = 'Signé';
       updateData.date_signature_formateur = new Date().toISOString();
+      updateData.statut = 'Signé';
     }
 
     if (clientSig) {
       updateData.signature_client = clientSig;
       updateData.statut_client = 'Signé';
       updateData.date_signature_client = new Date().toISOString();
-    }
-
-    // FIX (2026-09-25) : le statut global "statut" (encore lu par les écrans de planning via
-    // isSigned = statut_formateur === 'Signé' || statut === 'Signé') ne doit passer à 'Signé' que
-    // lorsque TOUTES les signatures réellement exigées par la séance (metadata.requiresClientSignature
-    // !== false, metadata.requiresTrainerSignature === true) sont réunies. Avant ce correctif, signer
-    // d'UN SEUL côté (ex. le client) mettait déjà updateData.statut = 'Signé', ce qui faisait
-    // apparaître le bouton "Signer" du formateur en "Signé ✓" (désactivé) dans
-    // "Mes Clients > Planning des Séances" alors qu'il n'avait pas encore signé lui-même —
-    // l'empêchant purement et simplement d'émarger.
-    const emargementSession = sessions.find(s => String(s.id) === String(sessionId));
-    const emargementMeta = emargementSession?.metadata || {};
-    const requiresClientSig = emargementMeta.requiresClientSignature !== false;
-    const requiresTrainerSig = emargementMeta.requiresTrainerSignature === true;
-    const clientNowSigned = !!clientSig || emargementSession?.statut_client === 'Signé';
-    const trainerNowSigned = !!formateurSig || emargementSession?.statut_formateur === 'Signé';
-    if ((!requiresClientSig || clientNowSigned) && (!requiresTrainerSig || trainerNowSigned)) {
-      updateData.statut = 'Signé';
+      if (!formateurSig) updateData.statut = 'Signé';
     }
 
     const { error } = await supabase.from('sessions').update(updateData).eq('id', sessionId);
     if (!error) {
-      // FIX (2026-09-26) : incrémente le compteur de progression du client (clients.seances_effectuees,
-      // lu par la barre "PROGRESSION X%" de la vue formateur "Mes Clients") dès que cette séance passe
-      // à 'Signé' — cette fonction ne le faisait jamais, contrairement à handleSessionSignatureSave qui
-      // gère le même compteur pour les documents. On ne compte que la transition (pas encore signée ->
-      // signée) pour éviter un double comptage si la fonction était rappelée.
-      if (updateData.statut === 'Signé' && emargementSession?.statut !== 'Signé') {
-        const emargementClient = clients.find(c => c.id === emargementSession?.client_id);
-        if (emargementClient) {
-          const newEffectuees = (emargementClient.seances_effectuees || 0) + 1;
-          await supabase.from('clients').update({ seances_effectuees: newEffectuees }).eq('id', emargementClient.id);
-          await fetchUtilisateurs();
-        }
-      }
       await fetchSessions();
       setSigningSessionId(null);
       toast.success('Émargement enregistré !');
@@ -21828,37 +15543,9 @@ export default function App() {
   };
 
   const assignFormateur = async (userId, formateurId) => {
-    // Capturé AVANT la mise à jour : sert à ne pas ré-envoyer un email de notification si on
-    // ré-enregistre le même formateur sans changement réel (voir plus bas).
-    const previousFormateurId = clients.find(c => c.id === userId)?.formateur_id || null;
     const { error } = await supabase.from('clients').update({ formateur_id: formateurId || null }).eq('id', userId);
     if (!error) {
       setClients(clients.map(c => c.id === userId ? { ...c, formateur_id: formateurId } : c));
-      // FIX (nouvelle fonctionnalité, 2026-09-11) : prévient le formateur par email dès qu'un
-      // client lui est assigné ou réassigné (voir api/formateur/notify-assignment.js), pour qu'il
-      // ne le découvre pas par hasard en allant vérifier sa liste de clients — demande utilisateur.
-      // Volontairement PAS envoyé si on retire le formateur (formateurId vide) ni si c'est le même
-      // formateur qu'avant (pas de vrai changement). "Fire-and-forget" : un souci d'envoi (clé
-      // Resend absente, formateur sans email...) ne doit jamais remettre en cause l'assignation
-      // elle-même, déjà enregistrée en base à ce stade — juste logué en console pour diagnostic.
-      if (formateurId && String(formateurId) !== String(previousFormateurId)) {
-        supabase.auth.getSession().then(({ data: sessionData }) => {
-          const accessToken = sessionData?.session?.access_token;
-          if (!accessToken) return;
-          fetch('/api/formateur/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-            body: JSON.stringify({ type: 'assignation', clientId: userId, formateurId, origin: window.location.origin }),
-          }).then(async (resp) => {
-            const result = await resp.json().catch(() => ({}));
-            if (!resp.ok) {
-              console.warn('[assignFormateur] Notification formateur non envoyée :', result.error || resp.status);
-            } else if (result.simulated) {
-              console.warn('[assignFormateur] Notification formateur simulée (RESEND_API_KEY non configurée côté serveur).');
-            }
-          }).catch(e => console.warn('[assignFormateur] Erreur réseau notification formateur :', e.message));
-        }).catch(e => console.warn('[assignFormateur] Erreur session notification formateur :', e.message));
-      }
     } else {
       toast.error("Erreur assignation: " + error.message);
     }
@@ -21941,24 +15628,13 @@ export default function App() {
   };
 
   // ── VisualTemplateEditor : upload DOCX + sauvegarde des champs visuels ──
-  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg, editingTemplateId = null, signingConfigArg = null) => {
+  const handleUploadVisualTemplate = async (fileArg, nameArg, destinationArg, fieldsArg, classificationArg, editingTemplateId = null) => {
     try {
       const file = fileArg;
       const name = nameArg || (file ? file.name.replace(/\.[^/.]+$/, '') : 'modele');
       const destination = destinationArg || 'client';
       const fieldsToSave = fieldsArg || [];
       const classification = classificationArg || 'a_generer';
-      // Mode de signature (Stage 3, 2026-07-24 ; généralisé à 3 parties le 2026-07-27) : 'simultane'
-      // (défaut, comportement historique) ou 'sequentiel' avec un ordre — réglé une fois ici sur le
-      // modèle, propagé sur chaque document instancié (instantiateDocument lit meta.signing_mode/
-      // signing_order) et sur les instances déjà envoyées à des clients (propagation ci-dessous).
-      // signing_order est désormais un TABLEAU de rôles ('client'|'formateur'|'organisme') dans
-      // l'ordre de signature — normalizeSigningOrder() (module-level) sait toujours lire l'ancien
-      // format 'client_first'/'formateur_first' pour les modèles créés avant ce changement.
-      const signingMode = signingConfigArg?.mode === 'sequentiel' ? 'sequentiel' : 'simultane';
-      const signingOrderRoles = Array.isArray(signingConfigArg?.order) && signingConfigArg.order.length
-        ? signingConfigArg.order.filter(r => SIGNER_ROLES.includes(r))
-        : null;
 
       if (!file) throw new Error('Aucun fichier fourni.');
 
@@ -21972,11 +15648,7 @@ export default function App() {
 
       // 2. Insérer / mettre à jour le MSR maître dans module_step_resources
       // Note : visual_template_id sera ajouté juste après (auto-référence, nécessite msrId)
-      const metadataObj = {
-        classification, has_visual_fields: true,
-        signing_mode: signingMode,
-        ...(signingMode === 'sequentiel' && signingOrderRoles ? { signing_order: signingOrderRoles } : {}),
-      };
+      const metadataObj = { classification, has_visual_fields: true };
       let msrId = null;
 
       if (editingTemplateId) {
@@ -22023,11 +15695,7 @@ export default function App() {
         page: f.page || 1,
         x_percent: parseFloat(f.xPct.toFixed(4)),
         y_percent: parseFloat(f.yPct.toFixed(4)),
-        // FIX (2026-09-04) : largeur/hauteur de la case "texte libre" (en % de la page), réglées par
-        // l'admin via la poignée de redimensionnement — undefined pour les autres types de balise.
-        ...(typeof f.width_percent === 'number' ? { width_percent: parseFloat(f.width_percent.toFixed(4)) } : {}),
-        ...(typeof f.height_percent === 'number' ? { height_percent: parseFloat(f.height_percent.toFixed(4)) } : {}),
-        field_type: (f.tag || '').startsWith('signature_') ? 'signature' : (f.tag || '').startsWith('checkbox_') ? 'checkbox' : (f.tag || '').startsWith('texte_') ? 'text_input' : 'text',
+        field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
         font_size: 11,
       }));
       const fullMetadataObj = { ...metadataObj, visual_template_id: msrId, template_fields: embeddedFields };
@@ -22050,7 +15718,7 @@ export default function App() {
             x_percent: parseFloat(f.xPct.toFixed(4)),
             y_percent: parseFloat(f.yPct.toFixed(4)),
             font_size: 11,
-            field_type: (f.tag || '').startsWith('signature_') ? 'signature' : (f.tag || '').startsWith('checkbox_') ? 'checkbox' : (f.tag || '').startsWith('texte_') ? 'text_input' : 'text',
+            field_type: (f.tag === 'signature_client' || f.tag === 'signature_formateur') ? 'signature' : (f.tag === 'checkbox_client' || f.tag === 'checkbox_formateur') ? 'checkbox' : 'text',
             ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
           }));
           const { error: fieldsErr } = await supabase.from('template_fields').insert(rows);
@@ -22063,19 +15731,14 @@ export default function App() {
         }
       }
 
-      // FIX 2 — Propager visual_template_id aux copies MSR module-liées (même titre), à l'intérieur
-      // du MÊME organisme uniquement — ou sans organisation_id renseigné (copies historiques non
-      // scopées). Le filtre organisation_id avait été totalement supprimé ici, ce qui permettait à
-      // l'admin d'un organisme de modifier les modèles de documents de n'importe quel AUTRE organisme
-      // partageant le même titre de modèle — un trou de cloisonnement multi-tenant critique.
-      if (msrId && currentOrgId) {
-        const propagateQuery = supabase.from('module_step_resources')
+      // FIX 2 — Propager visual_template_id à TOUTES les copies MSR module-liées (même titre, tout org).
+      // Filtre organisation_id SUPPRIMÉ : les copies module peuvent avoir un org différent ou null.
+      if (msrId) {
+        await supabase.from('module_step_resources')
           .update({ metadata: JSON.stringify(fullMetadataObj) })
           .eq('titre', name)
           .eq('type', 'document')
-          .eq('organisation_id', currentOrgId)
           .neq('id', msrId);
-        await propagateQuery;
       }
 
       // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id + champs pour Priority 2
@@ -22105,40 +15768,30 @@ export default function App() {
           };
 
           // Source 1 : MSR liés directement à un module (type=document, module_id non null)
-          // Scopé à l'organisation courante (+ legacy sans organisation_id) pour éviter de traiter
-          // des ressources d'autres organismes portant le même titre.
-          let directLinksQuery = supabase
+          const { data: directLinks } = await supabase
             .from('module_step_resources').select('module_id')
             .eq('titre', name).eq('type', 'document').not('module_id', 'is', null);
-          directLinksQuery = currentOrgId ? directLinksQuery.eq('organisation_id', currentOrgId) : directLinksQuery.limit(0);
-          const { data: directLinks } = await directLinksQuery;
           const directModuleIds = [...new Set((directLinks || []).map(m => m.module_id).filter(Boolean))];
 
           // Source 2 : document dans un document_group → remonter au module via le groupe
-          let groupLinksQuery = supabase
+          const { data: groupLinks } = await supabase
             .from('module_step_resources').select('document_group_id')
             .eq('titre', name).eq('type', 'document').not('document_group_id', 'is', null);
-          groupLinksQuery = currentOrgId ? groupLinksQuery.eq('organisation_id', currentOrgId) : groupLinksQuery.limit(0);
-          const { data: groupLinks } = await groupLinksQuery;
           const groupIds = [...new Set((groupLinks || []).map(d => d.document_group_id).filter(Boolean))];
           let groupModuleIds = [];
           if (groupIds.length > 0) {
-            let groupParentsQuery = supabase
+            const { data: groupParents } = await supabase
               .from('module_step_resources').select('module_id')
               .eq('type', 'document_group').in('document_group_id', groupIds).not('module_id', 'is', null);
-            groupParentsQuery = currentOrgId ? groupParentsQuery.eq('organisation_id', currentOrgId) : groupParentsQuery.limit(0);
-            const { data: groupParents } = await groupParentsQuery;
             groupModuleIds = [...new Set((groupParents || []).map(m => m.module_id).filter(Boolean))];
           }
 
           const allModuleIds = [...new Set([...directModuleIds, ...groupModuleIds])];
 
           // Source 3 : clients ayant déjà un document avec ce nom (non signé) → mettre à jour leur doc
-          let existingClientDocsQuery = supabase
+          const { data: existingClientDocs } = await supabase
             .from('documents').select('user_id')
             .eq('nom', name).not('user_id', 'is', null).eq('signe_par_client', false);
-          existingClientDocsQuery = currentOrgId ? existingClientDocsQuery.eq('organisation_id', currentOrgId) : existingClientDocsQuery.limit(0);
-          const { data: existingClientDocs } = await existingClientDocsQuery;
           const existingClientIds = new Set((existingClientDocs || []).map(d => String(d.user_id)));
 
           // Union de toutes les sources
@@ -22182,10 +15835,6 @@ export default function App() {
     try {
       const template = documentTemplates[templateKey];
       if (!template) return;
-      if (!currentOrgId) {
-        toast.error("Organisme introuvable — suppression annulée par sécurité.");
-        return;
-      }
 
       // Extraction du nom du fichier pour le storage
       const fileName = template.url.split('/').pop().split('?')[0];
@@ -22193,18 +15842,11 @@ export default function App() {
       // 1. Supprimer du storage
       await supabase.storage.from('documents').remove([fileName]);
 
-      // 2. Supprimer de documents (Modèle Référence) — limité à l'organisme courant (+ lignes
-      // historiques sans organisation_id). Avant ce correctif, aucun filtre d'organisme n'existait :
-      // un modèle du même nom appartenant à un AUTRE organisme aurait aussi été supprimé.
-      await supabase.from('documents').delete()
-        .eq('nom', templateKey).eq('type_action', 'Modèle Référence')
-        .eq('organisation_id', currentOrgId);
+      // 2. Supprimer de documents (Modèle Référence)
+      await supabase.from('documents').delete().eq('nom', templateKey).eq('type_action', 'Modèle Référence');
 
-      // 3. Supprimer de module_step_resources — même précaution, + limité au type 'document' pour ne
-      // pas toucher d'autres ressources de module qui partageraient le même titre par coïncidence.
-      await supabase.from('module_step_resources').delete()
-        .eq('titre', templateKey).eq('type', 'document')
-        .eq('organisation_id', currentOrgId);
+      // 3. Supprimer de module_step_resources
+      await supabase.from('module_step_resources').delete().eq('titre', templateKey);
 
       // 4. Update local state
       const newTemplates = { ...documentTemplates };
@@ -22223,11 +15865,7 @@ export default function App() {
 
   // Mise à jour de la destination d'un modèle existant
   const handleUpdateTemplateDestination = async (templateKey, newDest) => {
-    // Même précaution multi-tenant que handleDeleteDocxTemplate/handleUploadVisualTemplate ci-dessus :
-    // limité strictement aux lignes de l'organisme courant.
-    if (!currentOrgId) { toast.error('Organisme introuvable — action annulée par sécurité.'); return; }
-    const destQuery = supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey).eq('organisation_id', currentOrgId);
-    await destQuery;
+    await supabase.from('module_step_resources').update({ destination: newDest }).eq('titre', templateKey);
     setDocumentTemplates(prev => ({ ...prev, [templateKey]: { ...prev[templateKey], destination: newDest } }));
     toast.success(`Destination de "${templateKey}" mise à jour.`);
   };
@@ -22258,10 +15896,9 @@ export default function App() {
 
   const handleDownloadResource = async (fileName) => {
     try {
-      // Si le fileName est déjà une URL complète (modélothèque), on tente un lien signé
-      // (utile si l'URL pointe vers notre storage Supabase) avant de se rabattre dessus telle quelle.
+      // Si le fileName est déjà une URL complète (modélothèque), on l'ouvre
       if (fileName && (fileName.startsWith('http') || fileName.startsWith('https'))) {
-        await openSecureStorageFile(fileName);
+        window.open(fileName, '_blank');
         return;
       }
 
@@ -22336,72 +15973,7 @@ export default function App() {
     toast.success('Correction enregistrée !');
   };
 
-  // FIX (nouvelle fonctionnalité, 2026-09-11) : prévient le client par email dès qu'un document lui
-  // est envoyé (bouton "Envoyer" sur sa fiche, ou envoi automatique) — voir
-  // api/client/notify-new-document.js. Même principe "fire-and-forget" que notifyFormateurAssignment
-  // (voir assignFormateur) : un souci d'envoi n'annule jamais l'envoi du document lui-même, qui a
-  // déjà réussi en base à ce stade — juste logué en console pour diagnostic.
-  const notifyClientNewDocument = (clientId, documentName) => {
-    supabase.auth.getSession().then(({ data: sessionData }) => {
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) return;
-      fetch('/api/client/notify-new-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-        body: JSON.stringify({ clientId, documentName, origin: window.location.origin }),
-      }).then(async (resp) => {
-        const result = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          console.warn('[notifyClientNewDocument] Notification client non envoyée :', result.error || resp.status);
-        } else if (result.simulated) {
-          console.warn('[notifyClientNewDocument] Notification client simulée (RESEND_API_KEY non configurée côté serveur).');
-        }
-      }).catch(e => console.warn('[notifyClientNewDocument] Erreur réseau notification client :', e.message));
-    }).catch(e => console.warn('[notifyClientNewDocument] Erreur session notification client :', e.message));
-  };
-
-  // FIX (nouvelle fonctionnalité, 2026-09-11) : symétrique de notifyClientNewDocument ci-dessus,
-  // pour le FORMATEUR — utilisée à la fois par handleGenerateDocx (document simultané, ou
-  // séquentiel où le formateur est premier dans l'ordre) et par handleSignDocument (document
-  // séquentiel où une signature précédente vient de débloquer le tour du formateur).
-  const notifyFormateurNewDocument = (formateurId, documentName) => {
-    supabase.auth.getSession().then(({ data: sessionData }) => {
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) return;
-      fetch('/api/formateur/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-        body: JSON.stringify({ type: 'nouveau_document', formateurId, documentName, origin: window.location.origin }),
-      }).then(async (resp) => {
-        const result = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          console.warn('[notifyFormateurNewDocument] Notification formateur non envoyée :', result.error || resp.status);
-        } else if (result.simulated) {
-          console.warn('[notifyFormateurNewDocument] Notification formateur simulée (RESEND_API_KEY non configurée côté serveur).');
-        }
-      }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur réseau notification formateur :', e.message));
-    }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur session notification formateur :', e.message));
-  };
-
-  // FIX (nouvelle fonctionnalité, 2026-09-11) : décide QUI notifier juste après qu'un document
-  // devienne disponible pour signature — respecte la signature séquentielle (metadata.signing_mode/
-  // signing_order, voir isBlockedBySigningOrder plus haut dans le fichier) : en mode séquentiel,
-  // seul le rôle dont c'est VRAIMENT le tour (pas bloqué par un signataire précédent qui n'a pas
-  // encore signé) est notifié maintenant ; l'autre le sera plus tard, quand son tour viendra (voir
-  // le bloc ajouté dans handleSignDocument). En mode simultané (par défaut), tout le monde de requis
-  // est notifié immédiatement, comme avant ce correctif. Appelée juste après un insert réussi dans
-  // `documents`, avec l'objet tel qu'inséré (docToInsert) qui porte déjà metadata + les colonnes
-  // signe_par_* à false.
-  const notifyDocumentRecipients = (insertedDoc, documentName) => {
-    if (insertedDoc.visible_client && insertedDoc.user_id && !isBlockedBySigningOrder(insertedDoc, 'client')) {
-      notifyClientNewDocument(insertedDoc.user_id, documentName);
-    }
-    if (insertedDoc.visible_formateur && insertedDoc.assigned_formateur_id && !isBlockedBySigningOrder(insertedDoc, 'formateur')) {
-      notifyFormateurNewDocument(insertedDoc.assigned_formateur_id, documentName);
-    }
-  };
-
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -22419,17 +15991,8 @@ export default function App() {
       let uploadBucket = 'documents';
       let finalClient = null;
 
-      // FIX (2026-09-07) : cette branche ("formateur seul", sans aucune donnée client) ne doit
-      // s'appliquer que lorsqu'il n'y a PAS de client en contexte (appel direct depuis la fiche
-      // Formateur). Dès qu'un clientRow est fourni (appel depuis une fiche client — bouton
-      // "Envoyer" sur un document rattaché à ce client), on passe par la branche "else" ci-dessous
-      // qui résout correctement le formateur DE CE CLIENT (finalClient.formateur_id) et merge en
-      // plus ses données à lui — avant ce correctif, `fId` retombait par erreur sur clientRow.id
-      // (l'ID du CLIENT, pas de son formateur), et la recherche dans `utilisateurs` échouait
-      // systématiquement ("Formateur non trouvé") pour tout document destination=formateur envoyé
-      // depuis une fiche client.
-      if ((effectiveIsForFormateur || formateurId) && !clientRow) {
-        const fId = formateurId;
+      if (effectiveIsForFormateur || formateurId) {
+        const fId = formateurId || (clientRow ? clientRow.id : null);
         const { data: theFormateur } = await supabase.from('utilisateurs').select('*').eq('id', fId).single();
         if (!theFormateur) throw new Error("Formateur non trouvé");
 
@@ -22441,7 +16004,6 @@ export default function App() {
           raison_sociale: theFormateur.nom || '',
           adresse_formateur: theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse_client || theFormateur.adresse || '',
           adresse_session: theFormateur.adresse_session || theFormateur.adresse_formateur || theFormateur.adresse_pro || theFormateur.adresse || '',
-          region_formateur: theFormateur.region || '',
           formateur_nda: theFormateur.formateur_nda || theFormateur.nda || '',
           formateur_siret: theFormateur.formateur_siret || theFormateur.siret || '',
           email_formateur: theFormateur.email || '',
@@ -22450,13 +16012,6 @@ export default function App() {
           numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
           date_signature: new Date().toLocaleDateString('fr-FR'),
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
-          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
-          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
-          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
-          // (Pas de client dans cette branche — initiales_client reste vide.)
-          initiales_formateur: computeInitials(theFormateur.nom || ''),
-          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
           org_siret: orgSettings?.siret || '',
@@ -22464,17 +16019,8 @@ export default function App() {
           org_adresse: orgSettings?.adresse || '',
           org_code_postal: orgSettings?.code_postal || '',
           org_ville: orgSettings?.ville || '',
-          org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
-        // FIX (2026-09-07) : {ville_formateur} / {code_postal_formateur} / {rue_formateur}
-        // ressortaient toujours vides — balises listées dans ALL_TAGS mais jamais dérivées
-        // ici depuis adresse_formateur (chaîne combinée), contrairement aux autres points
-        // de génération de documents.
-        { const _fAddr = parseAddressString(dataToMerge.adresse_formateur);
-          dataToMerge.rue_formateur = _fAddr.rue;
-          dataToMerge.code_postal_formateur = _fAddr.codePostal;
-          dataToMerge.ville_formateur = _fAddr.ville; }
         targetId = fId;
         targetName = theFormateur.nom || "Formateur";
       } else {
@@ -22508,13 +16054,12 @@ export default function App() {
         }
 
         dataToMerge = {
-          // ── Formateur ──
-          nom: theCoach.nom || 'Formateur',
-          nom_formateur: theCoach.nom || 'Formateur',
+          // ── Formateur / Coach ──
+          nom: theCoach.nom || 'Coach',
+          nom_formateur: theCoach.nom || 'Coach',
           formateur_nom_complet: theCoach.nom || '',
-          raison_sociale: theCoach.nom || 'Formateur',
+          raison_sociale: theCoach.nom || 'Coach',
           adresse_formateur: theCoach.adresse_formateur || theCoach.adresse_pro || theCoach.adresse_client || theCoach.adresse || '',
-          region_formateur: theCoach.region || '',
           formateur_nda: theCoach.formateur_nda || theCoach.nda || '',
           formateur_siret: theCoach.formateur_siret || theCoach.siret || '',
           email_formateur: theCoach.email || '',
@@ -22523,31 +16068,18 @@ export default function App() {
           numero_assurance_rcp: theCoach.numero_assurance_rcp || '',
           // ── Client / Bénéficiaire ──
           nomcomplet_client: finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim(),
-          // FIX (2026-09-07) : balise {numero_dossier_client} ("Dossier n° : ...") ressortait
-          // toujours vide sur le PDF généré — clé absente de dataToMerge alors qu'elle fait
-          // partie des balises officiellement disponibles pour un destinataire Client (voir
-          // AVAILABLE_TAGS['Client'] plus haut) et que clients.numero_dossier est bien renseigné.
-          numero_dossier_client: finalClient.numero_dossier || '',
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
           prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
           rue_client: finalClient.rue || '',
           code_postal_client: finalClient.code_postal || '',
           ville_client: finalClient.ville || '',
-          region_client: finalClient.region || '',
           adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
           modalite_formation: finalClient.modalite_formation || 'Mixte',
           date_debut: dateDebut,
           date_fin: dateFin,
           date_signature: new Date().toLocaleDateString('fr-FR'),
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
-          // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
-          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
-          // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
-          initiales_client: computeInitials(finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim()),
-          initiales_formateur: computeInitials(theCoach.nom || ''),
-          initiales_organisme: computeInitials(orgSettings?.nom || ''),
           formation_nom: module?.nom || 'Formation',
           // ── Organisme (variables org_*) ──
           org_nom: orgSettings?.nom || '',
@@ -22556,17 +16088,8 @@ export default function App() {
           org_adresse: orgSettings?.adresse || '',
           org_code_postal: orgSettings?.code_postal || '',
           org_ville: orgSettings?.ville || '',
-          org_region: orgSettings?.region || '',
           org_site_web: orgSettings?.site_web || '',
         };
-        // FIX (2026-09-07) : {ville_formateur} / {code_postal_formateur} / {rue_formateur}
-        // ressortaient toujours vides — balises listées dans ALL_TAGS mais jamais dérivées
-        // ici depuis adresse_formateur (chaîne combinée), contrairement aux autres points
-        // de génération de documents.
-        { const _fAddr = parseAddressString(dataToMerge.adresse_formateur);
-          dataToMerge.rue_formateur = _fAddr.rue;
-          dataToMerge.code_postal_formateur = _fAddr.codePostal;
-          dataToMerge.ville_formateur = _fAddr.ville; }
         targetId = clientRow.id;
         targetName = finalClient.nom_complet || clientRow.nom || "Client";
       }
@@ -22575,11 +16098,7 @@ export default function App() {
       const isVisualTemplate = templateInfo?.metadata?.has_visual_fields === true;
       if (isVisualTemplate && templateInfo.id) {
         toast.loading('Génération du document visuel…', { id: 'gen-doc' });
-        // FIX (2026-09-07) : `targetName` (nom du client/formateur) peut contenir des accents
-        // (ex: "Stéphane Subra") — un simple remplacement des espaces ne suffit pas à produire
-        // une clé de stockage valide pour Supabase ("Invalid key"), même correctif que safeType
-        // plus bas.
-        const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
+        const safeName = targetName.replace(/\s+/g, '_');
 
         // 1. Charger les champs visuels depuis Supabase
         const { data: templateFieldsData, error: tfErr } = await supabase
@@ -22610,47 +16129,16 @@ export default function App() {
         }
 
         // 4. Superposer les valeurs aux positions stockées
-        // Champs interactifs (signature/case/texte libre) exclus : cet appel ne fournit ni sigMap ni
-        // checkedMap ni textInputMap, donc les inclure graverait un placeholder vide en dur dans le
-        // PDF généré — pour le client ET pour le formateur — avant même toute signature (même classe
-        // de bug que celle corrigée dans handleOpenSigning/handleSignSave le 2026-07-24).
         toast.loading('Superposition des données…', { id: 'gen-doc' });
-        const _dataOnlyFields = (templateFieldsData || []).filter(f => {
-          const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-          return !isInteractive;
-        });
-        const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, _dataOnlyFields, dataToMerge);
+        const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, templateFieldsData || [], dataToMerge);
 
-        // Nom de fichier "clé de stockage" : le titre du modèle (`type`) peut contenir des accents,
-        // espaces ou parenthèses (ex: "Pack de démarrage BC ST 14h") — utilisés tels quels, Supabase
-        // Storage refuse la clé ("Invalid key"), ce qui faisait échouer l'upload/l'archivage du
-        // document (le téléchargement local juste au-dessus, lui, fonctionnait quand même — d'où la
-        // confusion : le fichier se téléchargeait mais un message d'erreur s'affichait). On assainit
-        // uniquement la clé de stockage ; le nom affiché dans l'UI (docToInsert.nom) garde les accents.
-        const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
-        const finalFileName = `${safeType}_${safeName}_${Date.now()}.pdf`;
+        const finalFileName = `${type}_${safeName}_${Date.now()}.pdf`;
 
-        // Mode "Consulter" : aperçu volatile pour vérification avant envoi — ouvert dans un
-        // nouvel onglet du navigateur (jamais téléchargé sur le disque), jamais archivé ni visible
-        // du client/formateur, aucune ligne créée dans "documents" (demande du 2026-09-02, affinée
-        // le 2026-09-02 : la 1ère version téléchargeait systématiquement le fichier, ce n'est plus
-        // le cas — Consulter n'est qu'une prévisualisation à l'écran).
-        if (mode === 'preview') {
-          const previewObjectUrl = URL.createObjectURL(filledPdfBlob);
-          if (previewWindow && !previewWindow.closed) {
-            previewWindow.location.href = previewObjectUrl;
-          } else {
-            window.open(previewObjectUrl, '_blank');
-          }
-          setTimeout(() => URL.revokeObjectURL(previewObjectUrl), 5 * 60 * 1000);
-          toast.success("Aperçu ouvert dans un nouvel onglet — ce document n'a pas été envoyé.", { id: 'gen-doc' });
-          return;
+        // 5. Téléchargement local si applicable
+        const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
+        if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
+          saveAs(filledPdfBlob, finalFileName);
         }
-
-        // Le document n'est plus téléchargé automatiquement sur l'ordinateur de l'Admin lors d'un
-        // envoi réel, ni pour le client ni pour le formateur (demande du 2026-09-02) : "Envoyer"
-        // envoie uniquement, sans effet de bord local. Pour obtenir une copie locale, utiliser le
-        // bouton "Consulter" avant l'envoi.
 
         // 6. Upload + insert Supabase (même logique que la branche classique)
         toast.loading('Upload du document…', { id: 'gen-doc' });
@@ -22659,93 +16147,29 @@ export default function App() {
         if (upErr) throw upErr;
         const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
-        // Le document généré hérite de la classification du modèle source (même détection
-        // "à signer" que partout ailleurs dans ce fichier) — sans ça, type_document restait
-        // toujours "Administratif" et le bouton "Signer" ne s'affichait jamais côté client, quel
-        // que soit l'ordre de signature configuré sur le modèle (bug remonté le 2026-09-02).
-        const _tplMetaForInsert = templateInfo.metadata || {};
-        const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
-        // FIX (2026-09-07) : détecte une balise de signature de N'IMPORTE QUEL rôle (client,
-        // formateur OU organisme) — avant ce correctif, seules les balises CLIENT étaient
-        // regardées, donc un modèle destiné uniquement au formateur et/ou à l'organisme (sans
-        // client) ne recevait jamais le statut "À signer", même avec une vraie balise de
-        // signature posée dessus.
-        const _hasAnySignTag = _tplFieldsForInsert.some(f => [
-          'signature_client', 'checkbox_client', 'texte_client',
-          'signature_formateur', 'checkbox_formateur', 'texte_formateur',
-          'signature_organisme', 'checkbox_organisme', 'texte_organisme',
-        ].includes(f.tag));
-        const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
-        // FIX (2026-09-07) : destinataires réels du document — remplace la détection binaire
-        // effectiveIsForFormateur (égalité stricte à 'formateur', qui ratait toute destination
-        // combinée type "formateur,organisme") par la même lecture que partout ailleurs dans le
-        // fichier (parseDestinationRoles). Sans ça : (a) destination_roles n'était jamais écrit
-        // dans les métadonnées du document généré → l'onglet admin "Mes documents à signer" ne
-        // pouvait jamais le trouver ; (b) le document était systématiquement rattaché au CLIENT
-        // (user_id + visible_client forcé) même quand celui-ci n'était pas destinataire → il
-        // apparaissait à tort dans "Documents envoyés pour signature" du client, avec des badges
-        // "en attente de signature client/formateur" non pertinents.
-        const _destRolesForInsert = parseDestinationRoles(templateDestination);
-        const _visClientForInsert = _destRolesForInsert.includes('client');
-        const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
-        const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
         const docToInsert = {
           nom: `${type} - ${targetName}`,
-          type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
+          type_document: 'Administratif',
           url: publicUrl,
-          ...(_visClientForInsert ? { signe_par_client: false } : {}),
-          ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
-          ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
+          signe_par_client: false,
+          signe_par_formateur: false,
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
-          metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
-          // requiresTrainerSignature retiré (2026-09-03) : ce n'est pas une colonne de la table
-          // `documents`, seulement un champ du JSONB metadata des templates — l'insérer en top-level
-          // faisait échouer TOUT `handleGenerateDocx` avec "Could not find the 'requiresTrainerSignature'
-          // column of 'documents' in the schema cache". L'info reste disponible via `metadata` ci-dessus.
-          // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
-          // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
-          organisation_id: ((effectiveIsForFormateur || formateurId) && !clientRow) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
         };
-        if (_visClientForInsert) {
-          // Le client EST destinataire → document rattaché à son dossier (comportement inchangé),
-          // qu'il y ait ou non aussi un formateur/organisme destinataire.
-          docToInsert.user_id = targetId;
-          docToInsert.visible_client = true;
-          docToInsert.visible_formateur = _visFormateurForInsert;
-          if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
-        } else if ((effectiveIsForFormateur || formateurId) && !clientRow) {
-          // FIX (2026-09-07) : `targetId` ne vaut l'ID du formateur QUE dans le cas "envoi direct
-          // depuis la fiche Formateur" (pas de clientRow — voir le garde-fou !clientRow ajouté plus
-          // haut dans cette fonction). Dès qu'un clientRow est présent, targetId vaut l'ID DU CLIENT
-          // (uuid) et ne doit jamais atterrir dans documents.assigned_formateur_id (bigint) — cela
-          // provoquait "invalid input syntax for type bigint" pour tout document destination=
-          // formateur envoyé depuis une fiche client (bug remonté le 2026-09-07). Ce cas retombe
-          // maintenant sur la branche finale ci-dessous, qui utilise finalClient.formateur_id (bigint).
+        if (effectiveIsForFormateur || formateurId) {
           docToInsert.assigned_formateur_id = targetId;
           docToInsert.visible_formateur = true;
           docToInsert.visible_client = false;
         } else {
-          // Le client n'est PAS destinataire (ex: "formateur,organisme" uniquement) même si ce
-          // document a été généré depuis SA fiche. `visible_client` reste false (le client ne le
-          // voit jamais sur son propre portail — tous les points de lecture côté client filtrent
-          // sur visible_client, jamais sur user_id seul), MAIS on pose quand même user_id = targetId
-          // (le client, quand un clientRow existe) pour que ce document reste traçable depuis la
-          // fiche de CE client (section "Documents envoyés pour signature" de ClientDetailView,
-          // qui filtre justement sur user_id) — corrigé le 2026-09-07 : un précédent correctif
-          // avait au contraire arrêté de poser user_id ici pour éviter un badge "en attente de
-          // signature client" non pertinent, mais ce badge est déjà neutralisé par needsClientSign
-          // (dérivé de destination_roles) depuis un correctif encore antérieur.
-          if (clientRow) docToInsert.user_id = targetId;
-          docToInsert.visible_client = false;
-          docToInsert.visible_formateur = _visFormateurForInsert;
+          docToInsert.user_id = targetId;
+          docToInsert.visible_client = true;
+          docToInsert.visible_formateur = true;
           if (finalClient?.formateur_id) docToInsert.assigned_formateur_id = finalClient.formateur_id;
         }
         const { error: insertErr } = await supabase.from('documents').insert([docToInsert]);
         if (insertErr) throw new Error('Erreur Supabase : ' + insertErr.message);
         await fetchDocuments();
         toast.success(`Document "${type}" généré.`, { id: 'gen-doc' });
-        notifyDocumentRecipients(docToInsert, type);
         return;
       }
       // ── Fin branche visuelle ──
@@ -22766,8 +16190,7 @@ export default function App() {
 
       // Étape 1 : Conversion DOCX → PDF (via ConvertAPI si disponible, sinon DOCX direct)
       toast.loading('Génération du document…', { id: 'gen-doc' });
-      // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
-      const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
+      const safeName = targetName.replace(/\s+/g, '_');
 
       let finalBlob = docxBlob;
       let finalExt = 'docx';
@@ -22795,29 +16218,13 @@ export default function App() {
         }
       }
 
-      // Même correctif que la branche visuelle ci-dessus : clé de stockage assainie (accents/espaces
-      // interdits par Supabase Storage), nom affiché inchangé.
-      const safeType = type.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
-      const finalFileName = `${safeType}_${safeName}_${Date.now()}.${finalExt}`;
+      const finalFileName = `${type}_${safeName}_${Date.now()}.${finalExt}`;
 
-      // Mode "Consulter" : même court-circuit que la branche visuelle ci-dessus (aperçu ouvert
-      // dans un nouvel onglet, jamais téléchargé automatiquement).
-      if (mode === 'preview') {
-        const previewObjectUrl = URL.createObjectURL(finalBlob);
-        if (previewWindow && !previewWindow.closed) {
-          previewWindow.location.href = previewObjectUrl;
-        } else {
-          window.open(previewObjectUrl, '_blank');
-        }
-        setTimeout(() => URL.revokeObjectURL(previewObjectUrl), 5 * 60 * 1000);
-        toast.success("Aperçu ouvert dans un nouvel onglet — ce document n'a pas été envoyé.", { id: 'gen-doc' });
-        return;
+      // INTERDICTION de télécharger sur l'ordinateur de l'Admin pour la lettre de mission (demande utilisateur)
+      const isMissionLetter = type.toLowerCase().includes('mission') || type.toLowerCase().includes('lettre');
+      if (!isMissionLetter && !effectiveIsForFormateur && !formateurId && !isAutoGenerate) {
+        saveAs(finalBlob, finalFileName);
       }
-
-      // Le document n'est plus téléchargé automatiquement sur l'ordinateur de l'Admin lors d'un
-      // envoi réel, ni pour la lettre de mission ni pour les autres documents, ni pour le client ni
-      // pour le formateur (demande du 2026-09-02) : "Envoyer" envoie uniquement, sans effet de bord
-      // local. Pour obtenir une copie locale, utiliser le bouton "Consulter" avant l'envoi.
 
       // Upload du fichier généré
       toast.loading('Upload du document…', { id: 'gen-doc' });
@@ -22827,54 +16234,23 @@ export default function App() {
 
       const { data: { publicUrl } } = supabase.storage.from(uploadBucket).getPublicUrl(finalFileName);
 
-      // Même correctif que la branche visuelle ci-dessus (voir commentaire détaillé là-bas, 2026-09-07).
-      const _tplMetaForInsert = templateInfo.metadata || {};
-      const _tplFieldsForInsert = Array.isArray(_tplMetaForInsert.template_fields) ? _tplMetaForInsert.template_fields : [];
-      // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
-      const _hasAnySignTag = _tplFieldsForInsert.some(f => [
-        'signature_client', 'checkbox_client', 'texte_client',
-        'signature_formateur', 'checkbox_formateur', 'texte_formateur',
-        'signature_organisme', 'checkbox_organisme', 'texte_organisme',
-      ].includes(f.tag));
-      const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
-      const _destRolesForInsert = parseDestinationRoles(templateDestination);
-      const _visClientForInsert = _destRolesForInsert.includes('client');
-      const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
-      const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
       const docToInsert = {
         nom: `${type} - ${targetName}`,
-        type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
+        type_document: 'Administratif',
         url: publicUrl,
-        ...(_visClientForInsert ? { signe_par_client: false } : {}),
-        ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
-        ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
+        signe_par_client: false,
+        signe_par_formateur: false,
         visible_admin: true,
-        metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
-        // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
-        // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
-        // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
-        organisation_id: ((effectiveIsForFormateur || formateurId) && !clientRow) ? (currentOrgId || null) : (finalClient?.organisation_id || currentOrgId || null),
       };
 
-      if (_visClientForInsert) {
-        docToInsert.user_id = targetId;
-        docToInsert.visible_client = true;
-        docToInsert.visible_formateur = _visFormateurForInsert;
-        if (finalClient && finalClient.formateur_id) {
-          docToInsert.assigned_formateur_id = finalClient.formateur_id;
-        }
-      } else if ((effectiveIsForFormateur || formateurId) && !clientRow) {
-        // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
+      if (effectiveIsForFormateur || formateurId) {
         docToInsert.assigned_formateur_id = targetId;
         docToInsert.visible_formateur = true;
         docToInsert.visible_client = false;
       } else {
-        // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus : traçabilité côté
-        // fiche client, sans jamais impacter la visibilité réelle côté portail client (gouvernée
-        // exclusivement par visible_client, laissé à false ici).
-        if (clientRow) docToInsert.user_id = targetId;
-        docToInsert.visible_client = false;
-        docToInsert.visible_formateur = _visFormateurForInsert;
+        docToInsert.user_id = targetId;
+        docToInsert.visible_client = true;
+        docToInsert.visible_formateur = true;
         if (finalClient && finalClient.formateur_id) {
           docToInsert.assigned_formateur_id = finalClient.formateur_id;
         }
@@ -22894,7 +16270,6 @@ export default function App() {
       } else {
         toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
       }
-      notifyDocumentRecipients(docToInsert, type);
       return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
@@ -22962,25 +16337,18 @@ export default function App() {
     setIsAddingDoc(false);
   };
 
-  const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null, textValues = null) => {
+  const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null) => {
     const doc = documents.find(d => d.id === docId);
     if (!doc) return;
-    // Valeurs tapées dans les balises "texte libre" appartenant à ce signataire (clé = fieldKey(field))
-    const _textValueMap = {};
-    if (textValues) {
-      (textValues instanceof Map ? Array.from(textValues.entries()) : Object.entries(textValues)).forEach(([k, v]) => { if (v) _textValueMap[k] = v; });
-    }
 
-    // signerType = 'client' | 'formateur' | 'organisme' — colonnes résolues via les tables de
-    // correspondance module-level (SIGNED_FLAG_COLUMN etc.) plutôt qu'un ternaire binaire, pour
-    // accueillir le rôle "organisme" sans dupliquer cette logique une 3e fois.
-    const updateColumn = {
-      [SIGNED_FLAG_COLUMN[signerType]]: true,
-      [SIGNATURE_DATE_COLUMN[signerType]]: new Date().toISOString(),
-    };
+    // signerType = 'client' ou 'formateur'
+    const updateColumn = signerType === 'client'
+      ? { signe_par_client: true, date_signature_client: new Date().toISOString() }
+      : { signe_par_formateur: true, date_signature_formateur: new Date().toISOString() };
 
     if (signatureDataUrl) {
-      updateColumn[SIGNATURE_IMAGE_COLUMN[signerType]] = signatureDataUrl;
+      if (signerType === 'client') updateColumn.signature_client = signatureDataUrl;
+      else updateColumn.signature_formateur = signatureDataUrl;
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
@@ -22997,67 +16365,31 @@ export default function App() {
 
     let signedPdfUpdate = {};
 
-    // ── Incrustation de la signature ET/OU des cases à cocher ET/OU du texte libre à la position
-    // visuelle — NE PAS gater ce bloc sur la seule présence d'une signature : depuis l'ajout des
-    // balises texte libre, un signataire peut valider un document SANS dessiner de signature (aucune
-    // balise signature posée pour lui) ; si on se limitait à "if (signatureDataUrl)", son texte tapé
-    // n'était alors jamais gravé du tout (bug constaté 2026-07-24 : "pas le texte du formateur").
-    const _hasCheckedIds = checkedIds && (typeof checkedIds.size === 'number' ? checkedIds.size > 0 : Object.keys(checkedIds).length > 0);
-    if (signatureDataUrl || Object.keys(_textValueMap).length > 0 || _hasCheckedIds) {
+    // ── Incrustation de la signature (+ cases à cocher éventuelles) à la position visuelle ──
+    if (signatureDataUrl) {
       try {
-        const sigTag = `signature_${signerType}`;
-        const checkboxTag = `checkbox_${signerType}`;
-        const textTag = `texte_${signerType}`;
+        const sigTag = signerType === 'client' ? 'signature_client' : 'signature_formateur';
+        const checkboxTag = signerType === 'client' ? 'checkbox_client' : 'checkbox_formateur';
         let sigFields = null;
 
-        // FIX (2026-09-03, round 2) : priorité désormais metadata AVANT la table technique DB —
-        // voir commentaire détaillé plus haut dans le fichier. Les 3 sources ci-dessous (signature_fields,
-        // template_fields, fields) sont EXACTEMENT celles utilisées par DocumentViewerModal côté formateur
-        // pour construire requiredTextFields/textValues : garder le même ordre garantit que fieldKey(f)
-        // calcule les MÊMES clés ici et là-bas, condition indispensable pour que le texte tapé par le
-        // formateur (indexé par ces clés) soit effectivement retrouvé et gravé dans le PDF.
-        const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
-        const _candidateFields = (Array.isArray(docMeta.signature_fields) && docMeta.signature_fields.length > 0) ? docMeta.signature_fields
-          : (Array.isArray(docMeta.template_fields) && docMeta.template_fields.length > 0) ? docMeta.template_fields
-          : (Array.isArray(docMeta.fields) ? docMeta.fields : []);
-        {
-          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
-          if (match.length > 0) sigFields = match;
-        }
-
-        // Dernier recours : ancien flow instantiateDocument, qui ne portait ses balises que dans la
-        // table technique `template_fields` (pas de copie embarquée en metadata). On ne l'utilise QUE
-        // si aucune des 3 sources metadata ci-dessus n'a rien donné, pour ne jamais mélanger deux jeux
-        // de clés incompatibles au sein d'un même sigFields.
-        if (!sigFields && doc.template_id) {
+        // Source 1 : template_id → charger depuis template_fields DB (ancien flow)
+        if (doc.template_id) {
           const { data: dbFields } = await supabase
             .from('template_fields').select('*')
-            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag, textTag]);
+            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag]);
           if (dbFields && dbFields.length > 0) sigFields = dbFields;
         }
 
-        console.debug('[handleSignDocument]', signerType, 'sigFields:', sigFields ? sigFields.length : 0,
-          'textValues keys:', Object.keys(_textValueMap));
+        // Source 2 : metadata.signature_fields (nouveau flow instantiateDocument)
+        if (!sigFields) {
+          const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
+          const metaFields = docMeta.signature_fields || [];
+          const match = metaFields.filter(f => f.tag === sigTag || f.tag === checkboxTag);
+          if (match.length > 0) sigFields = match;
+        }
 
         if (sigFields && sigFields.length > 0) {
-          // Revérifier la dernière version du PDF avant de construire par-dessus : l'AUTRE partie a pu
-          // signer entre-temps (même correctif que côté client dans handleSignSave, 2026-07-24).
-          //
-          // IMPORTANT (bug racine identifié le 2026-07-24, "on ne voit plus que le texte formateur") :
-          // 'url' est la colonne mise à jour par TOUS les chemins d'écriture (signature client, régénération
-          // admin, upload manuel...), alors que 'signed_pdf_url' n'est écrite QUE par cette fonction et par
-          // l'ancien flux "sous-traitant" (handleDocumentSignatureSave). Si on préfère 'signed_pdf_url' dès
-          // qu'elle existe, un ancien snapshot y reste figé indéfiniment et masque toute mise à jour plus
-          // récente de 'url' (ex : signature du client faite APRÈS un premier essai formateur) → son contenu
-          // disparaît silencieusement au tour de signature suivant. 'url' doit donc rester la source de
-          // vérité pour construire par-dessus ; 'signed_pdf_url' n'est écrite qu'en miroir, pour l'affichage.
-          let pdfUrl = doc.url || doc.signed_pdf_url;
-          try {
-            const { data: freshDoc } = await supabase.from('documents').select('url, signed_pdf_url').eq('id', docId).maybeSingle();
-            if (freshDoc) pdfUrl = freshDoc.url || freshDoc.signed_pdf_url || pdfUrl;
-          } catch (e) {
-            console.warn('[handleSignDocument] Impossible de récupérer la dernière version du PDF, utilisation de la version locale :', e.message);
-          }
+          const pdfUrl = doc.signed_pdf_url || doc.url;
           if (pdfUrl && /\.pdf$/i.test(pdfUrl.split('?')[0])) {
             const pdfResp = await fetch(pdfUrl);
             if (pdfResp.ok) {
@@ -23071,13 +16403,7 @@ export default function App() {
                   checkedMap[k] = typeof checkedIds.has === 'function' ? checkedIds.has(k) : !!checkedIds[k];
                 });
               }
-              const textInputMap = {};
-              sigFields.filter(f => f.tag === textTag).forEach(f => {
-                const k = fieldKey(f);
-                if (_textValueMap[k]) textInputMap[k] = _textValueMap[k];
-              });
-              console.debug('[handleSignDocument]', signerType, 'textInputMap filled:', Object.keys(textInputMap).length, '/', sigFields.filter(f => f.tag === textTag).length);
-              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap, textInputMap);
+              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap);
               const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
               const { error: upErr } = await supabase.storage.from('documents')
                 .upload(fileName, new File([updatedPdfBlob], fileName, { type: 'application/pdf' }));
@@ -23093,18 +16419,12 @@ export default function App() {
       }
     }
 
-    // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis ont signé (pas
-    // seulement CE signataire) — voir getRequiredSignerRoles/isDocFullySigned.
-    const _requiredRolesForDoc = await getRequiredSignerRoles(doc, supabase);
-    const _mergedDocState = { ...doc, ...updateColumn };
-    const _finalStatut = isDocFullySigned(_mergedDocState, _requiredRolesForDoc) ? 'Signé' : doc.statut;
-
     const { error } = await supabase
       .from('documents')
       .update({
         ...updateColumn,
         ...signedPdfUpdate,
-        statut: _finalStatut,
+        statut: (updateColumn.signe_par_client || updateColumn.signe_par_formateur) ? 'Signé' : doc.statut,
         visible_admin: true,
       })
       .eq('id', docId);
@@ -23112,29 +16432,6 @@ export default function App() {
     if (error) {
       toast.error("Erreur signature: " + error.message);
       await fetchDocuments();
-    } else {
-      // FIX (nouvelle fonctionnalité, 2026-09-11) : document séquentiel — cette signature vient
-      // peut-être de débloquer le TOUR d'un autre rôle requis (ex : ordre formateur → client, le
-      // formateur vient de signer → c'est maintenant au client, qui doit être notifié MAINTENANT,
-      // pas à l'envoi initial du document où il était encore bloqué). En mode simultané (par
-      // défaut), tout le monde de requis a déjà été notifié dès l'envoi initial (voir
-      // notifyDocumentRecipients dans handleGenerateDocx) : rien à refaire ici.
-      const docMetaForNotif = parseDocMetadata(doc);
-      if (docMetaForNotif.signing_mode === 'sequentiel') {
-        const docLabel = doc.nom || 'un document';
-        for (const otherRole of _requiredRolesForDoc) {
-          if (otherRole === signerType) continue; // celui qui vient de signer, pas concerné
-          const flagCol = SIGNED_FLAG_COLUMN[otherRole];
-          if (_mergedDocState[flagCol]) continue; // a déjà signé plus tôt, déjà notifié en son temps
-          if (isBlockedBySigningOrder(_mergedDocState, otherRole)) continue; // toujours pas son tour
-          // Vient de passer de "bloqué" à "débloqué" grâce à cette signature : c'est son tour.
-          if (otherRole === 'client' && _mergedDocState.user_id) {
-            notifyClientNewDocument(_mergedDocState.user_id, docLabel);
-          } else if (otherRole === 'formateur' && _mergedDocState.assigned_formateur_id) {
-            notifyFormateurNewDocument(_mergedDocState.assigned_formateur_id, docLabel);
-          }
-        }
-      }
     }
   };
 
@@ -23286,14 +16583,10 @@ export default function App() {
 
       const { data: { publicUrl: signedPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
 
-      // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis ont signé.
-      const _requiredRolesLegacy = await getRequiredSignerRoles(doc, supabase);
-      const _statutAfterFormateurSign = isDocFullySigned({ ...doc, signe_par_formateur: true }, _requiredRolesLegacy)
-        ? 'Signé' : (doc.statut || 'En attente de signature');
       const updateData = {
         signe_par_formateur: true,
         date_signature_formateur: now.toISOString(),
-        statut: _statutAfterFormateurSign,
+        statut: 'Signé',
         visible_admin: true,
         signed_pdf_url: signedPdfUrl,
         ...(documentChoice ? { document_choice: documentChoice } : {}),
@@ -23322,15 +16615,9 @@ export default function App() {
     }
   };
 
-  const handleSignatureSave = async (dataUrl, checkedIds = null, textValues = null) => {
+  const handleSignatureSave = async (dataUrl, checkedIds = null) => {
     if (!signingDocId) return;
-    // 'organisme' = n'importe quel admin de l'organisation (2026-07-27) — un admin qui signe le
-    // fait toujours au titre de l'organisme, jamais au titre du formateur.
-    const signerType = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
-    // FIX (2026-09-07) : textValues (balises texte_<rôle> saisies dans SignatureModal) n'était
-    // jusqu'ici jamais transmis à handleSignDocument, qui pourtant sait déjà les graver dans le
-    // PDF (paramètre présent depuis longtemps mais jamais alimenté par ce flux de signature).
-    await handleSignDocument(signingDocId, signerType, dataUrl, checkedIds, textValues);
+    await handleSignDocument(signingDocId, userRole === 'client' ? 'client' : 'formateur', dataUrl, checkedIds);
     setSigningDocId(null);
   };
 
@@ -23343,9 +16630,7 @@ export default function App() {
         try {
           const isEmargementOnly = recapType === 'emargement';
           toast.loading(isEmargementOnly ? "Génération du récap émargements..." : "Génération du récapitulatif...", { id: 'recap' });
-          // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) du
-          // récapitulatif PDF — ce ne sont pas des séances planifiées.
-          const clientSessions = sessions.filter(s => s.client_id === doc.id && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => {
+          const clientSessions = sessions.filter(s => s.client_id === doc.id).sort((a, b) => {
             if (a.numero_seance !== b.numero_seance) return a.numero_seance - b.numero_seance;
             return new Date(a.created_at) - new Date(b.created_at);
           });
@@ -23451,35 +16736,8 @@ export default function App() {
           document.body.removeChild(recapEl);
 
           const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-          // FIX (2026-09-26) : pagination du récapitulatif — avant ce correctif, le canevas complet
-          // (qui grandit avec le nombre de séances) était posé en une seule fois sur une unique page
-          // A4 sans jamais appeler pdf.addPage(), donc tout ce qui dépassait la hauteur d'une page
-          // était silencieusement coupé (le PDF semblait "s'arrêter" après quelques séances). On
-          // découpe maintenant le canevas en tranches de la hauteur d'une page A4 et on ajoute une
-          // page par tranche, pour que toutes les séances soient toujours présentes, quel que soit
-          // leur nombre.
-          const imgWidthPt = 515;
-          const pageHeightPt = 842 - 80; // hauteur A4 (pt) moins marges haut/bas de 40pt
-          const pxPerPt = canvas.width / imgWidthPt;
-          const pageHeightPx = Math.max(1, Math.round(pageHeightPt * pxPerPt));
-
-          let yOffset = 0;
-          let isFirstPage = true;
-          while (yOffset < canvas.height) {
-            const sliceHeightPx = Math.min(pageHeightPx, canvas.height - yOffset);
-            const sliceCanvas = document.createElement('canvas');
-            sliceCanvas.width = canvas.width;
-            sliceCanvas.height = sliceHeightPx;
-            sliceCanvas.getContext('2d').drawImage(
-              canvas, 0, yOffset, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx
-            );
-            const sliceImgData = sliceCanvas.toDataURL('image/png');
-            const sliceHeightPt = sliceHeightPx / pxPerPt;
-            if (!isFirstPage) pdf.addPage();
-            pdf.addImage(sliceImgData, 'PNG', 40, 40, imgWidthPt, sliceHeightPt);
-            yOffset += sliceHeightPx;
-            isFirstPage = false;
-          }
+          const imgData = canvas.toDataURL('image/png');
+          pdf.addImage(imgData, 'PNG', 40, 40, 515, (canvas.height * 515) / canvas.width);
           pdf.save(`${isEmargementOnly ? 'Emargements' : 'Recapitulatif'}_${doc.nom || 'Client'}_${Date.now()}.pdf`);
           
           toast.success(isEmargementOnly ? "Récap émargements généré !" : "Récapitulatif généré !", { id: 'recap' });
@@ -23637,30 +16895,18 @@ export default function App() {
     fetchPedagogicalResources();
     fetchClientSkills();
     fetchOrgSettings();
-    fetchUnreadMessagesCount();
 
-    // Détection des liens d'invitation ou de récupération de mot de passe.
-    // IMPORTANT : PASSWORD_RECOVERY doit amener sur l'écran "Nouveau mot de passe"
-    // (isResetPassword), PAS sur "Finalisez votre accès" (isSettingPassword, réservé
-    // aux invitations). Les confondre faisait passer les liens de réinitialisation par
-    // les deux écrans à la suite (le mot de passe était déjà changé sur le premier,
-    // d'où l'erreur "déjà utilisé" en le retapant sur le second).
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsResetPassword(true);
-        setIsSettingPassword(false);
-      } else if (
+    // Détection des liens d'invitation ou de récupération de mot de passe
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (
+        event === 'PASSWORD_RECOVERY' ||
         (event === 'SIGNED_IN' && window.location.hash.includes('type=invite')) ||
         window.location.pathname === '/set-password'
       ) {
         setIsSettingPassword(true);
       }
     });
-    return () => { authListener?.subscription?.unsubscribe(); };
-  // FIX (2026-09-03, voir incident "clients/formateurs disparus") : currentOrgId ajouté aux
-  // dépendances en filet de sécurité — si sa valeur se stabilise après userRole, les données sont
-  // rechargées automatiquement au lieu de rester bloquées sur des listes vides (limit(0)).
-  }, [userRole, currentOrgId]);
+  }, [userRole]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
   // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
@@ -23686,23 +16932,23 @@ export default function App() {
             // Chercher le rôle dans la base de données (admin/formateur)
             const { data: userData } = await supabase
               .from('utilisateurs')
-              .select('role, id, organisation_id')
+              .select('role, id')
               .eq('email', user.email)
               .single();
 
             if (userData && userData.role) {
-              handleLogin(userData.role, userData.id, userData.organisation_id);
+              handleLogin(userData.role, userData.id);
               return;
             }
 
             // Chercher côté clients
             const { data: clientData } = await supabase
               .from('clients')
-              .select('id, organisation_id')
+              .select('id')
               .ilike('email_contact', user.email)
               .single();
             if (clientData?.id) {
-              handleLogin('client', clientData.id, clientData.organisation_id);
+              handleLogin('client', clientData.id);
               return;
             }
           }
@@ -23719,44 +16965,30 @@ export default function App() {
       <ResetPasswordPage
         supabase={supabase}
         onComplete={async () => {
-          // Le mot de passe est déjà enregistré côté Supabase Auth à ce stade (updateUser
-          // a réussi). Tout ce qui suit n'est qu'une tentative de reconnexion automatique
-          // pour le confort — si elle échoue pour une raison quelconque (réseau, RLS, etc.),
-          // on ne doit JAMAIS laisser l'utilisateur bloqué sur cet écran en pensant que rien
-          // n'a été enregistré : on retombe toujours proprement sur l'écran de connexion.
-          const fallbackToLogin = async () => {
-            try { await supabase.auth.signOut(); } catch (e) { console.error('Erreur déconnexion après reset:', e); }
-            window.history.replaceState(null, '', '/');
-            setIsResetPassword(false);
-            setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
-          };
-
-          try {
-            // Auto login process
-            const { data: { user } } = await supabase.auth.getUser();
-
-            if (user && user.email) {
-              const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', user.email).single();
-              if (userData && userData.role) {
-                handleLogin(userData.role, userData.id, userData.organisation_id);
-                setIsResetPassword(false);
-                return;
-              }
-
-              const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', user.email).single();
-              if (clientData && clientData.id) {
-                 handleLogin('client', clientData.id, clientData.organisation_id);
-                 setIsResetPassword(false);
-                 return;
-              }
+          // Auto login process
+          const { data: { user } } = await supabase.auth.getUser();
+          
+          if (user && user.email) {
+            const { data: userData } = await supabase.from('utilisateurs').select('role, id').eq('email', user.email).single();
+            if (userData && userData.role) {
+              handleLogin(userData.role, userData.id);
+              setIsResetPassword(false);
+              return;
             }
-
-            // Rôle non trouvé automatiquement (compte legacy, RLS, etc.)
-            await fallbackToLogin();
-          } catch (err) {
-            console.error('Erreur pendant la reconnexion automatique après réinitialisation du mot de passe:', err);
-            await fallbackToLogin();
+            
+            const { data: clientData } = await supabase.from('clients').select('id').ilike('email_contact', user.email).single();
+            if (clientData && clientData.id) {
+               handleLogin('client', clientData.id);
+               setIsResetPassword(false);
+               return;
+            }
           }
+          
+          // Fallback if role not found
+          await supabase.auth.signOut();
+          window.history.replaceState(null, '', '/');
+          setIsResetPassword(false);
+          setResetSuccessMsg("Votre mot de passe a été réinitialisé avec succès. Connectez-vous avec vos nouveaux identifiants.");
         }}
       />
     );
@@ -23771,10 +17003,6 @@ export default function App() {
     );
   }
 
-  if (isProspectQuestionnaire) {
-    return <ProspectQuestionnaireView />;
-  }
-
   if (needsSetup) {
     return (
       <SetupOrganisationPage />
@@ -23783,7 +17011,7 @@ export default function App() {
 
   if (isLoadingSession) {
     return (
-      <div className="h-dvh w-full flex flex-col items-center justify-center bg-gray-50">
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50">
         <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
         <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
       </div>
@@ -23794,9 +17022,8 @@ export default function App() {
     return <LoginView handleLogin={handleLogin} supabase={supabase} successMessage={resetSuccessMsg} onNeedsSetup={() => setNeedsSetup(true)} />;
   }
 
-  // Vérification abonnement expiré — s'applique à tous les rôles de l'organisme (admin, formateur,
-  // client) : un abonnement expiré doit bloquer tout le monde, pas seulement l'admin.
-  const isSubscriptionExpired = orgSettings && (() => {
+  // Vérification abonnement expiré (uniquement pour les admins)
+  const isSubscriptionExpired = userRole === 'admin' && orgSettings && (() => {
     const { subscription_status, trial_ends_at } = orgSettings;
     if (!subscription_status || subscription_status === 'active') return false;
     if (subscription_status === 'canceled' || subscription_status === 'past_due') return true;
@@ -23807,7 +17034,7 @@ export default function App() {
   })();
 
   return (
-    <div className="flex h-dvh bg-gray-50 font-sans overflow-hidden">
+    <div className="flex h-screen bg-gray-50 font-sans overflow-hidden">
       {/* Sidebar Mobile Overlay */}
       <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
 
@@ -23845,7 +17072,10 @@ export default function App() {
             {brandSettings.logo_url ? (
               <img src={brandSettings.logo_url} alt="Logo" className="w-9 h-9 rounded-xl object-contain bg-white/10 p-1 flex-shrink-0" />
             ) : (
-              <img src="/logo-mark.png" alt="SkorUp" className="w-9 h-9 object-contain flex-shrink-0" />
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{background: brandSettings.primary_color || '#7C3AED'}}>
+                <svg width="22" height="17" viewBox="0 0 40 31" fill="none"><rect width="40" height="7" rx="3.5" fill="white"/><rect y="12" width="27" height="7" rx="3.5" fill="rgba(255,255,255,0.78)"/><rect y="24" width="17" height="7" rx="3.5" fill="rgba(255,255,255,0.5)"/></svg>
+              </div>
             )}
             <span className="text-white truncate" style={{fontSize:'15px',lineHeight:1,letterSpacing:'0.2px'}}>
               {brandSettings.org_name ? <span style={{fontWeight:700}}>{brandSettings.org_name}</span> : <><span style={{fontWeight:800}}>Skor</span><span style={{fontWeight:300,opacity:0.9}}>Up</span></>}
@@ -23874,9 +17104,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Documents
               </button>
-              <button onClick={() => { setActiveTab('questionnaires'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'questionnaires' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <FileCheck className="w-5 h-5 mr-3" /> Questionnaires & Quiz
-              </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Modules
               </button>
@@ -23885,13 +17112,6 @@ export default function App() {
               </button>
               <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances Auto
-                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[9px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
-              </button>
-              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Send className="w-5 h-5 mr-3" /> Prospects
-              </button>
-              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Wallet className="w-5 h-5 mr-3" /> Finances
               </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
@@ -23899,21 +17119,9 @@ export default function App() {
               <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
-                {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
-                    {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
-                  </span>
-                )}
               </button>
               <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
-              </button>
-              <button
-                onClick={() => window.open(window.location.origin + window.location.pathname + '?view=formateur', '_blank')}
-                className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mt-2 border border-violet-800/60"
-                title="Ouvre votre espace formateur dans un nouvel onglet, sans vous déconnecter de l'espace admin"
-              >
-                <ExternalLink className="w-5 h-5 mr-3" /> Mon espace Formateur
               </button>
             </>
           )}
@@ -23932,23 +17140,12 @@ export default function App() {
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
-              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Send className="w-5 h-5 mr-3" /> Prospects
-              </button>
-              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Wallet className="w-5 h-5 mr-3" /> Finances
-              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
               <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
-                {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
-                    {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
-                  </span>
-                )}
               </button>
             </>
           )}
@@ -23966,11 +17163,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
-                {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
-                    {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
-                  </span>
-                )}
               </button>
             </>
           )}
@@ -23990,15 +17182,6 @@ export default function App() {
               </button>
             ))}
           </div>
-          {isAdminActingAsFormateur && (
-            <button
-              onClick={() => { window.location.href = window.location.origin + window.location.pathname; }}
-              className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mb-2 border border-violet-800/60"
-              title="Revenir à l'espace administrateur (dans cet onglet)"
-            >
-              <ExternalLink className="w-5 h-5 mr-3 rotate-180" /> Accéder à l'espace administrateur
-            </button>
-          )}
           <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 hover:bg-red-500/10 hover:text-red-400 text-gray-400 font-medium">
             <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
@@ -24038,8 +17221,8 @@ export default function App() {
               if (userRole === 'admin') {
                 displayName = orgSettings?.nom || "Mon espace";
               } else if (userRole === 'formateur') {
-                rawName = assignableFormateurs.find(f => f.id === currentUserId)?.nom;
-                displayName = rawName || "Formateur";
+                rawName = formateurs.find(f => f.id === currentUserId)?.nom;
+                displayName = rawName || "Coach";
               } else if (userRole === 'client') {
                 rawName = clients.find(c => c.id === currentUserId)?.nom;
                 displayName = rawName || "Bénéficiaire";
@@ -24074,20 +17257,17 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative">
-          {isSubscriptionExpired && activeTab !== 'parametres_org' ? (
-            // Abonnement expiré : on n'affiche QUE l'écran paywall, le contenu de l'onglet n'est même
-            // pas monté — avant, ce n'était qu'une superposition visuelle par-dessus un contenu resté
-            // actif (chargements/mutations de données en arrière-plan malgré le blocage à l'écran).
-            <div className="w-full h-full flex items-center justify-center">
-              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} isAdmin={userRole === 'admin'} />
+          {/* Écran paywall si essai expiré ou abonnement annulé/impayé */}
+          {isSubscriptionExpired && activeTab !== 'parametres_org' && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center" style={{background:'rgba(249,250,251,0.97)', backdropFilter:'blur(4px)'}}>
+              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} />
             </div>
-          ) : (
-          <>
+          )}
           {activeTab === 'profil' && <ProfileView
             currentUserId={currentUserId}
             supabase={supabase}
             fetchUtilisateurs={fetchUtilisateurs}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             clients={clients}
             userRole={userRole}
             orgSettings={orgSettings}
@@ -24098,26 +17278,24 @@ export default function App() {
             clients={clients}
             sessions={sessions}
             documents={documents}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             setActiveTab={setActiveTab}
           />}
           {activeTab === 'calendrier' && <CalendrierView
             sessions={sessions}
             clients={clients}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             userRole={userRole}
             currentUserId={currentUserId}
-            fetchSessions={fetchSessions}
           />}
           {activeTab === 'accueil_formateur' && userRole === 'formateur' && <FormateurAccueilView
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             clients={clients}
             sessions={sessions}
             documents={documents}
             currentUserId={currentUserId}
             setActiveTab={setActiveTab}
             setSigningDocId={setSigningDocId}
-            setViewingSession={setViewingSession}
             handleSaveCorrection={handleSaveCorrection}
           />}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
@@ -24126,7 +17304,7 @@ export default function App() {
             currentOrgId={currentOrgId}
             supabase={supabase}
             clients={clients}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
           />}
           {activeTab === 'parametres_org' && userRole === 'admin' && (
             <OrganisationSettingsView
@@ -24149,7 +17327,7 @@ export default function App() {
             clientEmail={clientEmail} setClientEmail={setClientEmail}
             isAddingUser={isAddingUser}
             clients={clients}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             assignFormateur={assignFormateur}
             handleModuleChange={handleModuleChange}
             modules={modules}
@@ -24164,7 +17342,6 @@ export default function App() {
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             setIsInviteModalOpen={setIsInviteModalOpen}
-            setInviteDefaultRole={setInviteDefaultRole}
             pedagogicalResources={pedagogicalResources}
             fetchSessions={fetchSessions}
             documents={documents}
@@ -24194,8 +17371,7 @@ export default function App() {
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
-            formateurs={assignableFormateurs}
-            adminSelfId={adminSelfProfile?.id}
+            formateurs={formateurs}
             documents={documents}
             expandedClientId={expandedClientId}
             setExpandedClientId={setExpandedClientId}
@@ -24214,37 +17390,10 @@ export default function App() {
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
-            currentOrgId={currentOrgId}
-            setIsInviteModalOpen={setIsInviteModalOpen}
-            setInviteDefaultRole={setInviteDefaultRole}
           />}
-          {activeTab === 'relances' && userRole === 'admin' && !hasFeatureAccess(orgSettings, 'pro') && (
-            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
-              <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
-                <Lock className="w-7 h-7 text-violet-600" />
-              </div>
-              <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
-              <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
-                Les relances automatiques auprès de vos clients sont disponibles à partir du plan Pro.
-              </p>
-              <button onClick={() => setActiveTab('parametres_org')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
-                Voir les plans →
-              </button>
-            </div>
-          )}
-          {activeTab === 'relances' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && <AutomationSettingsView
+          {activeTab === 'relances' && userRole === 'admin' && <AutomationSettingsView
             supabase={supabase}
             currentOrgId={currentOrgId}
-          />}
-          {activeTab === 'prospects' && (userRole === 'admin' || userRole === 'formateur') && <ProspectsView
-            supabase={supabase}
-            currentOrgId={currentOrgId}
-            userRole={userRole}
-          />}
-          {activeTab === 'finances' && userRole === 'admin' && <FinancesView
-            supabase={supabase}
-            currentOrgId={currentOrgId}
-            clients={clients}
           />}
           {activeTab === 'processus' && (
             <SharedProcessesView
@@ -24260,19 +17409,27 @@ export default function App() {
               userRole={userRole}
               currentUserId={currentUserId}
               clients={clients}
-              formateurs={assignableFormateurs}
+              formateurs={formateurs}
               currentOrgId={currentOrgId}
             />
           )}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
             modules={modules}
+            moduleDocuments={moduleDocuments}
             handleAddModule={handleAddModule}
-            handleDeleteModule={handleDeleteModule}
-            handleRenameModule={handleRenameModule}
+            handleLinkDocument={handleLinkDocument}
             newModuleName={newModuleName}
             setNewModuleName={setNewModuleName}
             newModuleSeances={newModuleSeances}
             setNewModuleSeances={setNewModuleSeances}
+            newModDocName={newModDocName}
+            setNewModDocName={setNewModDocName}
+            newModDocType={newModDocType}
+            setNewModDocType={setNewModDocType}
+            newModDocFile={newModDocFile}
+            setNewModDocFile={setNewModDocFile}
+            addingToModuleId={addingToModuleId}
+            setAddingToModuleId={setAddingToModuleId}
             handleUploadDocxTemplate={handleUploadDocxTemplate}
             newTemplateName={newTemplateName}
             setNewTemplateName={setNewTemplateName}
@@ -24311,12 +17468,10 @@ export default function App() {
             handleRedistributeModuleDocs={handleRedistributeModuleDocs}
             documentTemplates={documentTemplates}
             currentOrgId={currentOrgId}
-            handleUpdateStepResourceSignatures={handleUpdateStepResourceSignatures}
           />}
           {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
             clients={clients}
-            formateurs={assignableFormateurs}
-            currentOrgId={currentOrgId}
+            formateurs={formateurs}
             sessions={sessions}
             generateSessions={generateSessions}
             updateSessionDate={updateSessionDate}
@@ -24361,8 +17516,8 @@ export default function App() {
             const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
             const _today = new Date().toISOString().split('T')[0];
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
-            const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
-            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client && !isBlockedBySigningOrder(d, 'client')).length;
+            const _coach = formateurs.find(f => f.id === _client?.formateur_id);
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client).length;
             return <AccueilView
               setActiveTab={setActiveTab}
               clientProgress={_progress}
@@ -24376,16 +17531,14 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={formateurs} />}
           {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
-          {activeTab === 'questionnaires' && userRole === 'admin' && <QuestionnairesView supabase={supabase} currentOrgId={currentOrgId} clients={clients} formateurs={assignableFormateurs} modules={modules} orgName={orgSettings?.nom || ''} />}
           {activeTab === 'gestion_documents' && <DocumentsView
-            onOpenQuestionnaires={userRole === 'admin' ? () => setActiveTab('questionnaires') : null}
             sessions={sessions}
             documents={documents}
             clients={clients}
-            formateurs={assignableFormateurs}
+            formateurs={formateurs}
             userRole={userRole}
             currentUserId={currentUserId}
             handleSignDocument={handleSignDocument}
@@ -24426,65 +17579,21 @@ export default function App() {
           {activeTab === 'ressources' && userRole === 'formateur' && <RessourcesView pedagogicalResources={pedagogicalResources} supabase={supabase} currentUserId={currentUserId} />}
 
           {activeTab === 'set-password' && <SetPasswordView supabase={supabase} onComplete={() => setActiveTab('accueil')} />}
-          </>
-          )}
         </main>
       </div>
 
       {/* Modals Qualiopi */}
-      {/* FIX (2026-09-07) : remplace la modale générique <SignatureModal> par le même
-          <DocumentViewerModal mode="sign"> déjà utilisé côté "Documents à signer" du formateur
-          (viewingSession, plus bas) — la saisie des champs texte (et le cochage des cases) se
-          fait ainsi DIRECTEMENT sur le document affiché, à la position exacte de la balise,
-          identique partout dans l'app plutôt qu'une liste générique séparée. */}
-      <DocumentViewerModal
+      <SignatureModal
         isOpen={signingDocId !== null}
-        url={(() => { const d = documents.find(d => d.id === signingDocId); return d?.signed_pdf_url || d?.url || null; })()}
-        title={documents.find(d => d.id === signingDocId)?.nom}
         onClose={() => setSigningDocId(null)}
-        supabase={supabase}
-        mode="sign"
+        onSave={handleSignatureSave}
         requiredCheckboxes={(() => {
           const signingDoc = documents.find(d => d.id === signingDocId);
           if (!signingDoc) return [];
           const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
-          // Repli sur template_fields puis fields quand signature_fields est vide — les documents
-          // envoyés via "Envoyer" (handleGenerateDocx) stockent leurs balises dans
-          // metadata.template_fields, pas metadata.signature_fields (même repli déjà utilisé par
-          // handleSignDocument pour graver la signature dans le PDF).
-          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
-            : (Array.isArray(meta.fields) ? meta.fields : []);
-          const signerRoleForCheckbox = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
-          const checkboxTag = `checkbox_${signerRoleForCheckbox}`;
-          return fieldsForSigning.filter(f => f.tag === checkboxTag);
+          const checkboxTag = userRole === 'client' ? 'checkbox_client' : 'checkbox_formateur';
+          return (meta.signature_fields || []).filter(f => f.tag === checkboxTag);
         })()}
-        requiredTextFields={(() => {
-          const signingDoc = documents.find(d => d.id === signingDocId);
-          if (!signingDoc) return [];
-          const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
-          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
-            : (Array.isArray(meta.fields) ? meta.fields : []);
-          const signerRoleForText = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
-          const textTag = `texte_${signerRoleForText}`;
-          return fieldsForSigning.filter(f => f.tag === textTag);
-        })()}
-        requiresSignature={(() => {
-          const signingDoc = documents.find(d => d.id === signingDocId);
-          if (!signingDoc) return true;
-          const meta = (() => { try { return typeof signingDoc.metadata === 'string' ? JSON.parse(signingDoc.metadata) : (signingDoc.metadata || {}); } catch { return {}; } })();
-          const fieldsForSigning = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) && meta.template_fields.length > 0) ? meta.template_fields
-            : (Array.isArray(meta.fields) ? meta.fields : []);
-          const signerRoleForSig = userRole === 'client' ? 'client' : userRole === 'admin' ? 'organisme' : 'formateur';
-          // Pas de métadonnées de balises du tout → document hors du nouveau système visuel, on
-          // garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige que
-          // si une balise signature_<rôle> a effectivement été posée pour CE signataire.
-          if (!Array.isArray(fieldsForSigning) || fieldsForSigning.length === 0) return true;
-          return fieldsForSigning.some(f => f.tag === `signature_${signerRoleForSig}`);
-        })()}
-        onSave={(sigDataUrl, _choice, checkedIds, textValues) => handleSignatureSave(sigDataUrl, checkedIds, textValues)}
       />
 
       <EmargementModal
@@ -24501,7 +17610,7 @@ export default function App() {
         pedagogicalResources={pedagogicalResources}
         supabase={supabase}
         onSave={handleAddSessionItem}
-        clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId && s.numero_seance !== null && s.numero_seance !== undefined)}
+        clientSessions={sessions.filter(s => s.client_id === targetSessionForAddition?.clientId)}
         preSelectedSessionId={targetSessionForAddition?.preSelectedSessionId || null}
         preSelectedLabel={targetSessionForAddition?.numero ? `SÉANCE ${targetSessionForAddition.numero}` : null}
       />
@@ -24531,50 +17640,12 @@ export default function App() {
         supabase={supabase}
         mode={viewingSession?.mode || 'view'}
         isInteractiveConsent={viewingSession?.session?.is_interactive_consent === true}
-        requiredCheckboxes={(() => {
-          const sess = viewingSession?.session;
-          if (!sess || viewingSession?.mode !== 'sign') return [];
-          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          // FIX (2026-09-03) : repli sur template_fields/fields quand signature_fields est vide —
-          // voir commentaire détaillé plus bas sur requiresSignature.
-          const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
-          return sessFields.filter(f => f.tag === 'checkbox_formateur');
-        })()}
-        requiredTextFields={(() => {
-          const sess = viewingSession?.session;
-          if (!sess || viewingSession?.mode !== 'sign') return [];
-          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
-          return sessFields.filter(f => f.tag === 'texte_formateur');
-        })()}
-        requiresSignature={(() => {
-          const sess = viewingSession?.session;
-          if (!sess || viewingSession?.mode !== 'sign') return true;
-          const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
-          // BUG URGENT (2026-09-03) : cette visionneuse (accueil formateur → "Documents à signer")
-          // ne lisait QUE metadata.signature_fields — une clé propre à l'ancien flux
-          // instantiateDocument ("Schema B"), jamais alimentée par les documents créés via le
-          // bouton "Envoyer" (handleGenerateDocx) ni par l'envoi programmé, qui stockent leurs
-          // balises dans metadata.template_fields à la place. Résultat : un document avec un champ
-          // "texte formateur"/"case à cocher formateur" bien posé sur le modèle n'affichait ce
-          // champ NULLE PART pour le formateur — seulement le PDF statique + la signature. Repli
-          // ajouté sur template_fields puis fields, même logique que côté client (handleSignSave).
-          const sigFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
-            : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
-          // Pas de métadonnées de balises du tout → document hors du nouveau système visuel,
-          // on garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige
-          // que si une balise "signature_formateur" a effectivement été posée sur ce document.
-          if (!Array.isArray(sigFields) || sigFields.length === 0) return true;
-          return sigFields.some(f => f.tag === 'signature_formateur');
-        })()}
         onClose={() => setViewingSession(null)}
-        onSave={async (sigDataUrl, _choice, checkedIds, textValues) => {
+        onSave={async (sigDataUrl) => {
           const sess = viewingSession?.session;
           if (sess?.id) {
             // Signature d'un document administratif par le formateur
-            await handleSignDocument(sess.id, 'formateur', sigDataUrl, checkedIds, textValues);
+            await handleSignDocument(sess.id, 'formateur', sigDataUrl);
             toast.success('Document signé avec succès !');
           }
           setViewingSession(null);
@@ -24586,8 +17657,7 @@ export default function App() {
         onClose={() => setIsInviteModalOpen(false)}
         onInvite={handleInviteUser}
         isAddingUser={isAddingUser}
-        formateurs={assignableFormateurs}
-        defaultRole={inviteDefaultRole}
+        formateurs={formateurs}
       />
 
       <DeleteConfirmationModal

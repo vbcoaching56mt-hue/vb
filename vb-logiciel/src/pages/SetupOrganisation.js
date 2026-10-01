@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClientConfig';
+import { BENEFICIAIRE_MSG } from './Signup';
 
 const SetupOrganisationPage = () => {
   const [status, setStatus] = useState('loading'); // loading | creating | error | noMeta
@@ -40,6 +41,14 @@ const SetupOrganisationPage = () => {
   }, []);
 
   const handleSession = async (session) => {
+    // AJOUT (2026-10-01) : un bénéficiaire ne doit jamais devenir administrateur d'un nouvel organisme
+    // (voir Signup.js) — cas d'un compte créé avant ce correctif, qui confirmerait son email maintenant.
+    const { data: isBeneficiaire } = await supabase.rpc('email_est_beneficiaire', { p_email: session.user.email || '' });
+    if (isBeneficiaire === true) {
+      setError(BENEFICIAIRE_MSG);
+      setStatus('error');
+      return;
+    }
     const meta = session.user.user_metadata || {};
     const orgNameMeta = (meta.org_name || '').trim();
     const adminNameMeta = (meta.admin_name || '').trim();
