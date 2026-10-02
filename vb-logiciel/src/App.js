@@ -7352,27 +7352,38 @@ const FormateurView = ({
     setFormateurClientTab('seances');
   }, [expandedClientId]);
 
-  const onTimeChange = (sessionId, field, value) => {
-    setEditedTimes(prev => ({
-      ...prev,
-      [sessionId]: {
-        ...(prev[sessionId] || {
-          start: sessions.find(s => s.id === sessionId)?.heure_debut || '',
-          end: sessions.find(s => s.id === sessionId)?.heure_fin || ''
-        }),
-        [field]: value
-      }
-    }));
-  };
-
+  // FIX (2026-10-02) : les horaires n'étaient enregistrés qu'en cliquant sur la petite icône disquette —
+  // sans ce clic, ils étaient perdus en quittant la page. Ils s'enregistrent désormais AUTOMATIQUEMENT
+  // 0,8 s après la saisie (et à la sortie du champ) ; l'icône reste disponible pour forcer l'enregistrement.
+  const fEditedTimesRef = React.useRef({});
+  const fPendingSavesRef = React.useRef({});
   const onSaveTimes = async (sessionId) => {
+    clearTimeout(fPendingSavesRef.current[sessionId]);
+    delete fPendingSavesRef.current[sessionId];
+    const times = fEditedTimesRef.current[sessionId];
+    if (!times) return;
     setSavingId(sessionId);
-    const times = editedTimes[sessionId];
-    if (times) {
-      await updateSessionTime(sessionId, 'heure_debut', times.start);
-      await updateSessionTime(sessionId, 'heure_fin', times.end);
+    const okStart = await updateSessionTime(sessionId, 'heure_debut', times.start);
+    const okEnd = await updateSessionTime(sessionId, 'heure_fin', times.end);
+    if (okStart !== false && okEnd !== false && fEditedTimesRef.current[sessionId] === times) {
+      const next = { ...fEditedTimesRef.current };
+      delete next[sessionId];
+      fEditedTimesRef.current = next;
+      setEditedTimes(next);
     }
     setTimeout(() => setSavingId(null), 1500);
+  };
+
+  const onTimeChange = (sessionId, field, value) => {
+    const current = fEditedTimesRef.current[sessionId] || {
+      start: sessions.find(s => s.id === sessionId)?.heure_debut || '',
+      end: sessions.find(s => s.id === sessionId)?.heure_fin || ''
+    };
+    const next = { ...fEditedTimesRef.current, [sessionId]: { ...current, [field]: value } };
+    fEditedTimesRef.current = next;
+    setEditedTimes(next);
+    clearTimeout(fPendingSavesRef.current[sessionId]);
+    fPendingSavesRef.current[sessionId] = setTimeout(() => { onSaveTimes(sessionId); }, 800);
   };
 
   const calculateDuration = (start, end) => {
@@ -8246,12 +8257,14 @@ const FormateurView = ({
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
                                                   onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                                  onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                                   className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
                                                 />
                                                 <input
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
                                                   onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                                  onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                                   className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
                                                 />
                                               </div>
@@ -21599,43 +21612,78 @@ export default function App() {
     }
   };
 
-  const onTimeChange = (sessionId, field, value) => {
-    setEditedTimes(prev => ({
-      ...prev,
-      [sessionId]: { ...prev[sessionId], [field]: value }
-    }));
+  // ── FIX (2026-10-02) : enregistrement FIABLE des dates / horaires de séance ─────────────────────────
+  // Signalé : "quand elle met les horaires de ses séances, quand elle revient dessus ils ne sont pas
+  // enregistrés". Causes corrigées :
+  //  - l'horaire n'était enregistré qu'à la sortie du champ (onBlur) : changer d'onglet, de client ou
+  //    fermer la page juste après la saisie le perdait → enregistrement AUTOMATIQUE 0,8 s après la saisie
+  //    (et toujours immédiatement à la sortie du champ) ;
+  //  - une erreur, ou une mise à jour refusée par la base (0 ligne modifiée, ex. droits), passait en
+  //    silence et l'écran gardait l'horaire tapé comme s'il était enregistré → message d'erreur clair ;
+  //  - effacer un horaire n'était jamais enregistré (seules les valeurs non vides étaient envoyées).
+  const editedTimesRef = useRef({});
+  const pendingTimeSavesRef = useRef({});   // sessionId → minuteur d'enregistrement automatique
+  const sessionsRefreshTimerRef = useRef(null);
+  const scheduleSessionsRefresh = () => {
+    clearTimeout(sessionsRefreshTimerRef.current);
+    sessionsRefreshTimerRef.current = setTimeout(() => { fetchSessions(); }, 1500);
+  };
+  // Met à jour en base, vérifie que la ligne a VRAIMENT été modifiée, et répercute aussitôt à l'écran.
+  const persistSessionFields = async (sessionId, updates) => {
+    const { data, error } = await supabase.from('sessions').update(updates).eq('id', sessionId).select('id');
+    if (error || !data || data.length === 0) {
+      console.error('[séance] enregistrement refusé', sessionId, updates, error);
+      toast.error(`La modification de la séance n'a pas pu être enregistrée${error ? ' : ' + error.message : ' (droits insuffisants sur cette séance)'}. Réessayez ou contactez le support.`, { id: 'session-save-error' });
+      return false;
+    }
+    setLastModifiedSessionId(sessionId);
+    setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, ...updates } : s)));
+    scheduleSessionsRefresh();
+    return true;
   };
 
   const onSaveTimes = async (sessionId) => {
-    const times = editedTimes[sessionId];
+    clearTimeout(pendingTimeSavesRef.current[sessionId]);
+    delete pendingTimeSavesRef.current[sessionId];
+    const times = editedTimesRef.current[sessionId];
     if (!times) return;
-    
-    setLastModifiedSessionId(sessionId);
     const updates = {};
-    if (times.start) updates.heure_debut = times.start;
-    if (times.end) updates.heure_fin = times.end;
-
-    const { error } = await supabase.from('sessions').update(updates).eq('id', sessionId);
-    if (!error) {
-      await fetchSessions();
-      setEditedTimes(prev => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
+    if ('start' in times) updates.heure_debut = times.start || null;
+    if ('end' in times) updates.heure_fin = times.end || null;
+    if (Object.keys(updates).length === 0) return;
+    const ok = await persistSessionFields(sessionId, updates);
+    // On n'efface la saisie locale que si elle a bien été enregistrée ET n'a pas changé entre-temps.
+    if (ok && editedTimesRef.current[sessionId] === times) {
+      const next = { ...editedTimesRef.current };
+      delete next[sessionId];
+      editedTimesRef.current = next;
+      setEditedTimes(next);
     }
   };
 
+  const onTimeChange = (sessionId, field, value) => {
+    const next = { ...editedTimesRef.current, [sessionId]: { ...editedTimesRef.current[sessionId], [field]: value } };
+    editedTimesRef.current = next;
+    setEditedTimes(next);
+    clearTimeout(pendingTimeSavesRef.current[sessionId]);
+    pendingTimeSavesRef.current[sessionId] = setTimeout(() => { onSaveTimes(sessionId); }, 800);
+  };
+
+  // Prévenir si on ferme la page alors qu'un horaire attend encore d'être enregistré (< 1 s)
+  useEffect(() => {
+    const onBeforeUnload = (e) => {
+      if (Object.keys(pendingTimeSavesRef.current).length > 0) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
   const updateSessionTime = async (sessionId, field, value) => {
-    setLastModifiedSessionId(sessionId);
-    const { error } = await supabase.from('sessions').update({ [field]: value }).eq('id', sessionId);
-    if (!error) await fetchSessions();
+    return persistSessionFields(sessionId, { [field]: value || null });
   };
 
   const updateSessionDate = async (sessionId, newDate) => {
-    setLastModifiedSessionId(sessionId);
-    const { error } = await supabase.from('sessions').update({ date: newDate }).eq('id', sessionId);
-    if (!error) await fetchSessions();
+    return persistSessionFields(sessionId, { date: newDate || null });
   };
 
   const signSession = (session) => {
