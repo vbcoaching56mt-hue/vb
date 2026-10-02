@@ -394,6 +394,36 @@ const parseAddressString = (addr) => {
 // (le formulaire de création ne demande qu'un seul champ "Nom Complet", ex. "Jean Dupont" ou
 // "Marie LEROY" — voir InviteModal). Fonctionne donc quel que soit l'ordre (Nom Prénom ou Prénom Nom)
 // et même sur un nom à un seul mot (ex. "Dupont" → "D"). Toujours en majuscules.
+// AJOUT (2026-10-02) : chargement FIABLE d'une table Supabase — signalé par l'utilisateur ("parfois je ne
+// vois plus mes séances dans mes modules, et en ajoutant une séance tout réapparaît"). Deux causes corrigées :
+//  1. une erreur passagère (réseau, session en cours de renouvellement, incident Supabase) était ignorée en
+//     silence : la liste restait vide jusqu'au prochain rechargement → on retente désormais 2 fois ;
+//  2. Supabase ne renvoie JAMAIS plus de 1000 lignes par requête : au-delà, des lignes manquaient sans aucun
+//     message → on lit maintenant la table page par page (buildQuery doit inclure un tri stable, ex. .order('id')).
+// buildQuery est une fonction qui reconstruit la requête à chaque page/tentative (un builder Supabase ne se
+// réutilise pas après avoir été exécuté).
+const fetchAllRowsWithRetry = async (buildQuery, { label = 'données', pageSize = 1000, retries = 2 } = {}) => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
+    const rows = [];
+    let failed = null;
+    for (let from = 0; ; from += pageSize) {
+      let result;
+      try { result = await buildQuery().range(from, from + pageSize - 1); }
+      catch (e) { result = { data: null, error: e }; }
+      if (result.error) { failed = result.error; break; }
+      rows.push(...(result.data || []));
+      if (!result.data || result.data.length < pageSize) break;
+    }
+    if (!failed) return { data: rows, error: null };
+    lastError = failed;
+    console.warn(`[chargement ${label}] tentative ${attempt + 1} échouée :`, failed?.message || failed);
+  }
+  console.error(`[chargement ${label}] abandon après ${retries + 1} tentatives :`, lastError);
+  return { data: null, error: lastError };
+};
+
 const computeInitials = (fullName) => {
   const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '';
@@ -19790,47 +19820,71 @@ export default function App() {
 
 
 
+  // ── FIX (2026-10-02) : fiabilisation des chargements (modules, séances, clients, documents) ──────
+  // beginLoad(cle) renvoie isStale() : vrai si, pendant l'attente de la réponse, un chargement plus récent
+  // du même type a été lancé ou si l'organisme a changé (déconnexion, autre compte). Une réponse périmée
+  // (ex. une requête lancée avant que l'organisme soit connu, qui arrive APRÈS la bonne) ne peut donc plus
+  // écraser les bonnes données — l'une des causes des modules / séances qui "disparaissaient".
+  const loadSeqRef = useRef({});
+  const orgIdRef = useRef(null);
+  orgIdRef.current = currentOrgId;
+  const beginLoad = (key) => {
+    const seq = (loadSeqRef.current[key] || 0) + 1;
+    loadSeqRef.current[key] = seq;
+    const org = currentOrgId;
+    return () => loadSeqRef.current[key] !== seq || orgIdRef.current !== org;
+  };
+  const notifyLoadError = (what) => toast.error(`Impossible de charger ${what} pour le moment. Vérifiez votre connexion puis rechargez la page.`, { id: `load-error-${what}` });
+
   const fetchModules = async () => {
-    let mQuery = supabase.from('modules').select('id, nom, seances_prevues, prix_prestation');
-    mQuery = currentOrgId ? mQuery.eq('organisation_id', currentOrgId) : mQuery.limit(0);
-    const { data: mData, error: mErr } = await mQuery;
+    if (!currentOrgId) { setModules([]); setModuleSessionTemplates([]); setModuleStepResources([]); return; }
+    const isStale = beginLoad('modules');
+    // Les 3 listes sont chargées en parallèle puis appliquées ENSEMBLE : plus d'état intermédiaire où les
+    // modules s'affichent sans leurs séances.
+    const [mRes, mstRes, msrRes] = await Promise.all([
+      fetchAllRowsWithRetry(() => supabase.from('modules').select('id, nom, seances_prevues, prix_prestation')
+        .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'modules' }),
+      fetchAllRowsWithRetry(() => supabase.from('module_session_templates').select('*')
+        .eq('organisation_id', currentOrgId).order('ordre', { ascending: true }).order('id', { ascending: true }), { label: 'séances des modules' }),
+      fetchAllRowsWithRetry(() => supabase.from('module_step_resources').select('*')
+        .eq('organisation_id', currentOrgId).order('ordre', { ascending: true }).order('id', { ascending: true }), { label: 'contenus des modules' }),
+    ]);
+    if (isStale()) return;
     // AJOUT (2026-09-17) : tri alphabétique à la source, même logique que formateurs/clients ci-dessus.
-    if (!mErr && mData) setModules([...mData].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
-
-    let mstQuery = supabase.from('module_session_templates').select('*').order('ordre', { ascending: true });
-    mstQuery = currentOrgId ? mstQuery.eq('organisation_id', currentOrgId) : mstQuery.limit(0);
-    const { data: mstData, error: mstErr } = await mstQuery;
-    if (!mstErr && mstData) setModuleSessionTemplates(mstData);
-
-    let msrQuery = supabase.from('module_step_resources').select('*').order('ordre', { ascending: true });
-    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
-    const { data: msrData, error: msrErr } = await msrQuery;
-    if (!msrErr && msrData) setModuleStepResources(msrData);
+    if (mRes.data) setModules([...mRes.data].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
+    if (mstRes.data) setModuleSessionTemplates(mstRes.data);
+    if (msrRes.data) setModuleStepResources(msrRes.data);
+    if (mRes.error || mstRes.error || msrRes.error) notifyLoadError('les modules');
   };
 
   const fetchSessions = async () => {
-    let q = supabase.from('sessions').select('*');
-    q = currentOrgId ? q.eq('organisation_id', currentOrgId) : q.limit(0);
-    const { data, error } = await q;
-    if (!error && data) setSessions(data);
+    if (!currentOrgId) { setSessions([]); return; }
+    const isStale = beginLoad('sessions');
+    const { data, error } = await fetchAllRowsWithRetry(() => supabase.from('sessions').select('*')
+      .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'séances' });
+    if (isStale()) return;
+    if (data) setSessions(data);
+    if (error) notifyLoadError('les séances');
   };
 
   const fetchUtilisateurs = async () => {
-    // 1. Charger les formateurs depuis 'utilisateurs'
-    let fQuery = supabase
-      .from('utilisateurs')
-      .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
-      .eq('role', 'formateur');
-    fQuery = currentOrgId ? fQuery.eq('organisation_id', currentOrgId) : fQuery.limit(0);
-    const { data: formateursData, error: formateursError } = await fQuery;
-
-    // 2. Charger les clients depuis 'clients' (Source unique selon instruction utilisateur)
-    let cQuery = supabase.from('clients').select('*');
-    cQuery = currentOrgId ? cQuery.eq('organisation_id', currentOrgId) : cQuery.limit(0);
-    const { data: clientsData, error: clientsError } = await cQuery;
-
-    if (formateursError) console.error("Erreur fetch formateurs:", formateursError);
-    if (clientsError) console.error("Erreur fetch clients:", clientsError);
+    if (!currentOrgId) { setFormateurs([]); setClients([]); return; }
+    const isStale = beginLoad('utilisateurs');
+    // 1. Formateurs (table 'utilisateurs') et 2. clients (table 'clients', source unique) — en parallèle
+    const [fRes, cRes] = await Promise.all([
+      fetchAllRowsWithRetry(() => supabase
+        .from('utilisateurs')
+        .select('id, nom, email, role, formateur_siret, formateur_nda, adresse_formateur, adresse_session, telephone, compagnie_assurance, numero_assurance_rcp')
+        .eq('role', 'formateur')
+        .eq('organisation_id', currentOrgId)
+        .order('id', { ascending: true }), { label: 'formateurs' }),
+      fetchAllRowsWithRetry(() => supabase.from('clients').select('*')
+        .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'clients' }),
+    ]);
+    if (isStale()) return;
+    const formateursData = fRes.data;
+    const clientsData = cRes.data;
+    if (fRes.error || cRes.error) notifyLoadError('les clients et formateurs');
 
     if (formateursData) {
       // AJOUT (2026-09-17) : tri alphabétique à la source, demandé par l'utilisateur ("comme toutes
@@ -19881,16 +19935,22 @@ export default function App() {
   };
 
   const fetchDocuments = async () => {
-    // 1. Charger les documents classiques (contrats générés, preuves, etc.)
-    let docsQuery = supabase.from('documents').select('*');
-    docsQuery = currentOrgId ? docsQuery.eq('organisation_id', currentOrgId) : docsQuery.limit(0);
-    const { data: docsData, error } = await docsQuery;
-    if (!error && docsData) setDocuments(docsData);
-
-    // 2. Charger les modèles maîtres depuis la table unifiée module_step_resources (type='document' uniquement)
-    let msrQuery = supabase.from('module_step_resources').select('*').eq('type', 'document');
-    msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
-    const { data: modsData, error: modErr } = await msrQuery;
+    if (!currentOrgId) { setDocuments([]); setDocumentTemplates({}); return; }
+    const isStale = beginLoad('documents');
+    // 1. Documents classiques (contrats générés, preuves, etc.) et 2. modèles maîtres (table unifiée
+    // module_step_resources, type='document' uniquement) — en parallèle, voir fetchAllRowsWithRetry.
+    const [dRes, tRes] = await Promise.all([
+      fetchAllRowsWithRetry(() => supabase.from('documents').select('*')
+        .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'documents' }),
+      fetchAllRowsWithRetry(() => supabase.from('module_step_resources').select('*').eq('type', 'document')
+        .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'modèles de documents' }),
+    ]);
+    if (isStale()) return;
+    const docsData = dRes.data;
+    if (docsData) setDocuments(docsData);
+    const modsData = tRes.data;
+    const modErr = tRes.error;
+    if (dRes.error || tRes.error) notifyLoadError('les documents');
     if (!modErr && modsData) {
       console.log(`[fetchDocuments] ${modsData.length} modèles documents récupérés.`);
       const templates = {};
@@ -23699,6 +23759,25 @@ export default function App() {
   // rechargées automatiquement au lieu de rester bloquées sur des listes vides (limit(0)).
   }, [userRole, currentOrgId]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // AJOUT (2026-10-02) : quand on revient sur l'onglet après plus de 2 minutes (ordinateur en veille, autre
+  // onglet...), on recharge discrètement les données principales — sinon une session expirée ou des
+  // modifications faites ailleurs laissaient des listes vides ou périmées jusqu'au prochain clic.
+  const lastFullLoadRef = useRef(Date.now());
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !currentOrgId) return;
+      if (Date.now() - lastFullLoadRef.current < 2 * 60 * 1000) return;
+      lastFullLoadRef.current = Date.now();
+      fetchUtilisateurs();
+      fetchDocuments();
+      fetchModules();
+      fetchSessions();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole, currentOrgId]);
 
   // Auto-génération supprimée : elle déclenchait generateSessions 3x lors du chargement des données.
   // Les séances sont désormais générées uniquement via le bouton manuel dans la vue Formateur.
