@@ -2534,7 +2534,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
     }
   };
 
-  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
+  // obligatoire: true par défaut (2026-10-02) — même comportement qu'avant cette option ; décochable par question.
+  const addQuestion = () => setQuestions(prev => [...prev, { id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '', obligatoire: true }]);
   const removeQuestion = (id) => setQuestions(prev => prev.filter(q => q.id !== id));
   const updateQuestion = (id, field, value) => setQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: value } : q));
   // AJOUT (2026-09-30) : bascule le type d'une question en remettant correctAnswer dans le bon
@@ -2719,6 +2720,11 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                           className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
                       ))}
                     </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                      <input type="checkbox" checked={q.obligatoire !== false} onChange={e => updateQuestion(q.id, 'obligatoire', e.target.checked)}
+                        className="accent-violet-600 w-3.5 h-3.5" />
+                      <span className="text-[10px] font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
+                    </label>
                     {(q.type === 'single' || q.type === 'multiple') && (
                       <div className="space-y-1.5">
                         {isQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
@@ -3364,7 +3370,7 @@ const ProspectQuestionnaireView = () => {
             className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
           </button>
-          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions pour soumettre</p>}
+          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
         </div>
       </div>
     </div>
@@ -10496,7 +10502,8 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
   }, [fetchQTemplates]);
 
   const qAddQuestion = () => {
-    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '' }]);
+    // obligatoire: true par défaut (2026-10-02) — même comportement qu'avant cette option ; décochable par question.
+    setQQuestions(prev => [...prev, { id: Date.now(), text: '', type: 'single', options: ['', ''], correctAnswer: '', obligatoire: true }]);
   };
   const qRemoveQuestion = (id) => setQQuestions(prev => prev.filter(q => q.id !== id));
   const qUpdateQuestion = (id, field, val) => setQQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
@@ -10706,6 +10713,11 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                               className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                           ))}
                         </div>
+                        <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                          <input type="checkbox" checked={q.obligatoire !== false} onChange={e => qUpdateQuestion(q.id, 'obligatoire', e.target.checked)}
+                            className="accent-violet-600 w-3.5 h-3.5" />
+                          <span className="text-[10px] font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
+                        </label>
                         {(q.type === 'single' || q.type === 'multiple') && (
                           <div className="space-y-1">
                             {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
@@ -13528,7 +13540,10 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
     });
   };
 
+  // FIX (2026-10-02) : option "Obligatoire" par question (comme les questionnaires prospect). Une question
+  // sans ce réglage (questionnaires créés avant) reste obligatoire, comme elle l'a toujours été.
   const isComplete = questions.every(q => {
+    if (q.obligatoire === false) return true;
     if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
     if (q.type === 'single') return !!answers[q.id];
     if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
@@ -13615,6 +13630,9 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
               <p className="font-bold text-gray-900 text-sm leading-relaxed">
                 <span className="text-violet-500 font-black mr-1">{qi + 1}.</span>
                 {q.text || <span className="text-gray-400 italic">Question</span>}
+                {q.obligatoire === false
+                  ? <span className="text-gray-400 font-normal text-xs ml-1.5">(facultatif)</span>
+                  : <span className="text-red-500 ml-1">*</span>}
               </p>
               {q.type === 'text' && (
                 <textarea
@@ -13663,7 +13681,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
             className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
           </button>
-          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions pour soumettre</p>}
+          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
         </div>
       </div>
     </div>
