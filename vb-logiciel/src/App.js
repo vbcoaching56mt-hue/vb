@@ -23068,7 +23068,14 @@ export default function App() {
       // lire que des fichiers Word. On reconnaît maintenant le format au contenu du fichier : un .docx
       // (archive "PK") est rempli comme avant ; tout autre fichier (PDF, image...) est envoyé TEL QUEL.
       const _head = new Uint8Array(arrayBuffer.slice(0, 4));
-      const _isDocxFile = _head[0] === 0x50 && _head[1] === 0x4B; // "PK" = archive zip = .docx
+      const _isZip = _head[0] === 0x50 && _head[1] === 0x4B; // "PK" = archive zip (.docx, mais aussi .xlsx, .pptx...)
+      // FIX (2026-10-02) : un tableur Excel (.xlsx) est AUSSI une archive "PK" — il était pris pour un Word et
+      // plantait ("Filetype xlsx is supported only with the paid XlsxModule"). Un vrai .docx contient
+      // obligatoirement word/document.xml : seul ce cas passe par le remplissage Word, le reste part tel quel.
+      let _isDocxFile = false;
+      if (_isZip) {
+        try { _isDocxFile = !!new PizZip(arrayBuffer).file('word/document.xml'); } catch (_) { _isDocxFile = false; }
+      }
       const _isPdfFile = _head[0] === 0x25 && _head[1] === 0x50 && _head[2] === 0x44 && _head[3] === 0x46; // "%PDF"
       const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
       let finalBlob;
@@ -23078,7 +23085,13 @@ export default function App() {
       if (!_isDocxFile) {
         const _urlExt = ((templateInfo.url || '').split('?')[0].split('.').pop() || '').toLowerCase();
         finalExt = _isPdfFile ? 'pdf' : (/^[a-z0-9]{2,5}$/.test(_urlExt) ? _urlExt : 'bin');
-        finalMime = _isPdfFile ? 'application/pdf' : (response.headers.get('content-type') || 'application/octet-stream');
+        const _knownMimes = {
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          xls: 'application/vnd.ms-excel',
+          pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          csv: 'text/csv', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', zip: 'application/zip',
+        };
+        finalMime = _isPdfFile ? 'application/pdf' : (_knownMimes[finalExt] || response.headers.get('content-type') || 'application/octet-stream');
         finalBlob = new Blob([arrayBuffer], { type: finalMime });
       } else {
       const zip = new PizZip(arrayBuffer);
