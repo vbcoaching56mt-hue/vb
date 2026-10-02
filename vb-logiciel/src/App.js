@@ -424,6 +424,24 @@ const fetchAllRowsWithRetry = async (buildQuery, { label = 'données', pageSize 
   return { data: null, error: lastError };
 };
 
+// AJOUT (2026-10-02) : prévient un client par email qu'un nouvel élément l'attend sur son espace (réutilise
+// api/client/notify-new-document.js, qui revérifie côté serveur que l'appelant est admin/formateur de
+// l'organisme du client). Fire-and-forget : un souci d'email n'annule jamais l'action déjà enregistrée.
+const notifyClientByEmail = (clientId, label) => {
+  supabase.auth.getSession().then(({ data: sessionData }) => {
+    const accessToken = sessionData?.session?.access_token;
+    if (!accessToken) return;
+    fetch('/api/client/notify-new-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+      body: JSON.stringify({ clientId, documentName: label, origin: window.location.origin }),
+    }).then(async (resp) => {
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok || result.sent === false) console.warn('[notifyClientByEmail] email non envoyé :', result.error || result.message || resp.status);
+    }).catch(e => console.warn('[notifyClientByEmail] erreur réseau :', e.message));
+  }).catch(() => {});
+};
+
 const computeInitials = (fullName) => {
   const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '';
@@ -3931,6 +3949,70 @@ const ClientDetailView = ({
   const [isSendingDocs, setIsSendingDocs] = React.useState(false);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
+  // AJOUT (2026-10-02) : envoi d'un questionnaire / quiz directement à ce client, même s'il n'est pas dans
+  // son module (table questionnaire_assignments — voir questionnaire_assignments_migration.sql).
+  const [orgQuestionnaires, setOrgQuestionnaires] = React.useState([]);
+  const [clientQAssignments, setClientQAssignments] = React.useState([]);
+  const [showSendQ, setShowSendQ] = React.useState(false);
+  const [qToSend, setQToSend] = React.useState('');
+  const [qNotifyEmail, setQNotifyEmail] = React.useState(true);
+  const [isSendingQ, setIsSendingQ] = React.useState(false);
+  const fetchClientQAssignments = React.useCallback(async () => {
+    if (!supabase || !client?.id) return;
+    const { data, error } = await supabase.from('questionnaire_assignments').select('*').eq('client_id', client.id);
+    if (error) { console.warn('[questionnaire_assignments] lecture impossible :', error.message); return; }
+    setClientQAssignments(data || []);
+  }, [supabase, client?.id]);
+  React.useEffect(() => {
+    if (!supabase || !currentOrgId) return;
+    supabase.from('module_step_resources').select('id, titre, metadata, module_id').eq('type', 'questionnaire')
+      .eq('organisation_id', currentOrgId).order('titre', { ascending: true })
+      .then(({ data }) => { if (data) setOrgQuestionnaires(data); });
+    fetchClientQAssignments();
+  }, [supabase, currentOrgId, fetchClientQAssignments]);
+  // Liste affichée : questionnaires du module + envoyés à la main + tout autre questionnaire déjà rempli
+  // par ce client (ex. reçu via un groupe de documents), pour ne rien "perdre" de son historique.
+  const displayedQuestionnaires = React.useMemo(() => {
+    const byId = new Map();
+    clientQuestionnaireResources.forEach(q => byId.set(String(q.id), { ...q, _source: 'module' }));
+    clientQAssignments.forEach(a => {
+      const q = orgQuestionnaires.find(o => String(o.id) === String(a.questionnaire_id));
+      if (q && !byId.has(String(q.id))) byId.set(String(q.id), { ...q, _source: 'envoye', _assignment: a });
+    });
+    clientQuestionnaireResponses.forEach(r => {
+      if (byId.has(String(r.questionnaire_id))) return;
+      const q = orgQuestionnaires.find(o => String(o.id) === String(r.questionnaire_id));
+      if (q) byId.set(String(q.id), { ...q, _source: 'autre' });
+    });
+    return Array.from(byId.values());
+  }, [clientQuestionnaireResources, clientQAssignments, clientQuestionnaireResponses, orgQuestionnaires]);
+  const sendableQuestionnaires = orgQuestionnaires.filter(q => !displayedQuestionnaires.some(d => String(d.id) === String(q.id)));
+  const handleSendQuestionnaire = async () => {
+    const q = orgQuestionnaires.find(o => String(o.id) === String(qToSend));
+    if (!q) return;
+    setIsSendingQ(true);
+    const { error } = await supabase.from('questionnaire_assignments').insert([{
+      client_id: client.id, questionnaire_id: q.id, organisation_id: client.organisation_id || currentOrgId,
+    }]);
+    setIsSendingQ(false);
+    if (error) {
+      if (error.code === '23505') toast.error('Ce questionnaire a déjà été envoyé à ce client.');
+      else if (error.code === '42P01' || /questionnaire_assignments/.test(error.message || '')) toast.error("Fonction pas encore activée : lancez d'abord le script questionnaire_assignments_migration.sql dans Supabase.");
+      else toast.error('Erreur : ' + error.message);
+      return;
+    }
+    const qMeta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+    toast.success(`« ${q.titre} » envoyé à ${client.nom || client.nom_complet || 'ce client'}.`);
+    if (qNotifyEmail) notifyClientByEmail(client.id, `${qMeta.isQuiz ? 'Quiz' : 'Questionnaire'} « ${q.titre} »`);
+    setQToSend(''); setShowSendQ(false);
+    fetchClientQAssignments();
+  };
+  const handleRemoveQAssignment = async (assignment) => {
+    const { error } = await supabase.from('questionnaire_assignments').delete().eq('id', assignment.id);
+    if (error) { toast.error('Erreur : ' + error.message); return; }
+    toast.success('Questionnaire retiré de l\'espace du client.');
+    fetchClientQAssignments();
+  };
   // --- Finances (2026-09-26) : historique des paiements reçus pour ce client ---
   const [clientPaiements, setClientPaiements] = React.useState([]);
   const [isLoadingPaiements, setIsLoadingPaiements] = React.useState(false);
@@ -4437,7 +4519,7 @@ const ClientDetailView = ({
           )}
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
-        <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{clientQuestionnaireResources.length > 0 ? ` (${clientQuestionnaireResources.length})` : ''}</button>
+        <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{displayedQuestionnaires.length > 0 ? ` (${displayedQuestionnaires.length})` : ''}</button>
         <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>💶 Finances</button>
       </div>
 
@@ -5150,21 +5232,54 @@ const ClientDetailView = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">📝 Questionnaires & Quiz du parcours</h3>
-            <span className="text-xs text-gray-400">{clientQuestionnaireResources.length} questionnaire{clientQuestionnaireResources.length > 1 ? 's' : ''} dans le module</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">{displayedQuestionnaires.length} questionnaire{displayedQuestionnaires.length > 1 ? 's' : ''}</span>
+              <button type="button" onClick={() => setShowSendQ(v => !v)}
+                className="flex items-center gap-1.5 bg-violet-700 hover:bg-violet-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition-all">
+                <Send size={13} /> {showSendQ ? 'Annuler' : 'Envoyer un questionnaire'}
+              </button>
+            </div>
           </div>
-          {clientQuestionnaireResources.length === 0 ? (
+          {showSendQ && (
+            <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4 space-y-3">
+              <p className="text-xs text-violet-800">Choisissez un questionnaire ou un quiz : il apparaîtra dans « Mes Documents » de ce client, même s'il ne fait pas partie de son module.</p>
+              {sendableQuestionnaires.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">Tous vos questionnaires sont déjà disponibles pour ce client. Créez-en d'autres dans l'onglet « Questionnaires & Quiz ».</p>
+              ) : (
+                <>
+                  <select value={qToSend} onChange={e => setQToSend(e.target.value)} className="w-full p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
+                    <option value="">— Sélectionner —</option>
+                    {sendableQuestionnaires.map(q => {
+                      const m = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+                      const modName = q.module_id ? (modules || []).find(md => String(md.id) === String(q.module_id))?.nom : null;
+                      return <option key={q.id} value={String(q.id)}>{m.isQuiz ? '🎯 ' : '📝 '}{q.titre}{modName ? ` (module ${modName})` : ''}</option>;
+                    })}
+                  </select>
+                  <label className="flex items-center gap-2 text-xs text-gray-700">
+                    <input type="checkbox" checked={qNotifyEmail} onChange={e => setQNotifyEmail(e.target.checked)} className="accent-violet-600" />
+                    Prévenir le client par email
+                  </label>
+                  <button type="button" onClick={handleSendQuestionnaire} disabled={!qToSend || isSendingQ}
+                    className="w-full bg-violet-700 hover:bg-violet-800 text-white text-sm font-bold py-2.5 rounded-xl disabled:opacity-50">
+                    {isSendingQ ? 'Envoi…' : 'Envoyer au client'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {displayedQuestionnaires.length === 0 ? (
             <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
               <p className="text-2xl mb-2">📝</p>
-              <p className="text-gray-400 text-sm">Aucun questionnaire dans ce module.</p>
-              <p className="text-gray-300 text-xs mt-1">Ajoutez des questionnaires depuis l'éditeur de module.</p>
+              <p className="text-gray-400 text-sm">Aucun questionnaire pour ce client.</p>
+              <p className="text-gray-300 text-xs mt-1">Ajoutez-en dans son module, ou utilisez « Envoyer un questionnaire ».</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {clientQuestionnaireResources.map(qResource => {
+              {displayedQuestionnaires.map(qResource => {
                 const meta = (() => { try { return typeof qResource.metadata === 'string' ? JSON.parse(qResource.metadata) : (qResource.metadata || {}); } catch { return {}; } })();
                 const questions = meta.questions || [];
                 const isQuizResource = !!meta.isQuiz;
-                const response = clientQuestionnaireResponses.find(r => r.questionnaire_id === qResource.id);
+                const response = clientQuestionnaireResponses.find(r => String(r.questionnaire_id) === String(qResource.id));
                 return (
                   <div key={qResource.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
                     <div className="p-4 flex items-center justify-between">
@@ -5172,7 +5287,7 @@ const ClientDetailView = ({
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
-                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
+                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'} · {qResource._source === 'envoye' ? `envoyé le ${new Date(qResource._assignment.assigned_at).toLocaleDateString('fr-FR')}` : qResource._source === 'module' ? 'dans le module' : 'hors module'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -5185,6 +5300,10 @@ const ClientDetailView = ({
                           <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
                         ) : (
                           <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                        )}
+                        {qResource._source === 'envoye' && !response && (
+                          <button type="button" onClick={() => handleRemoveQAssignment(qResource._assignment)} title="Retirer ce questionnaire de l'espace du client"
+                            className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={14} /></button>
                         )}
                       </div>
                     </div>
@@ -13585,6 +13704,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [questionnaireResponses, setQuestionnaireResponses] = React.useState([]);
   const [activeQuestionnaire, setActiveQuestionnaire] = React.useState(null);
   const [groupQuestionnaires, setGroupQuestionnaires] = React.useState([]);
+  // AJOUT (2026-10-02) : questionnaires / quiz envoyés directement à ce client par son organisme (hors module)
+  const [assignedQuestionnaires, setAssignedQuestionnaires] = React.useState([]);
+  React.useEffect(() => {
+    if (!currentUserId || !supabase) return;
+    (async () => {
+      const { data: assigns, error } = await supabase.from('questionnaire_assignments').select('questionnaire_id').eq('client_id', currentUserId);
+      if (error || !assigns || assigns.length === 0) { setAssignedQuestionnaires([]); return; }
+      const { data: qs } = await supabase.from('module_step_resources').select('id, titre, metadata, type')
+        .in('id', assigns.map(x => x.questionnaire_id));
+      setAssignedQuestionnaires((qs || []).map(q => ({ ...q, type: 'questionnaire' })));
+    })();
+  }, [currentUserId, supabase]);
   // AJOUT (2026-09-18) : ressources de type "exercice" posées en Documents de début/fin — sorties de
   // moduleResources (qui n'affiche plus que document/questionnaire/document_group, voir plus bas) et
   // traitées à part pour être basculées vers l'onglet "Exercices" du client (voir l'effet plus bas).
@@ -14771,7 +14902,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     </div>
   );
 
-  if (!moduleId) return (
+  // Sans module, on affiche quand même la page si des questionnaires ont été envoyés à la main (2026-10-02)
+  if (!moduleId && assignedQuestionnaires.length === 0) return (
     <div className="max-w-3xl mx-auto py-20 text-center">
       <FileText size={48} className="mx-auto mb-4 text-gray-200" />
       <p className="font-bold text-lg text-gray-700">Aucun parcours assigné</p>
@@ -14789,7 +14921,10 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const finExercicesPending = !moduleCompleted && moduleExerciceResources.some(r => r.moment === 'fin');
   const finLocked = !moduleCompleted && (allFinResources.length > 0 || finExercicesPending);
   const visibleExtraFinDocs = moduleCompleted ? extraFinDocs : [];
-  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || visibleExtraFinDocs.length > 0 || extraOtherDocs.length > 0;
+  // Questionnaires envoyés à la main, sauf s'ils sont déjà affichés ailleurs (module ou groupe de documents)
+  const shownQIds = new Set([...moduleResources.map(r => String(r.id)), ...groupQuestionnaires.map(q => String(q.id))]);
+  const assignedToShow = assignedQuestionnaires.filter(q => !shownQIds.has(String(q.id)));
+  const hasAnything = debutResources.length > 0 || finResources.length > 0 || extraDebutDocs.length > 0 || visibleExtraFinDocs.length > 0 || extraOtherDocs.length > 0 || assignedToShow.length > 0;
 
   return (
     <div className="space-y-8 animate-fade-in max-w-3xl mx-auto">
@@ -14845,6 +14980,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="space-y-3">
             {finResources.map(renderResourceCard)}
             {visibleExtraFinDocs.map(renderDocumentCard)}
+          </div>
+        </div>
+      )}
+
+      {assignedToShow.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-2 h-6 bg-amber-500 rounded-full"></div>
+            <h2 className="font-bold text-gray-900 text-lg">Questionnaires à remplir</h2>
+          </div>
+          <div className="space-y-3">
+            {assignedToShow.map(renderQuestionnaireCard)}
           </div>
         </div>
       )}
