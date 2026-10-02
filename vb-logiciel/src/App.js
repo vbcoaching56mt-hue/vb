@@ -11362,6 +11362,25 @@ const DocumentsView = ({
                         Mettre à jour
                         <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
+                      {/* AJOUT (2026-10-02) : "Voir" sur TOUS les modèles (avec ou sans balises), toujours visible —
+                          demandé pour vérifier qu'on a bien déposé le bon fichier. Réutilise l'aperçu existant
+                          (PDF affiché tel quel, Word converti en PDF), sans la couche "balises" si le modèle n'en a pas. */}
+                      {(() => {
+                        const tplForView = (documentTemplates || {})[doc.nom];
+                        const viewUrl = resolveFileUrl(tplForView?.url || doc.url);
+                        if (!viewUrl) return null;
+                        const withFields = !!tplForView?.metadata?.has_visual_fields;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => openTemplatePreview(doc.nom, { ...(tplForView || {}), id: withFields ? tplForView?.id : null, url: viewUrl, plainView: !withFields })}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-600 bg-violet-50 hover:bg-violet-100 transition-colors"
+                            title="Voir le document"
+                          >
+                            <Eye size={12} /> Voir
+                          </button>
+                        );
+                      })()}
                       {(documentTemplates || {})[doc.nom]?.metadata?.has_visual_fields && (
                         <>
                           <button
@@ -12037,7 +12056,16 @@ const DocumentsView = ({
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
               <div>
                 <h3 className="font-black text-gray-900 text-base">{previewTemplate.key}</h3>
-                <p className="text-xs text-gray-400 mt-0.5">{previewFields.length} balise{previewFields.length !== 1 ? 's' : ''} positionnée{previewFields.length !== 1 ? 's' : ''}</p>
+                {previewTemplate.tpl?.plainView ? (
+                  <p className="text-xs text-gray-400 mt-0.5">Aperçu du document</p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-0.5">{previewFields.length} balise{previewFields.length !== 1 ? 's' : ''} positionnée{previewFields.length !== 1 ? 's' : ''}</p>
+                )}
+                {previewTemplate.tpl?.url && (
+                  <a href={previewTemplate.tpl.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-violet-600 hover:underline">
+                    Ouvrir le fichier d'origine ↗
+                  </a>
+                )}
               </div>
               <button onClick={() => { setPreviewTemplate(null); setPreviewPages([]); setPreviewFields([]); }} className="p-2 rounded-xl hover:bg-gray-100 transition-all text-gray-400 hover:text-gray-700">
                 <X size={18} />
@@ -12053,6 +12081,7 @@ const DocumentsView = ({
               ) : previewPages.length === 0 ? (
                 <div className="py-12 text-center">
                   <p className="text-gray-400 text-sm">Aucune page à afficher.</p>
+                  {previewTemplate.tpl?.url && <p className="text-gray-400 text-xs mt-1">Utilisez « Ouvrir le fichier d'origine » ci-dessus pour le consulter.</p>}
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -12094,7 +12123,7 @@ const DocumentsView = ({
                   })}
                 </div>
               )}
-              {!previewLoading && previewFields.length === 0 && previewPages.length > 0 && (
+              {!previewLoading && !previewTemplate.tpl?.plainView && previewFields.length === 0 && previewPages.length > 0 && (
                 <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-700">
                   <strong>Aucune balise enregistrée</strong> pour ce modèle. Ouvrez le modèle dans l'éditeur visuel pour en ajouter.
                 </div>
