@@ -22997,7 +22997,24 @@ export default function App() {
       const response = await fetch(templateInfo.url);
       if (!response.ok) throw new Error(`Fetch template error: ${response.statusText}`);
       const arrayBuffer = await response.arrayBuffer();
+      // FIX (2026-10-02) : "Can't find end of central directory : is this a zip file ?" — un modèle PDF
+      // déposé SANS balises (ex. supports stagiaires) passait ici dans le moteur Word (.docx), qui ne sait
+      // lire que des fichiers Word. On reconnaît maintenant le format au contenu du fichier : un .docx
+      // (archive "PK") est rempli comme avant ; tout autre fichier (PDF, image...) est envoyé TEL QUEL.
+      const _head = new Uint8Array(arrayBuffer.slice(0, 4));
+      const _isDocxFile = _head[0] === 0x50 && _head[1] === 0x4B; // "PK" = archive zip = .docx
+      const _isPdfFile = _head[0] === 0x25 && _head[1] === 0x50 && _head[2] === 0x44 && _head[3] === 0x46; // "%PDF"
+      const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
+      let finalBlob;
+      let finalExt;
+      let finalMime;
 
+      if (!_isDocxFile) {
+        const _urlExt = ((templateInfo.url || '').split('?')[0].split('.').pop() || '').toLowerCase();
+        finalExt = _isPdfFile ? 'pdf' : (/^[a-z0-9]{2,5}$/.test(_urlExt) ? _urlExt : 'bin');
+        finalMime = _isPdfFile ? 'application/pdf' : (response.headers.get('content-type') || 'application/octet-stream');
+        finalBlob = new Blob([arrayBuffer], { type: finalMime });
+      } else {
       const zip = new PizZip(arrayBuffer);
       const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
@@ -23011,11 +23028,10 @@ export default function App() {
       // Étape 1 : Conversion DOCX → PDF (via ConvertAPI si disponible, sinon DOCX direct)
       toast.loading('Génération du document…', { id: 'gen-doc' });
       // FIX (2026-09-07), même correctif que la branche visuelle ci-dessus.
-      const safeName = targetName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_');
 
-      let finalBlob = docxBlob;
-      let finalExt = 'docx';
-      let finalMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      finalBlob = docxBlob;
+      finalExt = 'docx';
+      finalMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
       // Tentative 1 : ConvertAPI (pixel-perfect si crédits disponibles)
       try {
@@ -23037,6 +23053,8 @@ export default function App() {
           console.warn('[handleGenerateDocx] Toutes les conversions ont échoué, stockage DOCX :', _localErr.message);
           // Dernier recours : stocker en DOCX (signature moins propre mais document disponible)
         }
+      }
+
       }
 
       // Même correctif que la branche visuelle ci-dessus : clé de stockage assainie (accents/espaces
