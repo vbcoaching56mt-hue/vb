@@ -722,6 +722,12 @@ const isDocFullySigned = (mergedDoc, requiredRoles) => (requiredRoles || []).eve
 // ces types ET ne pas déjà être un document signé archivé (qui, lui, s'affiche dans "Documents Signés").
 const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
 const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
+// AJOUT (2026-10-02) : document INTERNE du dossier client (échangé entre l'organisme et le formateur :
+// factures, justificatifs...) — jamais destiné au client. Depuis la migration
+// documents_internes_client_migration.sql, la base ne les renvoie même plus au client ; ce test sert de
+// seconde barrière côté écran (ex. ne jamais ouvrir un tel fichier dans la signature du client si son nom
+// coïncide avec celui d'un document du module).
+const isInternalDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !d?.visible_client;
 
 // ─── Synchronisation Google Agenda (2026-07-27) ──────────────────────────────
 // Déclenchée "best-effort" (non bloquante, sans afficher d'erreur) à chaque fois qu'une séance
@@ -13787,6 +13793,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     // directement comme aperçu (il contient déjà les données personnalisées)
     const existingPregenDoc = (documents || []).find(d =>
       String(d.user_id) === String(currentUserId) &&
+      !isInternalDossierDoc(d) &&
       d.nom === resource.titre &&
       d.url &&
       !d.signe_par_client &&
@@ -14025,6 +14032,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     // ── Chercher le document déjà généré pour ce client (non signé) ─────────
     const existingGeneratedDoc = (documents || []).find(d =>
       String(d.user_id) === String(currentUserId) &&
+      !isInternalDossierDoc(d) &&
       d.nom === signingResource.titre &&
       d.url &&
       !d.signe_par_client
