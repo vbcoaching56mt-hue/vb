@@ -769,7 +769,35 @@ const isDocFullySigned = (mergedDoc, requiredRoles) => (requiredRoles || []).eve
 // côté admin / FormateurView côté formateur) : un document affiché dans un "dossier" doit avoir l'un de
 // ces types ET ne pas déjà être un document signé archivé (qui, lui, s'affiche dans "Documents Signés").
 const DOSSIER_DOC_TYPES = ['Administratif', 'Contrat', 'Mission', 'Pièce justificative', 'Autre'];
-const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé');
+const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.statut === 'Signé') && !d?.visible_client;
+// AJOUT (2026-10-05) : un document envoyé au client attend-il vraiment une signature ? Demandé : "j'envoie
+// certains documents juste pour que le client les garde et les télécharge, mais ça met quand même 'en
+// attente de signature'". Ordre de décision :
+//  1. metadata.signature_requise (écrit à l'envoi depuis le 2026-10-05) fait foi ;
+//  2. type "À signer" → oui ; type "Téléchargeable" → non ;
+//  3. documents envoyés AVANT ce correctif : un document "Administratif" / "Pièce justificative" sans
+//     aucune balise de signature ni modèle de signature → simple document à consulter / télécharger ;
+//  4. dans le doute (anciens contrats, etc.) → oui, comme avant.
+const docRequiresSignature = (doc) => {
+  const meta = parseDocMetadata(doc);
+  if (typeof meta.signature_requise === 'boolean') return meta.signature_requise;
+  if (doc?.type_document === 'À signer') return true;
+  if (doc?.type_document === 'Téléchargeable') return false;
+  if (['Administratif', 'Pièce justificative'].includes(doc?.type_document)) {
+    const fields = [
+      ...(Array.isArray(meta.signature_fields) ? meta.signature_fields : []),
+      ...(Array.isArray(meta.template_fields) ? meta.template_fields : []),
+      ...(Array.isArray(meta.fields) ? meta.fields : []),
+    ];
+    const hasSignTag = fields.some(f => /^(signature|checkbox|texte)_/.test(f?.tag || ''));
+    if (!hasSignTag && !doc?.template_id && meta.requiresClientSignature !== true) return false;
+  }
+  return true;
+};
+// Le client doit-il encore signer ce document ?
+const docAwaitsClientSignature = (doc) => !!doc?.visible_client && !doc?.signe_par_client && docRequiresSignature(doc);
+// Le formateur doit-il encore signer ce document ?
+const docAwaitsFormateurSignature = (doc) => !!doc?.visible_formateur && !doc?.signe_par_formateur && docRequiresSignature(doc);
 // AJOUT (2026-10-02) : document INTERNE du dossier client (échangé entre l'organisme et le formateur :
 // factures, justificatifs...) — jamais destiné au client. Depuis la migration
 // documents_internes_client_migration.sql, la base ne les renvoie même plus au client ; ce test sert de
@@ -5592,7 +5620,7 @@ const ClientDetailView = ({
 
       {activeTab === 'docs' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-800 mb-6">Documents envoyés pour signature</h3>
+          <h3 className="text-lg font-bold text-gray-800 mb-6">Documents envoyés</h3>
           <div className="grid grid-cols-1 gap-3">
             {clientDocs.length > 0 ? clientDocs.map(doc => {
               const clientSigned = doc.signe_par_client;
@@ -5608,11 +5636,14 @@ const ClientDetailView = ({
               // uniquement, où le client n'est jamais destinataire (bug remonté le 2026-09-07). Sans
               // destination_roles (anciens documents), on garde l'ancien comportement (client par défaut).
               const _destRolesForBadge = Array.isArray(_docMetaForBadge.destination_roles) && _docMetaForBadge.destination_roles.length > 0 ? _docMetaForBadge.destination_roles : null;
-              const needsClientSign = _destRolesForBadge ? _destRolesForBadge.includes('client') : (doc.requiresClientSignature !== false);
-              const needsFormateurSign = _destRolesForBadge
+              // FIX (2026-10-05) : un document simplement transmis (sans signature) n'attend plus de signature.
+              const _sigRequired = docRequiresSignature(doc);
+              const sentToClientOnly = !_sigRequired && (_destRolesForBadge ? _destRolesForBadge.includes('client') : !!doc.visible_client);
+              const needsClientSign = _sigRequired && (_destRolesForBadge ? _destRolesForBadge.includes('client') : (doc.requiresClientSignature !== false));
+              const needsFormateurSign = !_sigRequired ? false : _destRolesForBadge
                 ? _destRolesForBadge.includes('formateur')
                 : (_docFieldsForBadge.some(f => ['signature_formateur', 'checkbox_formateur', 'texte_formateur'].includes(f.tag)) || doc.requiresTrainerSignature === true);
-              const needsOrganismeSign = !!(_destRolesForBadge && _destRolesForBadge.includes('organisme'));
+              const needsOrganismeSign = _sigRequired && !!(_destRolesForBadge && _destRolesForBadge.includes('organisme'));
               const fullySignedByAll = (!needsClientSign || clientSigned) && (!needsFormateurSign || formateurSigned) && (!needsOrganismeSign || organismeSigned);
               return (
               <div key={doc.id} className="p-4 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-indigo-200 transition-all shadow-sm">
@@ -5621,17 +5652,20 @@ const ClientDetailView = ({
                   <div>
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {sentToClientOnly && (
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-100 text-sky-700">📥 Transmis au client · sans signature</span>
+                      )}
                       {needsClientSign && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
                         </span>
                       )}
-                      {(needsFormateurSign || formateurSigned) && (
+                      {(needsFormateurSign || (_sigRequired && formateurSigned)) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {formateurSigned ? '✓ Signature formateur reçue' : '⏳ En attente de signature formateur'}
                         </span>
                       )}
-                      {(needsOrganismeSign || organismeSigned) && (
+                      {(needsOrganismeSign || (_sigRequired && organismeSigned)) && (
                         <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${organismeSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {organismeSigned ? '✓ Signature administrateur reçue' : '⏳ En attente de signature administrateur'}
                         </span>
@@ -7886,7 +7920,8 @@ const FormateurView = ({
                         const adminDocs = documents.filter(d =>
                           d.user_id === client.id &&
                           DOSSIER_DOC_TYPES.includes(d.type_document) &&
-                          !(d.statut === 'Signé')
+                          !(d.statut === 'Signé') &&
+                          !d.visible_client // FIX (2026-10-05) : un document transmis AU client n'est pas un document interne du dossier
                         );
                         
                         if (adminDocs.length === 0) return (
@@ -8062,6 +8097,7 @@ const FormateurView = ({
                                 <tbody className="divide-y divide-gray-50 bg-white">
                                   {clientDocs.map(doc => {
                                     const isSigned = !!doc.signe_par_client;
+                                    const noSignatureNeeded = !docRequiresSignature(doc); // FIX (2026-10-05)
                                     const fileUrl = doc.url || doc.file_url;
                                     return (
                                       <tr key={doc.id} className={`hover:bg-gray-50 transition-colors ${!isSigned ? 'bg-amber-50/30' : ''}`}>
@@ -8074,8 +8110,8 @@ const FormateurView = ({
                                           </div>
                                         </td>
                                         <td className="px-4 py-3">
-                                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${isSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                            {isSigned ? '✓ Signé' : '⚠ En attente'}
+                                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${noSignatureNeeded ? 'bg-sky-100 text-sky-700' : isSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                            {noSignatureNeeded ? '📥 Transmis' : isSigned ? '✓ Signé' : '⚠ En attente'}
                                           </span>
                                         </td>
                                         <td className="px-4 py-3 text-right">
@@ -12023,9 +12059,9 @@ const DocumentsView = ({
                 const classif = typeof doc.metadata === 'object' && doc.metadata !== null ? doc.metadata.classification : null;
                 const requiresOrganisme = (parseDocMetadata(doc).destination_roles || []).includes('organisme');
                 const allSigned = doc.signe_par_client && doc.signe_par_formateur && (!requiresOrganisme || doc.signe_par_organisme);
-                const needsClientSig = doc.visible_client && !doc.signe_par_client;
-                const needsFormateurSig = doc.visible_formateur && !doc.signe_par_formateur;
-                const needsOrganismeSig = requiresOrganisme && !doc.signe_par_organisme;
+                const needsClientSig = docAwaitsClientSignature(doc);
+                const needsFormateurSig = docAwaitsFormateurSignature(doc);
+                const needsOrganismeSig = requiresOrganisme && !doc.signe_par_organisme && docRequiresSignature(doc);
                 const pendingCount = (needsClientSig ? 1 : 0) + (needsFormateurSig ? 1 : 0) + (needsOrganismeSig ? 1 : 0);
 
                 return (
@@ -12319,7 +12355,9 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
   const notifications = React.useMemo(() => {
     const notifs = [];
     if (userRole === 'admin') {
-      const pendingDocs = documents.filter(d => (d.user_id || d.assigned_formateur_id) && (!d.signe_par_client || !d.signe_par_formateur));
+      // FIX (2026-10-05) : ne compte plus les documents simplement transmis (sans signature) ni les signatures
+      // non demandées (ex. document destiné au client seul : pas de signature formateur attendue).
+      const pendingDocs = documents.filter(d => (d.user_id || d.assigned_formateur_id) && (docAwaitsClientSignature(d) || docAwaitsFormateurSignature(d)));
       if (pendingDocs.length > 0) notifs.push({ type: 'warning', message: `${pendingDocs.length} document${pendingDocs.length > 1 ? 's' : ''} en attente de signature`, action: 'gestion_documents' });
       // NOUVEAU (2026-09-07) : documents en attente de la signature de L'ADMINISTRATEUR lui-même
       // (rôle "organisme") — jusqu'ici absents de la cloche, alors que l'action existe bel et bien
@@ -12345,7 +12383,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     } else if (userRole === 'client') {
       // Même logique que isSignedByClient dans ClientDocumentsView :
       // un document est considéré signé si UN enregistrement avec le même nom a signe_par_client = true
-      const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && d.visible_client && !d.signe_par_client);
+      const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && docAwaitsClientSignature(d));
       const trulyPending = myDocs.filter(d => {
         const effectivelySigned = documents.some(other =>
           String(other.user_id) === String(currentUserId) && other.nom === d.nom && other.signe_par_client
@@ -12402,7 +12440,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
   const weekEndStr = weekEnd.toISOString().split('T')[0];
 
   const issuedDocs = documents.filter(d => d.user_id || d.assigned_formateur_id);
-  const pendingDocs = issuedDocs.filter(d => !d.signe_par_client || !d.signe_par_formateur);
+  const pendingDocs = issuedDocs.filter(d => docAwaitsClientSignature(d) || docAwaitsFormateurSignature(d)); // FIX (2026-10-05), voir docRequiresSignature
   const signedDocs = issuedDocs.filter(d => d.signe_par_client && d.signe_par_formateur);
   const weekSessions = sessions.filter(s => s.date >= weekStartStr && s.date <= weekEndStr);
   const todaySessions = sessions.filter(s => s.date === todayStr);
@@ -12484,8 +12522,8 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
                         <p className="text-xs text-gray-400">{beneficiaire}</p>
                       </div>
                       <div className="flex gap-1 shrink-0 ml-2">
-                        {!doc.signe_par_client && doc.visible_client && <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded font-bold">Client</span>}
-                        {!doc.signe_par_formateur && doc.visible_formateur && <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded font-bold">Formateur</span>}
+                        {docAwaitsClientSignature(doc) && <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded font-bold">Client</span>}
+                        {docAwaitsFormateurSignature(doc) && <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded font-bold">Formateur</span>}
                       </div>
                     </div>
                   );
@@ -23001,14 +23039,16 @@ export default function App() {
         const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
         const docToInsert = {
           nom: `${type} - ${targetName}`,
-          type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
+          // FIX (2026-10-05) : un document sans signature envoyé au client devient "Téléchargeable" (et
+          // plus "Administratif", type réservé au dossier interne organisme/formateur).
+          type_document: needsSignatureForInsert ? 'À signer' : (_visClientForInsert ? 'Téléchargeable' : 'Administratif'),
           url: publicUrl,
           ...(_visClientForInsert ? { signe_par_client: false } : {}),
           ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
           ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
-          metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
+          metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
           // requiresTrainerSignature retiré (2026-09-03) : ce n'est pas une colonne de la table
           // `documents`, seulement un champ du JSONB metadata des templates — l'insérer en top-level
           // faisait échouer TOUT `handleGenerateDocx` avec "Could not find the 'requiresTrainerSignature'
@@ -23184,13 +23224,14 @@ export default function App() {
       const _requiresOrganismeForInsert = _destRolesForInsert.includes('organisme');
       const docToInsert = {
         nom: `${type} - ${targetName}`,
-        type_document: needsSignatureForInsert ? 'À signer' : 'Administratif',
+        // FIX (2026-10-05) : voir la branche visuelle ci-dessus.
+        type_document: needsSignatureForInsert ? 'À signer' : (_visClientForInsert ? 'Téléchargeable' : 'Administratif'),
         url: publicUrl,
         ...(_visClientForInsert ? { signe_par_client: false } : {}),
         ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
         ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
         visible_admin: true,
-        metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert },
+        metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
         // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
@@ -24722,7 +24763,7 @@ export default function App() {
             const _today = new Date().toISOString().split('T')[0];
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
-            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && d.visible_client && !d.signe_par_client && !isBlockedBySigningOrder(d, 'client')).length;
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client')).length;
             return <AccueilView
               setActiveTab={setActiveTab}
               clientProgress={_progress}
