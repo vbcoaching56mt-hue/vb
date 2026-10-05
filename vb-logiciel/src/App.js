@@ -781,15 +781,20 @@ const isDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document) && !(d.
 const docRequiresSignature = (doc) => {
   const meta = parseDocMetadata(doc);
   if (typeof meta.signature_requise === 'boolean') return meta.signature_requise;
+  const fields = [
+    ...(Array.isArray(meta.signature_fields) ? meta.signature_fields : []),
+    ...(Array.isArray(meta.template_fields) ? meta.template_fields : []),
+    ...(Array.isArray(meta.fields) ? meta.fields : []),
+  ];
+  const hasSignTag = fields.some(f => /^(signature|checkbox|texte)_/.test(f?.tag || ''));
+  // FIX (2026-10-05, constaté en base) : les documents ajoutés via "Ajouter" (fiche client) gardaient la case
+  // "Signature client" cochée PAR DÉFAUT → enregistrés "À signer" avec documentType = 'info'. Quand on coche
+  // volontairement cette case, documentType passe à 'signature' : 'info' signale donc un simple document à
+  // consulter, sauf s'il porte de vraies balises de signature ou est classé "à signer".
+  if (meta.documentType === 'info' && meta.classification !== 'a_signer' && !hasSignTag) return false;
   if (doc?.type_document === 'À signer') return true;
   if (doc?.type_document === 'Téléchargeable') return false;
   if (['Administratif', 'Pièce justificative'].includes(doc?.type_document)) {
-    const fields = [
-      ...(Array.isArray(meta.signature_fields) ? meta.signature_fields : []),
-      ...(Array.isArray(meta.template_fields) ? meta.template_fields : []),
-      ...(Array.isArray(meta.fields) ? meta.fields : []),
-    ];
-    const hasSignTag = fields.some(f => /^(signature|checkbox|texte)_/.test(f?.tag || ''));
     if (!hasSignTag && !doc?.template_id && meta.requiresClientSignature !== true) return false;
   }
   return true;
@@ -2632,7 +2637,9 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                     if (questions.length === 0) setQuestions([{ id: Date.now().toString(), text: '', type: 'single', options: ['Option A', 'Option B'], correctAnswer: '' }]);
                   } else {
                     setTitle('');
-                    setMetadata({ requiresClientSignature: true, requiresTrainerSignature: false, documentType: 'info' });
+                    // FIX (2026-10-05) : plus de signature client cochée par défaut pour un simple document —
+                    // à cocher volontairement (ce qui passe documentType à 'signature').
+                    setMetadata({ requiresClientSignature: false, requiresTrainerSignature: false, documentType: 'info' });
                   }
                 }}
                 className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${type === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-100 bg-gray-50 text-gray-400 hover:border-indigo-200'}`}
@@ -10213,7 +10220,7 @@ const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, f
   pdf.save(`Statistiques - ${safeName}.pdf`);
 };
 
-const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit }) => {
+const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit, recipients = [] }) => {
   const [dateFrom, setDateFrom] = React.useState('');
   const [dateTo, setDateTo] = React.useState('');
   const [formateurFilter, setFormateurFilter] = React.useState('');
@@ -10245,6 +10252,16 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
     return true;
   }), [allForQ, clientById, dateFrom, dateTo, formateurFilter, moduleFilter]);
   const stats = React.useMemo(() => computeQuestionnaireStats(questionnaire, filtered), [questionnaire, filtered]);
+  // AJOUT (2026-10-05) : destinataires (filtres formateur / module appliqués) et ceux qui n'ont pas encore répondu
+  const respondedClientIds = new Set(allForQ.map(r => String(r.client_id)));
+  const filteredRecipients = (recipients || []).filter(rc => {
+    const c = clientById.get(String(rc.clientId));
+    if (!c) return false;
+    if (formateurFilter && String(c.formateur_id ?? '') !== formateurFilter) return false;
+    if (moduleFilter && String(c.module_id ?? '') !== moduleFilter) return false;
+    return true;
+  });
+  const pendingRecipients = filteredRecipients.filter(rc => !respondedClientIds.has(String(rc.clientId)));
 
   // Ne proposer dans les filtres que les formateurs / modules réellement concernés par des réponses
   const formateurOptions = React.useMemo(() => {
@@ -10344,14 +10361,31 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
         <div className="py-16 text-center text-gray-400 text-sm">Chargement des réponses…</div>
       ) : (
         <>
-          {/* Indicateurs clés */}
-          <div className={`grid grid-cols-2 ${stats.isQuiz ? 'lg:grid-cols-5' : 'lg:grid-cols-3'} gap-3`}>
+          {/* AJOUT (2026-10-05) : destinataires et réponses en attente — demandé : "on voit le nombre de
+              questionnaires en attente de réponse ?". Destinataires = envois directs (fiche client) + clients
+              dont le module contient ce questionnaire (directement ou via un groupe de documents). */}
+          <div className={`grid grid-cols-2 ${stats.isQuiz ? 'lg:grid-cols-6' : 'lg:grid-cols-4'} gap-3`}>
             <Kpi label="Réponses" value={stats.total} sub={hasFilters ? `sur ${allForQ.length} au total` : null} />
+            <Kpi label="En attente de réponse" value={pendingRecipients.length} tone={pendingRecipients.length > 0 ? 'red' : 'green'}
+              sub={filteredRecipients.length > 0 ? `sur ${filteredRecipients.length} destinataire${filteredRecipients.length > 1 ? 's' : ''}` : 'aucun destinataire connu'} />
             <Kpi label="Bénéficiaires" value={stats.distinctClients} />
             <Kpi label="Période" value={stats.firstDay ? qFrDate(stats.lastDay) : '—'} sub={stats.firstDay ? `1re réponse le ${qFrDate(stats.firstDay)}` : 'aucune réponse'} />
             {stats.isQuiz && <Kpi label="Note moyenne" value={stats.avgScore != null ? `${stats.avgScore} %` : '—'} sub={stats.minScore != null ? `min ${stats.minScore} % · max ${stats.maxScore} %` : null} />}
             {stats.isQuiz && <Kpi label="Taux de réussite" value={stats.passRate != null ? `${stats.passRate} %` : '—'} tone={stats.passRate == null ? 'violet' : stats.passRate >= 50 ? 'green' : 'red'} sub={`${stats.passedCount} acquis · ${stats.failedCount} non acquis`} />}
           </div>
+
+          {pendingRecipients.length > 0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+              <p className="font-bold text-amber-800 text-sm mb-2">⏳ En attente de réponse ({pendingRecipients.length})</p>
+              <div className="flex flex-wrap gap-2">
+                {pendingRecipients.map(rc => (
+                  <span key={String(rc.clientId)} className="text-xs bg-white border border-amber-200 text-amber-800 px-2.5 py-1 rounded-full">
+                    {clientName(rc.clientId)} · {rc.via === 'envoi' ? `envoyé le ${qFrDate(rc.date)}` : 'via son module'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {stats.total === 0 ? (
             <div className="py-12 text-center bg-white rounded-2xl border border-dashed border-gray-200">
@@ -10516,6 +10550,37 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
     return m;
   }, [responses]);
 
+  // AJOUT (2026-10-05) : qui a reçu chaque questionnaire ? — envois directs (questionnaire_assignments) et
+  // clients dont le module contient le questionnaire (directement, ou via un groupe de documents du module).
+  const [orgAssignments, setOrgAssignments] = React.useState([]);
+  const [moduleGroupLinks, setModuleGroupLinks] = React.useState([]);
+  React.useEffect(() => {
+    if (!supabase || !currentOrgId) return;
+    supabase.from('questionnaire_assignments').select('client_id, questionnaire_id, assigned_at').eq('organisation_id', currentOrgId)
+      .then(({ data, error }) => { if (!error && data) setOrgAssignments(data); });
+    supabase.from('module_step_resources').select('module_id, document_group_id').eq('type', 'document_group').eq('organisation_id', currentOrgId)
+      .then(({ data }) => { if (data) setModuleGroupLinks(data.filter(l => l.module_id != null && l.document_group_id != null)); });
+  }, [supabase, currentOrgId]);
+  const getRecipients = (q) => {
+    if (!q) return [];
+    const byClient = new Map();
+    orgAssignments.filter(a => String(a.questionnaire_id) === String(q.id))
+      .forEach(a => byClient.set(String(a.client_id), { clientId: a.client_id, via: 'envoi', date: a.assigned_at }));
+    const meta = parseQMeta(q);
+    const moduleIds = new Set();
+    if (q.module_id != null) moduleIds.add(String(q.module_id));
+    const groupIds = (Array.isArray(meta.group_ids) && meta.group_ids.length > 0 ? meta.group_ids : (q.document_group_id ? [q.document_group_id] : [])).map(String);
+    moduleGroupLinks.filter(l => groupIds.includes(String(l.document_group_id))).forEach(l => moduleIds.add(String(l.module_id)));
+    (clients || []).forEach(c => {
+      if (c.module_id != null && moduleIds.has(String(c.module_id)) && !byClient.has(String(c.id))) byClient.set(String(c.id), { clientId: c.id, via: 'module', date: null });
+    });
+    return Array.from(byClient.values());
+  };
+  const pendingCountFor = (q) => {
+    const answered = new Set(responses.filter(r => String(r.questionnaire_id) === String(q.id)).map(r => String(r.client_id)));
+    return getRecipients(q).filter(rc => !answered.has(String(rc.clientId))).length;
+  };
+
   // ── États Questionnaires (déplacés depuis DocumentsView le 2026-10-01) ────────────────────────────────
   const [questionnaireTemplates, setQuestionnaireTemplates] = React.useState([]);
   const [showQBuilder, setShowQBuilder] = React.useState(false);
@@ -10674,6 +10739,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
           modules={modules}
           orgName={orgName}
           onBack={() => setSelectedStatsId(null)}
+          recipients={getRecipients(selectedQuestionnaire)}
           onEdit={selectedQuestionnaire.module_id == null ? () => { setSelectedStatsId(null); handleEditQTemplate(selectedQuestionnaire); } : null}
         />
       </div>
@@ -10841,7 +10907,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                           <button type="button" onClick={() => setSelectedStatsId(q.id)}
                             className="w-full flex items-center justify-between mt-1 px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-800 transition-colors">
                             <span className="text-[11px] font-black uppercase tracking-widest">📊 Voir les statistiques</span>
-                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${responseCountById.get(String(q.id)) || 0} réponse${(responseCountById.get(String(q.id)) || 0) > 1 ? 's' : ''}`}</span>
+                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${responseCountById.get(String(q.id)) || 0} réponse${(responseCountById.get(String(q.id)) || 0) > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
                           </button>
                           <button
                             type="button"
@@ -10904,7 +10970,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                       <p className="font-bold text-gray-900 text-sm truncate">{q.titre}</p>
                       <p className="text-[10px] text-gray-500">{moduleNameById(q.module_id)} · {nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
                     </div>
-                    <span className="ml-auto shrink-0 text-[10px] font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''}`}</span>
+                    <span className="ml-auto shrink-0 text-[10px] font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
                   </div>
                 </button>
               );
@@ -14928,7 +14994,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setIsConservationModalOpen(true);
     };
     // Docs envoyés pour signature (via "Envoyer pour signature") : bouton Signer générique
-    const isToSign = !isConsDoc && doc.type_document === 'À signer' && !doc.signe_par_client;
+    const isToSign = !isConsDoc && doc.type_document === 'À signer' && !doc.signe_par_client && docRequiresSignature(doc); // FIX (2026-10-05)
     const docMeta = (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })();
     const fileUrl = doc.url || doc.file_url;
     return (
@@ -23023,7 +23089,7 @@ export default function App() {
           'signature_formateur', 'checkbox_formateur', 'texte_formateur',
           'signature_organisme', 'checkbox_organisme', 'texte_organisme',
         ].includes(f.tag));
-        const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+        const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || (_tplMetaForInsert.requiresClientSignature === true && _tplMetaForInsert.documentType !== 'info') || _tplMetaForInsert.documentType === 'signature';
         // FIX (2026-09-07) : destinataires réels du document — remplace la détection binaire
         // effectiveIsForFormateur (égalité stricte à 'formateur', qui ratait toute destination
         // combinée type "formateur,organisme") par la même lecture que partout ailleurs dans le
@@ -23217,7 +23283,7 @@ export default function App() {
         'signature_formateur', 'checkbox_formateur', 'texte_formateur',
         'signature_organisme', 'checkbox_organisme', 'texte_organisme',
       ].includes(f.tag));
-      const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || _tplMetaForInsert.requiresClientSignature === true || _tplMetaForInsert.documentType === 'signature';
+      const needsSignatureForInsert = _hasAnySignTag || templateInfo.classification === 'a_signer' || (_tplMetaForInsert.requiresClientSignature === true && _tplMetaForInsert.documentType !== 'info') || _tplMetaForInsert.documentType === 'signature';
       const _destRolesForInsert = parseDestinationRoles(templateDestination);
       const _visClientForInsert = _destRolesForInsert.includes('client');
       const _visFormateurForInsert = _destRolesForInsert.includes('formateur');
