@@ -3939,6 +3939,59 @@ const FDragItemRow = ({ sessionId, activeId, children }) => {
   );
 };
 
+// FIX (2026-10-06) : « les dates des séances ne s'enregistrent pas ». Le champ date était "contrôlé"
+// directement par la valeur en base : en tapant la date AU CLAVIER, le navigateur envoie une date dès
+// le 1er chiffre de l'année (ex. 0002-10-15), React remettait aussitôt l'ancienne valeur dans le champ
+// (la saisie s'effaçait sous les doigts) et une année erronée pouvait partir en base. Ce champ garde
+// désormais la saisie localement et n'enregistre qu'une date COMPLÈTE (année >= 2000), 0,8 s après la
+// saisie ou à la sortie du champ — et aussi si l'on quitte l'écran juste après.
+const SessionDateInput = ({ value, onCommit, className }) => {
+  const saved = value || '';
+  const [local, setLocal] = React.useState(saved);
+  const [focused, setFocused] = React.useState(false);
+  const timerRef = React.useRef(null);
+  const pendingRef = React.useRef(null);
+  const lastSentRef = React.useRef(saved);
+  const onCommitRef = React.useRef(onCommit);
+  onCommitRef.current = onCommit;
+  React.useEffect(() => {
+    if (!focused && pendingRef.current === null) { setLocal(saved); lastSentRef.current = saved; }
+  }, [saved, focused]);
+  const isComplete = (v) => v === '' || (/^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 2000);
+  const commit = (v) => {
+    clearTimeout(timerRef.current);
+    pendingRef.current = null;
+    if (!isComplete(v) || v === lastSentRef.current) return false;
+    lastSentRef.current = v;
+    onCommitRef.current(v);
+    return true;
+  };
+  // Quitter l'écran moins d'une seconde après la saisie : on enregistre quand même.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useEffect(() => () => { if (pendingRef.current !== null) commit(pendingRef.current); }, []);
+  return (
+    <input
+      type="date"
+      value={local}
+      className={className}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => {
+        const v = e.target.value;
+        setLocal(v);
+        pendingRef.current = v;
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => commit(v), 800);
+      }}
+      onBlur={(e) => {
+        const v = e.target.value;
+        if (!isComplete(v)) toast.error("Date incomplète : vérifiez l'année (4 chiffres). La date n'a pas été modifiée.", { id: 'session-date-incomplete' });
+        commit(v);
+        setFocused(false);
+      }}
+    />
+  );
+};
+
 const ClientDetailView = ({
   client, formateurs, assignFormateur, handleModuleChange, modules,
   supabase, fetchUtilisateurs, onBack, sessions, fetchSessions, documents, fetchDocuments,
@@ -5468,10 +5521,9 @@ const ClientDetailView = ({
                               <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
                                 <div className="flex flex-col">
                                   <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
-                                  <input
-                                    type="date"
+                                  <SessionDateInput
                                     value={group.items[0]?.date || ''}
-                                    onChange={(e) => { group.items.forEach(s => updateSessionDate(s.id, e.target.value)); }}
+                                    onCommit={(v) => { group.items.forEach(s => updateSessionDate(s.id, v)); }}
                                     className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                                   />
                                 </div>
@@ -8286,10 +8338,9 @@ const FormateurView = ({
                                             </div>
                                           </td>
                                           <td className="px-4 py-3">
-                                            <input
-                                              type="date"
+                                            <SessionDateInput
                                               value={group.date || ''}
-                                              onChange={(e) => { group.items.forEach(s => updateSessionDate(s.id, e.target.value)); }}
+                                              onCommit={(v) => { group.items.forEach(s => updateSessionDate(s.id, v)); }}
                                               className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
                                             />
                                           </td>
