@@ -1,3 +1,41 @@
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
+
+/* ── Optimisation téléphone (2026-10-07) ─────────────────────────────────────────────── */
+
+/* Barres d'onglets : défilent horizontalement au doigt au lieu de déborder de l'écran */
+.tabs-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.tabs-scroll::-webkit-scrollbar { display: none; }
+.tabs-scroll > * { flex-shrink: 0; white-space: nowrap; }
+
+@media (max-width: 767px) {
+  /* Tableaux "mst" (planning des séances...) : une carte par ligne, champs empilés */
+  table.mst, table.mst > tbody, table.mst tr, table.mst td { display: block; width: 100%; }
+  table.mst > thead { display: none; }
+  table.mst td { padding: 8px 14px !important; text-align: left !important; }
+  table.mst td.mst-hide { display: none !important; }
+  table.mst td[data-label]::before {
+    content: attr(data-label); display: block; margin-bottom: 4px;
+    font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #9ca3af;
+  }
+  table.mst td .justify-end { justify-content: flex-start; }
+  table.mst td > .flex, table.mst td > div > .flex { flex-wrap: wrap; }
+  table.mst tr + tr { border-top: 1px solid #f3f4f6; }
+  /* Champs date / heure : assez grands pour le doigt, et 16px pour éviter le zoom automatique sur iPhone */
+  table.mst input[type="date"], table.mst input[type="time"] {
+    font-size: 16px !important; min-height: 44px; min-width: 150px; width: auto !important;
+    padding: 6px 12px; background: #fff !important; border: 1px solid #c7d2fe !important; border-radius: 12px;
+    color: #3730a3; -webkit-appearance: none; appearance: none;
+  }
+  table.mst input[type="time"] { min-width: 0; width: 132px !important; padding: 6px 8px; }
+  table.mst .mst-times { flex-direction: row; gap: 8px; }
+  /* Partout : champs date / heure en 16px (pas de zoom automatique de l'iPhone) et assez hauts pour le doigt */
+  input[type="date"], input[type="time"] { font-size: 16px !important; min-height: 40px; }
+}
+
+/* Écrans tactiles (pas de survol) : les boutons qui n'apparaissaient qu'au survol de la souris
+   (supprimer, paramètres...) restent visibles, sinon ils sont inaccessibles au doigt. */
+@media (hover: none) {
+  .opacity-0.group-hover\:opacity-100 { opacity: 1 !important; }
+}

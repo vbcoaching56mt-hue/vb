@@ -18,9 +18,22 @@ import {
 } from 'recharts';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
-import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
+import { DndContext as BaseDndContext, useDraggable, useDroppable, useSensors, useSensor, MouseSensor, TouchSensor, KeyboardSensor } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import romeData from './data/romeData.json';
+
+// AJOUT (2026-10-07, téléphone) : glisser-déposer des séances compatible tactile. Sans réglage, toucher
+// une ligne déclenchait aussitôt un glisser : sur téléphone, faire défiler la page ou toucher un champ
+// pouvait déplacer un élément par erreur. Désormais : souris = glisser après 6 px de mouvement ;
+// doigt = APPUI LONG (0,25 s) pour attraper l'élément, un simple balayage fait défiler normalement.
+const DndContext = (props) => {
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor)
+  );
+  return <BaseDndContext sensors={sensors} {...props} />;
+};
 
 
 
@@ -3901,7 +3914,7 @@ const SessDragItem = ({ itemId, activeId, children }) => {
       style={style}
       {...listeners}
       {...attributes}
-      className={`bg-white p-4 rounded-2xl border flex items-center justify-between group transition-all shadow-sm cursor-grab active:cursor-grabbing ${String(activeId) === String(itemId) ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
+      className={`bg-white p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-2 group transition-all shadow-sm cursor-grab active:cursor-grabbing ${String(activeId) === String(itemId) ? 'opacity-40 border-indigo-200' : 'border-gray-100 hover:border-indigo-200'}`}
     >
       {children}
     </div>
@@ -4606,10 +4619,10 @@ const ClientDetailView = ({
 
       <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col md:flex-row justify-between md:items-center">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
-          <p className="text-gray-500">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
+          <h2 className="text-2xl font-bold text-gray-900 break-words">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
+          <p className="text-gray-500 break-all">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
         </div>
-        <div className="mt-4 md:mt-0 flex items-center gap-3">
+        <div className="mt-4 md:mt-0 flex flex-wrap items-center gap-2 md:gap-3">
           <button
             onClick={() => handleDownloadPDF(client, 'emargement')}
             className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
@@ -4734,7 +4747,7 @@ const ClientDetailView = ({
             </div>
           </div>
 
-          <div className="flex justify-end items-center gap-3 pt-4 mb-4 border-b border-gray-100 pb-8">
+          <div className="flex flex-wrap justify-end items-center gap-3 pt-4 mb-4 border-b border-gray-100 pb-8">
             <button
               onClick={() => setIsConfirmDeleteOpen(true)}
               className="px-6 py-3 text-red-600 font-bold hover:bg-red-50 rounded-xl transition-colors flex items-center"
@@ -4849,7 +4862,7 @@ const ClientDetailView = ({
 
       {activeTab === 'administratif' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6 animate-fade-in">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="text-sm font-bold text-gray-800">Documents du dossier client</h3>
               <p className="text-xs text-gray-400 mt-0.5">Espace partagé avec le formateur assigné : factures, justificatifs, documents envoyés par le client par un autre biais, etc. Usage interne — jamais visible par le client.</p>
@@ -5538,7 +5551,7 @@ const ClientDetailView = ({
                       <SessDropZone key={gIdx} zoneId={zoneId} isAdmin={isAdminGroup} hasActive={activeId != null}>
                         {(isGroupOver) => (
                           <>
-                            <div className="bg-white p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
+                            <div className="bg-white p-4 md:p-6 flex flex-wrap items-center justify-between gap-4 border-b border-gray-50">
                               <div className="flex items-center gap-4">
                                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shadow-lg ${isAdminGroup ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'}`}>
                                   {isAdminGroup ? <Archive size={22} /> : (group.numero ?? '?')}
@@ -5607,9 +5620,9 @@ const ClientDetailView = ({
                                       </div>
                                       <div>
                                         <h5 className="font-bold text-gray-900 text-sm">{s.ressource_titre || s.titre || s.nom || 'Activité'}</h5>
-                                        <div className="flex items-center gap-3 mt-1">
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                                           <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
-                                          <div className="flex items-center gap-2">
+                                          <div className="flex flex-wrap items-center gap-2">
                                             {clientRequired ? (
                                               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                                                 Client: {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
@@ -6001,7 +6014,7 @@ const AdminClientsView = ({
           <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration SkorUp
         </h2>
 
-        <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-3xl flex items-center justify-between mb-8 shadow-sm">
+        <div className="bg-indigo-50 border border-indigo-100 p-5 md:p-6 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 shadow-sm">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
               <Plus size={24} />
@@ -6013,7 +6026,7 @@ const AdminClientsView = ({
           </div>
           <button
             onClick={() => { setInviteDefaultRole('client'); setIsInviteModalOpen(true); }}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 transform active:scale-95"
           >
             <Plus size={20} /> Ajouter un client
           </button>
@@ -6326,7 +6339,7 @@ const FormateurDetailView = ({
           </div>
         </div>
 
-        <div className="mt-12 flex justify-end items-center gap-4">
+        <div className="mt-12 flex flex-wrap justify-end items-center gap-4">
           {isSelfAdmin ? (
             <p className="text-xs text-gray-400 italic max-w-xs text-right">
               Ceci est votre propre compte administrateur — il ne peut pas être supprimé depuis cet écran.
@@ -6483,7 +6496,7 @@ const FormateurDetailView = ({
 
             {/* ── NOUVEAU (2026-09-04) : Documents du dossier formateur (ajout libre, sans signature) ── */}
             <div className="space-y-3 pt-2 border-t border-gray-100">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Documents du dossier formateur</h4>
                   <p className="text-[11px] text-gray-400 mt-0.5">Pièces administratives archivées sans demande de signature (assurance, diplôme...).</p>
@@ -6779,7 +6792,7 @@ const AdminFormateursView = ({
       {/* Ajouté 2026-08-05 : bouton d'invitation dédié aux formateurs, pré-sélectionnant le rôle
           "Formateur" — auparavant, le seul bouton d'invitation ("Nouveau Membre") se trouvait sur
           l'onglet Clients, avec un sélecteur de rôle à changer manuellement. */}
-      <div className="bg-violet-50 border border-violet-100 p-6 rounded-3xl flex items-center justify-between mb-2 shadow-sm">
+      <div className="bg-violet-50 border border-violet-100 p-5 md:p-6 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-violet-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
             <Plus size={24} />
@@ -6791,7 +6804,7 @@ const AdminFormateursView = ({
         </div>
         <button
           onClick={() => { setInviteDefaultRole('formateur'); setIsInviteModalOpen(true); }}
-          className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center gap-2 transform active:scale-95"
+          className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 transform active:scale-95"
         >
           <Plus size={20} /> Ajouter un formateur
         </button>
@@ -7719,7 +7732,7 @@ const FormateurView = ({
           <div className="space-y-4">
             {/* ── NOUVEAU (2026-09-04) : Mon dossier administratif — documents personnels, sans client, sans signature ── */}
             <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-3 gap-3">
+              <div className="flex flex-wrap items-center justify-between mb-3 gap-3">
                 <div>
                   <h3 className="font-black text-gray-900 text-sm">Mon dossier administratif</h3>
                   <p className="text-[11px] text-gray-400 mt-0.5">Vos propres documents partagés avec l'organisme (assurance, diplôme...) — sans lien avec un client.</p>
@@ -7945,7 +7958,7 @@ const FormateurView = ({
 
               {isExpanded && (
                 <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
-                  <div className="flex gap-4 border-b border-gray-200 mb-6 font-sans">
+                  <div className="tabs-scroll flex gap-4 border-b border-gray-200 mb-6 font-sans">
                     <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
                     <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
                     <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
@@ -8304,7 +8317,7 @@ const FormateurView = ({
 
                   {formateurClientTab === 'seances' && (
                     <>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <h4 className="font-bold text-gray-800 flex items-center">
                           <span className="w-2 h-5 bg-indigo-500 rounded-full mr-2"></span>
                           Planning des Séances - {assignedModule?.nom || 'Sans module'}
@@ -8325,7 +8338,7 @@ const FormateurView = ({
 
                       {clientSessions.length > 0 ? (
                         <div className="overflow-hidden rounded-2xl border border-gray-100">
-                          <table className="w-full text-left text-sm">
+                          <table className="mst w-full text-left text-sm">
                             <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
                               <tr>
                                 <th className="px-4 py-3 text-left">N° & Séance</th>
@@ -8373,16 +8386,16 @@ const FormateurView = ({
                                               )}
                                             </div>
                                           </td>
-                                          <td className="px-4 py-3">
+                                          <td className="px-4 py-3" data-label="Date de la séance">
                                             <SessionDateInput
                                               value={group.date || ''}
                                               onCommit={(v) => { group.items.forEach(s => updateSessionDate(s.id, v)); }}
                                               className="border-none bg-transparent font-bold text-indigo-700 text-xs focus:ring-0 outline-none w-full"
                                             />
                                           </td>
-                                          <td className="px-4 py-3">
+                                          <td className="px-4 py-3" data-label="Horaires (début / fin)">
                                             <div className="flex items-center gap-2">
-                                              <div className="flex flex-col gap-0.5">
+                                              <div className="mst-times flex flex-col gap-0.5">
                                                 <input
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
@@ -8403,7 +8416,7 @@ const FormateurView = ({
                                               </button>
                                             </div>
                                           </td>
-                                          <td colSpan="2" className="px-4 py-3 text-right">
+                                          <td colSpan="2" className="mst-hide px-4 py-3 text-right">
                                             <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
                                           </td>
                                         </>
@@ -8420,7 +8433,7 @@ const FormateurView = ({
                                       </span>
                                       <span className="truncate">{session.ressource_titre || session.nom}</span>
                                     </td>
-                                    <td colSpan="2" className="px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
+                                    <td colSpan="2" className="mst-hide px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
                                     <td className="px-4 py-3">
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-1.5">
@@ -17115,7 +17128,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <h2 className="text-2xl font-black text-gray-900 tracking-tight">Paramètres</h2>
         <p className="text-gray-500 text-sm mt-1">Gérez votre organisme, votre portail et votre abonnement.</p>
-        <div className="flex gap-1 mt-5 bg-gray-100 p-1 rounded-xl w-fit">
+        <div className="tabs-scroll flex gap-1 mt-5 bg-gray-100 p-1 rounded-xl w-fit max-w-full">
           {[
             { key: 'organisme', label: 'Organisme' },
             { key: 'personnalisation', label: 'Personnalisation', proOnly: true },
@@ -18682,7 +18695,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
             <p className="text-sm text-gray-500">Envoyez un questionnaire d'entretien préalable, sans que le prospect ait besoin d'un compte SkorUp</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
           {isAdmin && (
             <button
               onClick={() => setShowTemplates(v => !v)}
