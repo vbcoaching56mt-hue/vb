@@ -4466,7 +4466,35 @@ const ClientDetailView = ({
     }
   };
 
+  // FIX (2026-10-07) : « Erreur lors de la sauvegarde : invalid input syntax for type numeric: "" ».
+  // Un champ chiffré laissé vide (Montant de la prestation, Part reversée au formateur) partait en
+  // texte vide "" et la base refusait TOUT l'enregistrement. Désormais un champ chiffré vide est
+  // enregistré comme "non renseigné" (null), la virgule décimale est acceptée (1500,50), et la fiche
+  // s'enregistre toujours — avec un simple avertissement si des informations ne sont pas remplies.
+  const CLIENT_INFO_LABELS = [
+    ['nomcomplet_client', 'Nom complet'],
+    ['client_email', 'Email'],
+    ['client_phone', 'Téléphone'],
+    ['rue_client', 'Rue'],
+    ['code_postal_client', 'Code postal'],
+    ['ville_client', 'Ville'],
+    ['region', 'Région'],
+    ['numero_dossier', 'N° de dossier'],
+    ['montant_prestation', 'Montant de la prestation'],
+    ['pourcentage_formateur', 'Part reversée au formateur'],
+  ];
+  const toNumberOrNull = (v) => {
+    if (v === null || v === undefined) return null;
+    const t = String(v).replace(/[\s\u00a0€%]/g, '').replace(',', '.');
+    if (t === '') return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
+
   const handleSaveClientInfo = async () => {
+    const missingFields = CLIENT_INFO_LABELS
+      .filter(([key]) => String(clientInfo[key] ?? '').trim() === '')
+      .map(([, label]) => label);
     setIsSavingInfo(true);
     const fullAddress = [clientInfo.rue_client, clientInfo.code_postal_client, clientInfo.ville_client].filter(Boolean).join(', ');
     const { error } = await supabase.from('clients').update({
@@ -4480,8 +4508,8 @@ const ClientDetailView = ({
       region: clientInfo.region,
       numero_dossier: clientInfo.numero_dossier,
       modalite_formation: clientInfo.modalite_formation,
-      montant_prestation: clientInfo.montant_prestation,
-      pourcentage_formateur: clientInfo.pourcentage_formateur || null,
+      montant_prestation: toNumberOrNull(clientInfo.montant_prestation),
+      pourcentage_formateur: toNumberOrNull(clientInfo.pourcentage_formateur),
     }).eq('id', client.id);
 
     if (error) {
@@ -4490,6 +4518,14 @@ const ClientDetailView = ({
       await fetchUtilisateurs();
       if (client.module_id) await generateSessions(client);
       toast.success("Informations personnelles sauvegardées !");
+      if (missingFields.length > 0) {
+        toast(`Attention : toutes les informations ne sont pas remplies (${missingFields.join(', ')}).`, {
+          icon: '⚠️',
+          duration: 6000,
+          id: 'client-info-incomplete',
+          style: { background: '#FFFBEB', color: '#92400E', border: '1px solid #FCD34D' },
+        });
+      }
     }
     setIsSavingInfo(false);
   };
