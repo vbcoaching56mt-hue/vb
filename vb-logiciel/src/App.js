@@ -3632,6 +3632,51 @@ const LegalModal = ({ page, onClose }) => {
   );
 };
 
+// FIX (2026-10-09) : un administrateur existant tombait sur « Finaliser votre espace » (création d'un
+// NOUVEL organisme) au lieu de son espace : son profil était recherché UNIQUEMENT par adresse email, et
+// cette adresse avait été effacée en enregistrant la page Paramètres (champ email chargé vide puis
+// sauvegardé tel quel). Le profil est maintenant retrouvé d'abord par le lien de connexion
+// (auth_uid pour l'équipe, id pour un client), qui ne change jamais, puis seulement par email.
+const escapeLike = (v) => String(v).replace(/[\\%_]/g, (m) => '\\' + m);
+const findAccountProfile = async (authUser) => {
+  if (!authUser) return null;
+  const uid = authUser.id;
+  const email = String(authUser.email || '').trim();
+  if (uid) {
+    const { data } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('auth_uid', uid).order('id', { ascending: true }).limit(1);
+    if (data && data[0] && data[0].role) return data[0];
+  }
+  if (email) {
+    const { data } = await supabase.from('utilisateurs').select('role, id, organisation_id').ilike('email', escapeLike(email)).order('id', { ascending: true }).limit(1);
+    if (data && data[0] && data[0].role) return data[0];
+  }
+  if (uid) {
+    const { data } = await supabase.from('clients').select('id, organisation_id').eq('id', uid).limit(1);
+    if (data && data[0]) return { role: 'client', ...data[0] };
+  }
+  if (email) {
+    const { data } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', escapeLike(email)).limit(1);
+    if (data && data[0]) return { role: 'client', ...data[0] };
+  }
+  return null;
+};
+
+// Met à jour la fiche "utilisateurs" du compte connecté : retrouvée par auth_uid (lien de connexion),
+// sinon par email (anciens comptes sans auth_uid). Une adresse email vide n'est JAMAIS enregistrée :
+// c'est elle qui permet de retrouver le compte à la connexion.
+const updateOwnStaffProfile = async (authUser, fields) => {
+  const payload = { ...fields };
+  if ('email' in payload) {
+    const e = String(payload.email || '').trim();
+    if (e) payload.email = e; else delete payload.email;
+  }
+  let result = await supabase.from('utilisateurs').update(payload).eq('auth_uid', authUser.id).select('id');
+  if (!result.error && (!result.data || result.data.length === 0) && authUser.email) {
+    result = await supabase.from('utilisateurs').update(payload).eq('email', authUser.email).select('id');
+  }
+  return result;
+};
+
 const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   const [email, setEmail] = useState(() => {
     // Tenter de pré-remplir l'email depuis l'URL (#email=... ou ?email=...)
@@ -3674,11 +3719,8 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     const userEmail = authData.user?.email;
     if (userEmail) {
       // D'abord chercher dans utilisateurs (formateurs/admin)
-      const { data: userData, error: dbError } = await supabase
-        .from('utilisateurs')
-        .select('role, id, organisation_id')
-        .eq('email', userEmail)
-        .single();
+      const userData = await findAccountProfile(authData.user);
+      const dbError = null;
 
       if (userData && userData.role) {
         handleLogin(userData.role, userData.id, userData.organisation_id);
@@ -4512,7 +4554,7 @@ const ClientDetailView = ({
     const fullAddress = [clientInfo.rue_client, clientInfo.code_postal_client, clientInfo.ville_client].filter(Boolean).join(', ');
     const { error } = await supabase.from('clients').update({
       nom_complet: clientInfo.nomcomplet_client,
-      email_contact: clientInfo.client_email,
+      ...(String(clientInfo.client_email || '').trim() ? { email_contact: String(clientInfo.client_email).trim() } : {}),
       telephone: clientInfo.client_phone,
       rue: clientInfo.rue_client,
       code_postal: clientInfo.code_postal_client,
@@ -6205,7 +6247,7 @@ const FormateurDetailView = ({
         adresse_formateur: legalInfo.adresse_formateur,
         adresse_session: sameAddress ? legalInfo.adresse_formateur : legalInfo.adresse_session,
         region: legalInfo.region,
-        email: legalInfo.email,
+        ...(String(legalInfo.email || '').trim() ? { email: String(legalInfo.email).trim() } : {}),
         telephone: legalInfo.telephone,
         compagnie_assurance: legalInfo.compagnie_assurance,
         numero_assurance_rcp: legalInfo.numero_assurance_rcp
@@ -15621,7 +15663,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
       error = result.error;
     } else {
       const { data: { user: authUser } } = await supabase.auth.getUser();
-      const result = await supabase.from('utilisateurs').update({
+      const result = await updateOwnStaffProfile(authUser, {
         nom: profileData.nom,
         email: profileData.email,
         telephone: profileData.telephone,
@@ -15632,7 +15674,7 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
         formateur_nda: profileData.nda,
         compagnie_assurance: profileData.compagnie_assurance,
         numero_assurance_rcp: profileData.numero_assurance_rcp
-      }).eq('email', authUser.email);
+      });
       error = result.error;
       if (!error && userRole === 'admin' && orgSettings?.id) {
         const orgResult = await supabase.from('organisations').update({
@@ -17012,10 +17054,18 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
     const fetchAdminContact = async () => {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser?.email) return;
-      const { data } = await supabase.from('utilisateurs')
+      let { data } = await supabase.from('utilisateurs')
         .select('email, telephone, compagnie_assurance, numero_assurance_rcp')
-        .eq('email', authUser.email)
+        .eq('auth_uid', authUser.id)
+        .limit(1)
         .maybeSingle();
+      if (!data) {
+        ({ data } = await supabase.from('utilisateurs')
+          .select('email, telephone, compagnie_assurance, numero_assurance_rcp')
+          .eq('email', authUser.email)
+          .limit(1)
+          .maybeSingle());
+      }
       if (data) {
         setEmailContact(data.email || '');
         setTelephoneContact(data.telephone || '');
@@ -17110,12 +17160,12 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
     // 2. Mise à jour de la table utilisateurs (email, téléphone, assurance)
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (authUser?.email) {
-      await supabase.from('utilisateurs').update({
+      await updateOwnStaffProfile(authUser, {
         email: emailContact,
         telephone: telephoneContact,
         compagnie_assurance: compagnieAssurance,
         numero_assurance_rcp: numeroAssuranceRcp,
-      }).eq('email', authUser.email);
+      });
     }
     toast.success("Paramètres sauvegardés !");
     onSaved({ nom, siret, adresse, logo_url: logoUrl, nda, site_web: siteWeb, code_postal: codePostal, ville, region });
@@ -20056,7 +20106,8 @@ export default function App() {
       if (session?.user?.email) {
     
         // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
-        const { data: userData, error: userDataErr } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', session.user.email).maybeSingle();
+        const userData = await findAccountProfile(session.user);
+        const userDataErr = null;
         if (userDataErr) console.error('[initSession] Erreur lecture profil utilisateur (rôle) :', userDataErr);
         if (userData && userData.role) {
           // preserveTab=true : restauration SILENCIEUSE d'une session déjà ouverte (F5, réouverture
@@ -24251,11 +24302,7 @@ export default function App() {
 
           if (user && user.email) {
             // Chercher le rôle dans la base de données (admin/formateur)
-            const { data: userData } = await supabase
-              .from('utilisateurs')
-              .select('role, id, organisation_id')
-              .eq('email', user.email)
-              .single();
+            const userData = await findAccountProfile(user);
 
             if (userData && userData.role) {
               handleLogin(userData.role, userData.id, userData.organisation_id);
@@ -24303,7 +24350,7 @@ export default function App() {
             const { data: { user } } = await supabase.auth.getUser();
 
             if (user && user.email) {
-              const { data: userData } = await supabase.from('utilisateurs').select('role, id, organisation_id').eq('email', user.email).single();
+              const userData = await findAccountProfile(user);
               if (userData && userData.role) {
                 handleLogin(userData.role, userData.id, userData.organisation_id);
                 setIsResetPassword(false);
