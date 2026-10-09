@@ -2275,10 +2275,18 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
             <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
               <span className="text-2xl">📬</span>
               <div>
-                <p className="font-black text-amber-800 text-sm">Terminé — En attente de correction</p>
-                <p className="text-amber-600 text-xs mt-0.5">Votre formateur va corriger votre rendu prochainement.</p>
+                <p className="font-black text-amber-800 text-sm">{session.metadata?.deposeParFormateur ? 'Exercice réalisé en séance' : 'Terminé — En attente de correction'}</p>
+                <p className="text-amber-600 text-xs mt-0.5">{session.metadata?.deposeParFormateur ? 'Votre formateur a déposé le document de cet exercice, fait ensemble pendant la séance.' : 'Votre formateur va corriger votre rendu prochainement.'}</p>
               </div>
             </div>
+          )}
+          {hasSubmitted && (
+            <button
+              onClick={() => openSecureStorageFile(session.reponse_url)}
+              className="w-full flex items-center justify-center gap-3 p-3 bg-white border-2 border-gray-200 rounded-2xl text-gray-700 font-bold hover:bg-gray-50 transition-all text-sm"
+            >
+              <Eye size={16} /> Voir le document déposé
+            </button>
           )}
 
           {fileUrl && (
@@ -7498,7 +7506,7 @@ const FormateurView = ({
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
-  handleMoveSessionItem, handleSaveCorrection, currentOrgId
+  handleMoveSessionItem, handleSaveCorrection, currentOrgId, handleAddCompletedExercise
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -7521,6 +7529,12 @@ const FormateurView = ({
   const [ownDocType, setOwnDocType] = React.useState('Administratif');
   const [isUploadingOwnDoc, setIsUploadingOwnDoc] = React.useState(false);
   const [fActiveId, setFActiveId] = React.useState(null);
+  // Exercices déposés par le formateur (2026-10-09)
+  const [exoUploadingId, setExoUploadingId] = React.useState(null);
+  const [showAddExo, setShowAddExo] = React.useState(false);
+  const [addExoForm, setAddExoForm] = React.useState({ title: '', numero: '', file: null });
+  const [isAddingExo, setIsAddingExo] = React.useState(false);
+  const EXO_ACCEPT = 'image/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf';
   const assignedClients = clients.filter(c => c.formateur_id === currentUserId);
 
   // AJOUT (2026-09-30) : résultats de quiz des propres clients du formateur — jamais ceux des
@@ -8651,10 +8665,89 @@ const FormateurView = ({
 
                   {formateurClientTab === 'exercices' && (() => {
                     const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
+                    const seanceNumbers = [...new Set(allClientSessions.map(s => s.numero_seance).filter(n => n != null && Number(n) > 0).map(Number))].sort((a, b) => a - b);
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const defaultNumero = (() => {
+                      const past = allClientSessions.filter(s => s.numero_seance && s.date && s.date <= todayStr).map(s => Number(s.numero_seance));
+                      return past.length ? Math.max(...past) : (seanceNumbers[0] || 1);
+                    })();
+                    const openAddExo = () => { setAddExoForm({ title: '', numero: String(defaultNumero), file: null }); setShowAddExo(true); };
+                    const submitAddExo = async () => {
+                      if (!addExoForm.title.trim()) { toast.error("Indiquez le nom de l'exercice."); return; }
+                      if (!addExoForm.file) { toast.error('Choisissez la photo ou le fichier de l\'exercice.'); return; }
+                      if (!handleAddCompletedExercise) return;
+                      setIsAddingExo(true);
+                      const ok = await handleAddCompletedExercise({ client, numero: Number(addExoForm.numero || defaultNumero), title: addExoForm.title.trim(), file: addExoForm.file });
+                      setIsAddingExo(false);
+                      if (ok) { setShowAddExo(false); setAddExoForm({ title: '', numero: '', file: null }); }
+                    };
+                    const depositRendu = async (session, file) => {
+                      if (!file) return;
+                      setExoUploadingId(session.id);
+                      await handleUploadExerciseResponse(session.id, file, { byTrainer: true });
+                      setExoUploadingId(null);
+                    };
+                    const addExoBlock = (
+                      <div className="space-y-3">
+                        {!showAddExo ? (
+                          <button
+                            onClick={openAddExo}
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm transition-all"
+                          >
+                            <Plus size={14} /> Ajouter un exercice réalisé en séance
+                          </button>
+                        ) : (
+                          <div className="bg-emerald-50/60 border border-emerald-100 rounded-2xl p-4 space-y-3">
+                            <p className="text-xs font-black text-emerald-800 uppercase tracking-tight">Exercice réalisé pendant une séance</p>
+                            <p className="text-[11px] text-emerald-700">Déposez la photo, le PDF ou le document de l'exercice fait avec le client : il sera rangé dans ses exercices (visible par lui) comme « rendu ».</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Nom de l'exercice</label>
+                                <input
+                                  value={addExoForm.title}
+                                  onChange={e => setAddExoForm(f => ({ ...f, title: e.target.value }))}
+                                  placeholder="Ex : Ligne de vie, Test des valeurs..."
+                                  className="w-full p-3 text-sm border bg-white border-gray-200 focus:border-emerald-500 rounded-xl outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Séance</label>
+                                <select
+                                  value={addExoForm.numero}
+                                  onChange={e => setAddExoForm(f => ({ ...f, numero: e.target.value }))}
+                                  className="w-full p-3 text-sm border bg-white border-gray-200 focus:border-emerald-500 rounded-xl outline-none"
+                                >
+                                  {(seanceNumbers.length ? seanceNumbers : [1]).map(n => <option key={n} value={n}>Séance {n}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Photo ou fichier</label>
+                              <input
+                                type="file"
+                                accept={EXO_ACCEPT}
+                                onChange={e => setAddExoForm(f => ({ ...f, file: e.target.files?.[0] || null }))}
+                                className="block w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-white file:text-emerald-700 file:font-bold"
+                              />
+                              <p className="text-[10px] text-gray-400 mt-1">Sur téléphone, vous pouvez prendre la photo directement.</p>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button onClick={() => setShowAddExo(false)} disabled={isAddingExo} className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-white rounded-xl">Annuler</button>
+                              <button onClick={submitAddExo} disabled={isAddingExo} className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50">
+                                {isAddingExo ? 'Envoi en cours…' : "Enregistrer l'exercice"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
                     if (clientExercises.length === 0) return (
-                      <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                        <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
-                        <p className="text-gray-400 text-sm italic">Aucun exercice assigné à ce client pour le moment.</p>
+                      <div className="space-y-4">
+                        {addExoBlock}
+                        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
+                          <FileCheck className="mx-auto mb-3 text-gray-300" size={32} />
+                          <p className="text-gray-400 text-sm italic">Aucun exercice assigné à ce client pour le moment.</p>
+                        </div>
                       </div>
                     );
 
@@ -8672,8 +8765,9 @@ const FormateurView = ({
                           <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
                           <h4 className="font-black text-gray-800 text-sm uppercase tracking-tight">Tous les exercices — rendus et en attente</h4>
                         </div>
+                        {addExoBlock}
                         <div className="overflow-hidden rounded-2xl border border-gray-100">
-                          <table className="w-full text-left text-sm">
+                          <table className="mst w-full text-left text-sm">
                             <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
                               <tr>
                                 <th className="px-4 py-3">Exercice</th>
@@ -8684,7 +8778,7 @@ const FormateurView = ({
                             </thead>
                             <tbody className="divide-y divide-gray-50 bg-white">
                               {sortedExercises.map(session => {
-                                const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url;
+                                const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url || session.reponse_url;
                                 let badge;
                                 if (!session.reponse_url) {
                                   badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
@@ -8699,6 +8793,9 @@ const FormateurView = ({
                                   <tr key={session.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-4 py-3">
                                       <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom}</span>
+                                      {session.metadata?.deposeParFormateur && (
+                                        <span className="block text-[10px] text-emerald-600 font-bold mt-0.5">Déposé par le formateur</span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
                                     <td className="px-4 py-3">{badge}</td>
@@ -8710,6 +8807,26 @@ const FormateurView = ({
                                         >
                                           Consulter
                                         </button>
+                                        {!session.reponse_url && (
+                                          <label className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${exoUploadingId === session.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'}`}>
+                                            {exoUploadingId === session.id ? 'Envoi…' : 'Déposer le rendu'}
+                                            <input
+                                              type="file"
+                                              accept={EXO_ACCEPT}
+                                              className="hidden"
+                                              disabled={exoUploadingId === session.id}
+                                              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; depositRendu(session, f); }}
+                                            />
+                                          </label>
+                                        )}
+                                        {session.reponse_url && (
+                                          <button
+                                            onClick={() => openSecureStorageFile(session.reponse_url)}
+                                            className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
+                                          >
+                                            Voir le rendu
+                                          </button>
+                                        )}
                                         {session.reponse_url && (
                                           <button
                                             onClick={() => setCorrectionModalSession(session)}
@@ -22878,19 +22995,22 @@ export default function App() {
     }
   };
 
-  const handleUploadExerciseResponse = async (sessionId, file) => {
+  // AJOUT (2026-10-09) : le FORMATEUR peut aussi déposer le rendu d'un exercice (photo, PDF, Word...)
+  // quand l'exercice a été fait pendant la séance — options.byTrainer = true. Le nom du fichier
+  // reçoit un suffixe unique : deux dépôts le même jour pour le même exercice ne se bloquent plus.
+  const handleUploadExerciseResponse = async (sessionId, file, options = {}) => {
     try {
-      const fileExt = file.name.split('.').pop();
+      const fileExt = (file.name.split('.').pop() || 'bin').toLowerCase();
       const targetSession = sessions.find(s => s.id === sessionId);
       const client = clients.find(c => c.id === targetSession?.client_id);
       const normalize = (str) => (str || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toUpperCase();
       const nomClient = normalize(client?.nom_complet || client?.nom || 'CLIENT');
       const nomExercice = normalize(targetSession?.ressource_titre || 'EXERCICE');
       const date = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
-      const fileName = `${nomClient}_${nomExercice}_${date}.${fileExt}`;
+      const fileName = `${nomClient}_${nomExercice}_${date}_${Date.now().toString(36)}.${fileExt}`;
       const { error: uploadError } = await supabase.storage
         .from('exercice-returns')
-        .upload(fileName, file);
+        .upload(fileName, file, { contentType: file.type || undefined });
 
       if (uploadError) throw uploadError;
 
@@ -22902,17 +23022,66 @@ export default function App() {
         .from('sessions')
         .update({
           reponse_url: publicUrl,
-          statut: 'Rendu'
+          statut: 'Rendu',
+          ...(options.byTrainer ? { metadata: { ...(targetSession?.metadata || {}), deposeParFormateur: true, deposeLe: new Date().toISOString() } } : {})
         })
         .eq('id', sessionId);
 
       if (updateError) throw updateError;
 
       await fetchSessions();
-      toast.success('Réponse envoyée avec succès !');
+      toast.success(options.byTrainer ? 'Rendu déposé : il est maintenant visible par le client.' : 'Réponse envoyée avec succès !');
+      return true;
     } catch (error) {
       console.error('Erreur upload exercice:', error);
       toast.error('Erreur lors de l\'envoi : ' + error.message);
+      return false;
+    }
+  };
+
+  // AJOUT (2026-10-09) : « Ajouter un exercice réalisé en séance » (vue formateur, onglet Exercices).
+  // Crée un exercice dans la séance choisie, déjà "rendu" avec le fichier déposé par le formateur.
+  // Il apparaît dans les exercices du client (visible par lui) et dans le planning de la séance.
+  const handleAddCompletedExercise = async ({ client, numero, title, file }) => {
+    try {
+      const fileExt = (file.name.split('.').pop() || 'bin').toLowerCase();
+      const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toUpperCase();
+      const date = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
+      const fileName = `${normalize(client?.nom_complet || client?.nom || 'CLIENT')}_${normalize(title || 'EXERCICE')}_${date}_${Date.now().toString(36)}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage.from('exercice-returns').upload(fileName, file, { contentType: file.type || undefined });
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage.from('exercice-returns').getPublicUrl(fileName);
+
+      const groupItems = sessions.filter(s => s.client_id === client.id && Number(s.numero_seance) === Number(numero));
+      const sched = scheduleOf(groupItems);
+      const nextPos = groupItems.length > 0 ? Math.max(...groupItems.map(s => s.position || 0)) + 1 : 0;
+      const { error } = await supabase.from('sessions').insert([{
+        client_id: client.id,
+        module_id: client.module_id || null,
+        organisation_id: client.organisation_id || currentOrgId || null,
+        numero_seance: Number(numero),
+        nom: title,
+        ressource_titre: title,
+        type_activite: 'exercice',
+        reponse_url: publicUrl,
+        position: nextPos,
+        is_administrative: Number(numero) === 0,
+        metadata: { isCustom: true, documentType: 'info', deposeParFormateur: true, deposeLe: new Date().toISOString() },
+        statut: 'Rendu',
+        statut_client: 'À venir',
+        statut_formateur: 'À venir',
+        date: sched.date || null,
+        heure_debut: sched.debut || null,
+        heure_fin: sched.fin || null,
+      }]);
+      if (error) throw error;
+      await fetchSessions();
+      toast.success(`Exercice « ${title} » ajouté à la séance ${numero} — visible par le client.`);
+      return true;
+    } catch (error) {
+      console.error('Erreur ajout exercice réalisé:', error);
+      toast.error("Erreur lors de l'ajout de l'exercice : " + error.message);
+      return false;
     }
   };
 
@@ -24990,6 +25159,7 @@ export default function App() {
             fetchDocuments={fetchDocuments}
             handleMoveSessionItem={handleMoveSessionItem}
             handleSaveCorrection={handleSaveCorrection}
+            handleAddCompletedExercise={handleAddCompletedExercise}
           />}
           {activeTab === 'accueil' && (() => {
             const _client = clients.find(c => c.id === currentUserId);
