@@ -4000,6 +4000,24 @@ const FDragItemRow = ({ sessionId, activeId, children }) => {
 // (la saisie s'effaçait sous les doigts) et une année erronée pouvait partir en base. Ce champ garde
 // désormais la saisie localement et n'enregistre qu'une date COMPLÈTE (année >= 2000), 0,8 s après la
 // saisie ou à la sortie du champ — et aussi si l'on quitte l'écran juste après.
+// FIX (2026-10-09) : « quand je mets des horaires, soit ça ne s'enregistre pas, soit ça les modifie ».
+// Une séance regroupe plusieurs lignes (un document, l'émargement...). Les dates/horaires étaient lus
+// sur la PREMIÈRE ligne uniquement : si un élément avait été ajouté à la séance après coup sans
+// horaires (ou avec d'autres), l'écran affichait ses valeurs vides ou différentes, et la saisie d'un
+// seul horaire laissait l'autre horaire propre à chaque ligne → horaires « qui changent tout seuls ».
+// Désormais : la séance affiche la première valeur RENSEIGNÉE parmi ses lignes, et une saisie
+// enregistre début ET fin sur TOUTES les lignes de la séance, qui redeviennent identiques.
+const fillGroupSchedule = (g, s) => {
+  if (!g.date && s.date) g.date = s.date;
+  if (!g.debut && s.heure_debut) g.debut = s.heure_debut;
+  if (!g.fin && s.heure_fin) g.fin = s.heure_fin;
+};
+const scheduleOf = (items) => {
+  const g = { date: null, debut: null, fin: null };
+  (items || []).forEach(s => fillGroupSchedule(g, s));
+  return g;
+};
+
 const SessionDateInput = ({ value, onCommit, className }) => {
   const saved = value || '';
   const [local, setLocal] = React.useState(saved);
@@ -5613,7 +5631,7 @@ const ClientDetailView = ({
                                 <div className="flex flex-col">
                                   <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
                                   <SessionDateInput
-                                    value={group.items[0]?.date || ''}
+                                    value={scheduleOf(group.items).date || ''}
                                     onCommit={(v) => { group.items.forEach(s => updateSessionDate(s.id, v)); }}
                                     className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                                   />
@@ -5622,8 +5640,8 @@ const ClientDetailView = ({
                                   <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
                                   <input
                                     type="time"
-                                    value={editedTimes[group.items[0]?.id]?.start ?? group.items[0]?.heure_debut ?? ''}
-                                    onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                    value={editedTimes[group.items[0]?.id]?.start ?? scheduleOf(group.items).debut ?? ''}
+                                    onChange={(e) => { const g = scheduleOf(group.items); group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value, { start: g.debut, end: g.fin })); }}
                                     onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                     className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
                                   />
@@ -5632,8 +5650,8 @@ const ClientDetailView = ({
                                   <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
                                   <input
                                     type="time"
-                                    value={editedTimes[group.items[0]?.id]?.end ?? group.items[0]?.heure_fin ?? ''}
-                                    onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                    value={editedTimes[group.items[0]?.id]?.end ?? scheduleOf(group.items).fin ?? ''}
+                                    onChange={(e) => { const g = scheduleOf(group.items); group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value, { start: g.debut, end: g.fin })); }}
                                     onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                     className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-24"
                                   />
@@ -7558,11 +7576,14 @@ const FormateurView = ({
     setTimeout(() => setSavingId(null), 1500);
   };
 
-  const onTimeChange = (sessionId, field, value) => {
-    const current = fEditedTimesRef.current[sessionId] || {
+  const onTimeChange = (sessionId, field, value, groupDefaults) => {
+    const current = fEditedTimesRef.current[sessionId] || (groupDefaults ? {
+      start: groupDefaults.start || '',
+      end: groupDefaults.end || ''
+    } : {
       start: sessions.find(s => s.id === sessionId)?.heure_debut || '',
       end: sessions.find(s => s.id === sessionId)?.heure_fin || ''
-    };
+    });
     const next = { ...fEditedTimesRef.current, [sessionId]: { ...current, [field]: value } };
     fEditedTimesRef.current = next;
     setEditedTimes(next);
@@ -8396,6 +8417,7 @@ const FormateurView = ({
                                   const key = s.numero_seance;
                                   if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
                                   acc[key].items.push(s);
+                                  fillGroupSchedule(acc[key], s);
                                   return acc;
                                 }, {});
 
@@ -8441,14 +8463,14 @@ const FormateurView = ({
                                                 <input
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
-                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value))}
+                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value, { start: group.debut, end: group.fin }))}
                                                   onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                                   className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
                                                 />
                                                 <input
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
-                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value))}
+                                                  onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value, { start: group.debut, end: group.fin }))}
                                                   onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
                                                   className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
                                                 />
@@ -13372,6 +13394,7 @@ const SessionsView = ({
             const key = s.numero_seance;
             if (!acc[key]) acc[key] = { numero: s.numero_seance, nom: (s.nom || '').split(' - ')[0], date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
             acc[key].items.push(s);
+            fillGroupSchedule(acc[key], s);
             return acc;
           }, {});
 
@@ -21916,8 +21939,9 @@ export default function App() {
     }
   };
 
-  const onTimeChange = (sessionId, field, value) => {
-    const next = { ...editedTimesRef.current, [sessionId]: { ...editedTimesRef.current[sessionId], [field]: value } };
+  const onTimeChange = (sessionId, field, value, groupDefaults) => {
+    const base = editedTimesRef.current[sessionId] || (groupDefaults ? { start: groupDefaults.start || '', end: groupDefaults.end || '' } : {});
+    const next = { ...editedTimesRef.current, [sessionId]: { ...base, [field]: value } };
     editedTimesRef.current = next;
     setEditedTimes(next);
     clearTimeout(pendingTimeSavesRef.current[sessionId]);
@@ -23953,6 +23977,7 @@ export default function App() {
           const grouped = clientSessions.reduce((acc, s) => {
             if (!acc[s.numero_seance]) acc[s.numero_seance] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
             acc[s.numero_seance].items.push(s);
+            fillGroupSchedule(acc[s.numero_seance], s);
             return acc;
           }, {});
 
