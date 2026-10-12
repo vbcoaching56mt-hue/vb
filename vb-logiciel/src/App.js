@@ -4046,6 +4046,27 @@ const fillGroupSchedule = (g, s) => {
   if (!g.debut && s.heure_debut) g.debut = s.heure_debut;
   if (!g.fin && s.heure_fin) g.fin = s.heure_fin;
 };
+// AJOUT (2026-10-12) : une séance ne peut être émargée (signée) que LE JOUR de la séance ou APRÈS.
+// Auparavant, une séance sans date pouvait être signée n'importe quand : une cliente avait ainsi signé
+// toutes ses séances à l'avance. Règle : séance sans date → signature impossible (« Date à définir ») ;
+// date future → « Disponible le … ». Le bloc administratif (séance 0) et les documents de début/fin de
+// parcours (sans numéro de séance) gardent l'ancienne règle (seule une date future bloque).
+// Le même verrou existe côté base de données (voir verrou_signature_seance.sql).
+const localTodayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const signatureLockFor = (sessionDate, numero) => {
+  const n = Number(numero);
+  const isSeance = numero !== null && numero !== undefined && Number.isFinite(n) && n >= 1;
+  if (!sessionDate) return isSeance ? { locked: true, label: 'Date à définir' } : { locked: false, label: '' };
+  if (localTodayISO() < String(sessionDate).slice(0, 10)) {
+    const [y, m, d] = String(sessionDate).slice(0, 10).split('-');
+    return { locked: true, label: `Disponible le ${d}/${m}${y && y !== String(new Date().getFullYear()) ? '/' + y : ''}` };
+  }
+  return { locked: false, label: '' };
+};
+
 const scheduleOf = (items) => {
   const g = { date: null, debut: null, fin: null };
   (items || []).forEach(s => fillGroupSchedule(g, s));
@@ -8555,9 +8576,9 @@ const FormateurView = ({
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex justify-end items-center gap-2">
                                         {(() => {
-                                          const today = new Date().toISOString().split('T')[0];
                                           const sessionDate = session.date || group.date;
-                                          const isDateLocked = sessionDate && today < sessionDate;
+                                          const signLock = signatureLockFor(sessionDate, session.numero_seance ?? group.numero);
+                                          const isDateLocked = signLock.locked;
                                           const metadata = session.metadata || {};
                                           const signedUrl = session.file_url_signed || metadata.file_url_signed;
                                           const isToSign = metadata.isToSign || session.type_activite === 'signature';
@@ -8590,7 +8611,7 @@ const FormateurView = ({
                                                   onClick={() => signSession(session)}
                                                   className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'}`}
                                                 >
-                                                  {isSigned ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer'}
+                                                  {isSigned ? 'Signé ✓' : isDateLocked ? signLock.label : 'Signer'}
                                                 </button>
                                               )}
 
@@ -13416,9 +13437,9 @@ const SessionsView = ({
 
   // Boutons d'action (Consulter / Signer / Exercice) — partagés entre la vue tableau (desktop) et la vue cartes (mobile).
   const renderActions = (session, group) => {
-    const today = new Date().toISOString().split('T')[0];
     const sessionDate = session.date || group.date;
-    const isDateLocked = sessionDate && today < sessionDate;
+    const signLock = signatureLockFor(sessionDate, session.numero_seance ?? group.numero);
+    const isDateLocked = signLock.locked;
     const metadata = session.metadata || {};
 
     const isSignatureCondition = session.type_activite === 'signature' || (session.type_activite === 'document' && (metadata.isToSign || metadata.requiresSignature || metadata.documentType === 'signature'));
@@ -13458,7 +13479,7 @@ const SessionsView = ({
                 : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
             }`}
           >
-            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? 'Indisponible' : 'Signer le document'}
+            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? signLock.label : 'Signer le document'}
           </button>
         </div>
       );
@@ -13562,7 +13583,7 @@ const SessionsView = ({
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {sortedGroups.map((group, gIdx) => {
-                      const today = new Date().toISOString().split('T')[0];
+                      const today = localTodayISO();
                       const isFuture = group.date && group.date > today;
                       // Seules les séances avec une date future sont verrouillées.
                       // Les séances passées restent toujours accessibles pour que le client puisse signer.
@@ -13626,7 +13647,7 @@ const SessionsView = ({
               {/* --- Vue cartes : mobile (< md) --- */}
               <div className="md:hidden space-y-4">
                 {sortedGroups.map((group, gIdx) => {
-                  const today = new Date().toISOString().split('T')[0];
+                  const today = localTodayISO();
                   const isFuture = group.date && group.date > today;
                   const isLocked = isFuture;
                   const { lienVisio, note } = getGroupVisioInfo(group);
