@@ -516,6 +516,82 @@ const safeImgSrc = (v) => {
   return '';
 };
 
+// UX (2026-10-12) : regroupe les éléments d'une même séance (document + émargement…) pour les
+// afficher sur UNE seule ligne (tableau de bord, accueil formateur, calendrier) au lieu d'une
+// ligne par élément.
+const regrouperParSeance = (liste) => {
+  const groupes = new Map();
+  (liste || []).forEach(s => {
+    const aUnNumero = s.numero_seance !== null && s.numero_seance !== undefined;
+    const cle = aUnNumero ? `${s.client_id}|${s.numero_seance}|${s.date || ''}` : `seul|${s.id}`;
+    if (!groupes.has(cle)) {
+      groupes.set(cle, { cle, client_id: s.client_id, numero: aUnNumero ? s.numero_seance : null, date: s.date, heure_debut: s.heure_debut, heure_fin: s.heure_fin, items: [] });
+    }
+    const g = groupes.get(cle);
+    if (!g.heure_debut && s.heure_debut) g.heure_debut = s.heure_debut;
+    if (!g.heure_fin && s.heure_fin) g.heure_fin = s.heure_fin;
+    g.items.push(s);
+  });
+  return [...groupes.values()].sort((a, b) =>
+    (a.date || '').localeCompare(b.date || '') || String(a.heure_debut || '').localeCompare(String(b.heure_debut || '')));
+};
+const titreSeance = (g) => {
+  if (g.numero === null || g.numero === undefined) return g.items[0]?.ressource_titre || g.items[0]?.nom || 'Séance';
+  if (Number(g.numero) === 0) return 'Bloc administratif';
+  return `Séance ${g.numero}`;
+};
+const seanceSignee = (g) => g.items.every(s => s.statut === 'Signé' || s.statut_client === 'Signé');
+const horaireSeance = (g) => g.heure_debut ? `${g.heure_debut}${g.heure_fin ? '–' + g.heure_fin : ''}` : '';
+
+// UX (2026-10-12) : guide « Bien démarrer » affiché sur le tableau de bord d'un nouvel admin,
+// jusqu'à ce que les étapes essentielles soient faites (ou qu'il le masque).
+const GuideDemarrage = ({ orgSettings, modules, documents, formateurs, clients, setActiveTab, currentOrgId }) => {
+  const cleMasque = `skorup_guide_masque_${currentOrgId || 'org'}`;
+  const [masque, setMasque] = React.useState(() => { try { return localStorage.getItem(cleMasque) === '1'; } catch { return false; } });
+  const etapes = [
+    { titre: 'Complétez les informations de votre organisme', detail: 'Raison sociale, SIRET, n° de déclaration d\'activité : elles apparaissent sur vos documents.', fait: !!(orgSettings?.siret && orgSettings?.nda), onglet: 'parametres_org', bouton: 'Compléter' },
+    { titre: 'Créez votre premier module', detail: 'Le parcours type de vos accompagnements (ex. : bilan de compétences en 6 séances).', fait: (modules || []).length > 0, onglet: 'modules', bouton: 'Créer un module' },
+    { titre: 'Ajoutez vos modèles de documents', detail: 'Convention, programme, émargement… remplis et signés automatiquement.', fait: (documents || []).some(d => !d.user_id && !d.assigned_formateur_id), onglet: 'gestion_documents', bouton: 'Ajouter' },
+    { titre: 'Invitez vos formateurs', detail: 'Facultatif : seulement si vous travaillez avec des formateurs ou sous-traitants.', fait: (formateurs || []).length > 1, onglet: 'formateurs', bouton: 'Inviter', facultatif: true },
+    { titre: 'Ajoutez votre premier client', detail: 'Il reçoit un email pour accéder à son espace personnel.', fait: (clients || []).length > 0, onglet: 'clients', bouton: 'Ajouter un client' },
+  ];
+  const nbFaites = etapes.filter(e => e.fait).length;
+  if (masque || etapes.filter(e => !e.facultatif).every(e => e.fait)) return null;
+  const masquer = () => { try { localStorage.setItem(cleMasque, '1'); } catch { /* navigateur sans stockage */ } setMasque(true); };
+  return (
+    <div className="bg-white rounded-2xl border border-violet-100 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 bg-violet-50 border-b border-violet-100 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-black text-violet-900">Bien démarrer avec SkorUp</h2>
+          <p className="text-sm text-violet-700">{nbFaites} étape{nbFaites > 1 ? 's' : ''} sur {etapes.length} — quelques minutes suffisent.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-32 h-2 bg-violet-100 rounded-full overflow-hidden">
+            <div className="h-full bg-violet-600 rounded-full" style={{ width: `${Math.round(nbFaites / etapes.length * 100)}%` }} />
+          </div>
+          <button onClick={masquer} className="text-xs font-bold text-violet-500 hover:text-violet-800">Masquer</button>
+        </div>
+      </div>
+      <div className="divide-y divide-gray-50">
+        {etapes.map((e, i) => (
+          <div key={i} className="px-5 py-3.5 flex items-center gap-4">
+            {e.fait
+              ? <CheckCircle size={22} className="text-emerald-500 shrink-0" />
+              : <span className="w-[22px] h-[22px] rounded-full border-2 border-violet-200 text-violet-500 text-xs font-black flex items-center justify-center shrink-0">{i + 1}</span>}
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-bold ${e.fait ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{e.titre}</p>
+              {!e.fait && <p className="text-xs text-gray-500 mt-0.5">{e.detail}</p>}
+            </div>
+            {!e.fait && (
+              <button onClick={() => setActiveTab(e.onglet)} className="shrink-0 text-xs font-bold px-3 py-2 rounded-xl bg-violet-600 text-white hover:bg-violet-700">{e.bouton}</button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const computeInitials = (fullName) => {
   const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '';
@@ -1000,7 +1076,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
                   onTouchStart={fStart} onTouchMove={fMove} onTouchEnd={fStop} />
                 <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
               </div>
-              <p className="text-[10px] text-amber-600 mt-2 font-medium">⚠️ Le bénéficiaire doit signer lui-même depuis son espace.</p>
+              <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ Le bénéficiaire doit signer lui-même depuis son espace.</p>
             </div>
           )}
           {isClient && (
@@ -2255,7 +2331,7 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
                 />
                 <div>
                   <p className="font-bold text-gray-800 text-sm">Signature du Bénéficiaire (Client)</p>
-                  <p className="text-[10px] text-gray-400">Le client devra signer ce document</p>
+                  <p className="text-xs text-gray-400">Le client devra signer ce document</p>
                 </div>
               </label>
               <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-violet-200 transition-all">
@@ -2267,7 +2343,7 @@ const DocumentSettingsModal = ({ isOpen, session, onClose, onSave }) => {
                 />
                 <div>
                   <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
-                  <p className="text-[10px] text-gray-400">Le formateur devra contresigner</p>
+                  <p className="text-xs text-gray-400">Le formateur devra contresigner</p>
                 </div>
               </label>
             </div>
@@ -2332,7 +2408,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
       <div className="bg-white rounded-[32px] w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden animate-slide-up max-h-[90vh] flex flex-col">
         <div className="bg-emerald-600 p-8 text-white relative shrink-0">
-          <p className="text-emerald-200 text-[10px] font-black uppercase tracking-widest mb-2">⚙️ Votre Exercice</p>
+          <p className="text-emerald-200 text-xs font-black uppercase tracking-widest mb-2">⚙️ Votre Exercice</p>
           <h2 className="text-2xl font-black leading-tight">{exerciceName}</h2>
           {session.instructions && (
             <p className="text-emerald-100 text-sm mt-3 leading-relaxed opacity-90">{session.instructions}</p>
@@ -2361,7 +2437,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
 
           {fileUrl && (
             <div>
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">1. Récupérer l'énoncé</p>
               <button
                 onClick={() => openSecureStorageFile(fileUrl)}
                 className="w-full flex items-center justify-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl text-emerald-700 font-bold hover:bg-emerald-100 transition-all"
@@ -2372,7 +2448,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
           )}
 
           <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">{fileUrl ? '2.' : '1.'} Déposer votre rendu</p>
+            <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">{fileUrl ? '2.' : '1.'} Déposer votre rendu</p>
             <div
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -2396,7 +2472,7 @@ const ExerciceModal = ({ isOpen, onClose, session, onSubmit }) => {
                   <span className="text-3xl">📁</span>
                   <p className="font-bold text-gray-600 text-sm">Déposez votre exercice complété ici</p>
                   <p className="text-xs text-gray-400">ou cliquez pour parcourir vos fichiers</p>
-                  <p className="text-[10px] text-gray-300 mt-1">PDF, Word, Excel, Images</p>
+                  <p className="text-xs text-gray-300 mt-1">PDF, Word, Excel, Images</p>
                 </div>
               )}
             </div>
@@ -2545,14 +2621,14 @@ const StepResourceSignatureModal = ({ isOpen, resource, onClose, onSave }) => {
             <input type="checkbox" checked={reqClient} onChange={e => setReqClient(e.target.checked)} className="w-4 h-4 accent-indigo-600 rounded" />
             <div>
               <p className="font-bold text-gray-800 text-sm">Signature du Bénéficiaire (Client)</p>
-              <p className="text-[10px] text-gray-400">Le client devra signer cet émargement</p>
+              <p className="text-xs text-gray-400">Le client devra signer cet émargement</p>
             </div>
           </label>
           <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer hover:border-violet-200 transition-all">
             <input type="checkbox" checked={reqFormateur} onChange={e => setReqFormateur(e.target.checked)} className="w-4 h-4 accent-violet-600 rounded" />
             <div>
               <p className="font-bold text-gray-800 text-sm">Signature du Formateur</p>
-              <p className="text-[10px] text-gray-400">Le formateur devra aussi signer cet émargement</p>
+              <p className="text-xs text-gray-400">Le formateur devra aussi signer cet émargement</p>
             </div>
           </label>
         </div>
@@ -2565,7 +2641,7 @@ const StepResourceSignatureModal = ({ isOpen, resource, onClose, onSave }) => {
           {!reqClient && !reqFormateur && 'Aucune signature requise'}
         </div>
 
-        <p className="text-[10px] text-amber-600 mt-3 font-medium">
+        <p className="text-xs text-amber-600 mt-3 font-medium">
           ⚠️ Ajouter la signature formateur l'ajoutera aussi aux dossiers clients déjà créés avec cet émargement (sans toucher aux signatures déjà obtenues). La retirer ne modifie que les futurs dossiers.
         </p>
 
@@ -2736,7 +2812,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                 className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${type === t ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm' : 'border-gray-100 bg-gray-50 text-gray-400 hover:border-indigo-200'}`}
               >
                 <span className="text-2xl">{t === 'signature' ? '✍️' : t === 'document' ? '📄' : t === 'questionnaire' ? '📝' : '⚙️'}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest">{t}</span>
+                <span className="text-xs font-black uppercase tracking-widest">{t}</span>
               </button>
             ))}
           </div>
@@ -2757,15 +2833,15 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
               "client uniquement" sans aucun moyen de demander aussi la signature du formateur. */}
           {type === 'signature' && (
             <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
-              <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Qui doit signer ?</label>
+              <label className="block text-xs font-black text-indigo-800 uppercase tracking-widest mb-2">Qui doit signer ?</label>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={metadata.requiresClientSignature !== false} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                  <span className="text-xs font-bold text-indigo-900 uppercase">Client</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={metadata.requiresTrainerSignature === true} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                  <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                  <span className="text-xs font-bold text-indigo-900 uppercase">Formateur</span>
                 </label>
               </div>
             </div>
@@ -2773,7 +2849,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
           {type === 'exercice' && (
             <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
               <textarea
                 className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
                 placeholder="Décrivez ici les consignes pour votre client..."
@@ -2787,7 +2863,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
           {type === 'questionnaire' && (
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
                 <textarea
                   className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
                   placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
@@ -2800,7 +2876,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
               <div className="flex items-center justify-between bg-violet-50 border border-violet-100 rounded-2xl p-3">
                 <div>
                   <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
-                  <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
+                  <p className="text-xs text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
                 </div>
                 <button type="button" onClick={() => setIsQuiz(v => !v)}
                   className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${isQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
@@ -2810,7 +2886,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
               {isQuiz && (
                 <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
+                  <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
                   <input type="number" min="0" max="100" value={seuilReussite}
                     onChange={e => setSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
                     className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
@@ -2818,8 +2894,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
               )}
 
               <div className="flex items-center justify-between">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">Questions ({questions.length})</label>
-                <button type="button" onClick={addQuestion} className="flex items-center gap-1 text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase tracking-wider">+ Ajouter une question</button>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest">Questions ({questions.length})</label>
+                <button type="button" onClick={addQuestion} className="flex items-center gap-1 text-xs font-black text-violet-600 hover:text-violet-800 uppercase tracking-wider">+ Ajouter une question</button>
               </div>
               {questions.length === 0 && (
                 <div className="py-6 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
@@ -2830,8 +2906,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                 {questions.map((q, qi) => (
                   <div key={q.id} className="bg-indigo-50 rounded-2xl p-4 space-y-3 border border-indigo-100">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">Q{qi + 1}</span>
-                      <button type="button" onClick={() => removeQuestion(q.id)} className="w-6 h-6 rounded-lg bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100 transition-colors">✕</button>
+                      <span className="text-xs font-black text-indigo-600 uppercase tracking-wider">Q{qi + 1}</span>
+                      <button type="button" onClick={() => removeQuestion(q.id)} className="w-6 h-6 rounded-lg bg-red-50 text-red-400 text-xs flex items-center justify-center hover:bg-red-100 transition-colors">✕</button>
                     </div>
                     <input
                       type="text"
@@ -2843,17 +2919,17 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                     <div className="flex gap-1.5">
                       {(isQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
                         <button key={val} type="button" onClick={() => setQuestionType(q.id, val)}
-                          className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
                       ))}
                     </div>
                     <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
                       <input type="checkbox" checked={q.obligatoire !== false} onChange={e => updateQuestion(q.id, 'obligatoire', e.target.checked)}
                         className="accent-violet-600 w-3.5 h-3.5" />
-                      <span className="text-[10px] font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
+                      <span className="text-xs font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
                     </label>
                     {(q.type === 'single' || q.type === 'multiple') && (
                       <div className="space-y-1.5">
-                        {isQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                        {isQuiz && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
                         {q.options.map((opt, oi) => {
                           const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
                           return (
@@ -2862,7 +2938,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                                 <button type="button" onClick={() => toggleCorrectOption(q.id, opt)}
                                   title="Marquer comme bonne réponse"
                                   className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
-                                  <span className="text-[9px] leading-none">✓</span>
+                                  <span className="text-[11px] leading-none">✓</span>
                                 </button>
                               ) : (
                                 <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
@@ -2875,7 +2951,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                             </div>
                           );
                         })}
-                        <button type="button" onClick={() => addOption(q.id)} className="text-[10px] text-indigo-500 hover:text-indigo-700 font-bold mt-1">+ Option</button>
+                        <button type="button" onClick={() => addOption(q.id)} className="text-xs text-indigo-500 hover:text-indigo-700 font-bold mt-1">+ Option</button>
                       </div>
                     )}
                   </div>
@@ -2883,7 +2959,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
               </div>
 
               <div>
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
                 <textarea
                   className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm resize-none"
                   placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
@@ -2921,7 +2997,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
                 <div className="flex items-center gap-4">
                   <div className="h-px bg-gray-100 flex-1"></div>
-                  <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">OU</span>
+                  <span className="text-xs font-bold text-gray-300 uppercase tracking-widest">OU</span>
                   <div className="h-px bg-gray-100 flex-1"></div>
                 </div>
 
@@ -2939,7 +3015,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                   />
                 </label>
                 {selectedResourceId && !isUploading && (
-                  <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">✓ Fichier sélectionné</p>
+                  <p className="text-xs text-green-600 font-bold flex items-center gap-1">✓ Fichier sélectionné</p>
                 )}
               </div>
 
@@ -2947,7 +3023,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                 <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
                   {/* Destinataire */}
                   <div>
-                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Destinataire</label>
+                    <label className="block text-xs font-black text-indigo-800 uppercase tracking-widest mb-2">Destinataire</label>
                     <div className="flex gap-4">
                       {[['client', 'Client'], ['formateur', 'Formateur'], ['both', 'Les deux']].map(([val, lbl]) => (
                         <label key={val} className="flex items-center gap-2 cursor-pointer">
@@ -2960,15 +3036,15 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
                   {/* Signature requise */}
                   <div className="pt-3 border-t border-indigo-100">
-                    <label className="block text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-2">Signature</label>
+                    <label className="block text-xs font-black text-indigo-800 uppercase tracking-widest mb-2">Signature</label>
                     <div className="flex gap-4">
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" checked={metadata.requiresClientSignature} onChange={e => setMetadata({ ...metadata, requiresClientSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresTrainerSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                        <span className="text-[10px] font-bold text-indigo-900 uppercase">Client</span>
+                        <span className="text-xs font-bold text-indigo-900 uppercase">Client</span>
                       </label>
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" checked={metadata.requiresTrainerSignature} onChange={e => setMetadata({ ...metadata, requiresTrainerSignature: e.target.checked, documentType: e.target.checked ? 'signature' : metadata.requiresClientSignature ? 'signature' : 'info' })} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                        <span className="text-[10px] font-bold text-indigo-900 uppercase">Formateur</span>
+                        <span className="text-xs font-bold text-indigo-900 uppercase">Formateur</span>
                       </label>
                     </div>
                   </div>
@@ -3091,7 +3167,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 <Layout size={14} />
               </div>
               <div>
-                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Ajout dans</p>
+                <p className="text-[11px] font-black text-indigo-400 uppercase tracking-widest">Ajout dans</p>
                 <p className="text-sm font-black text-indigo-900">{preSelectedLabel || 'Séance sélectionnée'}</p>
               </div>
             </div>
@@ -3114,7 +3190,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
               {choice === 'existing' ? (
                 <div>
-                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
+                  <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Choisir la séance</label>
                   <select
                     className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800 outline-none focus:border-indigo-500"
                     value={selectedSessionId}
@@ -3130,7 +3206,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 <div className="space-y-4 animate-fade-in">
                   <div className="grid grid-cols-1 gap-4">
                     <div>
-                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
+                      <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Date de la séance</label>
                       <input
                         type="date"
                         className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
@@ -3140,7 +3216,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
+                        <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Début</label>
                         <input
                           type="time"
                           className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
@@ -3149,7 +3225,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
+                        <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Fin</label>
                         <input
                           type="time"
                           className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl font-bold text-gray-800"
@@ -3166,7 +3242,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
           {/* Titre */}
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
+            <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Titre de l'élément</label>
             <input
               autoFocus
               className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-bold text-gray-800 transition-all"
@@ -3178,7 +3254,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 
           {/* Type d'activité */}
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Type d'activité</label>
+            <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Type d'activité</label>
             <div className="grid grid-cols-3 gap-2">
               {[
                 { id: 'signature', label: 'Émargement', icon: '✍️' },
@@ -3191,7 +3267,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                   className={`p-3 rounded-2xl border-2 flex flex-col items-center gap-1 transition-all ${type === t.id ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-50 bg-gray-50 text-gray-400 hover:border-gray-200'}`}
                 >
                   <span className="text-xl">{t.icon}</span>
-                  <span className="text-[9px] font-black uppercase text-center">{t.label}</span>
+                  <span className="text-[11px] font-black uppercase text-center">{t.label}</span>
                 </button>
               ))}
             </div>
@@ -3200,7 +3276,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
           {/* Énoncé / Consignes — uniquement pour les exercices */}
           {type === 'exercice' && (
             <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
+              <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Énoncé / Consignes de l'exercice</label>
               <textarea
                 className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:border-indigo-500 font-medium text-gray-800 text-sm transition-all resize-none"
                 placeholder="Décrivez ici les consignes pour votre client..."
@@ -3214,7 +3290,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
           {/* Fichier / Ressource */}
           {(type === 'document' || type === 'exercice') && (
             <div className="space-y-4">
-              <label className="block text-[10px] font-black text-gray-400 uppercase mb-2 tracking-widest">Fichier / Ressource</label>
+              <label className="block text-xs font-black text-gray-400 uppercase mb-2 tracking-widest">Fichier / Ressource</label>
               <div className="flex flex-col gap-3">
                 <input
                   type="file"
@@ -3233,7 +3309,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                   }}
                   className="w-full text-xs p-3 bg-gray-50 border border-dashed border-gray-300 rounded-2xl"
                 />
-                <div className="text-center font-bold text-gray-300 text-[10px]">OU SÉLECTIONNER DANS LA BIBLIOTHÈQUE</div>
+                <div className="text-center font-bold text-gray-300 text-xs">OU SÉLECTIONNER DANS LA BIBLIOTHÈQUE</div>
                 <select
                   className="w-full p-3 bg-gray-50 border border-gray-100 rounded-2xl text-xs font-bold"
                   value={selectedResourceId}
@@ -3387,7 +3463,7 @@ const ProspectQuestionnaireView = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
-        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement du questionnaire...</div>
+        <div className="text-gray-400 font-bold uppercase tracking-widest text-xs animate-pulse">Chargement du questionnaire...</div>
       </div>
     );
   }
@@ -3479,7 +3555,7 @@ const ProspectQuestionnaireView = () => {
                       <label key={oi} onClick={() => toggleMultiple(q.id, opt)}
                         className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${checked ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
                         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-violet-600 bg-violet-600' : 'border-gray-300'}`}>
-                          {checked && <span className="text-white text-[8px] font-black leading-none">✓</span>}
+                          {checked && <span className="text-white text-[11px] font-black leading-none">✓</span>}
                         </div>
                         <span className="text-sm text-gray-700 select-none">{opt}</span>
                       </label>
@@ -3496,7 +3572,7 @@ const ProspectQuestionnaireView = () => {
             className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
           </button>
-          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
+          {!isComplete && <p className="text-xs text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
         </div>
       </div>
     </div>
@@ -4797,7 +4873,7 @@ const ClientDetailView = ({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
         <ChevronLeft className="w-5 h-5 mr-1" /> Retour à la supervision
       </button>
@@ -4810,7 +4886,7 @@ const ClientDetailView = ({
         <div className="mt-4 md:mt-0 flex flex-wrap items-center gap-2 md:gap-3">
           <button
             onClick={() => handleDownloadPDF(client, 'emargement')}
-            className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+            className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-bold py-2 px-4 rounded-xl shadow-sm transition-all flex items-center gap-2 text-sm"
           >
             <Download size={16} /> Récap Émargements
           </button>
@@ -4823,7 +4899,7 @@ const ClientDetailView = ({
           <button
             onClick={handleResendInvite}
             title="Renvoyer le lien d'invitation par email"
-            className="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm"
+            className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-bold py-2 px-4 rounded-xl shadow-sm transition-all flex items-center gap-2 text-sm"
           >
             <Mail size={16} /> Renvoyer le lien
           </button>
@@ -4833,7 +4909,7 @@ const ClientDetailView = ({
         </div>
       </div>
 
-      <div className="flex gap-4 border-b border-gray-200 overflow-x-auto">
+      <div className="flex gap-1 xl:gap-2 border-b border-gray-200 overflow-x-auto xl:flex-wrap xl:overflow-visible">
         <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
         <button onClick={() => setActiveTab('administratif')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'administratif' ? 'border-b-2 border-violet-700 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>Administratif</button>
@@ -4841,13 +4917,13 @@ const ClientDetailView = ({
         <button onClick={() => setActiveTab('exercices')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'exercices' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
           Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
           {clientPendingCorrections > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[11px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
               {clientPendingCorrections}
             </span>
           )}
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
-        <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{displayedQuestionnaires.length > 0 ? ` (${displayedQuestionnaires.length})` : ''}</button>
+        <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Questionnaires{displayedQuestionnaires.length > 0 ? ` (${displayedQuestionnaires.length})` : ''}</button>
         <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>Finances</button>
       </div>
 
@@ -4979,7 +5055,7 @@ const ClientDetailView = ({
                       </div>
                       <div>
                         <h4 className="font-bold text-gray-900 text-sm">{session.ressource_titre || session.nom || session.titre || 'Document Signé'}</h4>
-                        <p className="text-[10px] text-gray-500 uppercase font-black">
+                        <p className="text-xs text-gray-500 uppercase font-black">
                           Signé le {new Date(session.updated_at).toLocaleDateString()}
                         </p>
                       </div>
@@ -5013,7 +5089,7 @@ const ClientDetailView = ({
                     </div>
                     <div>
                       <h4 className="font-bold text-gray-900 text-sm">{doc.nom}</h4>
-                      <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest">
+                      <p className="text-xs text-emerald-600 font-bold uppercase tracking-widest">
                         Document Administratif Signé
                       </p>
                     </div>
@@ -5073,7 +5149,7 @@ const ClientDetailView = ({
                     <FileText className="w-4 h-4 text-violet-500 shrink-0" />
                     <div className="min-w-0">
                       <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                      <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                      <span className="text-[11px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -5193,7 +5269,7 @@ const ClientDetailView = ({
             return (
               <div className="overflow-hidden rounded-2xl border border-gray-100">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                  <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-xs tracking-widest">
                     <tr>
                       <th className="px-4 py-3">Exercice</th>
                       <th className="px-4 py-3">Séance</th>
@@ -5206,13 +5282,13 @@ const ClientDetailView = ({
                       const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url;
                       let badge;
                       if (!session.reponse_url) {
-                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
+                        badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
                       } else if (session.correction_statut === 'Validé') {
-                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
+                        badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
                       } else if (session.correction_statut === 'À corriger') {
-                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
+                        badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
                       } else {
-                        badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
+                        badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
                       }
                       return (
                         <tr key={session.id} className="hover:bg-gray-50 transition-colors">
@@ -5225,14 +5301,14 @@ const ClientDetailView = ({
                             <div className="flex justify-end items-center gap-2">
                               <button
                                 onClick={() => setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' })}
-                                className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
+                                className="text-xs font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
                               >
                                 Consulter
                               </button>
                               {session.reponse_url && (
                                 <button
                                   onClick={() => setCorrectionModalSession(session)}
-                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                 >
                                   {session.correction_statut === 'Validé' ? 'Validé' : session.correction_statut === 'À corriger' ? 'Modifier' : 'Corriger'}
                                 </button>
@@ -5282,7 +5358,7 @@ const ClientDetailView = ({
           ) : (
             <div className="space-y-2">
               {moduleDocResources.length > 0 && (
-                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Depuis le module</p>
               )}
               {moduleDocResources.map(res => {
                 // "à signer" détecté via classification/requiresClientSignature/documentType — mêmes
@@ -5299,7 +5375,7 @@ const ClientDetailView = ({
                     <div>
                       <span className="text-sm font-bold text-gray-700">{res.titre}</span>
                       {needsSignatureRes && (
-                        <span className="ml-2 text-[9px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
+                        <span className="ml-2 text-[11px] font-black bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase">à signer</span>
                       )}
                     </div>
                   </div>
@@ -5325,7 +5401,7 @@ const ClientDetailView = ({
                 );
               })}
               {assignedDocs.length > 0 && (
-                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1 mt-3">Ajouts personnalisés</p>
               )}
               {assignedDocs.map(doc => (
                 <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3 border border-gray-100 group">
@@ -5335,14 +5411,14 @@ const ClientDetailView = ({
                       <span className="text-sm font-bold text-gray-700">{doc.template_titre}</span>
                       {doc.send_mode === 'scheduled' && !doc.sent_at && (
                         <span
-                          className={`ml-2 text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${doc.send_error ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}
+                          className={`ml-2 text-[11px] font-black px-2 py-0.5 rounded-full uppercase ${doc.send_error ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}
                           title={doc.send_error ? `Erreur lors du dernier essai : ${doc.send_error}` : "Ce document sera généré et envoyé automatiquement à la date indiquée."}
                         >
                           {doc.send_error ? '⚠ Erreur — nouvel essai auto.' : `📅 Programmé le ${doc.scheduled_date ? new Date(doc.scheduled_date + 'T00:00:00').toLocaleDateString('fr-FR') : ''}`}
                         </span>
                       )}
                       {doc.send_mode === 'scheduled' && doc.sent_at && (
-                        <span className="ml-2 text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase" title={`Envoyé automatiquement le ${new Date(doc.sent_at).toLocaleDateString('fr-FR')}`}>
+                        <span className="ml-2 text-[11px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase" title={`Envoyé automatiquement le ${new Date(doc.sent_at).toLocaleDateString('fr-FR')}`}>
                           ✓ Envoyé auto.
                         </span>
                       )}
@@ -5397,7 +5473,7 @@ const ClientDetailView = ({
                 <p className="text-xs text-gray-400 mb-3">Choisissez un modèle de la modélothèque à ajouter.</p>
 
                 <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-3 space-y-2">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Envoi</p>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400">Envoi</p>
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -5423,7 +5499,7 @@ const ClientDetailView = ({
                         onChange={(e) => setAddDocScheduledDate(e.target.value)}
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                       />
-                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là (ex : jour de démarrage de la formation), sans action de votre part.</p>
+                      <p className="text-xs text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là (ex : jour de démarrage de la formation), sans action de votre part.</p>
                     </div>
                   )}
                 </div>
@@ -5493,7 +5569,7 @@ const ClientDetailView = ({
                         onChange={(e) => setScheduleEditDate(e.target.value)}
                         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                       />
-                      <p className="text-[10px] text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là, sans action de votre part.</p>
+                      <p className="text-xs text-gray-400 mt-1">Le document sera généré et envoyé au client automatiquement ce jour-là, sans action de votre part.</p>
                     </div>
                   )}
                 </div>
@@ -5615,7 +5691,7 @@ const ClientDetailView = ({
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
-                          <p className="text-[10px] text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'} · {qResource._source === 'envoye' ? `envoyé le ${new Date(qResource._assignment.assigned_at).toLocaleDateString('fr-FR')}` : qResource._source === 'module' ? 'dans le module' : 'hors module'}</p>
+                          <p className="text-xs text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'} · {qResource._source === 'envoye' ? `envoyé le ${new Date(qResource._assignment.assigned_at).toLocaleDateString('fr-FR')}` : qResource._source === 'module' ? 'dans le module' : 'hors module'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -5637,7 +5713,7 @@ const ClientDetailView = ({
                     </div>
                     {response && response.responses && (
                       <div className="border-t border-gray-50 p-4 bg-gray-50/50 space-y-3">
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Réponses</p>
+                        <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Réponses</p>
                         {questions.map((q, qi) => {
                           const answer = response.responses[q.id];
                           const hasAnswer = answer !== undefined && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
@@ -5651,7 +5727,7 @@ const ClientDetailView = ({
                               <p className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                                 <span>{qi + 1}. {q.text}</span>
                                 {isQuestionCorrect !== null && (
-                                  <span className={`text-[10px] font-black ${isQuestionCorrect ? 'text-emerald-600' : 'text-red-500'}`}>{isQuestionCorrect ? '✓' : '✗'}</span>
+                                  <span className={`text-xs font-black ${isQuestionCorrect ? 'text-emerald-600' : 'text-red-500'}`}>{isQuestionCorrect ? '✓' : '✗'}</span>
                                 )}
                               </p>
                               {hasAnswer ? (
@@ -5745,16 +5821,16 @@ const ClientDetailView = ({
                                   <h4 className="font-black text-gray-900 text-lg uppercase tracking-tight">
                                     {isAdminGroup ? 'BLOC ADMINISTRATIF' : `SÉANCE ${group.numero}`}
                                     {isGroupOver && activeId && (
-                                      <span className={`ml-3 text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse ${isAdminGroup ? 'text-amber-600 bg-amber-100' : 'text-indigo-500 bg-indigo-100'}`}>Déposer ici</span>
+                                      <span className={`ml-3 text-[11px] font-black px-2 py-0.5 rounded-full animate-pulse ${isAdminGroup ? 'text-amber-600 bg-amber-100' : 'text-indigo-500 bg-indigo-100'}`}>Déposer ici</span>
                                     )}
                                   </h4>
-                                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{isAdminGroup ? '7 jours avant la Séance 1' : 'Planification globale'}</p>
+                                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{isAdminGroup ? '7 jours avant la Séance 1' : 'Planification globale'}</p>
                                 </div>
                               </div>
 
                               <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
                                 <div className="flex flex-col">
-                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
+                                  <label className="text-[11px] font-black text-gray-400 uppercase mb-1 ml-1">Date</label>
                                   <SessionDateInput
                                     value={scheduleOf(group.items).date || ''}
                                     onCommit={(v) => { group.items.forEach(s => updateSessionDate(s.id, v)); }}
@@ -5762,7 +5838,7 @@ const ClientDetailView = ({
                                   />
                                 </div>
                                 <div className="flex flex-col">
-                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
+                                  <label className="text-[11px] font-black text-gray-400 uppercase mb-1 ml-1">Début</label>
                                   <input
                                     type="time"
                                     value={editedTimes[group.items[0]?.id]?.start ?? scheduleOf(group.items).debut ?? ''}
@@ -5772,7 +5848,7 @@ const ClientDetailView = ({
                                   />
                                 </div>
                                 <div className="flex flex-col">
-                                  <label className="text-[9px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
+                                  <label className="text-[11px] font-black text-gray-400 uppercase mb-1 ml-1">Fin</label>
                                   <input
                                     type="time"
                                     value={editedTimes[group.items[0]?.id]?.end ?? scheduleOf(group.items).fin ?? ''}
@@ -5806,21 +5882,21 @@ const ClientDetailView = ({
                                       <div>
                                         <h5 className="font-bold text-gray-900 text-sm">{s.ressource_titre || s.titre || s.nom || 'Activité'}</h5>
                                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
+                                          <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
                                           <div className="flex flex-wrap items-center gap-2">
                                             {clientRequired ? (
-                                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                              <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                                                 Client: {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
                                               </span>
                                             ) : (
-                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Client: N/A</span>
+                                              <span className="text-[11px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Client: N/A</span>
                                             )}
                                             {coachRequired ? (
-                                              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                              <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                                                 Formateur: {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
                                               </span>
                                             ) : (
-                                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Formateur: N/A</span>
+                                              <span className="text-[11px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Formateur: N/A</span>
                                             )}
                                           </div>
                                         </div>
@@ -5887,7 +5963,7 @@ const ClientDetailView = ({
                                     setTargetSessionForAddition({ clientId: client.id, preSelectedSessionId: adminItem?.id, adminBloc: true });
                                     setIsSessionItemModalOpen(true);
                                   }}
-                                  className="text-[10px] font-black bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition-all shadow-sm flex items-center gap-2 mt-2"
+                                  className="text-xs font-black bg-amber-500 text-white px-4 py-2 rounded-xl hover:bg-amber-600 transition-all shadow-sm flex items-center gap-2 mt-2"
                                 >
                                   <Plus size={14} /> Ajouter un élément
                                 </button>
@@ -5946,20 +6022,20 @@ const ClientDetailView = ({
                     <p className="font-bold text-gray-900 text-sm truncate max-w-[200px]">{doc.nom}</p>
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       {sentToClientOnly && (
-                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-100 text-sky-700">📥 Transmis au client · sans signature</span>
+                        <span className="text-[11px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-100 text-sky-700">📥 Transmis au client · sans signature</span>
                       )}
                       {needsClientSign && (
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${clientSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {clientSigned ? '✓ Signature client reçue' : '⏳ En attente de signature client'}
                         </span>
                       )}
                       {(needsFormateurSign || (_sigRequired && formateurSigned)) && (
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${formateurSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {formateurSigned ? '✓ Signature formateur reçue' : '⏳ En attente de signature formateur'}
                         </span>
                       )}
                       {(needsOrganismeSign || (_sigRequired && organismeSigned)) && (
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${organismeSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${organismeSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {organismeSigned ? '✓ Signature administrateur reçue' : '⏳ En attente de signature administrateur'}
                         </span>
                       )}
@@ -5992,13 +6068,13 @@ const ClientDetailView = ({
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Montant total de la prestation</label>
               <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
-                {(parseFloat(clientInfo.montant_prestation) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
+                {(parseFloat(clientInfo.montant_prestation) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € <span className="text-xs font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
               </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-1">Part reversée au formateur</label>
               <div className="p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-bold">
-                {clientInfo.pourcentage_formateur || 0}% <span className="text-[10px] font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
+                {clientInfo.pourcentage_formateur || 0}% <span className="text-xs font-normal text-gray-400">(modifiable dans l'onglet "Infos &amp; Modalités")</span>
               </div>
             </div>
           </div>
@@ -6014,21 +6090,21 @@ const ClientDetailView = ({
             return (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
-                  <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Payé</p>
+                  <p className="text-xs font-black uppercase text-emerald-700 tracking-widest mb-1">Payé</p>
                   <p className="text-lg font-black text-emerald-800">{fmt(montantPaye)}</p>
                 </div>
                 <div className={`rounded-2xl p-4 border ${resteDu > 0 ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
-                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 ${resteDu > 0 ? 'text-orange-700' : 'text-gray-500'}`}>Reste dû</p>
+                  <p className={`text-xs font-black uppercase tracking-widest mb-1 ${resteDu > 0 ? 'text-orange-700' : 'text-gray-500'}`}>Reste dû</p>
                   <p className={`text-lg font-black ${resteDu > 0 ? 'text-orange-800' : 'text-gray-600'}`}>{fmt(resteDu)}</p>
                 </div>
                 {pourcentageFormateur > 0 && (
                   <>
                     <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-                      <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateur</p>
+                      <p className="text-xs font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateur</p>
                       <p className="text-lg font-black text-indigo-800">{fmt(partFormateur)}</p>
                     </div>
                     <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
-                      <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
+                      <p className="text-xs font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
                       <p className="text-lg font-black text-violet-800">{fmt(partOrganisme)}</p>
                     </div>
                   </>
@@ -6041,15 +6117,15 @@ const ClientDetailView = ({
             <h4 className="text-sm font-bold text-gray-700 mb-3">Ajouter un paiement reçu</h4>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
               <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Montant (€)</label>
+                <label className="block text-xs font-bold text-gray-400 mb-1">Montant (€)</label>
                 <input type="number" step="0.01" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMontant} onChange={e => setNewPaiementMontant(e.target.value)} placeholder="Ex: 500" />
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Date</label>
+                <label className="block text-xs font-bold text-gray-400 mb-1">Date</label>
                 <input type="date" className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementDate} onChange={e => setNewPaiementDate(e.target.value)} />
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-gray-400 mb-1">Mode</label>
+                <label className="block text-xs font-bold text-gray-400 mb-1">Mode</label>
                 <select className="w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-indigo-500 rounded-xl outline-none transition-colors" value={newPaiementMode} onChange={e => setNewPaiementMode(e.target.value)}>
                   <option value="Virement">Virement</option>
                   <option value="Carte bancaire">Carte bancaire</option>
@@ -6193,7 +6269,7 @@ const AdminClientsView = ({
   }
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Clients
@@ -6262,7 +6338,7 @@ const AdminClientsView = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
                           {client.status || 'Actif'}
                         </span>
                         <ChevronRight className="w-5 h-5 text-gray-400" />
@@ -6407,7 +6483,7 @@ const FormateurDetailView = ({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <button onClick={onBack} className="text-gray-500 hover:text-gray-900 font-bold flex items-center mb-4 transition-colors">
         <ChevronLeft className="w-5 h-5 mr-1" /> Retour à la liste des formateurs
       </button>
@@ -6595,7 +6671,7 @@ const FormateurDetailView = ({
                               </div>
                               <div>
                                 <p className="font-bold text-gray-900 text-sm">{key}</p>
-                                {alreadySent && <p className="text-[10px] text-amber-600 font-bold">⚡ Déjà envoyé — renvoyer créera un nouvel exemplaire</p>}
+                                {alreadySent && <p className="text-xs text-amber-600 font-bold">⚡ Déjà envoyé — renvoyer créera un nouvel exemplaire</p>}
                               </div>
                             </div>
                             <button
@@ -6627,13 +6703,13 @@ const FormateurDetailView = ({
                     <div>
                       <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
                       <div className="flex items-center gap-3 mt-1">
-                        <span className="text-[10px] text-gray-400 font-bold uppercase">{doc.created_at ? (() => { const d = new Date(doc.created_at); return isNaN(d) ? '—' : d.toLocaleDateString('fr-FR'); })() : '—'}</span>
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-md ${isSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className="text-xs text-gray-400 font-bold uppercase">{doc.created_at ? (() => { const d = new Date(doc.created_at); return isNaN(d) ? '—' : d.toLocaleDateString('fr-FR'); })() : '—'}</span>
+                        <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${isSigned ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {isSigned ? 'Signé' : 'En attente de signature'}
                         </span>
                       </div>
                       {isSigned && doc.date_signature_formateur && (
-                        <p className="text-[10px] text-green-600 mt-0.5">
+                        <p className="text-xs text-green-600 mt-0.5">
                           Signé le {new Date(doc.date_signature_formateur).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
                         </p>
                       )}
@@ -6703,7 +6779,7 @@ const FormateurDetailView = ({
                         <FileText className="w-4 h-4 text-violet-500 shrink-0" />
                         <div className="min-w-0">
                           <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                          <span className="text-[11px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -6817,11 +6893,11 @@ const FormateurDetailView = ({
                   </div>
                   <div>
                     <h4 className="font-bold text-gray-900 text-sm">{client.nom}</h4>
-                    <p className="text-[10px] text-gray-500 font-medium">{client.email}</p>
+                    <p className="text-xs text-gray-500 font-medium">{client.email}</p>
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-gray-100">
-                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${assignedModule ? 'bg-violet-50 text-violet-700' : 'bg-gray-100 text-gray-400'}`}>
+                  <span className={`px-2 py-1 rounded-lg text-xs font-bold ${assignedModule ? 'bg-violet-50 text-violet-700' : 'bg-gray-100 text-gray-400'}`}>
                     {assignedModule ? assignedModule.nom : 'Pas de module assigné'}
                   </span>
                 </div>
@@ -6914,7 +6990,7 @@ const AdminFormateursView = ({
             {clientSessions.length > 0 ? (
               <table className="w-full text-left border-collapse bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 text-sm">
                 <thead>
-                  <tr className="bg-gray-100/50 text-[10px] font-black uppercase text-gray-400 tracking-widest">
+                  <tr className="bg-gray-100/50 text-xs font-black uppercase text-gray-400 tracking-widest">
                     <th className="p-4">Séance</th>
                     <th className="p-4">Date & Heures</th>
                     <th className="p-4">Activité</th>
@@ -6931,20 +7007,20 @@ const AdminFormateursView = ({
                       </td>
                       <td className="p-4">
                         <div className="font-bold text-gray-700">{s.date ? new Date(s.date).toLocaleDateString() : 'Non planifié'}</div>
-                        <div className="text-[10px] text-gray-400 font-bold">{s.heure_debut || '--:--'} - {s.heure_fin || '--:--'}</div>
+                        <div className="text-xs text-gray-400 font-bold">{s.heure_debut || '--:--'} - {s.heure_fin || '--:--'}</div>
                       </td>
                       <td className="p-4">
-                        <span className="text-[10px] px-2 py-0.5 rounded-lg bg-gray-100 font-black uppercase text-gray-400 tracking-tighter">
+                        <span className="text-xs px-2 py-0.5 rounded-lg bg-gray-100 font-black uppercase text-gray-400 tracking-tighter">
                           {s.type_activite}
                         </span>
                       </td>
                       <td className="p-4 text-center">
-                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`px-2 py-1 rounded-lg text-[11px] font-black uppercase ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
                         </span>
                       </td>
                       <td className="p-4 text-center">
-                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`px-2 py-1 rounded-lg text-[11px] font-black uppercase ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
                         </span>
                       </td>
@@ -6972,7 +7048,7 @@ const AdminFormateursView = ({
   };
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
 
       {/* Ajouté 2026-08-05 : bouton d'invitation dédié aux formateurs, pré-sélectionnant le rôle
           "Formateur" — auparavant, le seul bouton d'invitation ("Nouveau Membre") se trouvait sur
@@ -7038,7 +7114,7 @@ const AdminFormateursView = ({
                         <div>
                           <span className="font-bold text-gray-900 text-lg hover:text-violet-700 transition-colors">{f.nom}</span>
                           {adminSelfId != null && String(f.id) === String(adminSelfId) && (
-                            <span className="ml-2 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 align-middle">Vous — Admin</span>
+                            <span className="ml-2 text-xs font-black uppercase px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 align-middle">Vous — Admin</span>
                           )}
                           <span className="text-sm text-gray-500 block">{f.email}</span>
                         </div>
@@ -7066,9 +7142,9 @@ const AdminFormateursView = ({
                           <table className="w-full text-left border-collapse">
                             <thead className="bg-gray-50">
                               <tr>
-                                <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Client</th>
-                                <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Module</th>
-                                <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Statut</th>
+                                <th className="p-3 text-xs font-bold text-gray-400 uppercase tracking-widest">Client</th>
+                                <th className="p-3 text-xs font-bold text-gray-400 uppercase tracking-widest">Module</th>
+                                <th className="p-3 text-xs font-bold text-gray-400 uppercase tracking-widest text-center">Statut</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50 bg-white">
@@ -7083,13 +7159,13 @@ const AdminFormateursView = ({
                                       >
                                         {client.nom || client.nom_complet || "Client"}
                                       </div>
-                                      <div className="text-[10px] text-gray-400">{client.email}</div>
+                                      <div className="text-xs text-gray-400">{client.email}</div>
                                     </td>
                                     <td className="p-3">
                                       <span className="text-xs font-medium text-gray-600">{clientModule?.nom || 'Non assigné'}</span>
                                     </td>
                                     <td className="p-3 text-center">
-                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${client.status === 'Nouveau' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase ${client.status === 'Nouveau' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
                                         {client.status || 'Actif'}
                                       </span>
                                     </td>
@@ -7193,7 +7269,7 @@ const DraggableStepResourceRow = ({ res, editingId, setEditingId, editValue, set
               </button>
             </div>
           )}
-          <span className="text-[9px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
+          <span className="text-[11px] text-gray-400 uppercase">{res.type} {res.ressource_id ? `(${res.ressource_id})` : ''}</span>
         </div>
       </div>
       <div className="flex items-center gap-1">
@@ -7290,7 +7366,7 @@ const IngenierieView = ({
   };
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
       <div className="flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Ingénierie Formation</h1>
@@ -7375,7 +7451,7 @@ const IngenierieView = ({
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-emerald-500 rounded-full"></span>
                               <span className="text-xs font-black text-emerald-800 uppercase tracking-wider">Documents de Début de Parcours</span>
-                              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-200 px-2 py-0.5 rounded-full">Accessibles immédiatement</span>
+                              <span className="text-[11px] font-bold text-emerald-600 bg-emerald-200 px-2 py-0.5 rounded-full">Accessibles immédiatement</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <select 
@@ -7386,14 +7462,14 @@ const IngenierieView = ({
                                   await handleAddModuleMomentResource(mod.id, 'debut', { type: 'document_group', title: grpName, document_group_id: grpId });
                                   e.target.value = '';
                                 }}
-                                className="text-[10px] font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                                className="text-xs font-bold text-emerald-800 bg-white border border-emerald-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
                               >
                                 <option value="">+ Groupe...</option>
                                 {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
                               </select>
                               <button
                                 onClick={() => { setActiveMoment('debut'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                                className="text-[10px] font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
+                                className="text-xs font-black bg-emerald-600 text-white px-3 py-1.5 rounded-xl hover:bg-emerald-700 transition-all flex items-center gap-1.5"
                               >
                                 <Plus size={12} /> Fichier
                               </button>
@@ -7410,7 +7486,7 @@ const IngenierieView = ({
                                   <div className="flex items-center gap-2">
                                     <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
                                     <span className="font-bold text-gray-800">{res.titre}</span>
-                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                    <span className="text-[11px] text-gray-400 uppercase">{res.type}</span>
                                   </div>
                                   <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>
                                 </div>
@@ -7458,7 +7534,7 @@ const IngenierieView = ({
                                       </button>
                                     </div>
                                   )}
-                                  <p className="text-[10px] text-gray-400 uppercase font-black">Dossier Séance</p>
+                                  <p className="text-xs text-gray-400 uppercase font-black">Dossier Séance</p>
                                 </div>
                               </div>
                               <button
@@ -7485,7 +7561,7 @@ const IngenierieView = ({
 
                               <button
                                 onClick={() => { setActiveFolderId(template.id); setIsResourceModalOpen(true); }}
-                                className="text-[10px] font-black bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-black transition-all shadow-lg flex items-center gap-2 mt-2"
+                                className="text-xs font-black bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-black transition-all shadow-lg flex items-center gap-2 mt-2"
                               >
                                 <Plus size={14} /> Ajouter un élément
                               </button>
@@ -7509,7 +7585,7 @@ const IngenierieView = ({
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-5 bg-violet-600 rounded-full"></span>
                               <span className="text-xs font-black text-violet-800 uppercase tracking-wider">Documents de Fin de Parcours</span>
-                              <span className="text-[9px] font-bold text-violet-700 bg-violet-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
+                              <span className="text-[11px] font-bold text-violet-700 bg-violet-200 px-2 py-0.5 rounded-full">Débloqués après le dernier RDV</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <select 
@@ -7520,14 +7596,14 @@ const IngenierieView = ({
                                   await handleAddModuleMomentResource(mod.id, 'fin', { type: 'document_group', title: grpName, document_group_id: grpId });
                                   e.target.value = '';
                                 }}
-                                className="text-[10px] font-bold text-violet-800 bg-white border border-violet-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
+                                className="text-xs font-bold text-violet-800 bg-white border border-violet-300 px-2 py-1.5 rounded-lg outline-none cursor-pointer"
                               >
                                 <option value="">+ Groupe...</option>
                                 {documentGroups.map(g => <option key={g.id} value={g.id}>{g.nom}</option>)}
                               </select>
                               <button
                                 onClick={() => { setActiveMoment('fin'); setActiveMomentModuleId(mod.id); setActiveFolderId(null); setIsResourceModalOpen(true); }}
-                                className="text-[10px] font-black bg-violet-700 text-white px-3 py-1.5 rounded-xl hover:bg-violet-700 transition-all flex items-center gap-1.5"
+                                className="text-xs font-black bg-violet-700 text-white px-3 py-1.5 rounded-xl hover:bg-violet-700 transition-all flex items-center gap-1.5"
                               >
                                 <Plus size={12} /> Fichier
                               </button>
@@ -7544,7 +7620,7 @@ const IngenierieView = ({
                                   <div className="flex items-center gap-2">
                                     <span>{res.type === 'signature' ? '✍️' : '📄'}</span>
                                     <span className="font-bold text-gray-800">{res.titre}</span>
-                                    <span className="text-[9px] text-gray-400 uppercase">{res.type}</span>
+                                    <span className="text-[11px] text-gray-400 uppercase">{res.type}</span>
                                   </div>
                                   <button onClick={() => handleDeleteStepResource(res.id)} className="text-gray-300 hover:text-violet-400"><Trash2 size={12} /></button>
                                 </div>
@@ -7828,7 +7904,7 @@ const FormateurView = ({
   };
 
   return (
-    <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
       {/* Navigation principale du formateur */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -7856,7 +7932,7 @@ const FormateurView = ({
           >
             Docs Administratifs
             {pendingDocsCount > 0 && (
-              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md">
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md">
                 {pendingDocsCount}
               </span>
             )}
@@ -7892,10 +7968,10 @@ const FormateurView = ({
                 <div className="min-w-0">
                   <p className="font-bold text-gray-900 text-sm truncate">{doc.nom}</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${signed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${signed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                       {signed ? '✓ Signé' : '⚠ À signer'}
                     </span>
-                    {doc.created_at && <span className="text-[10px] text-gray-400">Reçu le {new Date(doc.created_at).toLocaleDateString('fr-FR')}</span>}
+                    {doc.created_at && <span className="text-xs text-gray-400">Reçu le {new Date(doc.created_at).toLocaleDateString('fr-FR')}</span>}
                   </div>
                 </div>
               </div>
@@ -7948,7 +8024,7 @@ const FormateurView = ({
                         <FileText className="w-4 h-4 text-violet-500 shrink-0" />
                         <div className="min-w-0">
                           <span className="text-sm font-bold text-gray-700 truncate block">{doc.nom}</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
+                          <span className="text-[11px] font-black uppercase tracking-widest text-violet-600">{doc.type_document || 'Autre'}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -8060,7 +8136,7 @@ const FormateurView = ({
                         <p className="text-[11px] text-gray-400">{docs.length} document{docs.length > 1 ? 's' : ''}</p>
                       </div>
                     </div>
-                    <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full ${allSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-xs font-black uppercase px-3 py-1.5 rounded-full ${allSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                       {allSigned ? '✓ Tout signé' : `${pendingCount} à signer`}
                     </span>
                   </div>
@@ -8159,7 +8235,7 @@ const FormateurView = ({
                     <button onClick={() => setFormateurClientTab('exercices')} className={`relative px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'exercices' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                       Exercices
                       {clientPendingCorrections > 0 && (
-                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[11px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
                           {clientPendingCorrections}
                         </span>
                       )}
@@ -8191,7 +8267,7 @@ const FormateurView = ({
                             <div key={resource.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
                               <div>
                                 <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-                                <p className="text-[10px] text-gray-500">Seuil de réussite : {meta.seuilReussite ?? 50}%</p>
+                                <p className="text-xs text-gray-500">Seuil de réussite : {meta.seuilReussite ?? 50}%</p>
                               </div>
                               {response && response.score_percent != null ? (
                                 <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
@@ -8255,7 +8331,7 @@ const FormateurView = ({
                                     </div>
                                     <div>
                                       <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-                                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">
+                                      <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-0.5">
                                         {dateLabel ? `${needsSignature ? 'Généré' : 'Ajouté'} le ${dateLabel}` : (doc.type_document || 'Document')}
                                       </p>
                                     </div>
@@ -8389,7 +8465,7 @@ const FormateurView = ({
                             <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Suivi des documents</h4>
                             <div className="overflow-hidden rounded-2xl border border-gray-100">
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-xs tracking-widest">
                                   <tr>
                                     <th className="px-4 py-3">Document</th>
                                     <th className="px-4 py-3">Statut</th>
@@ -8412,7 +8488,7 @@ const FormateurView = ({
                                           </div>
                                         </td>
                                         <td className="px-4 py-3">
-                                          <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${noSignatureNeeded ? 'bg-sky-100 text-sky-700' : isSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                          <span className={`text-xs font-bold uppercase px-2 py-1 rounded-full ${noSignatureNeeded ? 'bg-sky-100 text-sky-700' : isSigned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                             {noSignatureNeeded ? '📥 Transmis' : isSigned ? '✓ Signé' : '⚠ En attente'}
                                           </span>
                                         </td>
@@ -8448,7 +8524,7 @@ const FormateurView = ({
                             <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Émargements de séances</h4>
                             <div className="overflow-hidden rounded-2xl border border-gray-100">
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                                <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-xs tracking-widest">
                                   <tr>
                                     <th className="px-4 py-3">Séance</th>
                                     <th className="px-4 py-3">Date de signature</th>
@@ -8533,7 +8609,7 @@ const FormateurView = ({
                       {clientSessions.length > 0 ? (
                         <div className="overflow-hidden rounded-2xl border border-gray-100">
                           <table className="mst w-full text-left text-sm">
-                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-xs tracking-widest">
                               <tr>
                                 <th className="px-4 py-3 text-left">N° & Séance</th>
                                 <th className="px-4 py-3 text-left">Date</th>
@@ -8577,7 +8653,7 @@ const FormateurView = ({
                                               <Layout size={12} className="text-indigo-600" />
                                               <span>SÉANCE {group.numero}{group.nom && !/^s[ée]ance\s*\d+$/i.test(String(group.nom).trim()) ? ` : ${group.nom}` : ''}</span>
                                               {isGroupOver && fActiveId && (
-                                                <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
+                                                <span className="ml-2 text-[11px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
                                               )}
                                             </div>
                                           </td>
@@ -8596,14 +8672,14 @@ const FormateurView = ({
                                                   value={editedTimes[group.items[0]?.id]?.start ?? group.debut ?? ''}
                                                   onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'start', e.target.value, { start: group.debut, end: group.fin }))}
                                                   onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
-                                                  className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                                  className="bg-transparent border-none text-xs w-24 font-bold text-indigo-600 focus:ring-0"
                                                 />
                                                 <input
                                                   type="time"
                                                   value={editedTimes[group.items[0]?.id]?.end ?? group.fin ?? ''}
                                                   onChange={(e) => group.items.forEach(s => onTimeChange(s.id, 'end', e.target.value, { start: group.debut, end: group.fin }))}
                                                   onBlur={() => group.items.forEach(s => onSaveTimes(s.id))}
-                                                  className="bg-transparent border-none text-[10px] w-16 font-bold text-indigo-600 focus:ring-0"
+                                                  className="bg-transparent border-none text-xs w-24 font-bold text-indigo-600 focus:ring-0"
                                                 />
                                               </div>
                                               <button onClick={() => group.items.forEach(s => onSaveTimes(s.id))} className="text-indigo-400 hover:text-indigo-600">
@@ -8622,23 +8698,23 @@ const FormateurView = ({
                                 {group.items.map(session => (
                                   <FDragItemRow key={session.id} sessionId={session.id} activeId={fActiveId}>
                                     <td className="px-8 py-3 italic text-gray-600 text-[11px] flex items-center gap-2">
-                                      <span className="text-[8px] text-gray-300 mr-0.5" title="Glisser pour déplacer">⠿</span>
+                                      <span className="text-[11px] text-gray-300 mr-0.5" title="Glisser pour déplacer">⠿</span>
                                       <span className="text-[14px]">
                                         {session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}
                                       </span>
                                       <span className="truncate">{session.ressource_titre || session.nom}</span>
                                     </td>
-                                    <td colSpan="2" className="mst-hide px-4 py-3 text-[10px] text-gray-400 italic">Mêmes date et horaires que la séance</td>
+                                    <td colSpan="2" className="mst-hide px-4 py-3 text-xs text-gray-400 italic">Mêmes date et horaires que la séance</td>
                                     <td className="px-4 py-3">
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Client : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[11px] font-black uppercase text-gray-500">Client : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[11px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         )}
                                       </div>
@@ -8668,7 +8744,7 @@ const FormateurView = ({
                                                     const docUrl = signedUrl || session.file_url || session.ressource_url;
                                                     setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
                                                   }}
-                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
+                                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'}`}
                                                 >
                                                   {signedUrl ? 'Voir Signé ↗' : 'Consulter'}
                                                 </button>
@@ -8679,7 +8755,7 @@ const FormateurView = ({
                                                   disabled={isSigned || isDateLocked}
                                                   onPointerDown={e => e.stopPropagation()}
                                                   onClick={() => signSession(session)}
-                                                  className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'}`}
+                                                  className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${isSigned ? 'bg-green-50 text-green-600 border-green-200' : isDateLocked ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed' : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'}`}
                                                 >
                                                   {isSigned ? 'Signé ✓' : isDateLocked ? signLock.label : 'Signer'}
                                                 </button>
@@ -8696,7 +8772,7 @@ const FormateurView = ({
                                                 </button>
                                               )}
                                                 {userRole === 'client' && (
-                                                  <label className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
+                                                  <label className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700 transition-colors">
                                                     Soumettre Réponse
                                                     <input
                                                       type="file"
@@ -8710,7 +8786,7 @@ const FormateurView = ({
                                                   <button
                                                     onPointerDown={e => e.stopPropagation()}
                                                     onClick={() => setCorrectionModalSession(session)}
-                                                    className={`relative text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                                    className={`relative text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1.5 ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                                   >
                                                     {session.correction_statut === 'Validé' ? (
                                                       <>✅ Validé</>
@@ -8727,7 +8803,7 @@ const FormateurView = ({
                                                     )}
                                                   </button>
                                                 ) : (
-                                                  <span className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 flex items-center gap-1.5">
+                                                  <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 flex items-center gap-1.5">
                                                     Aucun rendu
                                                   </span>
                                                 )
@@ -8758,7 +8834,7 @@ const FormateurView = ({
                                         });
                                         setIsSessionItemModalOpen(true);
                                       }}
-                                      className="text-[10px] font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
+                                      className="text-xs font-black bg-white text-indigo-600 px-4 py-1.5 rounded-xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm border border-indigo-100 flex items-center gap-2"
                                     >
                                       <Plus size={12} /> Ajouter un élément
                                     </button>
@@ -8819,7 +8895,7 @@ const FormateurView = ({
                             <p className="text-[11px] text-emerald-700">Déposez la photo, le PDF ou le document de l'exercice fait avec le client : il sera rangé dans ses exercices (visible par lui) comme « rendu ».</p>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <div className="sm:col-span-2">
-                                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Nom de l'exercice</label>
+                                <label className="block text-xs font-black text-gray-500 uppercase mb-1">Nom de l'exercice</label>
                                 <input
                                   value={addExoForm.title}
                                   onChange={e => setAddExoForm(f => ({ ...f, title: e.target.value }))}
@@ -8828,7 +8904,7 @@ const FormateurView = ({
                                 />
                               </div>
                               <div>
-                                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Séance</label>
+                                <label className="block text-xs font-black text-gray-500 uppercase mb-1">Séance</label>
                                 <select
                                   value={addExoForm.numero}
                                   onChange={e => setAddExoForm(f => ({ ...f, numero: e.target.value }))}
@@ -8839,14 +8915,14 @@ const FormateurView = ({
                               </div>
                             </div>
                             <div>
-                              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Photo ou fichier</label>
+                              <label className="block text-xs font-black text-gray-500 uppercase mb-1">Photo ou fichier</label>
                               <input
                                 type="file"
                                 accept={EXO_ACCEPT}
                                 onChange={e => setAddExoForm(f => ({ ...f, file: e.target.files?.[0] || null }))}
                                 className="block w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-white file:text-emerald-700 file:font-bold"
                               />
-                              <p className="text-[10px] text-gray-400 mt-1">Sur téléphone, vous pouvez prendre la photo directement.</p>
+                              <p className="text-xs text-gray-400 mt-1">Sur téléphone, vous pouvez prendre la photo directement.</p>
                             </div>
                             <div className="flex flex-wrap justify-end gap-2">
                               <button onClick={() => setShowAddExo(false)} disabled={isAddingExo} className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-white rounded-xl">Annuler</button>
@@ -8885,7 +8961,7 @@ const FormateurView = ({
                         {addExoBlock}
                         <div className="overflow-hidden rounded-2xl border border-gray-100">
                           <table className="mst w-full text-left text-sm">
-                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-widest">
+                            <thead className="bg-gray-50 text-gray-400 font-bold uppercase text-xs tracking-widest">
                               <tr>
                                 <th className="px-4 py-3">Exercice</th>
                                 <th className="px-4 py-3">Séance</th>
@@ -8898,20 +8974,20 @@ const FormateurView = ({
                                 const docUrl = session.file_url_signed || session.metadata?.file_url_signed || session.file_url || session.ressource_url || session.reponse_url;
                                 let badge;
                                 if (!session.reponse_url) {
-                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
+                                  badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-gray-100 text-gray-400">Pas encore rendu</span>;
                                 } else if (session.correction_statut === 'Validé') {
-                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
+                                  badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">✅ Validé</span>;
                                 } else if (session.correction_statut === 'À corriger') {
-                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
+                                  badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">📝 À corriger (envoyé)</span>;
                                 } else {
-                                  badge = <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
+                                  badge = <span className="text-xs font-bold uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">🟢 Rendu — à corriger</span>;
                                 }
                                 return (
                                   <tr key={session.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-4 py-3">
                                       <span className="font-semibold text-gray-800 text-xs">{session.ressource_titre || session.nom}</span>
                                       {session.metadata?.deposeParFormateur && (
-                                        <span className="block text-[10px] text-emerald-600 font-bold mt-0.5">Déposé par le formateur</span>
+                                        <span className="block text-xs text-emerald-600 font-bold mt-0.5">Déposé par le formateur</span>
                                       )}
                                     </td>
                                     <td className="px-4 py-3 text-xs text-gray-400">{session.numero_seance != null ? `Séance ${session.numero_seance}` : (session.metadata?.moment === 'fin' ? 'Doc. de fin' : 'Doc. de début')}</td>
@@ -8920,12 +8996,12 @@ const FormateurView = ({
                                       <div className="flex justify-end items-center gap-2">
                                         <button
                                           onClick={() => setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' })}
-                                          className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
+                                          className="text-xs font-bold px-3 py-1.5 rounded-lg border bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition-all"
                                         >
                                           Consulter
                                         </button>
                                         {!session.reponse_url && (
-                                          <label className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${exoUploadingId === session.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'}`}>
+                                          <label className={`text-xs font-bold px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${exoUploadingId === session.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'}`}>
                                             {exoUploadingId === session.id ? 'Envoi…' : 'Déposer le rendu'}
                                             <input
                                               type="file"
@@ -8939,7 +9015,7 @@ const FormateurView = ({
                                         {session.reponse_url && (
                                           <button
                                             onClick={() => openSecureStorageFile(session.reponse_url)}
-                                            className="text-[10px] font-bold px-3 py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
+                                            className="text-xs font-bold px-3 py-1.5 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 transition-all"
                                           >
                                             Voir le rendu
                                           </button>
@@ -8947,7 +9023,7 @@ const FormateurView = ({
                                         {session.reponse_url && (
                                           <button
                                             onClick={() => setCorrectionModalSession(session)}
-                                            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                                            className={`text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition-all ${session.correction_statut === 'Validé' ? 'bg-green-600 text-white hover:bg-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
                                           >
                                             {session.correction_statut === 'Validé' ? 'Validé' : session.correction_statut === 'À corriger' ? 'Modifier' : 'Corriger'}
                                           </button>
@@ -9797,7 +9873,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           {isSig ? (
                             <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 whitespace-nowrap shadow-xl ring-2 ring-white ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`} style={{ minWidth: 140 }}>
                               <span className="text-base">✍️</span>
-                              <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Signature {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
+                              <p className={`text-xs font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Signature {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
                             </div>
                           ) : isChk ? (
                             // Carré compact — même taille que le rendu final (~12pt) pour un cadrage précis
@@ -9810,7 +9886,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               <div className={`w-0.5 self-stretch rounded-full shrink-0 ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-500' : 'bg-blue-500'}`} style={{ minHeight: 18 }} />
                               <div className={`flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-r-lg border border-l-0 shadow-xl ring-2 ring-white whitespace-nowrap ${roleFromTag(tag) === 'organisme' ? 'bg-emerald-100 border-emerald-500' : roleFromTag(tag) === 'formateur' ? 'bg-orange-100 border-orange-500' : 'bg-blue-100 border-blue-500'}`}>
                                 <span className="text-sm">📝</span>
-                                <p className={`text-[10px] font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Texte {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
+                                <p className={`text-xs font-black ${roleFromTag(tag) === 'organisme' ? 'text-emerald-800' : roleFromTag(tag) === 'formateur' ? 'text-orange-800' : 'text-blue-800'}`}>Texte {ROLE_LABEL[roleFromTag(tag) || 'client']}</p>
                               </div>
                             </div>
                           ) : (
@@ -9885,10 +9961,10 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           <div className={`flex items-center gap-2 px-3 py-2 rounded-lg shadow-lg ring-2 ring-white border-2 whitespace-nowrap select-none ${roleFromTag(field.tag) === 'organisme' ? 'bg-emerald-50 border-emerald-400' : roleFromTag(field.tag) === 'formateur' ? 'bg-orange-50 border-orange-400' : 'bg-blue-50 border-blue-400'}`} style={{ minWidth: 140 }}>
                             <span className="text-base select-none">✍️</span>
                             <div className="flex-1 select-none">
-                              <p className={`text-[10px] font-black ${roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : roleFromTag(field.tag) === 'formateur' ? 'text-orange-700' : 'text-blue-700'}`}>
+                              <p className={`text-xs font-black ${roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : roleFromTag(field.tag) === 'formateur' ? 'text-orange-700' : 'text-blue-700'}`}>
                                 Signature {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
                               </p>
-                              <p className="text-[9px] text-gray-400">Centré sur le point choisi</p>
+                              <p className="text-[11px] text-gray-400">Centré sur le point choisi</p>
                             </div>
                             <button
                               onMouseDown={e => e.stopPropagation()}
@@ -9953,7 +10029,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                               }`}
                             >
                               <span className="text-xs select-none shrink-0">📝</span>
-                              <p className={`text-[9px] font-black leading-tight truncate ${
+                              <p className={`text-[11px] font-black leading-tight truncate ${
                                 roleFromTag(field.tag) === 'organisme' ? 'text-emerald-700' : field.tag === 'texte_formateur' ? 'text-orange-700' : 'text-blue-700'
                               }`}>
                                 Texte {ROLE_LABEL[roleFromTag(field.tag) || 'client']}
@@ -10005,7 +10081,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           </>
                         ) : (
                           <div className="group relative inline-flex select-none">
-                            <div className="flex items-center gap-1.5 bg-violet-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
+                            <div className="flex items-center gap-1.5 bg-violet-600 text-white text-xs font-bold px-1.5 py-0.5 rounded whitespace-nowrap shadow-lg ring-2 ring-white">
                               <span className="font-mono">{field.tag === 'date_du_jour' ? '📅 date_du_jour' : `{${field.tag}}`}</span>
                             </div>
                             <button
@@ -10089,13 +10165,13 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                 {/* Liste des balises */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
                   <div>
-                    <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
+                    <h3 className="text-xs font-black text-gray-500 uppercase tracking-widest mb-1">Balises disponibles</h3>
                     <p className="text-[11px] text-gray-400 leading-snug">Glissez une balise et déposez-la sur la page à l'endroit souhaité</p>
                   </div>
 
                   {/* ── Zones de signature ── */}
                   <div>
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Signatures —</p>
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Signatures —</p>
                     <div className="flex flex-col gap-1.5">
                       {SIGNATURE_TAGS.map(({ tag, label, color }) => {
                         const isPlaced = placedTags.has(tag);
@@ -10120,7 +10196,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <span className="text-base shrink-0">✍️</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-[11px] font-bold truncate">{label}</p>
-                              <p className="text-[9px] opacity-60">Zone de signature</p>
+                              <p className="text-[11px] opacity-60">Zone de signature</p>
                             </div>
                             {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
                           </div>
@@ -10131,7 +10207,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
 
                   {/* ── Cases à cocher (sans texte) ── */}
                   <div>
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Cases à cocher —</p>
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Cases à cocher —</p>
                     <div className="flex flex-col gap-1.5">
                       {CHECKBOX_TAGS.map(({ tag, label, color }) => {
                         const isPlaced = placedTags.has(tag);
@@ -10156,7 +10232,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <span className="text-base shrink-0">☑️</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-[11px] font-bold truncate">{label}</p>
-                              <p className="text-[9px] opacity-60">Case à cocher · peut être posée plusieurs fois</p>
+                              <p className="text-[11px] opacity-60">Case à cocher · peut être posée plusieurs fois</p>
                             </div>
                             {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
                           </div>
@@ -10167,7 +10243,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
 
                   {/* ── Champs texte libre (remplis par le signataire, façon Yousign) ── */}
                   <div>
-                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Texte libre —</p>
+                    <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— Texte libre —</p>
                     <div className="flex flex-col gap-1.5">
                       {TEXT_INPUT_TAGS.map(({ tag, label, color }) => {
                         const isPlaced = placedTags.has(tag);
@@ -10192,7 +10268,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                             <span className="text-base shrink-0">📝</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-[11px] font-bold truncate">{label}</p>
-                              <p className="text-[9px] opacity-60">Champ à remplir · peut être posé plusieurs fois</p>
+                              <p className="text-[11px] opacity-60">Champ à remplir · peut être posé plusieurs fois</p>
                             </div>
                             {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0" />}
                           </div>
@@ -10204,7 +10280,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                   {/* ── Balises texte ── */}
                   {Object.entries(ALL_TAGS).map(([group, tags]) => (
                     <div key={group}>
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— {group} —</p>
+                      <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1.5">— {group} —</p>
                       <div className="flex flex-col gap-1">
                         {tags.map(tag => {
                           const isPlaced = placedTags.has(tag);
@@ -10226,7 +10302,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                                 'bg-white border-gray-100 text-gray-600 hover:border-violet-200 hover:bg-violet-50/50 hover:text-violet-600'
                               }`}
                             >
-                              <span className="text-gray-300 shrink-0 text-[10px]">{isDate ? '📅' : '⠿'}</span>
+                              <span className="text-gray-300 shrink-0 text-xs">{isDate ? '📅' : '⠿'}</span>
                               <span className="truncate flex-1">{isDate ? 'date_du_jour' : `{${tag}}`}</span>
                               {isPlaced && !isDraggingThis && <Check size={10} className="shrink-0 text-violet-500" />}
                             </div>
@@ -10240,7 +10316,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                 {/* Paramètres + Enregistrer */}
                 <div className="p-4 border-t border-gray-100 space-y-3 shrink-0">
                   <div>
-                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Nom du modèle</label>
+                    <label className="block text-[11px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Nom du modèle</label>
                     <input
                       type="text"
                       value={templateName}
@@ -10250,7 +10326,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destinataires (un ou plusieurs)</label>
+                    <label className="block text-[11px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Destinataires (un ou plusieurs)</label>
                     <div className="flex gap-2">
                       {[['client', '📁 Client'], ['formateur', '📋 Formateur'], ['organisme', '🏢 Administrateur']].map(([val, label]) => {
                         const checked = destinationRoles.includes(val);
@@ -10271,7 +10347,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                       seul signataire, rien à séquencer. */}
                   {destinationRoles.length > 1 && (
                     <div>
-                      <label className="block text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Mode de signature</label>
+                      <label className="block text-[11px] font-black text-gray-400 uppercase tracking-wider mb-1.5">Mode de signature</label>
                       <div className="flex gap-2 mb-2">
                         {[['simultane', '⇄ Simultané'], ['sequentiel', '→ Séquentiel']].map(([val, label]) => (
                           <button key={val} onClick={() => setSigningMode(val)}
@@ -10280,17 +10356,17 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
                           </button>
                         ))}
                       </div>
-                      <p className="text-[10px] text-gray-400 mb-2">
+                      <p className="text-xs text-gray-400 mb-2">
                         {signingMode === 'sequentiel'
                           ? "Chaque partie ne verra le document qu'une fois son tour arrivé, dans l'ordre ci-dessous."
                           : 'Toutes les parties cochées peuvent signer indépendamment, dans n\'importe quel ordre.'}
                       </p>
                       {signingMode === 'sequentiel' && (
                         <div className="space-y-1.5">
-                          <p className="text-[9px] text-gray-400 mb-0.5">Ordre de signature (▲▼ pour réordonner) :</p>
+                          <p className="text-[11px] text-gray-400 mb-0.5">Ordre de signature (▲▼ pour réordonner) :</p>
                           {signingOrder.filter(r => destinationRoles.includes(r)).map((role, idx, arr) => (
                             <div key={role} className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
-                              <span className="text-[10px] font-black text-gray-400 w-4">{idx + 1}.</span>
+                              <span className="text-xs font-black text-gray-400 w-4">{idx + 1}.</span>
                               <span className="flex-1 text-[11px] font-bold text-gray-700">
                                 {role === 'client' ? '📁 Client' : role === 'formateur' ? '📋 Formateur' : '🏢 Administrateur'}
                               </span>
@@ -10689,7 +10765,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
 
   const Kpi = ({ label, value, sub, tone = 'violet' }) => (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">{label}</p>
+      <p className="text-xs font-black uppercase tracking-widest text-gray-400">{label}</p>
       <p className={`text-2xl font-black mt-1 ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-500' : 'text-violet-700'}`}>{value}</p>
       {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
     </div>
@@ -10724,22 +10800,22 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
       {/* Filtres */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
         <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Du</label>
+          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Du</label>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
         </div>
         <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Au</label>
+          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Au</label>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm" />
         </div>
         <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Formateur</label>
+          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Formateur</label>
           <select value={formateurFilter} onChange={e => setFormateurFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
             <option value="">Tous</option>
             {formateurOptions.map(f => <option key={f.id} value={String(f.id)}>{f.nom}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Module</label>
+          <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Module</label>
           <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl text-sm bg-white">
             <option value="">Tous</option>
             {moduleOptions.map(m => <option key={m.id} value={String(m.id)}>{m.nom}</option>)}
@@ -10798,7 +10874,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
                   <div key={qs.question.id || qs.index} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
                     <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                       <div>
-                        <p className="text-[10px] font-black text-violet-600 uppercase tracking-widest">Question {qs.index}</p>
+                        <p className="text-xs font-black text-violet-600 uppercase tracking-widest">Question {qs.index}</p>
                         <p className="font-bold text-gray-900">{qs.question.text || '(question sans titre)'}</p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples — plusieurs réponses possibles' : 'Choix unique'} · {qs.answeredCount} réponse{qs.answeredCount > 1 ? 's' : ''}
@@ -10817,7 +10893,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
                           {(expandedTexts[qs.index] ? qs.texts : qs.texts.slice(0, 5)).map((t, i) => (
                             <div key={i} className="bg-gray-50 rounded-xl p-3">
                               <p className="text-sm text-gray-800 whitespace-pre-wrap">« {t.text} »</p>
-                              <p className="text-[10px] text-gray-400 mt-1">{clientName(t.clientId)} · {qFrDate(t.date)}</p>
+                              <p className="text-xs text-gray-400 mt-1">{clientName(t.clientId)} · {qFrDate(t.date)}</p>
                             </div>
                           ))}
                           {qs.texts.length > 5 && (
@@ -10832,7 +10908,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
                         {qs.options.map(o => (
                           <div key={o.label} className="grid grid-cols-12 items-center gap-3">
                             <p className={`col-span-12 sm:col-span-5 text-sm ${o.isCorrect ? 'font-bold text-emerald-700' : 'text-gray-700'}`}>
-                              {o.isCorrect && '✓ '}{o.label}{o.isLegacy && <span className="text-[10px] text-gray-400 ml-1">(option retirée)</span>}
+                              {o.isCorrect && '✓ '}{o.label}{o.isLegacy && <span className="text-xs text-gray-400 ml-1">(option retirée)</span>}
                             </p>
                             <div className="col-span-9 sm:col-span-5 h-3 bg-gray-100 rounded-full overflow-hidden">
                               <div className={`h-full rounded-full ${o.isCorrect ? 'bg-emerald-500' : 'bg-violet-500'}`} style={{ width: `${o.percent}%` }} />
@@ -10855,7 +10931,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 text-[10px] uppercase tracking-widest text-gray-400">
+                    <thead className="bg-gray-50 text-xs uppercase tracking-widest text-gray-400">
                       <tr>
                         <th className="text-left px-4 py-2">Bénéficiaire</th>
                         <th className="text-left px-4 py-2">Formateur</th>
@@ -11166,14 +11242,14 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
             {showQBuilder && (
               <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
                 <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
+                  <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
                   <input type="text" placeholder="Ex : Questionnaire de satisfaction"
                     value={qName} onChange={e => setQName(e.target.value)}
                     className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
+                  <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
                   <textarea
                     className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
                     placeholder="Expliquez au client le fonctionnement, avant qu'il commence..."
@@ -11184,7 +11260,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                 <div className="flex items-center justify-between bg-violet-100/60 border border-violet-200 rounded-2xl p-3">
                   <div>
                     <p className="text-xs font-black text-violet-800 uppercase tracking-widest">🎯 Quiz noté</p>
-                    <p className="text-[10px] text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
+                    <p className="text-xs text-violet-500 mt-0.5">Le client reçoit une note et un statut Acquis / Non acquis</p>
                   </div>
                   <button type="button" onClick={() => setQIsQuiz(v => !v)}
                     className={`w-12 h-7 rounded-full transition-all relative shrink-0 ${qIsQuiz ? 'bg-violet-600' : 'bg-gray-200'}`}>
@@ -11194,7 +11270,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
 
                 {qIsQuiz && (
                   <div>
-                    <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
+                    <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Seuil de réussite (%)</label>
                     <input type="number" min="0" max="100" value={qSeuilReussite}
                       onChange={e => setQSeuilReussite(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
                       className="w-32 p-2.5 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
@@ -11203,8 +11279,8 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
-                    <button type="button" onClick={qAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                    <label className="text-xs font-black text-violet-700 uppercase tracking-widest">Questions ({qQuestions.length})</label>
+                    <button type="button" onClick={qAddQuestion} className="text-xs font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
                   </div>
                   {qQuestions.length === 0 && (
                     <div className="py-5 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
@@ -11215,25 +11291,25 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                     {qQuestions.map((q, qi) => (
                       <div key={q.id} className="bg-violet-50 rounded-xl p-3 border border-violet-100 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
-                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                          <span className="text-xs font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                          <button type="button" onClick={() => qRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-xs flex items-center justify-center hover:bg-red-100">✕</button>
                         </div>
                         <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
                           className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
                         <div className="flex gap-1.5">
                           {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
                             <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
-                              className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                              className={`flex-1 py-1 rounded text-xs font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                           ))}
                         </div>
                         <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
                           <input type="checkbox" checked={q.obligatoire !== false} onChange={e => qUpdateQuestion(q.id, 'obligatoire', e.target.checked)}
                             className="accent-violet-600 w-3.5 h-3.5" />
-                          <span className="text-[10px] font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
+                          <span className="text-xs font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
                         </label>
                         {(q.type === 'single' || q.type === 'multiple') && (
                           <div className="space-y-1">
-                            {qIsQuiz && <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                            {qIsQuiz && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
                             {q.options.map((opt, oi) => {
                               const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
                               return (
@@ -11242,7 +11318,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                                     <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
                                       title="Marquer comme bonne réponse"
                                       className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
-                                      <span className="text-[9px] leading-none">✓</span>
+                                      <span className="text-[11px] leading-none">✓</span>
                                     </button>
                                   ) : (
                                     <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
@@ -11253,7 +11329,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                                 </div>
                               );
                             })}
-                            <button type="button" onClick={() => qAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                            <button type="button" onClick={() => qAddOption(q.id)} className="text-xs text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
                           </div>
                         )}
                       </div>
@@ -11262,7 +11338,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
+                  <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Message de fin (facultatif)</label>
                   <textarea
                     className="w-full p-3 bg-gray-50 border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
                     placeholder="Un mot pour remercier ou féliciter le client une fois terminé..."
@@ -11294,7 +11370,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                               <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
                               <div>
                                 <p className="font-bold text-gray-900 text-sm">{q.titre}</p>
-                                <p className="text-[10px] text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
+                                <p className="text-xs text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
                               </div>
                             </div>
                             <div className="flex gap-1">
@@ -11312,14 +11388,14 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                             onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
                             className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors"
                           >
-                            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
+                            <span className="text-xs font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
                               📁 {qGroupIds.length > 0 ? `${qGroupIds.length} groupe${qGroupIds.length > 1 ? 's' : ''}` : 'Aucun groupe'}
                             </span>
                             <span className="text-violet-400 text-xs">{expandedQGroupId === q.id ? '▲' : '▼'}</span>
                           </button>
                           {expandedQGroupId === q.id && (
                             <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1 border border-violet-100 rounded-xl p-2 bg-white">
-                              {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé</p>}
+                              {documentGroups.length === 0 && <p className="text-xs text-gray-400 italic">Aucun groupe créé</p>}
                               {documentGroups.map(g => {
                                 const checked = qGroupIds.includes(g.id);
                                 return (
@@ -11330,7 +11406,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                                         handleQSetGroups(q.id, next, qMeta);
                                       }} />
                                     <span className="text-xs text-gray-700">{g.nom}</span>
-                                    {checked && <span className="ml-auto text-violet-500 text-[10px] font-bold">✓</span>}
+                                    {checked && <span className="ml-auto text-violet-500 text-xs font-bold">✓</span>}
                                   </label>
                                 );
                               })}
@@ -11366,9 +11442,9 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                     <span className="text-xl">{qMeta.isQuiz ? '🎯' : '📝'}</span>
                     <div className="min-w-0">
                       <p className="font-bold text-gray-900 text-sm truncate">{q.titre}</p>
-                      <p className="text-[10px] text-gray-500">{moduleNameById(q.module_id)} · {nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
+                      <p className="text-xs text-gray-500">{moduleNameById(q.module_id)} · {nbQ} question{nbQ > 1 ? 's' : ''} · {qMeta.isQuiz ? 'Quiz noté' : 'Questionnaire'}</p>
                     </div>
-                    <span className="ml-auto shrink-0 text-[10px] font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
+                    <span className="ml-auto shrink-0 text-xs font-black text-violet-700 bg-violet-50 px-2 py-1 rounded-full">📊 {loadingResponses ? '…' : `${nbR} réponse${nbR > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
                   </div>
                 </button>
               );
@@ -11805,7 +11881,7 @@ const DocumentsView = ({
 
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
 
       {/* ── En-tête ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
@@ -11920,7 +11996,7 @@ const DocumentsView = ({
                                 <li key={d.id} className="text-sm text-gray-700 flex items-center gap-2">
                                   <FileText size={14} className="text-indigo-400" />
                                   {d.nom}
-                                  <span className="text-[10px] text-gray-400 font-bold uppercase">({d.extension || 'docx'})</span>
+                                  <span className="text-xs text-gray-400 font-bold uppercase">({d.extension || 'docx'})</span>
                                 </li>
                               ))}
                             </ul>
@@ -11931,7 +12007,7 @@ const DocumentsView = ({
                                 <li key={q.id} className="text-sm text-gray-700 flex items-center gap-2">
                                   <span className="text-amber-500">📝</span>
                                   {q.titre}
-                                  <span className="text-[10px] text-amber-600 font-bold uppercase bg-amber-50 px-1.5 py-0.5 rounded">Questionnaire</span>
+                                  <span className="text-xs text-amber-600 font-bold uppercase bg-amber-50 px-1.5 py-0.5 rounded">Questionnaire</span>
                                 </li>
                               ))}
                             </ul>
@@ -12016,23 +12092,23 @@ const DocumentsView = ({
               return (
                 <div key={doc.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-amber-500 transition-all group relative flex flex-col h-full">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
+                    <span className={`text-xs font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       destRolesForBadge.length > 1 ? 'bg-teal-100 text-teal-700' : destRolesForBadge[0] === 'formateur' ? 'bg-violet-100 text-violet-700' : destRolesForBadge[0] === 'organisme' ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-600'
                     }`}>
                       {destBadgeLabel}
                     </span>
-                    <span className={`text-[10px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
+                    <span className={`text-xs font-bold uppercase tracking-tighter px-2 py-0.5 rounded-full ${
                       classif === 'a_generer' ? 'bg-purple-100 text-purple-600' :
                       classif === 'a_signer' ? 'bg-orange-100 text-orange-600' :
                       'bg-slate-100 text-slate-600'
                     }`}>
                       {classif === 'a_generer' ? '⚙️ À générer' : classif === 'a_signer' ? '✍️ À signer' : '📥 Téléchargeable'}
                     </span>
-                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full uppercase">
+                    <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full uppercase">
                       .{doc.extension || 'docx'}
                     </span>
                     <div className="flex items-center gap-2 ml-auto">
-                      <label className="text-[10px] text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
+                      <label className="text-xs text-gray-400 hover:text-amber-600 cursor-pointer font-bold transition-colors">
                         Mettre à jour
                         <input type="file" className="hidden" accept=".docx, .pdf" onChange={(e) => handleUploadDocxTemplate(e.target.files[0], doc.nom, dest)} />
                       </label>
@@ -12048,7 +12124,7 @@ const DocumentsView = ({
                           <button
                             type="button"
                             onClick={() => openTemplatePreview(doc.nom, { ...(tplForView || {}), id: withFields ? tplForView?.id : null, url: viewUrl, plainView: !withFields })}
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-violet-600 bg-violet-50 hover:bg-violet-100 transition-colors"
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold text-violet-600 bg-violet-50 hover:bg-violet-100 transition-colors"
                             title="Voir le document"
                           >
                             <Eye size={12} /> Voir
@@ -12150,7 +12226,7 @@ const DocumentsView = ({
                       const docGroupIds = (doc.group_ids && doc.group_ids.length > 0) ? doc.group_ids : (doc.group_id ? [doc.group_id] : []);
                       return (
                         <div className="border border-indigo-100 rounded-lg bg-indigo-50 p-2">
-                          <p className="text-[9px] font-black uppercase text-indigo-600 mb-1.5 tracking-wider">Groupes</p>
+                          <p className="text-[11px] font-black uppercase text-indigo-600 mb-1.5 tracking-wider">Groupes</p>
                           <div className="space-y-1 max-h-24 overflow-y-auto">
                             {documentGroups.map(g => {
                               const isChecked = docGroupIds.includes(g.id);
@@ -12171,16 +12247,16 @@ const DocumentsView = ({
                                     }}
                                     className="w-3 h-3 accent-indigo-600 rounded"
                                   />
-                                  <span className="text-[10px] text-indigo-800 font-medium group-hover:text-indigo-600 truncate">{g.nom}</span>
+                                  <span className="text-xs text-indigo-800 font-medium group-hover:text-indigo-600 truncate">{g.nom}</span>
                                 </label>
                               );
                             })}
-                            {documentGroups.length === 0 && <p className="text-[10px] text-gray-400 italic">Aucun groupe créé.</p>}
+                            {documentGroups.length === 0 && <p className="text-xs text-gray-400 italic">Aucun groupe créé.</p>}
                           </div>
                           {docGroupIds.length > 0 && (
                             <button
                               onClick={() => handleToggleDocumentGroups(doc._fromMsrOnly ? doc : doc.id, [])}
-                              className="mt-1.5 text-[9px] text-violet-600 hover:text-violet-700 font-bold"
+                              className="mt-1.5 text-[11px] text-violet-600 hover:text-violet-700 font-bold"
                             >
                               ✕ Détacher tous
                             </button>
@@ -12302,7 +12378,7 @@ const DocumentsView = ({
                   <div className="mt-6 pt-6 border-t border-gray-100 overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="border-b border-gray-100 text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+                        <tr className="border-b border-gray-100 text-xs text-gray-400 uppercase tracking-widest font-bold">
                           <th className="pb-3 px-2">Document</th>
                           <th className="pb-3 px-2">Statut Signature</th>
                           <th className="pb-3 px-2 text-right">Action</th>
@@ -12317,22 +12393,22 @@ const DocumentsView = ({
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-900 text-sm">{doc.nom}</span>
                                   {doc.type_document === 'Présence' && doc.date_seance && (
-                                    <span className="text-[10px] text-gray-400 font-medium">Séance du : {new Date(doc.date_seance).toLocaleDateString('fr-FR')}</span>
+                                    <span className="text-xs text-gray-400 font-medium">Séance du : {new Date(doc.date_seance).toLocaleDateString('fr-FR')}</span>
                                   )}
-                                  {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="text-[10px] text-blue-600 font-bold hover:underline mt-0.5 text-left">Voir PDF ↗</button>}
+                                  {doc.url && <button onClick={() => setViewingDocId(doc.id)} className="text-xs text-blue-600 font-bold hover:underline mt-0.5 text-left">Voir PDF ↗</button>}
                                 </div>
                               </div>
                             </td>
                             <td className="py-4 px-2">
                               <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${doc.signe_par_client ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Bénéficiaire</span>
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${doc.signe_par_formateur ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Formateur</span>
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${doc.signe_par_client ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Bénéficiaire</span>
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${doc.signe_par_formateur ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>Formateur</span>
                               </div>
                             </td>
                             <td className="py-4 px-2 text-right">
                               <div className="flex justify-end gap-2">
                                 {!doc.signe_par_formateur && (
-                                  <button onClick={() => setSigningDocId(doc.id)} className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-lg text-[10px] hover:bg-indigo-700 shadow-sm shadow-indigo-100">Signer</button>
+                                  <button onClick={() => setSigningDocId(doc.id)} className="px-3 py-1.5 bg-indigo-600 text-white font-bold rounded-lg text-xs hover:bg-indigo-700 shadow-sm shadow-indigo-100">Signer</button>
                                 )}
                                 <button onClick={() => handleDownloadPDF(doc)} className="p-1.5 border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition-colors" title="Télécharger">
                                   <DownloadIcon />
@@ -12375,7 +12451,7 @@ const DocumentsView = ({
                       <div className="w-10 h-10 bg-violet-50 text-violet-700 flex items-center justify-center rounded-xl shrink-0"><FileText size={20} /></div>
                       <div>
                         <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-                        <p className="text-[10px] text-gray-500 uppercase tracking-wider">{doc.type_document || doc.type || 'Document'}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider">{doc.type_document || doc.type || 'Document'}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -12425,7 +12501,7 @@ const DocumentsView = ({
                                   <div className="w-10 h-10 bg-violet-100 text-violet-700 flex items-center justify-center rounded-xl shrink-0">📚</div>
                                   <div>
                                     <p className="font-bold text-gray-900 text-sm">{s.ressource_titre || `Support de la session ${s.titre}`}</p>
-                                    <p className="text-[10px] text-violet-700 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
+                                    <p className="text-xs text-violet-700 font-bold uppercase tracking-wider">{s.titre} du {new Date(s.date).toLocaleDateString()}</p>
                                   </div>
                                 </div>
                                 <button onClick={() => openSecureStorageFile(s.ressource_url)} className="px-4 py-2 bg-violet-700 text-white font-bold rounded-lg text-xs shadow-sm hover:bg-violet-700 transition-colors flex items-center gap-2">
@@ -12446,7 +12522,7 @@ const DocumentsView = ({
                                 <div className="w-10 h-10 bg-gray-200 text-gray-500 flex items-center justify-center rounded-xl shrink-0">🔒</div>
                                 <div>
                                   <p className="font-bold text-gray-700 text-sm">{s.ressource_titre || `Support de la session ${s.titre}`}</p>
-                                  <p className="text-[10px] text-gray-500">Sera débloqué le {new Date(s.date).toLocaleDateString()}</p>
+                                  <p className="text-xs text-gray-500">Sera débloqué le {new Date(s.date).toLocaleDateString()}</p>
                                 </div>
                               </div>
                             ))}
@@ -12596,12 +12672,12 @@ const DocumentsView = ({
                           </span>
                         )}
                         {classif === 'a_signer' && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-purple-50 text-purple-700 border border-purple-100">
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-black uppercase tracking-wide bg-purple-50 text-purple-700 border border-purple-100">
                             ✍️ À signer
                           </span>
                         )}
                         {classif === 'a_generer' && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-sky-50 text-sky-700 border border-sky-100">
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-black uppercase tracking-wide bg-sky-50 text-sky-700 border border-sky-100">
                             ⚙️ Généré
                           </span>
                         )}
@@ -12622,7 +12698,7 @@ const DocumentsView = ({
                       {/* Extension */}
                       {doc.extension && (
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] font-black uppercase text-gray-300 tracking-widest bg-gray-50 px-2 py-0.5 rounded-md border border-gray-100">.{doc.extension}</span>
+                          <span className="text-xs font-black uppercase text-gray-300 tracking-widest bg-gray-50 px-2 py-0.5 rounded-md border border-gray-100">.{doc.extension}</span>
                         </div>
                       )}
 
@@ -12763,7 +12839,7 @@ const DocumentsView = ({
                     const pageFields = previewFields.filter(f => (f.page || 1) === pi + 1);
                     return (
                       <div key={pi}>
-                        <p className="text-[10px] font-black uppercase text-gray-400 mb-2 tracking-widest">Page {pi + 1}</p>
+                        <p className="text-xs font-black uppercase text-gray-400 mb-2 tracking-widest">Page {pi + 1}</p>
                         <div className="relative inline-block w-full border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                           <img src={pg.dataUrl} alt={`Page ${pi + 1}`} className="w-full block" />
                           {pageFields.map((f, fi) => {
@@ -12785,7 +12861,7 @@ const DocumentsView = ({
                               <div
                                 key={fi}
                                 style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform }}
-                                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black shadow-lg border pointer-events-none ${isSignature ? 'bg-blue-500 text-white border-blue-400' : 'bg-violet-600 text-white border-violet-500'}`}
+                                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-black shadow-lg border pointer-events-none ${isSignature ? 'bg-blue-500 text-white border-blue-400' : 'bg-violet-600 text-white border-violet-500'}`}
                               >
                                 {isSignature ? `✍️ ${f.tag}` : `{${f.tag}}`}
                               </div>
@@ -12866,7 +12942,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     <div className="relative">
       <button onClick={() => setIsOpen(!isOpen)} className="relative p-2 rounded-xl hover:bg-gray-100 transition-colors">
         <Bell size={20} className="text-gray-500" />
-        {count > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-violet-600 text-white text-[9px] font-black rounded-full flex items-center justify-center leading-none">{count}</span>}
+        {count > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-violet-600 text-white text-[11px] font-black rounded-full flex items-center justify-center leading-none">{count}</span>}
       </button>
       {isOpen && (
         <>
@@ -12893,7 +12969,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
 };
 
 // ─── Tableau de bord Admin ─────────────────────────────────────────────────────
-const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiveTab }) => {
+const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiveTab, modules, orgSettings, currentOrgId }) => {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const weekStart = new Date(today);
@@ -12910,33 +12986,37 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
   const todaySessions = sessions.filter(s => s.date === todayStr);
   const completedSessions = sessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
   const completionRate = sessions.length > 0 ? Math.round((completedSessions / sessions.length) * 100) : 0;
-  const upcomingSessions = [...sessions].filter(s => s.date >= todayStr).sort((a, b) => (a.date || '').localeCompare(b.date || '')).slice(0, 5);
+  const upcomingGroups = regrouperParSeance(sessions.filter(s => s.date >= todayStr)).slice(0, 5);
+  const weekGroups = regrouperParSeance(weekSessions);
+  const todayGroups = regrouperParSeance(todaySessions);
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <div>
         <h1 className="text-2xl font-black text-gray-900">Tableau de bord</h1>
         <p className="text-gray-400 text-sm mt-1">Vue d'ensemble de votre activité.</p>
       </div>
 
+      <GuideDemarrage orgSettings={orgSettings} modules={modules} documents={documents} formateurs={formateurs} clients={clients} setActiveTab={setActiveTab} currentOrgId={currentOrgId} />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm">
-          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Clients actifs</p>
+          <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Clients actifs</p>
           <p className="text-3xl font-black text-gray-900 mt-2">{clients.length}</p>
           <p className="text-xs text-gray-400 mt-1">{formateurs.length} formateur{formateurs.length > 1 ? 's' : ''}</p>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-amber-100 shadow-sm">
-          <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">En attente</p>
+          <p className="text-xs font-black text-amber-500 uppercase tracking-widest">En attente</p>
           <p className="text-3xl font-black text-amber-500 mt-2">{pendingDocs.length}</p>
           <p className="text-xs text-gray-400 mt-1">{signedDocs.length} signés</p>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-blue-100 shadow-sm">
-          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Séances cette semaine</p>
-          <p className="text-3xl font-black text-blue-500 mt-2">{weekSessions.length}</p>
-          <p className="text-xs text-gray-400 mt-1">{todaySessions.length} aujourd'hui</p>
+          <p className="text-xs font-black text-blue-500 uppercase tracking-widest">Séances cette semaine</p>
+          <p className="text-3xl font-black text-blue-500 mt-2">{weekGroups.length}</p>
+          <p className="text-xs text-gray-400 mt-1">{todayGroups.length} aujourd'hui</p>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-emerald-100 shadow-sm">
-          <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Complétion</p>
+          <p className="text-xs font-black text-emerald-500 uppercase tracking-widest">Complétion</p>
           <p className="text-3xl font-black text-emerald-500 mt-2">{completionRate}%</p>
           <p className="text-xs text-gray-400 mt-1">{completedSessions}/{sessions.length} émargements</p>
         </div>
@@ -12949,18 +13029,22 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
             <button onClick={() => setActiveTab('calendrier')} className="text-xs text-violet-600 font-bold hover:underline">Voir calendrier →</button>
           </div>
           <div className="divide-y divide-gray-50">
-            {upcomingSessions.length === 0
+            {upcomingGroups.length === 0
               ? <div className="py-8 text-center text-gray-400 text-sm">Aucune séance à venir.</div>
-              : upcomingSessions.map(s => {
-                  const client = clients.find(c => c.id === s.client_id);
+              : upcomingGroups.map(g => {
+                  const client = clients.find(c => c.id === g.client_id);
                   return (
-                    <div key={s.id} className="px-5 py-3.5 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900">{s.ressource_titre || s.nom || 'Séance'}</p>
-                        <p className="text-xs text-gray-400">{client?.nom} · {s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '—'}</p>
+                    <div key={g.cle} className="px-5 py-3.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{client?.nom || 'Client'} — {titreSeance(g)}</p>
+                        <p className="text-xs text-gray-500">
+                          {g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : '—'}
+                          {horaireSeance(g) ? ` · ${horaireSeance(g)}` : ''}
+                          {g.items.length > 1 ? ` · ${g.items.length} éléments` : ''}
+                        </p>
                       </div>
-                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${s.date === todayStr ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}>
-                        {s.date === todayStr ? "Aujourd'hui" : s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short' }) : '—'}
+                      <span className={`text-xs font-black px-2 py-1 rounded-lg shrink-0 ${g.date === todayStr ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}>
+                        {g.date === todayStr ? "Aujourd'hui" : g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '—'}
                       </span>
                     </div>
                   );
@@ -12986,8 +13070,8 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
                         <p className="text-xs text-gray-400">{beneficiaire}</p>
                       </div>
                       <div className="flex gap-1 shrink-0 ml-2">
-                        {docAwaitsClientSignature(doc) && <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded font-bold">Client</span>}
-                        {docAwaitsFormateurSignature(doc) && <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded font-bold">Formateur</span>}
+                        {docAwaitsClientSignature(doc) && <span className="text-xs bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded font-bold">Client</span>}
+                        {docAwaitsFormateurSignature(doc) && <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-1.5 py-0.5 rounded font-bold">Formateur</span>}
                       </div>
                     </div>
                   );
@@ -13062,7 +13146,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <div>
         <h1 className="text-2xl font-black text-gray-900">Calendrier</h1>
         <p className="text-gray-400 text-sm mt-1">Planning des séances par jour.</p>
@@ -13079,13 +13163,13 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
           </button>
         </div>
         <div className="grid grid-cols-7 border-b border-gray-100">
-          {DAYS.map(d => <div key={d} className="py-3 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">{d}</div>)}
+          {DAYS.map(d => <div key={d} className="py-3 text-center text-xs font-black text-gray-400 uppercase tracking-widest">{d}</div>)}
         </div>
         <div className="grid grid-cols-7">
           {cells.map((day, idx) => {
             if (!day) return <div key={idx} className="h-20 border-b border-r border-gray-50 bg-gray-50/50" />;
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const daySessions = sessionsByDate[dateStr] || [];
+            const dayGroups = regrouperParSeance(sessionsByDate[dateStr] || []);
             const isToday = dateStr === todayStr;
             const isSelected = selectedDay === dateStr;
             return (
@@ -13093,11 +13177,11 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                 className={`h-20 border-b border-r border-gray-50 p-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-violet-50' : isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mb-1 ${isToday ? 'bg-violet-600 text-white' : 'text-gray-700'}`}>{day}</div>
                 <div className="space-y-0.5">
-                  {daySessions.slice(0, 2).map((s, i) => {
-                    const client = clients.find(c => c.id === s.client_id);
-                    return <div key={i} className="text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{client?.nom?.split(' ')[0] || 'Séance'}</div>;
+                  {dayGroups.slice(0, 2).map((g, i) => {
+                    const client = clients.find(c => c.id === g.client_id);
+                    return <div key={i} className="text-[11px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{g.heure_debut ? `${g.heure_debut} ` : ''}{client?.nom?.split(' ')[0] || 'Séance'}</div>;
                   })}
-                  {daySessions.length > 2 && <div className="text-[9px] text-gray-400 font-medium">+{daySessions.length - 2}</div>}
+                  {dayGroups.length > 2 && <div className="text-[11px] text-gray-400 font-medium">+{dayGroups.length - 2}</div>}
                 </div>
               </div>
             );
@@ -13111,29 +13195,33 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
             <h3 className="font-bold text-gray-900 text-sm">{new Date(selectedDay + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
           </div>
           <div className="divide-y divide-gray-50">
-            {sessionsByDate[selectedDay].map(s => {
-              const client = clients.find(c => c.id === s.client_id);
+            {regrouperParSeance(sessionsByDate[selectedDay]).map(g => {
+              const s = g.items[0];
+              const client = clients.find(c => c.id === g.client_id);
               const formateur = formateurs.find(f => f.id === client?.formateur_id);
-              const meta = (typeof s.metadata === 'string')
-                ? (() => { try { return JSON.parse(s.metadata); } catch { return {}; } })()
-                : (s.metadata || {});
-              const lienVisio = meta.lien_visio;
-              const noteSeance = meta.note_seance;
+              const metas = g.items.map(i => (typeof i.metadata === 'string')
+                ? (() => { try { return JSON.parse(i.metadata); } catch { return {}; } })()
+                : (i.metadata || {}));
+              const lienVisio = metas.map(m => m.lien_visio).find(isSafeVisioUrl);
+              const noteSeance = metas.map(m => m.note_seance).find(Boolean);
               const canEdit = userRole === 'formateur' || userRole === 'admin';
+              const signee = seanceSignee(g);
               return (
-                <div key={s.id} className="px-5 py-4">
+                <div key={g.cle} className="px-5 py-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 text-sm truncate">{s.ressource_titre || s.nom}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {client?.nom}
+                      <p className="font-semibold text-gray-900 text-sm truncate">{client?.nom || 'Client'} — {titreSeance(g)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {horaireSeance(g) || 'Horaire à définir'}
                         {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
-                        {s.heure_debut ? ` · ${s.heure_debut}–${s.heure_fin || '—'}` : ''}
                       </p>
+                      {g.items.length > 1 && (
+                        <p className="text-xs text-gray-400 mt-1 truncate">{g.items.map(i => i.ressource_titre || i.nom).join(' · ')}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${(s.statut === 'Signé' || s.statut_client === 'Signé') ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                        {(s.statut === 'Signé' || s.statut_client === 'Signé') ? '✓ Signé' : 'En attente'}
+                      <span className={`text-xs font-black px-2 py-1 rounded-lg ${signee ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {signee ? '✓ Signé' : 'En attente'}
                       </span>
                       {canEdit && (
                         <button
@@ -13208,13 +13296,13 @@ const SeanceInfoModal = ({ isOpen, onClose, session, onSave }) => {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
       <div className="bg-white rounded-[32px] w-full max-w-md shadow-2xl border border-gray-100 overflow-hidden animate-slide-up">
         <div className="bg-violet-600 p-6 text-white relative">
-          <p className="text-violet-200 text-[10px] font-black uppercase tracking-widest mb-1">📅 Informations de séance</p>
+          <p className="text-violet-200 text-xs font-black uppercase tracking-widest mb-1">📅 Informations de séance</p>
           <h2 className="text-lg font-black leading-tight">{session.ressource_titre || session.nom || 'Séance'}</h2>
           <button onClick={onClose} className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-all">✕</button>
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Lien de visioconférence (optionnel)</label>
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2 block">Lien de visioconférence (optionnel)</label>
             <input
               type="url"
               value={lienVisio}
@@ -13224,7 +13312,7 @@ const SeanceInfoModal = ({ isOpen, onClose, session, onSave }) => {
             />
           </div>
           <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Note / information pour le client (optionnel)</label>
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2 block">Note / information pour le client (optionnel)</label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -13254,6 +13342,8 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
+  const todayGroups = regrouperParSeance(todaySessions);
+  const weekGroups = regrouperParSeance(weekSessions);
   const pendingDocs = documents.filter(d => d.assigned_formateur_id === currentUserId && d.visible_formateur !== false && !d.signe_par_formateur && !isBlockedBySigningOrder(d, 'formateur') && !isDossierDoc(d));
   // Exercices rendus par un client mais pas encore corrigés — auparavant on ne le voyait qu'en
   // ouvrant chaque client une par une dans "Mes Clients". On le remonte ici, bien visible.
@@ -13265,7 +13355,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <div>
         <h1 className="text-2xl font-black text-gray-900">Bonjour, {formateur?.nom?.split(' ')[0] || 'Formateur'} 👋</h1>
         <p className="text-gray-400 text-sm mt-1">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
@@ -13274,19 +13364,19 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm text-center">
           <p className="text-3xl font-black text-gray-900">{myClients.length}</p>
-          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Mes clients</p>
+          <p className="text-xs text-gray-400 mt-1 font-black uppercase tracking-widest">Mes clients</p>
         </div>
         <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${todaySessions.length > 0 ? 'border-violet-100' : 'border-gray-100'}`}>
-          <p className={`text-3xl font-black ${todaySessions.length > 0 ? 'text-violet-600' : 'text-gray-900'}`}>{todaySessions.length}</p>
-          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Séances aujourd'hui</p>
+          <p className={`text-3xl font-black ${todayGroups.length > 0 ? 'text-violet-600' : 'text-gray-900'}`}>{todayGroups.length}</p>
+          <p className="text-xs text-gray-400 mt-1 font-black uppercase tracking-widest">Séances aujourd'hui</p>
         </div>
         <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingDocs.length > 0 ? 'border-amber-100' : 'border-gray-100'}`}>
           <p className={`text-3xl font-black ${pendingDocs.length > 0 ? 'text-amber-500' : 'text-gray-900'}`}>{pendingDocs.length}</p>
-          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">À signer</p>
+          <p className="text-xs text-gray-400 mt-1 font-black uppercase tracking-widest">À signer</p>
         </div>
         <div className={`bg-white rounded-2xl p-5 border shadow-sm text-center ${pendingCorrections.length > 0 ? 'border-emerald-100' : 'border-gray-100'}`}>
           <p className={`text-3xl font-black ${pendingCorrections.length > 0 ? 'text-emerald-600' : 'text-gray-900'}`}>{pendingCorrections.length}</p>
-          <p className="text-[10px] text-gray-400 mt-1 font-black uppercase tracking-widest">Exercices à corriger</p>
+          <p className="text-xs text-gray-400 mt-1 font-black uppercase tracking-widest">Exercices à corriger</p>
         </div>
       </div>
 
@@ -13297,32 +13387,33 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
             <button onClick={() => setActiveTab('calendrier')} className="text-xs text-violet-600 font-bold hover:underline">Calendrier →</button>
           </div>
           <div className="divide-y divide-gray-50">
-            {todaySessions.length === 0 && weekSessions.length === 0
+            {todayGroups.length === 0 && weekGroups.length === 0
               ? <div className="py-8 text-center text-gray-400 text-sm">Aucune séance planifiée cette semaine.</div>
               : <>
-                  {todaySessions.length > 0 && <>
-                    <div className="px-5 py-2 bg-violet-50"><p className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Aujourd'hui</p></div>
-                    {todaySessions.map(s => {
-                      const client = myClients.find(c => c.id === s.client_id);
+                  {todayGroups.length > 0 && <>
+                    <div className="px-5 py-2 bg-violet-50"><p className="text-xs font-black text-violet-700 uppercase tracking-widest">Aujourd'hui</p></div>
+                    {todayGroups.map(g => {
+                      const client = myClients.find(c => c.id === g.client_id);
                       return (
-                        <div key={s.id} className="px-5 py-3 flex items-center justify-between border-b border-gray-50">
-                          <div>
-                            <p className="text-sm font-semibold text-gray-900">{client?.nom}</p>
-                            <p className="text-xs text-gray-400">{s.ressource_titre || s.nom}</p>
+                        <div key={g.cle} className="px-5 py-3 flex items-center justify-between border-b border-gray-50">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 truncate">{client?.nom} — {titreSeance(g)}</p>
+                            <p className="text-xs text-gray-500">{g.items.length > 1 ? `${g.items.length} éléments` : (g.items[0]?.ressource_titre || g.items[0]?.nom)}</p>
                           </div>
-                          {s.heure_debut && <span className="text-xs font-medium text-gray-500 shrink-0 ml-2">{s.heure_debut}</span>}
+                          {horaireSeance(g) && <span className="text-xs font-bold text-violet-700 shrink-0 ml-2">{horaireSeance(g)}</span>}
                         </div>
                       );
                     })}
                   </>}
-                  {weekSessions.slice(0, 4).map(s => {
-                    const client = myClients.find(c => c.id === s.client_id);
+                  {weekGroups.slice(0, 4).map(g => {
+                    const client = myClients.find(c => c.id === g.client_id);
                     return (
-                      <div key={s.id} className="px-5 py-3 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">{client?.nom}</p>
-                          <p className="text-xs text-gray-400">{s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}</p>
+                      <div key={g.cle} className="px-5 py-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">{client?.nom} — {titreSeance(g)}</p>
+                          <p className="text-xs text-gray-500">{g.date ? new Date(g.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : '—'}</p>
                         </div>
+                        {horaireSeance(g) && <span className="text-xs font-medium text-gray-500 shrink-0">{horaireSeance(g)}</span>}
                       </div>
                     );
                   })}
@@ -13354,7 +13445,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
                         <p className="text-sm font-semibold text-gray-900 truncate">{doc.nom}</p>
                         {client && <p className="text-xs text-gray-400">{client.nom}</p>}
                       </div>
-                      <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À signer</span>
+                      <span className="text-xs bg-amber-50 text-amber-600 border border-amber-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À signer</span>
                     </button>
                   );
                 })
@@ -13382,7 +13473,7 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
                         <p className="text-sm font-semibold text-gray-900 truncate">{session.ressource_titre || session.nom}</p>
                         {client && <p className="text-xs text-gray-400">{client.nom}</p>}
                       </div>
-                      <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À corriger</span>
+                      <span className="text-xs bg-emerald-50 text-emerald-600 border border-emerald-100 px-2 py-1 rounded-lg font-bold shrink-0 ml-2">À corriger</span>
                     </button>
                   );
                 })
@@ -13436,7 +13527,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
           <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('calendrier')}>
             <div className="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center text-white">📅</div>
             <div>
-              <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Prochaine séance</p>
+              <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Prochaine séance</p>
               <p className="text-sm font-bold text-blue-700">{new Date(nextSession.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
             </div>
           </div>
@@ -13445,7 +13536,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
           <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('mes_documents')}>
             <div className="w-8 h-8 bg-amber-400 rounded-xl flex items-center justify-center text-white font-black text-sm">{pendingDocsCount}</div>
             <div>
-              <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Document{pendingDocsCount > 1 ? 's' : ''} à signer</p>
+              <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Document{pendingDocsCount > 1 ? 's' : ''} à signer</p>
               <p className="text-sm font-bold text-amber-700">En attente de votre signature</p>
             </div>
           </div>
@@ -13465,9 +13556,9 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         <div className="h-full bg-violet-600 transition-all duration-1000 ease-out" style={{ width: `${clientProgress}%` }}></div>
       </div>
       <div className="flex items-center justify-between mt-2">
-        <p className="text-[10px] text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
+        <p className="text-xs text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
         {totalSessions > 0 && (
-          <p className="text-[10px] text-gray-400 font-semibold">{signedSessions} / {totalSessions} étapes validées</p>
+          <p className="text-xs text-gray-400 font-semibold">{signedSessions} / {totalSessions} étapes validées</p>
         )}
       </div>
     </div>
@@ -13534,7 +13625,7 @@ const SessionsView = ({
                 const fileUrl = signedUrl || docUrl;
                 setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'view' });
               }}
-              className="text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+              className="text-xs font-bold px-3 py-1.5 rounded-lg border transition-all bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
             >
               Consulter
             </button>
@@ -13550,7 +13641,7 @@ const SessionsView = ({
                 setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
               }
             }}
-            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+            className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
               session.statut_client === 'Signé'
                 ? 'bg-green-50 text-green-600 border-green-200'
                 : isDateLocked
@@ -13573,7 +13664,7 @@ const SessionsView = ({
             onClick={() => {
               setViewingSession && setViewingSession({ session: { ...session, file_url: docUrl }, mode: 'view' });
             }}
-            className={`text-[10px] font-bold px-3 py-1.5 rounded-lg border transition-all ${
+            className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
               signedUrl ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
             }`}
           >
@@ -13587,13 +13678,13 @@ const SessionsView = ({
       return (
         <div className="flex flex-wrap gap-2 items-center">
           {session.reponse_url && (
-            <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+            <span className={`text-[11px] font-black uppercase px-2 py-1 rounded-full ${session.correction_statut === 'Validé' ? 'bg-green-100 text-green-700' : session.correction_statut === 'À corriger' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
               {session.correction_statut === 'Validé' ? '✅ Validé' : session.correction_statut === 'À corriger' ? '📝 À corriger' : '📬 En attente'}
             </span>
           )}
           <button
             onClick={() => setExerciceModalSession(session)}
-            className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+            className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
           >
             {session.reponse_url ? "Modifier le rendu" : "Accéder à l'exercice"}
           </button>
@@ -13609,19 +13700,19 @@ const SessionsView = ({
     <div className="flex flex-col gap-1 items-start md:items-center">
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Vous : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+        <span className="text-[11px] font-black uppercase text-gray-500">Vous : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
       {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+        <span className="text-[11px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
       )}
     </div>
   );
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Séances d'Accompagnement</h1>
       {(() => {
         const nbSeances = new Set(mySessions.filter(s => Number(s.numero_seance) >= 1).map(s => s.numero_seance)).size;
@@ -13687,7 +13778,7 @@ const SessionsView = ({
                                   <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
                                   <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
                                 </div>
-                                <div className="text-[10px] font-bold text-gray-500">
+                                <div className="text-xs font-bold text-gray-500">
                                   {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
                                   {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
                                 </div>
@@ -13695,11 +13786,11 @@ const SessionsView = ({
                               {!isLocked && (lienVisio || note) && (
                                 <div className="mt-2 flex flex-wrap items-center gap-2 pl-11">
                                   {lienVisio && (
-                                    <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+                                    <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
                                       🎥 Rejoindre la visio
                                     </a>
                                   )}
-                                  {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
+                                  {note && <p className="text-xs text-gray-500 italic">{note}</p>}
                                 </div>
                               )}
                             </td>
@@ -13711,9 +13802,9 @@ const SessionsView = ({
                                 <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                  <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                  <span className="text-[11px] text-gray-400 uppercase font-black">{session.type_activite}</span>
                                   {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                    <p className="text-[10px] text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
+                                    <p className="text-xs text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
                                   )}
                                 </div>
                               </div>
@@ -13748,18 +13839,18 @@ const SessionsView = ({
                           <span className={`font-black text-xs uppercase tracking-tight truncate ${isLocked ? 'text-gray-400' : 'text-white'}`}>{group.nom}</span>
                         </div>
                       </div>
-                      <div className="px-4 py-2 bg-gray-50 text-[10px] font-bold text-gray-500 flex items-center justify-between flex-wrap gap-1">
+                      <div className="px-4 py-2 bg-gray-50 text-xs font-bold text-gray-500 flex items-center justify-between flex-wrap gap-1">
                         {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 VERROUILLÉ</span>}
                         <span>{group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}</span>
                       </div>
                       {!isLocked && (lienVisio || note) && (
                         <div className="px-4 py-2 flex flex-wrap items-center gap-2 border-b border-gray-50">
                           {lienVisio && (
-                            <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+                            <a href={lienVisio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
                               🎥 Rejoindre la visio
                             </a>
                           )}
-                          {note && <p className="text-[10px] text-gray-500 italic">{note}</p>}
+                          {note && <p className="text-xs text-gray-500 italic">{note}</p>}
                         </div>
                       )}
                       <div className={`divide-y divide-gray-100 ${isLocked ? 'pointer-events-none' : ''}`}>
@@ -13769,9 +13860,9 @@ const SessionsView = ({
                               <span className="text-lg shrink-0">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
                               <div className="flex flex-col min-w-0">
                                 <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                <span className="text-[9px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                <span className="text-[11px] text-gray-400 uppercase font-black">{session.type_activite}</span>
                                 {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
-                                  <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">{session.instructions}</p>
+                                  <p className="text-xs text-gray-500 mt-1 leading-relaxed">{session.instructions}</p>
                                 )}
                               </div>
                             </div>
@@ -13808,7 +13899,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
 
   if (!skill) {
     return (
-      <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="space-y-6 max-w-7xl mx-auto">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
           <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
@@ -13834,7 +13925,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
   const topSkills = [skill.top_skill_1, skill.top_skill_2, skill.top_skill_3].filter(Boolean);
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
@@ -14023,7 +14114,7 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
                 className="w-full cursor-crosshair touch-none"
               />
             </div>
-            <p className="text-[10px] text-gray-400 mt-1">Dessinez votre signature dans le cadre ci-dessus</p>
+            <p className="text-xs text-gray-400 mt-1">Dessinez votre signature dans le cadre ci-dessus</p>
           </div>
         </div>
 
@@ -14198,7 +14289,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
                       <label key={oi} onClick={() => toggleMultiple(q.id, opt)}
                         className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${checked ? 'border-violet-500 bg-violet-50' : 'border-gray-100 hover:border-violet-200 bg-gray-50'}`}>
                         <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-all ${checked ? 'border-violet-600 bg-violet-600' : 'border-gray-300'}`}>
-                          {checked && <span className="text-white text-[8px] font-black leading-none">✓</span>}
+                          {checked && <span className="text-white text-[11px] font-black leading-none">✓</span>}
                         </div>
                         <span className="text-sm text-gray-700 select-none">{opt}</span>
                       </label>
@@ -14215,7 +14306,7 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
             className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
           </button>
-          {!isComplete && <p className="text-[10px] text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
+          {!isComplete && <p className="text-xs text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
         </div>
       </div>
     </div>
@@ -15225,7 +15316,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             <div className="w-10 h-10 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-xl shrink-0"><Layout size={20} /></div>
             <div className="text-left">
               <p className="font-bold text-gray-900 text-sm">{groupName}</p>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider">
+              <p className="text-xs text-gray-500 uppercase tracking-wider">
                 {groupDocs.length} document{groupDocs.length !== 1 ? 's' : ''}{groupQuestItems.length > 0 ? ` · ${groupQuestItems.length} questionnaire${groupQuestItems.length > 1 ? 's' : ''}` : ''} · Groupe
               </p>
             </div>
@@ -15261,7 +15352,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         <FileText size={14} className={`shrink-0 ${canSign ? 'text-violet-400' : 'text-gray-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{doc.nom}</p>
-                          <p className="text-[10px] uppercase tracking-wider" style={{ color: isDocSigned ? '#16a34a' : (canSign ? '#f87171' : '#9ca3af') }}>
+                          <p className="text-xs uppercase tracking-wider" style={{ color: isDocSigned ? '#16a34a' : (canSign ? '#f87171' : '#9ca3af') }}>
                             {isDocSigned ? 'Signé' : (canSign ? 'À signer' : (doc.type_document || 'Document'))}
                           </p>
                         </div>
@@ -15299,7 +15390,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
                         <span className="text-base shrink-0">{isQuizItem ? '🎯' : '📝'}</span>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{q.titre}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {isQuizItem ? 'Quiz noté' : 'Questionnaire'}</p>
+                          <p className="text-xs uppercase tracking-wider text-amber-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {isQuizItem ? 'Quiz noté' : 'Questionnaire'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -15339,7 +15430,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 text-xl ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">{nbQuestions} question{nbQuestions > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -15386,7 +15477,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${needsSignature ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider">{label}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -15420,7 +15511,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className={`w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ${isToSign || isConsDoc ? 'bg-violet-50 text-violet-700' : 'bg-gray-50 text-gray-500'}`}><FileText size={20} /></div>
           <div>
             <p className="font-bold text-gray-900 text-sm">{doc.nom}</p>
-            <p className={`text-[10px] uppercase tracking-wider ${doc.signe_par_client ? 'text-green-600' : (isToSign ? 'text-red-400' : 'text-gray-500')}`}>
+            <p className={`text-xs uppercase tracking-wider ${doc.signe_par_client ? 'text-green-600' : (isToSign ? 'text-red-400' : 'text-gray-500')}`}>
               {doc.signe_par_client ? 'Signé' : (doc.type_document || 'Document')}
             </p>
           </div>
@@ -15513,7 +15604,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-emerald-500 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de début de parcours</h2>
-            <span className="bg-emerald-50 text-emerald-600 text-[10px] font-bold px-2 py-1 rounded-full">Accessibles immédiatement</span>
+            <span className="bg-emerald-50 text-emerald-600 text-xs font-bold px-2 py-1 rounded-full">Accessibles immédiatement</span>
           </div>
           <div className="space-y-3">
             {debutResources.map(renderResourceCard)}
@@ -15527,7 +15618,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-violet-600 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de fin de parcours</h2>
-            <span className="bg-violet-50 text-violet-600 text-[10px] font-bold px-2 py-1 rounded-full">Débloqués — parcours terminé</span>
+            <span className="bg-violet-50 text-violet-600 text-xs font-bold px-2 py-1 rounded-full">Débloqués — parcours terminé</span>
           </div>
           <div className="space-y-3">
             {finResources.map(renderResourceCard)}
@@ -15629,7 +15720,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
   const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   return (
-    <div className="space-y-6 animate-fade-in relative flex flex-col max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in relative flex flex-col max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Exercices</h1>
@@ -15663,7 +15754,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
                 </div>
                 {s.correction_commentaire && (
                   <div className="mt-3 px-3 py-2 bg-gray-50 rounded-xl border border-gray-100">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Retour du formateur</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Retour du formateur</p>
                     <p className="text-xs text-gray-600 leading-relaxed">{s.correction_commentaire}</p>
                   </div>
                 )}
@@ -16241,7 +16332,7 @@ const RessourcesView = ({ pedagogicalResources, supabase, currentUserId }) => {
   );
 
   return (
-    <div className="space-y-10 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-10 animate-fade-in max-w-7xl mx-auto">
 
       {/* Section 1 : Mes documents personnels */}
       <div>
@@ -16776,7 +16867,7 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
   const typeLabel = (type) => ({ pdf: 'PDF', video: 'Vidéo', link: 'Lien', document: 'Fichier' }[type] || type);
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
@@ -16886,11 +16977,11 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
                     <p className="font-bold text-gray-900 text-sm leading-tight truncate">{p.titre}</p>
                     {p.description && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{p.description}</p>}
                     <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{typeLabel(p.type)}</span>
+                      <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{typeLabel(p.type)}</span>
                       {isAdmin && (
                         <>
-                          {p.visible_client && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Clients</span>}
-                          {p.visible_formateur && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Formateurs</span>}
+                          {p.visible_client && <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Clients</span>}
+                          {p.visible_formateur && <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Formateurs</span>}
                         </>
                       )}
                     </div>
@@ -17089,7 +17180,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
   const activeOther = possibleReceivers.find(r => r.id === activeConvId);
 
   return (
-    <div className="animate-fade-in max-w-5xl mx-auto">
+    <div className="animate-fade-in max-w-7xl mx-auto">
       <div className="mb-6">
         <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
           <span className="w-2 h-6 bg-teal-500 rounded-full"></span> Messagerie
@@ -17137,9 +17228,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                         <div className="flex-1 min-w-0 pr-6">
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-bold text-gray-900 truncate">{conv.otherLabel}</span>
-                            {conv.unread > 0 && <span className="bg-teal-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 shrink-0">{conv.unread}</span>}
+                            {conv.unread > 0 && <span className="bg-teal-500 text-white text-[11px] font-bold rounded-full px-1.5 py-0.5 shrink-0">{conv.unread}</span>}
                           </div>
-                          <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                          <p className="text-xs text-gray-400 truncate mt-0.5">
                             {conv.lastMessage.content || (conv.lastMessage.attachment_name ? `📎 ${conv.lastMessage.attachment_name}` : '')}
                           </p>
                         </div>
@@ -17148,11 +17239,11 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                     {/* Bouton suppression */}
                     {confirmDeleteConvId === conv.otherId ? (
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white border border-red-200 rounded-xl px-2 py-1 shadow-sm z-10">
-                        <span className="text-[10px] text-red-500 font-bold whitespace-nowrap">Supprimer ?</span>
+                        <span className="text-xs text-red-500 font-bold whitespace-nowrap">Supprimer ?</span>
                         <button onClick={() => handleDeleteConversation(conv.otherId)}
-                          className="text-[10px] font-black text-white bg-red-500 hover:bg-red-600 rounded-lg px-1.5 py-0.5 transition-colors">Oui</button>
+                          className="text-xs font-black text-white bg-red-500 hover:bg-red-600 rounded-lg px-1.5 py-0.5 transition-colors">Oui</button>
                         <button onClick={() => setConfirmDeleteConvId(null)}
-                          className="text-[10px] font-black text-gray-500 hover:text-gray-800 rounded-lg px-1 py-0.5">Non</button>
+                          className="text-xs font-black text-gray-500 hover:text-gray-800 rounded-lg px-1 py-0.5">Non</button>
                       </div>
                     ) : (
                       <button
@@ -17195,7 +17286,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                   </div>
                   <div>
                     <p className="font-bold text-gray-900 text-sm">{activeOther?.label || activeConvId}</p>
-                    <p className="text-[10px] text-gray-400 uppercase font-bold">{roleLabel(activeOther?.role || '')}</p>
+                    <p className="text-xs text-gray-400 uppercase font-bold">{roleLabel(activeOther?.role || '')}</p>
                   </div>
                 </div>
 
@@ -17211,7 +17302,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                     return (
                       <React.Fragment key={m.id}>
                         {showDate && (
-                          <div className="text-center"><span className="text-[10px] text-gray-400 bg-gray-100 px-3 py-1 rounded-full font-bold">{formatDay(m.created_at)}</span></div>
+                          <div className="text-center"><span className="text-xs text-gray-400 bg-gray-100 px-3 py-1 rounded-full font-bold">{formatDay(m.created_at)}</span></div>
                         )}
                         <div className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-xs rounded-2xl px-4 py-2.5 shadow-sm ${isMine ? 'bg-teal-500 text-white rounded-br-sm' : 'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
@@ -17221,7 +17312,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
                                 📎 {m.attachment_name || 'Pièce jointe'}
                               </button>
                             )}
-                            <p className={`text-[9px] mt-1 ${isMine ? 'text-teal-100' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
+                            <p className={`text-[11px] mt-1 ${isMine ? 'text-teal-100' : 'text-gray-400'}`}>{formatTime(m.created_at)}</p>
                           </div>
                         </div>
                       </React.Fragment>
@@ -17456,7 +17547,7 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
             <button key={tab.key} onClick={() => setSettingsTab(tab.key)}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold transition-all ${settingsTab === tab.key ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
               {tab.label}
-              {tab.proOnly && !hasFeatureAccess(orgSettings, 'pro') && <span className="text-[9px] font-black bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-md">PRO</span>}
+              {tab.proOnly && !hasFeatureAccess(orgSettings, 'pro') && <span className="text-[11px] font-black bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded-md">PRO</span>}
             </button>
           ))}
         </div>
@@ -18680,23 +18771,23 @@ function FinancesView({ supabase, currentOrgId, clients }) {
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
-              <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">CA prévisionnel</p>
+              <p className="text-xs font-black uppercase text-gray-400 tracking-widest mb-1">CA prévisionnel</p>
               <p className="text-lg font-black text-gray-800">{fmt(totals.montantTotal)}</p>
             </div>
             <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-emerald-700 tracking-widest mb-1">Encaissé</p>
+              <p className="text-xs font-black uppercase text-emerald-700 tracking-widest mb-1">Encaissé</p>
               <p className="text-lg font-black text-emerald-800">{fmt(totals.montantPaye)}</p>
             </div>
             <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-orange-700 tracking-widest mb-1">Reste dû</p>
+              <p className="text-xs font-black uppercase text-orange-700 tracking-widest mb-1">Reste dû</p>
               <p className="text-lg font-black text-orange-800">{fmt(totals.resteDu)}</p>
             </div>
             <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateurs</p>
+              <p className="text-xs font-black uppercase text-indigo-700 tracking-widest mb-1">Part formateurs</p>
               <p className="text-lg font-black text-indigo-800">{fmt(totals.partFormateur)}</p>
             </div>
             <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
+              <p className="text-xs font-black uppercase text-violet-700 tracking-widest mb-1">Part organisme</p>
               <p className="text-lg font-black text-violet-800">{fmt(totals.partOrganisme)}</p>
             </div>
           </div>
@@ -18705,13 +18796,13 @@ function FinancesView({ supabase, currentOrgId, clients }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left">
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest">Client</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Montant total</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Payé</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Reste dû</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">% Formateur</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part formateur</th>
-                  <th className="p-4 text-[10px] font-black uppercase text-gray-400 tracking-widest text-right">Part organisme</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest">Client</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">Montant total</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">Payé</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">Reste dû</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">% Formateur</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">Part formateur</th>
+                  <th className="p-4 text-xs font-black uppercase text-gray-400 tracking-widest text-right">Part organisme</th>
                 </tr>
               </thead>
               <tbody>
@@ -19002,7 +19093,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       {/* En-tête */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
@@ -19113,15 +19204,15 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
           {showBuilder && (
             <div className="bg-violet-50 rounded-2xl p-5 border border-violet-200 space-y-4 mb-5">
               <div>
-                <label className="block text-[10px] font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du modèle</label>
+                <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du modèle</label>
                 <input type="text" placeholder="Ex : Questionnaire d'entretien préalable"
                   value={tTitre} onChange={e => setTTitre(e.target.value)}
                   className="w-full p-3 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
               </div>
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-black text-violet-700 uppercase tracking-widest">Questions ({tQuestions.length})</label>
-                  <button type="button" onClick={tAddQuestion} className="text-[10px] font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
+                  <label className="text-xs font-black text-violet-700 uppercase tracking-widest">Questions ({tQuestions.length})</label>
+                  <button type="button" onClick={tAddQuestion} className="text-xs font-black text-violet-600 hover:text-violet-800 uppercase">+ Question</button>
                 </div>
                 {tQuestions.length === 0 && (
                   <div className="py-5 text-center bg-white rounded-xl border border-dashed border-gray-200">
@@ -19132,21 +19223,21 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                   {tQuestions.map((q, qi) => (
                     <div key={q.id} className="bg-white rounded-xl p-3 border border-violet-100 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black text-violet-600 uppercase">Q{qi + 1}</span>
-                        <button type="button" onClick={() => tRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-[10px] flex items-center justify-center hover:bg-red-100">✕</button>
+                        <span className="text-xs font-black text-violet-600 uppercase">Q{qi + 1}</span>
+                        <button type="button" onClick={() => tRemoveQuestion(q.id)} className="w-5 h-5 rounded bg-red-50 text-red-400 text-xs flex items-center justify-center hover:bg-red-100">✕</button>
                       </div>
                       <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => tUpdateQuestion(q.id, 'text', e.target.value)}
                         className="w-full p-2.5 bg-gray-50 border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
                       <div className="flex gap-1.5">
                         {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
                           <button key={val} type="button" onClick={() => tUpdateQuestion(q.id, 'type', val)}
-                            className={`flex-1 py-1 rounded text-[10px] font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
+                            className={`flex-1 py-1 rounded text-xs font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                         ))}
                       </div>
                       <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
                         <input type="checkbox" checked={!!q.obligatoire} onChange={e => tUpdateQuestion(q.id, 'obligatoire', e.target.checked)}
                           className="w-3.5 h-3.5 rounded border-violet-300 text-violet-600 focus:ring-violet-400" />
-                        <span className="text-[10px] font-bold text-gray-500">Obligatoire — le prospect devra y répondre pour valider</span>
+                        <span className="text-xs font-bold text-gray-500">Obligatoire — le prospect devra y répondre pour valider</span>
                       </label>
                       {(q.type === 'single' || q.type === 'multiple') && (
                         <div className="space-y-1">
@@ -19158,7 +19249,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                               {q.options.length > 1 && <button type="button" onClick={() => tRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
                             </div>
                           ))}
-                          <button type="button" onClick={() => tAddOption(q.id)} className="text-[10px] text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
+                          <button type="button" onClick={() => tAddOption(q.id)} className="text-xs text-violet-500 hover:text-violet-700 font-bold">+ Option</button>
                         </div>
                       )}
                     </div>
@@ -19206,7 +19297,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                <tr className="text-left text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
                   <th className="pb-2 pr-3">Prospect</th>
                   <th className="pb-2 pr-3">Modèle</th>
                   <th className="pb-2 pr-3">Envoyé par</th>
@@ -19227,8 +19318,8 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
                     <td className="py-3 pr-3 text-gray-500 text-xs">{e.envoye_at ? new Date(e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
                     <td className="py-3 pr-3">
                       {e.statut === 'rempli'
-                        ? <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3" /> Rempli</span>
-                        : <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-full"><Clock className="w-3 h-3" /> En attente</span>}
+                        ? <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3" /> Rempli</span>
+                        : <span className="inline-flex items-center gap-1 text-xs font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-full"><Clock className="w-3 h-3" /> En attente</span>}
                     </td>
                     <td className="py-3 text-right">
                       {e.statut === 'rempli' && (
@@ -19257,23 +19348,23 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
             <div className="p-6 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Prénom</label>
+                  <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1">Prénom</label>
                   <input type="text" value={sendForm.prenom} onChange={e => setSendForm(f => ({ ...f, prenom: e.target.value }))}
                     className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Nom</label>
+                  <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1">Nom</label>
                   <input type="text" value={sendForm.nom} onChange={e => setSendForm(f => ({ ...f, nom: e.target.value }))}
                     className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
                 </div>
               </div>
               <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Email</label>
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1">Email</label>
                 <input type="email" value={sendForm.email} onChange={e => setSendForm(f => ({ ...f, email: e.target.value }))}
                   className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400" />
               </div>
               <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Modèle de questionnaire</label>
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1">Modèle de questionnaire</label>
                 <select value={sendForm.templateId} onChange={e => setSendForm(f => ({ ...f, templateId: e.target.value }))}
                   className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
                   <option value="">Choisir un modèle…</option>
@@ -19799,7 +19890,7 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
                   >
                     <span className="text-xs font-mono font-semibold text-indigo-600 break-all">{v}</span>
                     {def.example && (
-                      <div className="text-[10px] text-gray-400 italic mt-0.5 break-words">ex : {def.example}</div>
+                      <div className="text-xs text-gray-400 italic mt-0.5 break-words">ex : {def.example}</div>
                     )}
                     {def.label && <div className="text-xs font-medium text-gray-700 mt-1 break-words">{def.label}</div>}
                     {def.description && <div className="text-[11px] text-gray-500 mt-0.5 break-words">{def.description}</div>}
@@ -19960,7 +20051,7 @@ function TrialBanner({ orgSettings, onUpgrade }) {
       <p className="text-xs font-bold" style={{ color: expired ? '#F87171' : '#A78BFA' }}>
         {expired ? '⚠️ Essai expiré' : `🎁 ${daysLeft}j d'essai restant${daysLeft !== 1 ? 's' : ''}`}
       </p>
-      <p className="text-[10px] text-slate-400 mt-0.5">
+      <p className="text-xs text-slate-400 mt-0.5">
         {expired ? 'Cliquez pour souscrire' : 'Cliquez pour choisir un plan'}
       </p>
     </div>
@@ -24725,7 +24816,7 @@ export default function App() {
     return (
       <div className="h-dvh w-full flex flex-col items-center justify-center bg-gray-50">
         <div className="w-12 h-12 border-4 border-violet-600/20 border-t-violet-600 rounded-full animate-spin mb-4"></div>
-        <div className="text-gray-400 font-bold uppercase tracking-widest text-[10px] animate-pulse">Chargement de votre session...</div>
+        <div className="text-gray-400 font-bold uppercase tracking-widest text-xs animate-pulse">Chargement de votre session...</div>
       </div>
     );
   }
@@ -24796,61 +24887,65 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 px-4 py-8 space-y-2 overflow-y-auto nav-scroll">
+        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto nav-scroll">
           {userRole === 'admin' && (
             <>
-              <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'dashboard' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <LayoutDashboard className="w-5 h-5 mr-3" /> Tableau de bord
               </button>
-              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Suivi</p>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Clients
               </button>
-              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <CalendarDays className="w-5 h-5 mr-3" /> Calendrier
               </button>
-              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Contenus</p>
+              <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Documents
               </button>
-              <button onClick={() => { setActiveTab('questionnaires'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'questionnaires' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <FileCheck className="w-5 h-5 mr-3" /> Questionnaires & Quiz
+              <button onClick={() => { setActiveTab('questionnaires'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'questionnaires' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <FileCheck className="w-5 h-5 mr-3" /> Questionnaires
               </button>
-              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layers className="w-5 h-5 mr-3" /> Modules
               </button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
-              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Bell className="w-5 h-5 mr-3" /> Relances Auto
-                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[9px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
+              <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Commercial</p>
+              <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Bell className="w-5 h-5 mr-3" /> Relances
+                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[11px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
               </button>
-              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
-              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Gestion</p>
+              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Wallet className="w-5 h-5 mr-3" /> Finances
               </button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
                 {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
+                  <span className="ml-auto bg-rose-500 text-white text-xs font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
                     {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
                   </span>
                 )}
               </button>
-              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'parametres_org' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Settings className="w-5 h-5 mr-3" /> Paramètres
               </button>
               <button
                 onClick={() => window.open(window.location.origin + window.location.pathname + '?view=formateur', '_blank')}
-                className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mt-2 border border-violet-800/60"
+                className="w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mt-2 border border-violet-800/60"
                 title="Ouvre votre espace formateur dans un nouvel onglet, sans vous déconnecter de l'espace admin"
               >
                 <ExternalLink className="w-5 h-5 mr-3" /> Mon espace Formateur
@@ -24860,32 +24955,32 @@ export default function App() {
 
           {userRole === 'formateur' && (
             <>
-              <button onClick={() => { setActiveTab('accueil_formateur'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil_formateur' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('accueil_formateur'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil_formateur' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <LayoutDashboard className="w-5 h-5 mr-3" /> Accueil
               </button>
-              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Mes Clients
               </button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <CalendarDays className="w-5 h-5 mr-3" /> Calendrier
               </button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
-              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
-              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Wallet className="w-5 h-5 mr-3" /> Finances
               </button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
                 {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
+                  <span className="ml-auto bg-rose-500 text-white text-xs font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
                     {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
                   </span>
                 )}
@@ -24895,19 +24990,19 @@ export default function App() {
 
           {userRole === 'client' && (
             <>
-              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
-              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><CalendarDays className="w-5 h-5 mr-3" /> Calendrier</button>
-              <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Target className="w-5 h-5 mr-3" /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><ClipboardList className="w-5 h-5 mr-3" /> Exercices</button>
-              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><BookOpen className="w-5 h-5 mr-3" /> Ressources</button>
-              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+              <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
+              <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><CalendarDays className="w-5 h-5 mr-3" /> Calendrier</button>
+              <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Target className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><ClipboardList className="w-5 h-5 mr-3" /> Exercices</button>
+              <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><BookOpen className="w-5 h-5 mr-3" /> Ressources</button>
+              <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
                 {unreadMessagesCount > 0 && (
-                  <span className="ml-auto bg-rose-500 text-white text-[10px] font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
+                  <span className="ml-auto bg-rose-500 text-white text-xs font-black rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
                     {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
                   </span>
                 )}
@@ -24925,7 +25020,7 @@ export default function App() {
           <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2">
             {[['mentions','Mentions'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
               <button key={k} onClick={() => setSidebarLegalPage(k)}
-                className="text-[10px] text-violet-400/60 hover:text-violet-300 transition-colors">
+                className="text-xs text-violet-400/60 hover:text-violet-300 transition-colors">
                 {label}
               </button>
             ))}
@@ -24933,7 +25028,7 @@ export default function App() {
           {isAdminActingAsFormateur && (
             <button
               onClick={() => { window.location.href = window.location.origin + window.location.pathname; }}
-              className="w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mb-2 border border-violet-800/60"
+              className="w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 text-violet-300 hover:bg-violet-900/30 hover:text-white font-medium mb-2 border border-violet-800/60"
               title="Revenir à l'espace administrateur (dans cet onglet)"
             >
               <ExternalLink className="w-5 h-5 mr-3 rotate-180" /> Accéder à l'espace administrateur
@@ -25040,6 +25135,9 @@ export default function App() {
             documents={documents}
             formateurs={assignableFormateurs}
             setActiveTab={setActiveTab}
+            modules={modules}
+            orgSettings={orgSettings}
+            currentOrgId={currentOrgId}
           />}
           {activeTab === 'calendrier' && <CalendrierView
             sessions={sessions}
