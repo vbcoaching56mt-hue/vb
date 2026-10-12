@@ -30,8 +30,28 @@ function verifyState(state) {
   }
 }
 
+function readCookie(req, name) {
+  const raw = String(req.headers.cookie || '');
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
+}
+
+function sameNonce(a, b) {
+  if (!a || !b) return false;
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
 module.exports = async (req, res) => {
   const { code, state, error: googleError } = req.query;
+  // Cookie à usage unique : effacé quelle que soit l'issue.
+  const cookieNonce = readCookie(req, 'skorup_gcal_nonce');
+  res.setHeader('Set-Cookie', 'skorup_gcal_nonce=; Path=/api/calendar/google; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
 
   if (googleError) {
     return res.redirect(302, `${APP_URL}/profil?calendar=error`);
@@ -44,6 +64,12 @@ module.exports = async (req, res) => {
 
   const payload = verifyState(state);
   if (!payload || !code) {
+    return res.redirect(302, `${APP_URL}/profil?calendar=error`);
+  }
+  // SÉCURITÉ (2026-10-12) : le retour de Google doit arriver dans le navigateur qui a lancé la
+  // connexion (voir start.js).
+  if (!sameNonce(payload.nonce, cookieNonce)) {
+    console.warn('[calendar/google/callback] state non lié à ce navigateur — connexion refusée');
     return res.redirect(302, `${APP_URL}/profil?calendar=error`);
   }
 

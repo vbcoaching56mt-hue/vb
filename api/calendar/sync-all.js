@@ -155,7 +155,7 @@ module.exports = async (req, res) => {
 
     const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
     if (userErr || !userData?.user) {
-      return res.status(401).json({ error: 'Session invalide', detail: userErr?.message || userErr?.name || 'inconnu' });
+      return res.status(401).json({ error: 'Session invalide' });
     }
     const authUser = userData.user;
 

@@ -46,15 +46,24 @@ function addDaysToDateStr(dateStr, days) {
   return dt.toISOString().split('T')[0];
 }
 
-function interpolate(str, vars) {
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// SÉCURITÉ (2026-10-12) : esc = true pour le corps HTML de l'email — les valeurs (nom du client,
+// titre de séance…) y sont neutralisées. L'objet de l'email (texte simple) n'en a pas besoin.
+function interpolate(str, vars, esc = false) {
+  const v = (x) => (esc ? escapeHtml(x || '') : (x || ''));
   return (str || '')
-    .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, vars.clientName || '')
-    .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, vars.sessionDate || '')
-    .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, vars.sessionTitle || '')
-    .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, vars.sessionTime || '')
-    .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, vars.sessionNumber || '')
-    .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, vars.numeroDossier || '')
-    .replace(/\{module_name\}|\{\{module_name\}\}/g, vars.moduleName || '');
+    .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, () => v(vars.clientName))
+    .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, () => v(vars.sessionDate))
+    .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, () => v(vars.sessionTitle))
+    .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, () => v(vars.sessionTime))
+    .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, () => v(vars.sessionNumber))
+    .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, () => v(vars.numeroDossier))
+    .replace(/\{module_name\}|\{\{module_name\}\}/g, () => v(vars.moduleName));
 }
 
 module.exports = async (req, res) => {
@@ -99,19 +108,8 @@ module.exports = async (req, res) => {
     }
 
     if (callerErr || !callerRow || callerRow.role !== 'admin' || !callerRow.organisation_id) {
-      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : à retirer une fois le problème identifié.
-      // Inclut le détail exact de ce que le serveur a vu, pour ne plus avoir à deviner.
-      return res.status(403).json({
-        error: 'Réservé aux administrateurs d\'un organisme. [DEBUG-v3-auth_uid]',
-        debug: {
-          authUserId: authData.user.id || null,
-          authUserEmail: authData.user.email || null,
-          callerErrMessage: callerErr ? callerErr.message : null,
-          callerRowFound: !!callerRow,
-          callerRowRole: callerRow ? callerRow.role : null,
-          callerRowOrgId: callerRow ? callerRow.organisation_id : null,
-        },
-      });
+      // SÉCURITÉ (2026-10-12) : plus aucun détail technique renvoyé au navigateur.
+      return res.status(403).json({ error: 'Réservé aux administrateurs d\'un organisme.' });
     }
     const organisationId = callerRow.organisation_id;
 
@@ -235,23 +233,15 @@ module.exports = async (req, res) => {
         emailQueue.push({
           setting, client, clientName, session,
           subject: interpolate(setting.email_subject, vars),
-          body: interpolate(setting.email_body, vars),
+          body: interpolate(setting.email_body, vars, true),
         });
       }
     }
 
     if (emailQueue.length === 0) {
-      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28/29) : à retirer une fois le problème identifié.
       return res.status(200).json({
         sent: 0, simulated: 0,
-        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante). [DEBUG-v5-sessions]",
-        debug: {
-          todayStr,
-          organisationId,
-          settingsInfo: debugSettingsInfo,
-          sessionsFound: (sessions || []).map(s => ({ id: s.id, date: s.date, client_id: s.client_id })),
-          sessionSkipDetails: debugSessionInfo,
-        },
+        message: "Aucun email à envoyer aujourd'hui (aucune séance correspondante).",
       });
     }
 
@@ -327,10 +317,11 @@ module.exports = async (req, res) => {
       if (logInsertErr) debugSendResults[debugSendResults.length - 1].logInsertError = logInsertErr.message;
     }
 
-    // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) : à retirer une fois le problème identifié.
-    return res.status(200).json({ sent, simulated, debug_v6_send: debugSendResults });
+    const failed = debugSendResults.filter(r => !r.ok).length;
+    if (failed) console.warn('[automation/trigger-manual] envois échoués :', debugSendResults.filter(r => !r.ok));
+    return res.status(200).json({ sent, simulated, failed });
   } catch (err) {
     console.error('[automation/trigger-manual]', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne lors de l\'envoi des relances.' });
   }
 };

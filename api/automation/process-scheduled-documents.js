@@ -36,6 +36,18 @@ const { createClient } = require('@supabase/supabase-js');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const crypto = require('crypto');
+
+// SÉCURITÉ (2026-10-12) : seuls les déclenchements planifiés de Vercel sont acceptés (Vercel
+// envoie "Authorization: Bearer <CRON_SECRET>" dès que la variable CRON_SECRET existe). Avant,
+// n'importe qui pouvait lancer cette fonction (et donc des conversions CloudConvert payantes).
+function isAuthorizedCron(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const a = Buffer.from(String(req.headers['authorization'] || ''));
+  const b = Buffer.from(`Bearer ${secret}`);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // Le cron tourne 2x/jour (garde-fou horaire Paris ci-dessous) donc, même un jour où beaucoup de
 // documents tombent à échéance le même jour, le reliquat est repris automatiquement au passage
@@ -47,12 +59,8 @@ function todayInParisStr() {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Non autorisé.' });
 
   // Même garde-fou horaire France que api/automation/process.js : un seul des deux cron
   // (été/hiver) programmés dans vercel.json doit réellement traiter les envois, l'autre ne fait
@@ -65,7 +73,7 @@ module.exports = async (req, res) => {
         .find(p => p.type === 'hour').value
     );
     if (parisHour !== 8) {
-      return res.json({ skipped: true, reason: 'not_target_hour_paris', parisHour, schedule: cronSchedule });
+      return res.json({ skipped: true, reason: 'not_target_hour_paris' });
     }
   }
 
@@ -73,7 +81,8 @@ module.exports = async (req, res) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.REACT_APP_SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl || !serviceKey) {
-    return res.status(500).json({ error: 'Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).' });
+    console.error('[process-scheduled-documents] Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).');
+    return res.status(500).json({ error: 'Configuration serveur incomplète.' });
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -110,16 +119,17 @@ module.exports = async (req, res) => {
       }
     }
 
+    // SÉCURITÉ (2026-10-12) : réponse limitée à des compteurs (le détail reste dans les logs
+    // Vercel et sur chaque ligne client_documents : sent_at / send_error).
     return res.json({
       processed: results.length,
       sent: results.filter(r => r.ok).length,
       remaining_for_next_run: remaining,
-      results,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
     console.error('[process-scheduled-documents] Erreur:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };
 
@@ -127,6 +137,11 @@ async function generateAndSendOne(supabase, row) {
   // 1. Client
   const { data: client, error: clientErr } = await supabase.from('clients').select('*').eq('id', row.client_id).single();
   if (clientErr || !client) throw new Error('Client introuvable.');
+  // SÉCURITÉ (2026-10-12) : le client doit appartenir au même organisme que l'envoi programmé —
+  // jamais de document généré avec les données d'un client d'un autre organisme.
+  if (row.organisation_id && String(client.organisation_id) !== String(row.organisation_id)) {
+    throw new Error('Client hors de cet organisme.');
+  }
 
   // 2. Modèle (même table que fetchDocuments côté front : module_step_resources, type='document')
   const { data: msr, error: msrErr } = await supabase

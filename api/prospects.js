@@ -29,6 +29,28 @@ const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+// SÉCURITÉ (2026-10-12) : les liens des emails pointent toujours vers l'application SkorUp (avant :
+// n'importe quel site https envoyé par le navigateur était accepté → risque d'hameçonnage), et
+// les textes insérés (noms, titres de documents) sont neutralisés.
+const APP_URL = (process.env.APP_URL || 'https://app.skorup.fr').replace(/\/+$/, '');
+const ALLOWED_ORIGINS = new Set([
+  APP_URL,
+  'https://app.skorup.fr',
+  ...String(process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean),
+]);
+function safeOriginOf(origin) {
+  const o = typeof origin === 'string' ? origin.trim().replace(/\/+$/, '') : '';
+  return ALLOWED_ORIGINS.has(o) ? o : APP_URL;
+}
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function plainText(v, max = 200) {
+  return String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
+}
+
 function echappe(v = '') {
   return String(v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -67,17 +89,27 @@ async function handleEnvoyer(req, res) {
   const organisationId = callerRow.organisation_id;
 
   const { templateId, nom, prenom, email, origin } = req.body || {};
-  const nomTrim = (nom || '').toString().trim();
-  const prenomTrim = (prenom || '').toString().trim();
+  const nomTrim = plainText(nom, 100);
+  const prenomTrim = plainText(prenom, 100);
   const emailTrim = (email || '').toString().trim().toLowerCase();
 
   if (!templateId) return res.status(400).json({ error: 'Choisissez un modèle de questionnaire.' });
   if (!nomTrim || !prenomTrim) return res.status(400).json({ error: 'Le nom et le prénom sont requis.' });
   if (!EMAIL_RE.test(emailTrim)) return res.status(400).json({ error: 'Adresse email invalide.' });
 
-  const safeOrigin = (typeof origin === 'string' && /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}$/i.test(origin))
-    ? origin
-    : 'https://app.skorup.fr';
+  const safeOrigin = safeOriginOf(origin);
+
+  // SÉCURITÉ (2026-10-12) : limite anti-abus — 50 questionnaires envoyés par organisme sur 24 h
+  // (empêche qu'un compte piraté serve à envoyer des emails en masse au nom de SkorUp).
+  const depuis = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count: envoisRecents, error: countErr } = await supabaseAdmin
+    .from('prospect_questionnaire_envois')
+    .select('id', { count: 'exact', head: true })
+    .eq('organisation_id', organisationId)
+    .gte('created_at', depuis);
+  if (!countErr && (envoisRecents || 0) >= 50) {
+    return res.status(429).json({ error: 'Limite atteinte : 50 questionnaires envoyés en 24 h. Réessayez demain.' });
+  }
 
   const { data: template, error: templateErr } = await supabaseAdmin
     .from('prospect_questionnaire_templates')
@@ -112,7 +144,7 @@ async function handleEnvoyer(req, res) {
   const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
     <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
     <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
-      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${prenomTrim},</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${escapeHtml(prenomTrim)},</p>
       <p style="color:#111827;font-size:14px;line-height:1.7;">Avant votre entretien, merci de prendre quelques minutes pour compléter ce court questionnaire : <strong>${echappe(template.titre)}</strong>.</p>
       <p style="text-align:center;margin:28px 0;">
         <a href="${lien}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Répondre au questionnaire</a>
@@ -184,6 +216,10 @@ async function handleSoumettre(req, res) {
   if (!reponses || typeof reponses !== 'object' || Array.isArray(reponses)) {
     return res.status(400).json({ error: 'Réponses manquantes.' });
   }
+  // SÉCURITÉ (2026-10-12) : taille maximale des réponses (page publique, sans compte).
+  if (JSON.stringify(reponses).length > 100000) {
+    return res.status(413).json({ error: 'Réponses trop longues.' });
+  }
 
   // Mise à jour CONDITIONNELLE : ne touche la ligne que si elle est encore au statut 'envoye' et
   // pas expirée — empêche tout écrasement d'une réponse déjà soumise.
@@ -216,6 +252,6 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Action invalide.' });
   } catch (err) {
     console.error('[prospects]', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };

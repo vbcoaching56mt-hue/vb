@@ -42,7 +42,7 @@ module.exports = async (req, res) => {
       console.error('[calendar/google/start] getUser a échoué', userErr);
       // Détail exposé temporairement (rien de sensible : juste le message d'erreur Supabase Auth)
       // pour diagnostiquer sans avoir besoin d'aller lire les logs Vercel.
-      return res.status(401).json({ error: 'Session invalide', detail: userErr?.message || userErr?.name || 'inconnu' });
+      return res.status(401).json({ error: 'Session invalide' });
     }
     const authUser = userData.user;
 
@@ -88,7 +88,13 @@ module.exports = async (req, res) => {
 
     if (!ownerId) return res.status(403).json({ error: 'Identité introuvable' });
 
-    const state = signState({ ownerId, role, orgId, ts: Date.now() });
+    // SÉCURITÉ (2026-10-12) : la connexion est liée au navigateur qui l'a lancée. Un identifiant
+    // aléatoire est placé dans un cookie (illisible par les scripts) ET dans le "state" signé ; le
+    // retour de Google (callback.js) n'est accepté que si les deux correspondent. Empêche qu'un
+    // lien de connexion préparé par quelqu'un d'autre rattache SON compte Google à votre espace.
+    const nonce = crypto.randomBytes(16).toString('base64url');
+    res.setHeader('Set-Cookie', `skorup_gcal_nonce=${nonce}; Path=/api/calendar/google; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+    const state = signState({ ownerId, role, orgId, nonce, ts: Date.now() });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: REDIRECT_URI,
@@ -102,6 +108,6 @@ module.exports = async (req, res) => {
     return res.status(200).json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
   } catch (err) {
     console.error('[calendar/google/start]', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };

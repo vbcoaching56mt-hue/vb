@@ -455,6 +455,21 @@ const notifyClientByEmail = (clientId, label) => {
   }).catch(() => {});
 };
 
+// SÉCURITÉ (2026-10-12) : neutralise le texte inséré dans du HTML généré à la main (récapitulatif
+// de séances, certificat de signature, autorisation de conservation). Sans cela, un nom ou un titre
+// contenant du code pouvait s'exécuter dans le navigateur de l'admin/formateur qui génère le PDF.
+const escHtml = (v) => String(v ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+// Source d'image sûre pour <img src="…"> : image encodée (data:…;base64,…) ou lien http(s)/blob.
+// Tout le reste est ignoré (renvoie '').
+const safeImgSrc = (v) => {
+  const s = String(v || '').trim();
+  if (/^data:[a-z0-9.+/-]*(;[a-z0-9=._+-]+)*;base64,[a-z0-9+/=\s]+$/i.test(s)) return s.replace(/\s/g, '');
+  if (/^(https?:|blob:)/i.test(s)) return escHtml(s);
+  return '';
+};
+
 const computeInitials = (fullName) => {
   const words = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '';
@@ -830,10 +845,15 @@ const isInternalDossierDoc = (d) => DOSSIER_DOC_TYPES.includes(d?.type_document)
 // personne n'est connecté, l'appel ne fait rien. Voir ProfileView pour l'écran de connexion.
 const syncSeanceToCalendar = (clientId, numeroSeance) => {
   if (!clientId || numeroSeance === undefined || numeroSeance === null) return;
-  fetch('/api/calendar/sync-seance', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, numeroSeance }),
+  // SÉCURITÉ (2026-10-12) : le serveur exige maintenant d'être connecté et autorisé sur ce client.
+  supabase.auth.getSession().then(({ data }) => {
+    const accessToken = data?.session?.access_token;
+    if (!accessToken) return;
+    fetch('/api/calendar/sync-seance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ clientId, numeroSeance }),
+    }).catch(() => {});
   }).catch(() => {});
 };
 
@@ -3749,7 +3769,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
         .select('id, organisation_id')
-        .ilike('email_contact', userEmail)
+        .ilike('email_contact', escapeLike(userEmail))
         .single();
 
       if (clientData) {
@@ -15033,13 +15053,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, sauf accord écrit du bénéficiaire.
         </div>
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:10px;">
-          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;width:38%;" >Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${clientFullName}</td></tr>
-          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${formateurNom || '—'}</td></tr>
-          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${dateDebut || '—'}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;width:38%;" >Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${escHtml(clientFullName)}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(formateurNom || '—')}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(dateDebut || '—')}</td></tr>
         </table>
         <h2 style="font-size:12px;font-weight:800;color:#7C3AED;margin:0 0 12px;">Choix du bénéficiaire</h2>
         <p style="font-size:9.5px;color:#374151;margin:0 0 16px;line-height:1.6;">
-          Je soussigné(e) ${clientFullName}, bénéficiaire du bilan de compétences réalisé par SkorUp, autorise SkorUp à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
+          Je soussigné(e) ${escHtml(clientFullName)}, bénéficiaire du bilan de compétences réalisé par SkorUp, autorise SkorUp à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
         </p>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
           <span style="font-size:18px;line-height:1;color:${checkColorConserve};flex-shrink:0;">${checkConserve}</span>
@@ -15054,7 +15074,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             <p style="font-size:9px;color:#6b7280;margin:0 0 4px;">Fait le ${today}</p>
             <p style="font-size:9px;color:#6b7280;margin:0;">Signature du bénéficiaire :</p>
           </div>
-          <img src="${signatureDataUrl}" style="max-width:210px;max-height:80px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;padding:4px;" />
+          <img src="${safeImgSrc(signatureDataUrl)}" style="max-width:210px;max-height:80px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;padding:4px;" />
         </div>
       `;
       document.body.appendChild(el);
@@ -19437,9 +19457,6 @@ function AutomationSettingsView({ supabase, currentOrgId }) {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
       });
       const result = await resp.json().catch(() => ({}));
-      // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) : affiche la réponse complète du serveur
-      // (y compris le détail "debug" en cas d'erreur 403) — à retirer une fois le problème identifié.
-      console.log('[triggerManual][DEBUG] Réponse complète du serveur :', result);
       if (!resp.ok) throw new Error(result.error || `Erreur HTTP ${resp.status}`);
 
       if (result.simulated > 0) {
@@ -20302,7 +20319,7 @@ export default function App() {
           // plus haut), sinon un lien profond ou un simple F5 ramènerait toujours à la page d'accueil.
           handleLogin(userData.role, userData.id, userData.organisation_id, true);
         } else {
-          const { data: clientData, error: clientDataErr } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', session.user.email).maybeSingle();
+          const { data: clientData, error: clientDataErr } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', escapeLike(session.user.email)).maybeSingle();
           if (clientDataErr) console.error('[initSession] Erreur lecture profil client :', clientDataErr);
           if (clientData) {
             handleLogin('client', clientData.id, clientData.organisation_id, true);
@@ -24209,16 +24226,16 @@ export default function App() {
             const filteredItems = isEmargementOnly ? g.items.filter(i => i.type_activite === 'signature') : g.items;
             if (filteredItems.length === 0) return '';
             const itemsHtml = filteredItems.map(item => {
-              const sigClient = item.signature_image || item.signature_client || null;
-              const sigCoach = item.signature_formateur || null;
+              const sigClient = safeImgSrc(item.signature_image || item.signature_client) || null;
+              const sigCoach = safeImgSrc(item.signature_formateur) || null;
               const dateSigClient = item.date_signature_client ? new Date(item.date_signature_client).toLocaleString('fr-FR') : (item.statut === 'Signé' ? 'Horodatage certifié' : null);
               const dateSigCoach = item.date_signature_formateur ? new Date(item.date_signature_formateur).toLocaleString('fr-FR') : (item.statut_formateur === 'Signé' ? 'Horodatage certifié' : null);
 
               return `
                 <div style="margin-bottom: 25px; padding-left: 20px; border-left: 3px solid #f3f4f6;">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <span style="font-weight: bold; font-size: 14px; color: #1f2937;">${item.type_activite === 'signature' ? '✍️' : '📄'} ${item.ressource_titre || item.nom}</span>
-                    <span style="font-size: 11px; font-weight: 800; color: ${item.statut === 'Signé' ? '#059669' : '#f59e0b'}; text-transform: uppercase;">${item.statut}</span>
+                    <span style="font-weight: bold; font-size: 14px; color: #1f2937;">${item.type_activite === 'signature' ? '✍️' : '📄'} ${escHtml(item.ressource_titre || item.nom)}</span>
+                    <span style="font-size: 11px; font-weight: 800; color: ${item.statut === 'Signé' ? '#059669' : '#f59e0b'}; text-transform: uppercase;">${escHtml(item.statut)}</span>
                   </div>
                   
                   <div style="display: flex; gap: 40px; margin-top: 10px;">
@@ -24245,10 +24262,10 @@ export default function App() {
               <div style="margin-bottom: 40px; page-break-inside: avoid;">
                 <div style="background: #f8fafc; padding: 15px 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
                   <div>
-                    <h3 style="margin: 0; color: #4f46e5; font-size: 16px;">SÉANCE ${g.numero} : ${g.nom.split(' - ')[0]}</h3>
+                    <h3 style="margin: 0; color: #4f46e5; font-size: 16px;">SÉANCE ${escHtml(g.numero)} : ${escHtml(String(g.nom || '').split(' - ')[0])}</h3>
                     <p style="margin: 5px 0 0; font-size: 12px; color: #64748b; font-weight: bold;">
                       📅 ${g.date ? new Date(g.date).toLocaleDateString('fr-FR') : 'Date non définie'} 
-                      &nbsp;&nbsp; ⏰ ${g.debut || '--:--'} - ${g.fin || '--:--'}
+                      &nbsp;&nbsp; ⏰ ${escHtml(g.debut || '--:--')} - ${escHtml(g.fin || '--:--')}
                     </p>
                   </div>
                 </div>
@@ -24267,8 +24284,8 @@ export default function App() {
                   <p style="color: #94a3b8; font-size: 11px; font-weight: bold; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.1em;">${isEmargementOnly ? 'Émargements signés — Traçabilité Qualiopi' : 'Document de traçabilité Qualiopi'}</p>
                 </div>
                 <div style="text-align: right;">
-                  <h2 style="font-size: 18px; font-weight: 800; color: #1e293b; margin: 0;">${doc.nomcomplet_client || doc.nom}</h2>
-                  <p style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 600;">Dossier : ${doc.numero_dossier || 'N/A'}</p>
+                  <h2 style="font-size: 18px; font-weight: 800; color: #1e293b; margin: 0;">${escHtml(doc.nomcomplet_client || doc.nom)}</h2>
+                  <p style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 600;">Dossier : ${escHtml(doc.numero_dossier || 'N/A')}</p>
                 </div>
               </div>
 
@@ -24403,14 +24420,15 @@ export default function App() {
         certEl.style.top = '-9999px';
 
         const renderSigBlock = (role, imageBase64, name) => {
-          const imageHtml = imageBase64
-            ? `<img src="${imageBase64}" style="max-width: 280px; height: auto; border: 1px solid #d1d5db;" />`
+          const safeSrc = safeImgSrc(imageBase64);
+          const imageHtml = safeSrc
+            ? `<img src="${safeSrc}" style="max-width: 280px; height: auto; border: 1px solid #d1d5db;" />`
             : '<div style="width:280px;height:120px;border:1px dashed #9ca3af;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:12px;">Aucune signature attachée</div>';
 
           return `
             <div style="flex:1; min-width:280px; padding: 14px; border: 1px solid #d1d5db; border-radius: 12px; margin: 8px;">
-              <h3 style="font-size: 16px; margin-bottom: 10px;">${role}</h3>
-              <p style="font-size: 12px; margin-bottom: 8px; font-weight: bold;">${name}</p>
+              <h3 style="font-size: 16px; margin-bottom: 10px;">${escHtml(role)}</h3>
+              <p style="font-size: 12px; margin-bottom: 8px; font-weight: bold;">${escHtml(name)}</p>
               <p style="font-size: 12px; margin-bottom: 10px;">${dateText} à ${timeText}</p>
               ${imageHtml}
             </div>
@@ -24420,7 +24438,7 @@ export default function App() {
         certEl.innerHTML = `
           <div style="padding: 20px; border: 1px solid #d1d5db; border-radius: 12px;">
             <h1 style="font-size: 24px; margin-bottom: 16px;">Certificat de signature électronique</h1>
-            <p style="font-size: 14px; margin-bottom: 16px;"><strong>Document :</strong> ${doc.nom || 'Document'}</p>
+            <p style="font-size: 14px; margin-bottom: 16px;"><strong>Document :</strong> ${escHtml(doc.nom || 'Document')}</p>
             <div style="display:flex; flex-wrap:wrap; gap:16px;">
               ${renderSigBlock('Client', clientImageBase64, clientName)}
               ${renderSigBlock('Formateur', formateurImageBase64, formateurName)}
@@ -24554,7 +24572,7 @@ export default function App() {
             const { data: clientData } = await supabase
               .from('clients')
               .select('id, organisation_id')
-              .ilike('email_contact', user.email)
+              .ilike('email_contact', escapeLike(user.email))
               .single();
             if (clientData?.id) {
               handleLogin('client', clientData.id, clientData.organisation_id);
@@ -24598,7 +24616,7 @@ export default function App() {
                 return;
               }
 
-              const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', user.email).single();
+              const { data: clientData } = await supabase.from('clients').select('id, organisation_id').ilike('email_contact', escapeLike(user.email)).single();
               if (clientData && clientData.id) {
                  handleLogin('client', clientData.id, clientData.organisation_id);
                  setIsResetPassword(false);

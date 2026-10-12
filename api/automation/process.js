@@ -15,6 +15,26 @@
 // silencieusement, selon l'heure exacte du cron.
 
 const { createClient } = require('@supabase/supabase-js');
+const crypto = require('crypto');
+
+// SÉCURITÉ (2026-10-12) : seuls les déclenchements planifiés de Vercel sont acceptés. Vercel
+// envoie automatiquement l'en-tête "Authorization: Bearer <CRON_SECRET>" dès que la variable
+// d'environnement CRON_SECRET existe dans le projet. Sans cette clé, plus personne ne peut lancer
+// cette fonction depuis Internet (avant : n'importe qui pouvait déclencher l'envoi des relances).
+// Le bouton "Tester maintenant" de l'admin utilise api/automation/trigger-manual.js (inchangé).
+function isAuthorizedCron(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const a = Buffer.from(String(req.headers['authorization'] || ''));
+  const b = Buffer.from(`Bearer ${secret}`);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 // ── Utilitaires de dates fuseau France ──────────────────────────────────────
 function todayInParisStr() {
@@ -28,13 +48,8 @@ function addDaysToDateStr(dateStr, days) {
 }
 
 module.exports = async (req, res) => {
-  // CORS pour appels depuis le navigateur (admin "Tester maintenant")
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Non autorisé.' });
 
   // ── Garde-fou horaire France pour les invocations Cron ───────────────────
   // Vercel Cron s'exécute toujours en UTC. Deux cron sont programmés dans vercel.json
@@ -51,7 +66,7 @@ module.exports = async (req, res) => {
         .find(p => p.type === 'hour').value
     );
     if (parisHour !== 8) {
-      return res.json({ skipped: true, reason: 'not_target_hour_paris', parisHour, schedule: cronSchedule });
+      return res.json({ skipped: true, reason: 'not_target_hour_paris' });
     }
   }
 
@@ -62,7 +77,8 @@ module.exports = async (req, res) => {
   const fromEmail    = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
 
   if (!supabaseUrl || !serviceKey) {
-    return res.status(500).json({ error: 'Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).' });
+    console.error('[automation/process] Variables Supabase non configurées (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).');
+    return res.status(500).json({ error: 'Configuration serveur incomplète.' });
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -152,7 +168,7 @@ module.exports = async (req, res) => {
           .maybeSingle();
 
         if (existingLog) {
-          results.push({ skipped: true, reason: 'already_sent_today', client: client.nom_complet, trigger: setting.trigger_type });
+          results.push({ skipped: true, reason: 'already_sent_today', trigger: setting.trigger_type });
           continue;
         }
 
@@ -172,17 +188,23 @@ module.exports = async (req, res) => {
         const moduleName = (modulesList || []).find(m => String(m.id) === String(client.module_id))?.nom
           || client.module_name || '';
 
-        const replaceVars = (str) => (str || '')
-          .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, clientName)
-          .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, sessionDate)
-          .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, sessionTitle)
-          .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, sessionTime)
-          .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, sessionNumber)
-          .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, numeroDossier)
-          .replace(/\{module_name\}|\{\{module_name\}\}/g, moduleName);
+        // SÉCURITÉ (2026-10-12) : dans le corps HTML, les valeurs (nom du client, titre…) sont
+        // neutralisées — un nom contenant du code ne peut plus modifier le contenu de l'email.
+        // L'objet de l'email est du texte simple : pas de neutralisation nécessaire.
+        const replaceVars = (str, esc = false) => {
+          const v = (x) => (esc ? escapeHtml(x) : x);
+          return (str || '')
+            .replace(/\{nom_client\}|\{client_name\}|\{\{nom_client\}\}|\{\{client_name\}\}/g, () => v(clientName))
+            .replace(/\{date_seance\}|\{session_date\}|\{\{date_seance\}\}|\{\{session_date\}\}/g, () => v(sessionDate))
+            .replace(/\{titre_seance\}|\{session_title\}|\{\{titre_seance\}\}|\{\{session_title\}\}/g, () => v(sessionTitle))
+            .replace(/\{heure_seance\}|\{session_time\}|\{\{heure_seance\}\}|\{\{session_time\}\}/g, () => v(sessionTime))
+            .replace(/\{numero_seance\}|\{session_number\}|\{\{numero_seance\}\}|\{\{session_number\}\}/g, () => v(sessionNumber))
+            .replace(/\{numero_dossier\}|\{\{numero_dossier\}\}/g, () => v(numeroDossier))
+            .replace(/\{module_name\}|\{\{module_name\}\}/g, () => v(moduleName));
+        };
 
         const emailSubject = replaceVars(setting.email_subject);
-        const emailBodyText = replaceVars(setting.email_body);
+        const emailBodyText = replaceVars(setting.email_body, true);
         const emailBodyHtml = emailBodyText.replace(/\n/g, '<br>');
 
         // Envoyer via Resend
@@ -248,22 +270,23 @@ module.exports = async (req, res) => {
 
         if (emailSent) {
           sent++;
-          results.push({ sent: true, client: clientName, email: client.email_contact, trigger: setting.trigger_type });
+          results.push({ sent: true, trigger: setting.trigger_type });
         } else {
-          results.push({ sent: false, error: emailError, client: clientName, trigger: setting.trigger_type });
+          results.push({ sent: false, trigger: setting.trigger_type });
         }
       }
     }
 
+    // SÉCURITÉ (2026-10-12) : la réponse ne contient plus que des compteurs (avant : noms et
+    // emails des clients de tous les organismes).
     return res.json({
       sent,
       processed: results.length,
-      details: results,
       timestamp: new Date().toISOString(),
     });
 
   } catch (err) {
     console.error('[automation/process] Erreur:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };

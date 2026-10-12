@@ -133,10 +133,47 @@ async function upsertGoogleEvent(connection, ownerId, seance) {
   }
 }
 
+// SÉCURITÉ (2026-10-12) : l'appelant doit être connecté, et avoir le droit sur ce client :
+// admin/formateur du même organisme, ou le client lui-même. Avant, n'importe qui sur Internet
+// pouvait déclencher la synchronisation de n'importe quelle séance.
+async function callerCanSyncClient(token, clientId) {
+  if (!token) return false;
+  const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+  if (authErr || !authData?.user) return false;
+  const authUser = authData.user;
+
+  const { data: client } = await supabaseAdmin
+    .from('clients')
+    .select('id, organisation_id')
+    .eq('id', clientId)
+    .maybeSingle();
+  if (!client) return false;
+
+  // Le client lui-même (clients.id = identifiant de son compte de connexion).
+  if (String(client.id) === String(authUser.id)) return true;
+
+  let { data: staff } = await supabaseAdmin
+    .from('utilisateurs')
+    .select('role, organisation_id')
+    .eq('auth_uid', authUser.id)
+    .maybeSingle();
+  if (!staff && authUser.email) {
+    const byEmail = await supabaseAdmin
+      .from('utilisateurs')
+      .select('role, organisation_id')
+      .is('auth_uid', null)
+      .eq('email', authUser.email)
+      .maybeSingle();
+    staff = byEmail.data;
+  }
+  return !!(staff && ['admin', 'formateur'].includes(staff.role)
+    && staff.organisation_id && String(staff.organisation_id) === String(client.organisation_id));
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -144,6 +181,11 @@ module.exports = async (req, res) => {
     const { clientId, numeroSeance } = req.body || {};
     if (!clientId || numeroSeance === undefined || numeroSeance === null) {
       return res.status(400).json({ error: 'clientId et numeroSeance requis' });
+    }
+
+    const token = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+    if (!(await callerCanSyncClient(token, clientId))) {
+      return res.status(403).json({ error: 'Non autorisé.' });
     }
 
     const { data: rows, error: rowsErr } = await supabaseAdmin
@@ -197,6 +239,6 @@ module.exports = async (req, res) => {
     return res.status(200).json({ synced });
   } catch (err) {
     console.error('[calendar/sync-seance]', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };

@@ -20,10 +20,26 @@ const supabaseAdmin = createClient(
 const resendApiKey = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
 
+// SÉCURITÉ (2026-10-12) : les liens des emails pointent toujours vers l'application SkorUp (avant :
+// n'importe quel site https envoyé par le navigateur était accepté → risque d'hameçonnage), et
+// les textes insérés (noms, titres de documents) sont neutralisés.
+const APP_URL = (process.env.APP_URL || 'https://app.skorup.fr').replace(/\/+$/, '');
+const ALLOWED_ORIGINS = new Set([
+  APP_URL,
+  'https://app.skorup.fr',
+  ...String(process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean),
+]);
 function safeOriginOf(origin) {
-  return (typeof origin === 'string' && /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}$/i.test(origin))
-    ? origin
-    : 'https://app.skorup.fr';
+  const o = typeof origin === 'string' ? origin.trim().replace(/\/+$/, '') : '';
+  return ALLOWED_ORIGINS.has(o) ? o : APP_URL;
+}
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function plainText(v, max = 200) {
+  return String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
 }
 
 async function envoyerEmailFormateur(formateur, subject, bodyHtml) {
@@ -82,8 +98,8 @@ async function handleAssignation(req, res, authData) {
   if (!client) return res.status(404).json({ error: 'Client introuvable dans cet organisme.' });
   if (!formateur) return res.status(404).json({ error: 'Formateur introuvable dans cet organisme.' });
 
-  const clientName = client.nom_complet || 'un nouveau client';
-  const formateurFirstName = (formateur.nom || '').split(' ')[0] || '';
+  const clientName = plainText(client.nom_complet || 'un nouveau client');
+  const formateurFirstName = escapeHtml((formateur.nom || '').split(' ')[0] || '');
   const link = `${safeOrigin}/?view=formateur&client=${encodeURIComponent(clientId)}`;
 
   const subject = `Nouveau client assigné : ${clientName}`;
@@ -91,7 +107,7 @@ async function handleAssignation(req, res, authData) {
     <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
     <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
       <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${formateurFirstName},</p>
-      <p style="color:#111827;font-size:14px;line-height:1.7;"><strong>${clientName}</strong> vient de vous être assigné comme client sur SkorUp.</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;"><strong>${escapeHtml(clientName)}</strong> vient de vous être assigné comme client sur SkorUp.</p>
       <p style="text-align:center;margin:28px 0;">
         <a href="${link}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir la fiche du client</a>
       </p>
@@ -157,15 +173,16 @@ async function handleNouveauDocument(req, res, authData) {
   if (formateurErr) throw formateurErr;
   if (!formateur) return res.status(404).json({ error: 'Formateur introuvable dans cet organisme.' });
 
-  const formateurFirstName = (formateur.nom || '').split(' ')[0] || '';
+  const formateurFirstName = escapeHtml((formateur.nom || '').split(' ')[0] || '');
   const link = `${safeOrigin}/?view=formateur`;
+  const docName = plainText(documentName);
 
-  const subject = `Nouveau document à signer : ${documentName}`;
+  const subject = `Nouveau document à signer : ${docName}`;
   const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
     <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
     <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
       <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${formateurFirstName},</p>
-      <p style="color:#111827;font-size:14px;line-height:1.7;">Un nouveau document est en attente de votre signature sur SkorUp : <strong>${documentName}</strong>.</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Un nouveau document est en attente de votre signature sur SkorUp : <strong>${escapeHtml(docName)}</strong>.</p>
       <p style="text-align:center;margin:28px 0;">
         <a href="${link}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir mes documents</a>
       </p>
@@ -200,6 +217,6 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'type invalide (attendu : "assignation" ou "nouveau_document").' });
   } catch (err) {
     console.error('[formateur/notify]', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur interne.' });
   }
 };
