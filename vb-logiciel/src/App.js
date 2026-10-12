@@ -25203,10 +25203,12 @@ export default function App() {
             <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
           {(() => {
-            const logoEspace = brandSettings?.logo_url || orgSettings?.logo_url || null;
+            // Logo et nom affichés aux clients/formateurs = personnalisation du portail (offre Pro) :
+            // on reprend exactement les réglages « Personnalisation », comme l'en-tête ordinateur.
+            const logoEspace = userRole === 'admin' ? (orgSettings?.logo_url || null) : (brandSettings?.logo_url || null);
             const nomEspace = userRole === 'admin'
               ? (orgSettings?.nom || 'Espace Admin')
-              : (brandSettings?.org_name || orgSettings?.nom || 'SkorUp');
+              : (brandSettings?.org_name || 'SkorUp');
             const nomPersonne = userRole === 'client'
               ? clients.find(c => c.id === currentUserId)?.nom
               : userRole === 'formateur' ? assignableFormateurs.find(f => f.id === currentUserId)?.nom : orgSettings?.nom;

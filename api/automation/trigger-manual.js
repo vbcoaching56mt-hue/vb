@@ -47,12 +47,18 @@ function expediteurPour(nomOrganisme) {
 async function infosOrganisme(supabase, organisationId) {
   if (!organisationId) return { nom: '', replyTo: null };
   const [orgRes, adminRes] = await Promise.all([
-    supabase.from('organisations').select('nom').eq('id', organisationId).maybeSingle(),
+    supabase.from('organisations').select('nom, subscription_status, subscribed_plan').eq('id', organisationId).maybeSingle(),
     supabase.from('utilisateurs').select('email').eq('organisation_id', organisationId).eq('role', 'admin').order('id', { ascending: true }).limit(1),
   ]);
   const email = adminRes && adminRes.data && adminRes.data[0] && adminRes.data[0].email;
+  // Emails au nom de l'organisme = personnalisation de marque, réservée aux offres Pro et Illimité
+  // (même règle que l'application : pendant l'essai gratuit, règles de l'offre Essentiel). Pour les
+  // autres offres, l'email reste signé « SkorUp » ; seule la réponse vers l'organisme est conservée.
+  const org = (orgRes && orgRes.data) || {};
+  const offre = String(org.subscribed_plan || '').split('_')[0];
+  const estPro = org.subscription_status !== 'trialing' && (offre === 'pro' || offre === 'illimite');
   return {
-    nom: (orgRes && orgRes.data && orgRes.data.nom) || '',
+    nom: estPro ? (org.nom || '') : '',
     replyTo: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null,
   };
 }
