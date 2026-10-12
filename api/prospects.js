@@ -26,6 +26,31 @@ const supabaseAdmin = createClient(
 );
 const resendApiKey = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
+const FROM_EMAIL_ORG = FROM_EMAIL;
+
+// UX (2026-10-12) : emails envoyés au nom de l'organisme de formation (« VB Coaching via SkorUp »),
+// avec réponse possible vers l'administrateur de l'organisme (plus rassurant pour le client, et
+// meilleure délivrabilité qu'un message anonyme « SkorUp »).
+const ADRESSE_EXPEDITEUR = ((FROM_EMAIL_ORG.match(/<([^>]+)>/) || [])[1] || FROM_EMAIL_ORG).trim();
+function expediteurPour(nomOrganisme) {
+  const nom = String(nomOrganisme || '').replace(/[\r\n"<>\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return nom ? `"${nom} via SkorUp" <${ADRESSE_EXPEDITEUR}>` : FROM_EMAIL_ORG;
+}
+async function infosOrganisme(supabase, organisationId) {
+  if (!organisationId) return { nom: '', replyTo: null };
+  const [orgRes, adminRes] = await Promise.all([
+    supabase.from('organisations').select('nom').eq('id', organisationId).maybeSingle(),
+    supabase.from('utilisateurs').select('email').eq('organisation_id', organisationId).eq('role', 'admin').order('id', { ascending: true }).limit(1),
+  ]);
+  const email = adminRes && adminRes.data && adminRes.data[0] && adminRes.data[0].email;
+  return {
+    nom: (orgRes && orgRes.data && orgRes.data.nom) || '',
+    replyTo: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null,
+  };
+}
+function htmlEchappe(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -140,9 +165,11 @@ async function handleEnvoyer(req, res) {
   if (envoiErr) throw envoiErr;
 
   const lien = `${safeOrigin}/questionnaire?t=${questionnaireToken}`;
+  const organisme = await infosOrganisme(supabaseAdmin, organisationId);
+  const nomOrg = htmlEchappe(organisme.nom || 'SkorUp');
   const subject = `${prenomTrim}, un questionnaire vous attend avant votre entretien`;
   const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">${nomOrg}</div>
     <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
       <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${escapeHtml(prenomTrim)},</p>
       <p style="color:#111827;font-size:14px;line-height:1.7;">Avant votre entretien, merci de prendre quelques minutes pour compléter ce court questionnaire : <strong>${echappe(template.titre)}</strong>.</p>
@@ -151,7 +178,7 @@ async function handleEnvoyer(req, res) {
       </p>
       <p style="color:#6b7280;font-size:12px;">Ce lien est personnel, valable 30 jours, et ne nécessite pas de créer de compte.</p>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-      <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
+      <p style="color:#9ca3af;font-size:11px;">Envoyé par ${nomOrg} via SkorUp.${organisme.replyTo ? ' Vous pouvez répondre directement à cet email.' : ''}</p>
     </div>
   </div>`;
 
@@ -162,7 +189,7 @@ async function handleEnvoyer(req, res) {
   const resendResp = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM_EMAIL, to: [emailTrim], subject, html: bodyHtml }),
+    body: JSON.stringify({ from: expediteurPour(organisme.nom), to: [emailTrim], subject, html: bodyHtml, ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}) }),
   });
 
   if (!resendResp.ok) {

@@ -34,6 +34,31 @@ const supabaseAdmin = createClient(
 );
 const resendApiKey = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
+const FROM_EMAIL_ORG = FROM_EMAIL;
+
+// UX (2026-10-12) : emails envoyés au nom de l'organisme de formation (« VB Coaching via SkorUp »),
+// avec réponse possible vers l'administrateur de l'organisme (plus rassurant pour le client, et
+// meilleure délivrabilité qu'un message anonyme « SkorUp »).
+const ADRESSE_EXPEDITEUR = ((FROM_EMAIL_ORG.match(/<([^>]+)>/) || [])[1] || FROM_EMAIL_ORG).trim();
+function expediteurPour(nomOrganisme) {
+  const nom = String(nomOrganisme || '').replace(/[\r\n"<>\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return nom ? `"${nom} via SkorUp" <${ADRESSE_EXPEDITEUR}>` : FROM_EMAIL_ORG;
+}
+async function infosOrganisme(supabase, organisationId) {
+  if (!organisationId) return { nom: '', replyTo: null };
+  const [orgRes, adminRes] = await Promise.all([
+    supabase.from('organisations').select('nom').eq('id', organisationId).maybeSingle(),
+    supabase.from('utilisateurs').select('email').eq('organisation_id', organisationId).eq('role', 'admin').order('id', { ascending: true }).limit(1),
+  ]);
+  const email = adminRes && adminRes.data && adminRes.data[0] && adminRes.data[0].email;
+  return {
+    nom: (orgRes && orgRes.data && orgRes.data.nom) || '',
+    replyTo: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null,
+  };
+}
+function htmlEchappe(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 // ── Utilitaires de dates fuseau France (identiques à api/automation/process.js) ────────────
 function todayInParisStr() {
@@ -248,6 +273,8 @@ module.exports = async (req, res) => {
     // ── 6. Envoyer via Resend (clé jamais exposée au navigateur) — appel fetch direct, sans
     //         dépendre du SDK npm "resend" (absent de package.json) ──
     const resendConfigured = !!resendApiKey;
+    const organisme = await infosOrganisme(supabaseAdmin, organisationId);
+    const nomOrg = htmlEchappe(organisme.nom || 'SkorUp');
     let sent = 0, simulated = 0;
     const debugSendResults = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) — à retirer ensuite.
 
@@ -264,18 +291,19 @@ module.exports = async (req, res) => {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              from: FROM_EMAIL,
+              from: expediteurPour(organisme.nom),
               to: [item.client.email_contact],
               subject: item.subject,
+              ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}),
               html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-                <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+                <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">${nomOrg}</div>
                 <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
                   <p style="color:#111827;font-size:14px;line-height:1.7;">${(item.body || '').replace(/\n/g, '<br>')}</p>
                   <div style="text-align:center;margin:28px 0 8px;">
                     <a href="https://app.skorup.fr" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 30px;border-radius:10px;">Se connecter à SkorUp</a>
                   </div>
                   <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                  <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
+                  <p style="color:#9ca3af;font-size:11px;">Envoyé par ${nomOrg} via SkorUp.${organisme.replyTo ? ' Vous pouvez répondre directement à cet email.' : ''}</p>
                 </div>
               </div>`,
             }),

@@ -3,7 +3,8 @@ import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
   Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet,
-  Layers, Target, ClipboardList, CalendarDays, BookOpen
+  Layers, Target, ClipboardList, CalendarDays, BookOpen,
+  UserCircle, MessageCircle, Menu, CalendarCheck, KeyRound
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -1060,7 +1061,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
   return (
     <div className="fixed inset-0 bg-gray-900/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
       <div className={`bg-white rounded-3xl shadow-2xl p-6 md:p-8 w-full border border-gray-100 ${isClient ? 'max-w-lg' : 'max-w-2xl'}`}>
-        <h3 className="text-xl font-extrabold text-gray-900 mb-1">Émargement de présence</h3>
+        <h3 className="text-xl font-extrabold text-gray-900 mb-1">{isClient ? 'Signer ma présence' : 'Émargement de présence'}</h3>
         {sessionTitle && <p className="text-sm text-indigo-600 font-bold mb-3">{sessionTitle}</p>}
         <p className="text-sm text-gray-500 mb-6">{isClient ? 'Signez ci-dessous pour valider votre présence.' : 'Signez dans les cadres ci-dessous pour valider la présence.'}</p>
         <div className="grid gap-6 mb-6 grid-cols-1">
@@ -1086,7 +1087,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
                 <button onClick={() => clearCanvas(cCanvasRef)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Effacer</button>
               </div>
               <div className="border-2 border-dashed border-gray-300 rounded-2xl overflow-hidden bg-gray-50 touch-none relative">
-                <canvas ref={cCanvasRef} width={280} height={150} className="w-full h-[150px] cursor-crosshair"
+                <canvas ref={cCanvasRef} width={280} height={150} className="w-full h-[220px] sm:h-[170px] cursor-crosshair"
                   onMouseDown={cStart} onMouseMove={cMove} onMouseUp={cStop} onMouseOut={cStop}
                   onTouchStart={cStart} onTouchMove={cMove} onTouchEnd={cStop} />
                 <div className="absolute bottom-2 right-2 opacity-20 pointer-events-none text-xs font-bold uppercase tracking-widest text-gray-500">Signer ici</div>
@@ -1096,7 +1097,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
         </div>
         <div className="flex justify-between gap-3">
           <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-          <button onClick={handleSave} className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg">Valider l'émargement</button>
+          <button onClick={handleSave} className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg">{isClient ? 'Valider ma signature' : "Valider l'émargement"}</button>
         </div>
       </div>
     </div>
@@ -12947,7 +12948,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       {isOpen && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 z-20 overflow-hidden">
+          <div className="absolute right-0 top-full mt-2 w-[min(20rem,calc(100vw-2rem))] bg-white rounded-2xl shadow-xl border border-gray-100 z-20 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100"><p className="font-bold text-gray-900 text-sm">Notifications</p></div>
             <div className="max-h-64 overflow-y-auto">
               {count === 0
@@ -13179,7 +13180,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                 <div className="space-y-0.5">
                   {dayGroups.slice(0, 2).map((g, i) => {
                     const client = clients.find(c => c.id === g.client_id);
-                    return <div key={i} className="text-[11px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{g.heure_debut ? `${g.heure_debut} ` : ''}{client?.nom?.split(' ')[0] || 'Séance'}</div>;
+                    return <div key={i} className="text-[11px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{g.heure_debut ? `${g.heure_debut} ` : ''}{userRole === 'client' ? titreSeance(g) : (client?.nom?.split(' ')[0] || 'Séance')}</div>;
                   })}
                   {dayGroups.length > 2 && <div className="text-[11px] text-gray-400 font-medium">+{dayGroups.length - 2}</div>}
                 </div>
@@ -13210,10 +13211,10 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                 <div key={g.cle} className="px-5 py-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 text-sm truncate">{client?.nom || 'Client'} — {titreSeance(g)}</p>
+                      <p className="font-semibold text-gray-900 text-sm truncate">{userRole === 'client' ? titreSeance(g) : `${client?.nom || 'Client'} — ${titreSeance(g)}`}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {horaireSeance(g) || 'Horaire à définir'}
-                        {formateur && userRole === 'admin' ? ` · ${formateur.nom}` : ''}
+                        {formateur && userRole !== 'formateur' ? ` · avec ${formateur.nom}` : ''}
                       </p>
                       {g.items.length > 1 && (
                         <p className="text-xs text-gray-400 mt-1 truncate">{g.items.map(i => i.ressource_titre || i.nom).join(' · ')}</p>
@@ -13502,7 +13503,7 @@ const prenomDe = (nomComplet) => {
   return mots[0];
 };
 
-const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount, brandSettings, clientName }) => (
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, coachName, brandSettings, clientName, nextGroup, todos = [] }) => (
   <div className="flex flex-col items-center justify-center pt-8 md:pt-16 animate-fade-in">
     {brandSettings?.logo_url ? (
       <img src={brandSettings.logo_url} alt="Logo" className="w-20 h-20 rounded-full object-contain bg-white shadow-lg border border-gray-100 p-2 mb-5" />
@@ -13520,29 +13521,55 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
     )}
     {coachName && <p className="text-sm text-gray-400 mb-4">Votre formateur : <span className="font-bold text-gray-600">{coachName}</span></p>}
 
-    {/* Info cards : prochaine séance + docs en attente */}
-    {(nextSession || pendingDocsCount > 0) && (
-      <div className="flex gap-3 mb-6 flex-wrap justify-center">
-        {nextSession && (
-          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('calendrier')}>
-            <div className="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center text-white">📅</div>
-            <div>
-              <p className="text-xs font-black text-blue-400 uppercase tracking-widest">Prochaine séance</p>
-              <p className="text-sm font-bold text-blue-700">{new Date(nextSession.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-            </div>
+    {/* Prochaine séance (UX 2026-10-12) */}
+    {nextGroup && (
+      <div className="w-full max-w-3xl mb-4">
+        <div onClick={() => setActiveTab('mes_seances')}
+          className={`cursor-pointer rounded-2xl px-5 py-4 flex flex-wrap items-center gap-4 border transition-shadow hover:shadow-md ${nextGroup.estAujourdhui ? 'bg-violet-50 border-violet-200' : 'bg-blue-50 border-blue-100'}`}>
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 ${nextGroup.estAujourdhui ? 'bg-violet-600' : 'bg-blue-500'}`}>
+            <CalendarDays size={22} />
           </div>
-        )}
-        {pendingDocsCount > 0 && (
-          <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('mes_documents')}>
-            <div className="w-8 h-8 bg-amber-400 rounded-xl flex items-center justify-center text-white font-black text-sm">{pendingDocsCount}</div>
-            <div>
-              <p className="text-xs font-black text-amber-400 uppercase tracking-widest">Document{pendingDocsCount > 1 ? 's' : ''} à signer</p>
-              <p className="text-sm font-bold text-amber-700">En attente de votre signature</p>
-            </div>
+          <div className="flex-1 min-w-[160px]">
+            <p className={`text-xs font-black uppercase tracking-widest ${nextGroup.estAujourdhui ? 'text-violet-500' : 'text-blue-400'}`}>
+              {nextGroup.estAujourdhui ? 'Votre séance aujourd’hui' : 'Prochaine séance'}
+            </p>
+            <p className="text-base font-bold text-gray-900">
+              {nextGroup.titre} · {nextGroup.estAujourdhui ? "Aujourd'hui" : new Date(nextGroup.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+              {nextGroup.horaire ? ` · ${nextGroup.horaire}` : ''}
+            </p>
           </div>
-        )}
+          {nextGroup.lienVisio && (
+            <a href={nextGroup.lienVisio} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+              className="inline-flex items-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl bg-violet-600 text-white hover:bg-violet-700">
+              🎥 Rejoindre la visio
+            </a>
+          )}
+        </div>
       </div>
     )}
+
+    {/* À faire maintenant (UX 2026-10-12) */}
+    <div className="w-full max-w-3xl bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+      <div className="px-6 py-4 border-b border-gray-50">
+        <h2 className="font-bold text-gray-900">À faire maintenant</h2>
+      </div>
+      {todos.length === 0 ? (
+        <p className="px-6 py-5 text-sm text-emerald-600 font-semibold">✓ Tout est à jour, rien à faire pour le moment.</p>
+      ) : (
+        <div className="divide-y divide-gray-50">
+          {todos.map(t => (
+            <button key={t.cle} onClick={() => setActiveTab(t.onglet)}
+              className="w-full px-6 py-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50 transition-colors">
+              <span className="flex items-center gap-3 min-w-0">
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${t.urgent ? 'bg-amber-400' : 'bg-violet-400'}`}></span>
+                <span className="text-sm font-semibold text-gray-800">{t.label}</span>
+              </span>
+              <span className="shrink-0 text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white">{t.bouton}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
 
     {/* Barre de Progression */}
     <div className="w-full max-w-3xl bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
@@ -13585,6 +13612,16 @@ const SessionsView = ({
   // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de "Mes
   // Séances" — ils vivent désormais uniquement dans l'onglet "Exercices", jamais ici comme séance à venir.
   const mySessions = sessions.filter(s => s.client_id === currentUserId && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+  // UX (2026-10-12) : les séances passées et entièrement faites sont repliées (bouton pour les revoir).
+  const [afficherTerminees, setAfficherTerminees] = React.useState(false);
+  const libelleType = (t) => ({ signature: 'Émargement', document: 'Document', exercice: 'Exercice', Exercice: 'Exercice' }[t] || t);
+  const estSeanceTerminee = (g) => !!g.date && g.date < localTodayISO() && g.items.every(s => {
+    if (s.type_activite === 'exercice' || s.type_activite === 'Exercice') return !!s.reponse_url;
+    if (s.type_activite === 'signature') return s.metadata?.requiresClientSignature === false || s.statut_client === 'Signé';
+    const m = s.metadata || {};
+    if (m.isToSign || m.requiresSignature || m.documentType === 'signature') return s.statut_client === 'Signé';
+    return true;
+  });
   const [exerciceModalSession, setExerciceModalSession] = React.useState(null);
 
   const parseSessionMeta = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
@@ -13649,7 +13686,7 @@ const SessionsView = ({
                 : 'bg-violet-600 text-white border-violet-700 hover:bg-violet-700'
             }`}
           >
-            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? signLock.label : 'Signer le document'}
+            {session.statut_client === 'Signé' ? 'Signé ✓' : isDateLocked ? signLock.label : (session.type_activite === 'signature' ? 'Signer ma présence' : 'Signer le document')}
           </button>
         </div>
       );
@@ -13742,6 +13779,8 @@ const SessionsView = ({
           }, {});
 
           const sortedGroups = Object.values(grouped).sort((a, b) => a.numero - b.numero);
+          const nbTerminees = sortedGroups.filter(estSeanceTerminee).length;
+          const groupesAffiches = afficherTerminees ? sortedGroups : sortedGroups.filter(g => !estSeanceTerminee(g));
 
           if (sortedGroups.length === 0) {
             return <p className="py-12 text-center text-gray-400 italic">Aucune séance n'est encore programmée. Votre formateur les générera prochainement.</p>;
@@ -13749,6 +13788,11 @@ const SessionsView = ({
 
           return (
             <>
+              {nbTerminees > 0 && (
+                <button onClick={() => setAfficherTerminees(v => !v)} className="mb-4 text-sm font-bold text-violet-700 hover:text-violet-900">
+                  {afficherTerminees ? 'Masquer les séances terminées' : `Afficher ${nbTerminees > 1 ? `les ${nbTerminees} séances terminées` : 'la séance terminée'} ✓`}
+                </button>
+              )}
               {/* --- Vue tableau : écrans md et plus --- */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -13761,7 +13805,7 @@ const SessionsView = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {sortedGroups.map((group, gIdx) => {
+                    {groupesAffiches.map((group, gIdx) => {
                       const today = localTodayISO();
                       const isFuture = group.date && group.date > today;
                       // Seules les séances avec une date future sont verrouillées.
@@ -13777,9 +13821,10 @@ const SessionsView = ({
                                 <div className="flex items-center">
                                   <div className={`w-8 h-8 rounded-lg ${isLocked ? 'bg-gray-300' : 'bg-gray-900'} text-white flex items-center justify-center mr-3 text-xs font-black`}>#{group.numero}</div>
                                   <span className={`font-black ${isLocked ? 'text-gray-400' : 'text-gray-900'} text-sm uppercase tracking-tighter`}>{group.nom}</span>
+                                  {group.date === localTodayISO() && <span className="ml-3 text-[11px] font-black bg-violet-600 text-white px-2 py-0.5 rounded-full">AUJOURD'HUI</span>}
                                 </div>
                                 <div className="text-xs font-bold text-gray-500">
-                                  {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 VERROUILLÉ</span>}
+                                  {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded mr-2">🔒 À venir</span>}
                                   {group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}
                                 </div>
                               </div>
@@ -13802,7 +13847,7 @@ const SessionsView = ({
                                 <span className="text-lg">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
                                 <div className="flex flex-col">
                                   <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                  <span className="text-[11px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                  <span className="text-[11px] text-gray-400 uppercase font-black">{libelleType(session.type_activite)}</span>
                                   {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
                                     <p className="text-xs text-gray-500 mt-1 max-w-xs leading-relaxed">{session.instructions}</p>
                                   )}
@@ -13825,7 +13870,7 @@ const SessionsView = ({
 
               {/* --- Vue cartes : mobile (< md) --- */}
               <div className="md:hidden space-y-4">
-                {sortedGroups.map((group, gIdx) => {
+                {groupesAffiches.map((group, gIdx) => {
                   const today = localTodayISO();
                   const isFuture = group.date && group.date > today;
                   const isLocked = isFuture;
@@ -13837,10 +13882,11 @@ const SessionsView = ({
                         <div className="flex items-center min-w-0">
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center mr-3 text-xs font-black shrink-0 ${isLocked ? 'bg-gray-300 text-gray-500' : 'bg-white/10 text-white'}`}>#{group.numero}</div>
                           <span className={`font-black text-xs uppercase tracking-tight truncate ${isLocked ? 'text-gray-400' : 'text-white'}`}>{group.nom}</span>
+                          {group.date === localTodayISO() && <span className="ml-auto shrink-0 text-[11px] font-black bg-violet-500 text-white px-2 py-0.5 rounded-full">AUJOURD'HUI</span>}
                         </div>
                       </div>
                       <div className="px-4 py-2 bg-gray-50 text-xs font-bold text-gray-500 flex items-center justify-between flex-wrap gap-1">
-                        {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 VERROUILLÉ</span>}
+                        {isLocked && <span className="bg-gray-200 text-gray-500 px-2 py-0.5 rounded">🔒 À venir</span>}
                         <span>{group.date ? new Date(group.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : 'Date à définir'} • {group.debut || '--:--'} - {group.fin || '--:--'}</span>
                       </div>
                       {!isLocked && (lienVisio || note) && (
@@ -13860,7 +13906,7 @@ const SessionsView = ({
                               <span className="text-lg shrink-0">{session.type_activite === 'signature' ? '✍️' : session.type_activite === 'document' ? '📄' : '⚙️'}</span>
                               <div className="flex flex-col min-w-0">
                                 <span className="font-bold text-gray-700 text-xs">{session.ressource_titre || session.nom}</span>
-                                <span className="text-[11px] text-gray-400 uppercase font-black">{session.type_activite}</span>
+                                <span className="text-[11px] text-gray-400 uppercase font-black">{libelleType(session.type_activite)}</span>
                                 {session.instructions && (session.type_activite === 'exercice' || session.type_activite === 'Exercice') && (
                                   <p className="text-xs text-gray-500 mt-1 leading-relaxed">{session.instructions}</p>
                                 )}
@@ -15604,7 +15650,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <div className="flex items-center gap-3 mb-5">
             <div className="w-2 h-6 bg-emerald-500 rounded-full"></div>
             <h2 className="font-bold text-gray-900 text-lg">Documents de début de parcours</h2>
-            <span className="bg-emerald-50 text-emerald-600 text-xs font-bold px-2 py-1 rounded-full">Accessibles immédiatement</span>
           </div>
           <div className="space-y-3">
             {debutResources.map(renderResourceCard)}
@@ -15951,6 +15996,42 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     !user?.adresse_session || user?.adresse_session === (user?.adresse_formateur || user?.adresse_pro || '')
   );
 
+  // CORRECTIF (2026-10-12) : pour un client, on charge sa fiche depuis la base. Avant, si la page
+  // « Mon profil » était ouverte directement (rechargement, lien), les champs restaient vides et un
+  // clic sur « Enregistrer » effaçait son nom et son adresse.
+  const [profilClientCharge, setProfilClientCharge] = useState(false);
+  useEffect(() => {
+    if (userRole !== 'client' || !currentUserId) return;
+    supabase.from('clients').select('nom_complet, adresse_postale, telephone, email_contact').eq('id', currentUserId).maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setProfileData(prev => ({
+            ...prev,
+            nomcomplet: data.nom_complet || '',
+            adresse_client: data.adresse_postale || '',
+            telephone: data.telephone || '',
+            email: data.email_contact || '',
+          }));
+          setProfilClientCharge(true);
+        }
+      });
+  }, [userRole, currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Changement de mot de passe (tous les rôles)
+  const [nouveauMdp, setNouveauMdp] = useState('');
+  const [confirmationMdp, setConfirmationMdp] = useState('');
+  const [changementMdpEnCours, setChangementMdpEnCours] = useState(false);
+  const handleChangerMotDePasse = async () => {
+    if (nouveauMdp.length < 8) { toast.error('Le mot de passe doit contenir au moins 8 caractères.'); return; }
+    if (nouveauMdp !== confirmationMdp) { toast.error('Les deux mots de passe ne sont pas identiques.'); return; }
+    setChangementMdpEnCours(true);
+    const { error } = await supabase.auth.updateUser({ password: nouveauMdp });
+    setChangementMdpEnCours(false);
+    if (error) { toast.error('Impossible de changer le mot de passe : ' + error.message); return; }
+    setNouveauMdp(''); setConfirmationMdp('');
+    toast.success('Votre mot de passe a bien été modifié.');
+  };
+
   // Pour les admins et formateurs : charger les vraies données depuis la BDD
   useEffect(() => {
     if ((userRole === 'admin' || userRole === 'formateur') && currentUserId) {
@@ -16016,9 +16097,15 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     setIsSaving(true);
     let error;
     if (userRole === 'client') {
+      if (!profilClientCharge || !String(profileData.nomcomplet || '').trim()) {
+        toast.error(!profilClientCharge ? 'Vos informations sont en cours de chargement, réessayez dans un instant.' : 'Indiquez votre nom.');
+        setIsSaving(false);
+        return;
+      }
       const result = await supabase.from('clients').update({
-        nom_complet: profileData.nomcomplet,
-        adresse_postale: profileData.adresse_client
+        nom_complet: profileData.nomcomplet.trim(),
+        adresse_postale: profileData.adresse_client,
+        telephone: profileData.telephone || null,
       }).eq('id', currentUserId);
       error = result.error;
     } else {
@@ -16088,6 +16175,17 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
             <div>
               <label className={labelCls}>Adresse</label>
               <input className={inputCls} value={profileData.adresse_client} onChange={e => setProfileData({ ...profileData, adresse_client: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <div>
+                <label className={labelCls}>Téléphone</label>
+                <input type="tel" className={inputCls} value={profileData.telephone || ''} onChange={e => setProfileData({ ...profileData, telephone: e.target.value })} placeholder="06 12 34 56 78" />
+              </div>
+              <div>
+                <label className={labelCls}>Email de connexion</label>
+                <input className={`${inputCls} text-gray-500`} value={profileData.email || ''} readOnly />
+                <p className="text-xs text-gray-400 mt-1">Pour le changer, contactez votre organisme de formation.</p>
+              </div>
             </div>
           </div>
         ) : (
@@ -16254,6 +16352,20 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
             <Save size={20} /> {isSaving ? 'Enregistrement...' : 'Enregistrer les modifications'}
           </button>
         </div>
+      </div>
+
+      {/* Mot de passe (tous les rôles) */}
+      <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100">
+        <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2"><KeyRound size={18} className="text-indigo-500" /> Mot de passe</h3>
+        <p className="text-sm text-gray-500 mb-5">Choisissez un nouveau mot de passe d'au moins 8 caractères.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <input type="password" autoComplete="new-password" className={inputCls} placeholder="Nouveau mot de passe" value={nouveauMdp} onChange={e => setNouveauMdp(e.target.value)} />
+          <input type="password" autoComplete="new-password" className={inputCls} placeholder="Confirmez le mot de passe" value={confirmationMdp} onChange={e => setConfirmationMdp(e.target.value)} />
+        </div>
+        <button onClick={handleChangerMotDePasse} disabled={changementMdpEnCours || !nouveauMdp}
+          className="mt-4 px-5 py-2.5 rounded-xl bg-gray-900 text-white text-sm font-bold hover:bg-gray-800 disabled:opacity-40">
+          {changementMdpEnCours ? 'Modification…' : 'Changer mon mot de passe'}
+        </button>
       </div>
 
       {(userRole === 'client' || userRole === 'formateur') && (
@@ -16871,9 +16983,9 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-            <span className="w-2 h-6 bg-purple-500 rounded-full"></span> Espace Processus & Ressources
+            <span className="w-2 h-6 bg-purple-500 rounded-full"></span> {isClient ? 'Ressources' : 'Espace Processus & Ressources'}
           </h2>
-          <p className="text-sm text-gray-500 mt-1">Partagez des guides, tutoriels et ressources avec vos équipes et clients.</p>
+          <p className="text-sm text-gray-500 mt-1">{isClient ? 'Guides et ressources partagés par votre organisme de formation.' : 'Partagez des guides, tutoriels et ressources avec vos équipes et clients.'}</p>
         </div>
         {isAdmin && (
           <button onClick={() => setIsAdding(!isAdding)} className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-sm transition-all shadow-md flex items-center gap-2">
@@ -17177,6 +17289,16 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
   const formatTime = (iso) => iso ? new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
   const formatDay = (iso) => iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '';
 
+  // UX (2026-10-12) : un client n'a qu'un interlocuteur (son formateur) — la conversation s'ouvre
+  // directement, sans passer par la liste « Nouvelle conversation ».
+  const conversationOuverteAuto = React.useRef(false);
+  React.useEffect(() => {
+    if (isClient && !conversationOuverteAuto.current && !activeConvId && possibleReceivers.length === 1) {
+      conversationOuverteAuto.current = true;
+      setActiveConvId(possibleReceivers[0].id);
+    }
+  }, [isClient, activeConvId, possibleReceivers]);
+
   const activeOther = possibleReceivers.find(r => r.id === activeConvId);
 
   return (
@@ -17195,7 +17317,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
             <div className="p-4 border-b border-gray-100">
               <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Conversations</p>
               {/* Démarrer nouvelle conversation */}
-              {possibleReceivers.length > 0 && (
+              {possibleReceivers.length > 0 && !(isClient && possibleReceivers.length === 1) && (
                 <select
                   value={newConvReceiver}
                   onChange={e => { if (e.target.value) startConversation(e.target.value); }}
@@ -22551,7 +22673,7 @@ export default function App() {
       }
       await fetchSessions();
       setSigningSessionId(null);
-      toast.success('Émargement enregistré !');
+      toast.success(userRole === 'client' ? 'Merci ! Votre présence est bien enregistrée.' : 'Émargement enregistré !');
     } else {
       toast.error('Erreur : ' + error.message);
     }
@@ -24985,6 +25107,9 @@ export default function App() {
                   </span>
                 )}
               </button>
+              <button onClick={() => { setActiveTab('profil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'profil' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <UserCircle className="w-5 h-5 mr-3" /> Mon profil
+              </button>
             </>
           )}
 
@@ -25006,6 +25131,9 @@ export default function App() {
                     {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
                   </span>
                 )}
+              </button>
+              <button onClick={() => { setActiveTab('profil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'profil' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <UserCircle className="w-5 h-5 mr-3" /> Mon profil
               </button>
             </>
           )}
@@ -25043,11 +25171,61 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
+        {userRole === 'client' && (() => {
+          const docsASigner = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client')).length;
+          const onglets = [
+            { onglet: 'accueil', label: 'Accueil', Icone: LayoutDashboard, badge: 0 },
+            { onglet: 'mes_seances', label: 'Séances', Icone: CalendarCheck, badge: 0 },
+            { onglet: 'mes_documents', label: 'Documents', Icone: FileText, badge: docsASigner },
+            { onglet: 'messagerie', label: 'Messages', Icone: MessageCircle, badge: unreadMessagesCount },
+          ];
+          return (
+            <nav aria-label="Navigation principale" className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-gray-200 grid grid-cols-5 shadow-[0_-4px_12px_rgba(0,0,0,0.04)]" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              {onglets.map(({ onglet, label, Icone, badge }) => (
+                <button key={onglet} onClick={() => { setActiveTab(onglet); setMobileMenuOpen(false); }}
+                  aria-current={activeTab === onglet ? 'page' : undefined}
+                  className={`relative flex flex-col items-center justify-center py-2 text-[11px] font-bold ${activeTab === onglet ? 'text-violet-700' : 'text-gray-500'}`}>
+                  <Icone className="w-6 h-6 mb-0.5" />
+                  {label}
+                  {badge > 0 && <span className="absolute top-1 left-1/2 ml-2 bg-rose-500 text-white text-[10px] font-black rounded-full min-w-[18px] px-1 leading-[18px] text-center">{badge > 9 ? '9+' : badge}</span>}
+                </button>
+              ))}
+              <button onClick={() => setMobileMenuOpen(true)} className="flex flex-col items-center justify-center py-2 text-[11px] font-bold text-gray-500">
+                <Menu className="w-6 h-6 mb-0.5" />
+                Plus
+              </button>
+            </nav>
+          );
+        })()}
+
         <header className="md:hidden bg-white border-b border-gray-200 px-4 py-4 flex items-center justify-between z-10 w-full shrink-0">
-          <button onClick={() => setMobileMenuOpen(true)} className="text-gray-500">
+          <button onClick={() => setMobileMenuOpen(true)} className="text-gray-500 shrink-0" aria-label="Ouvrir le menu">
             <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <div className="font-bold text-gray-900 border border-gray-200 px-3 py-1 rounded capitalize">{userRole}</div>
+          {(() => {
+            const logoEspace = brandSettings?.logo_url || orgSettings?.logo_url || null;
+            const nomEspace = userRole === 'admin'
+              ? (orgSettings?.nom || 'Espace Admin')
+              : (brandSettings?.org_name || orgSettings?.nom || 'SkorUp');
+            const nomPersonne = userRole === 'client'
+              ? clients.find(c => c.id === currentUserId)?.nom
+              : userRole === 'formateur' ? assignableFormateurs.find(f => f.id === currentUserId)?.nom : orgSettings?.nom;
+            return (
+              <>
+                <div className="flex-1 min-w-0 flex items-center gap-2 mx-3">
+                  {logoEspace && <img src={logoEspace} alt="" className="w-7 h-7 rounded-full object-contain bg-white border border-gray-100 shrink-0" />}
+                  <span className="font-bold text-gray-900 truncate">{nomEspace}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <NotificationBell sessions={sessions} documents={documents} clients={clients} userRole={userRole} currentUserId={currentUserId} setActiveTab={setActiveTab} />
+                  <button onClick={() => setActiveTab('profil')} aria-label="Mon profil"
+                    className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 text-xs font-black flex items-center justify-center">
+                    {computeInitials(nomPersonne || '') || <UserCircle size={20} />}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </header>
 
         <header className="hidden md:flex bg-white px-10 py-5 border-b border-gray-100 shadow-sm z-10 justify-between items-center w-full shrink-0">
@@ -25108,7 +25286,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative">
+        <main className={`flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative ${userRole === 'client' ? 'pb-28 md:pb-10' : ''}`}>
           {isSubscriptionExpired && activeTab !== 'parametres_org' ? (
             // Abonnement expiré : on n'affiche QUE l'écran paywall, le contenu de l'onglet n'est même
             // pas monté — avant, ce n'était qu'une superposition visuelle par-dessus un contenu resté
@@ -25402,6 +25580,27 @@ export default function App() {
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
             const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client')).length;
+            // UX (2026-10-12) : prochaine séance (regroupée, avec horaires et lien visio) + liste « À faire ».
+            const _todayL = localTodayISO();
+            const _metaDe = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
+            const _ng = regrouperParSeance(_clientSessions.filter(s => s.date && s.date >= _todayL && Number(s.numero_seance) >= 1))[0] || null;
+            const _nextGroup = _ng ? {
+              titre: titreSeance(_ng),
+              date: _ng.date,
+              horaire: horaireSeance(_ng),
+              estAujourdhui: _ng.date === _todayL,
+              lienVisio: _ng.items.map(i => _metaDe(i.metadata).lien_visio).find(u => typeof u === 'string' && /^https?:\/\//i.test(u.trim())) || null,
+            } : null;
+            const _emargements = _clientSessions.filter(s => s.type_activite === 'signature' && s.statut_client !== 'Signé'
+              && _metaDe(s.metadata).requiresClientSignature !== false && s.date && s.date <= _todayL && Number(s.numero_seance) >= 1);
+            const _exosARendre = _clientSessions.filter(s => (s.type_activite === 'exercice' || s.type_activite === 'Exercice') && !s.reponse_url && (!s.date || s.date <= _todayL));
+            const _jjmm = (d) => new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+            const _todos = [
+              ..._emargements.map(s => ({ cle: 'em-' + s.id, urgent: true, label: s.date === _todayL ? `Signer ma présence — Séance ${s.numero_seance} (aujourd'hui)` : `Signer ma présence — Séance ${s.numero_seance} du ${_jjmm(s.date)}`, onglet: 'mes_seances', bouton: 'Signer' })),
+              ...(_pendingDocs > 0 ? [{ cle: 'docs', urgent: true, label: `${_pendingDocs} document${_pendingDocs > 1 ? 's' : ''} à signer`, onglet: 'mes_documents', bouton: 'Voir' }] : []),
+              ...(_exosARendre.length > 0 ? [{ cle: 'exos', label: `${_exosARendre.length} exercice${_exosARendre.length > 1 ? 's' : ''} à rendre`, onglet: 'exercices', bouton: 'Voir' }] : []),
+              ...(unreadMessagesCount > 0 ? [{ cle: 'msg', label: `${unreadMessagesCount} nouveau${unreadMessagesCount > 1 ? 'x' : ''} message${unreadMessagesCount > 1 ? 's' : ''}`, onglet: 'messagerie', bouton: 'Lire' }] : []),
+            ];
             return <AccueilView
               setActiveTab={setActiveTab}
               clientProgress={_progress}
@@ -25413,6 +25612,8 @@ export default function App() {
               pendingDocsCount={_pendingDocs}
               brandSettings={brandSettings}
               clientName={_client?.nom_complet || ''}
+              nextGroup={_nextGroup}
+              todos={_todos}
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
@@ -25531,7 +25732,16 @@ export default function App() {
         isOpen={signingSessionId !== null}
         onClose={() => setSigningSessionId(null)}
         onSave={handleEmargementSave}
-        sessionTitle={(() => { const s = sessions.find(s => s.id === signingSessionId); return s?.ressource_titre || s?.nom; })()}
+        sessionTitle={(() => {
+          const s = sessions.find(s => s.id === signingSessionId);
+          if (!s) return '';
+          const morceaux = [
+            Number(s.numero_seance) >= 1 ? `Séance ${s.numero_seance}` : (s.ressource_titre || s.nom),
+            s.date ? new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : null,
+            s.heure_debut ? `${s.heure_debut}${s.heure_fin ? '–' + s.heure_fin : ''}` : null,
+          ];
+          return morceaux.filter(Boolean).join(' · ');
+        })()}
         signerRole={userRole}
       />
 

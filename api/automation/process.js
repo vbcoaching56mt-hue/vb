@@ -30,6 +30,32 @@ function isAuthorizedCron(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+const FROM_EMAIL_ORG = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
+
+// UX (2026-10-12) : emails envoyés au nom de l'organisme de formation (« VB Coaching via SkorUp »),
+// avec réponse possible vers l'administrateur de l'organisme (plus rassurant pour le client, et
+// meilleure délivrabilité qu'un message anonyme « SkorUp »).
+const ADRESSE_EXPEDITEUR = ((FROM_EMAIL_ORG.match(/<([^>]+)>/) || [])[1] || FROM_EMAIL_ORG).trim();
+function expediteurPour(nomOrganisme) {
+  const nom = String(nomOrganisme || '').replace(/[\r\n"<>\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return nom ? `"${nom} via SkorUp" <${ADRESSE_EXPEDITEUR}>` : FROM_EMAIL_ORG;
+}
+async function infosOrganisme(supabase, organisationId) {
+  if (!organisationId) return { nom: '', replyTo: null };
+  const [orgRes, adminRes] = await Promise.all([
+    supabase.from('organisations').select('nom').eq('id', organisationId).maybeSingle(),
+    supabase.from('utilisateurs').select('email').eq('organisation_id', organisationId).eq('role', 'admin').order('id', { ascending: true }).limit(1),
+  ]);
+  const email = adminRes && adminRes.data && adminRes.data[0] && adminRes.data[0].email;
+  return {
+    nom: (orgRes && orgRes.data && orgRes.data.nom) || '',
+    replyTo: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim()) ? String(email).trim() : null,
+  };
+}
+function htmlEchappe(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function escapeHtml(v) {
   return String(v ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -110,6 +136,11 @@ module.exports = async (req, res) => {
 
     let sent = 0;
     const results = [];
+    const cacheOrganismes = {};
+    const organismeDe = async (orgId) => {
+      if (!cacheOrganismes[orgId]) cacheOrganismes[orgId] = await infosOrganisme(supabase, orgId);
+      return cacheOrganismes[orgId];
+    };
 
     // ── 3. Traiter chaque relance ─────────────────────────────────────────────
     for (const setting of settings) {
@@ -203,6 +234,8 @@ module.exports = async (req, res) => {
             .replace(/\{module_name\}|\{\{module_name\}\}/g, () => v(moduleName));
         };
 
+        const organisme = await organismeDe(setting.organisation_id);
+        const nomOrg = htmlEchappe(organisme.nom || 'SkorUp');
         const emailSubject = replaceVars(setting.email_subject);
         const emailBodyText = replaceVars(setting.email_body, true);
         const emailBodyHtml = emailBodyText.replace(/\n/g, '<br>');
@@ -224,12 +257,13 @@ module.exports = async (req, res) => {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                from: fromEmail,
+                from: expediteurPour(organisme.nom),
                 to: [client.email_contact],
                 subject: emailSubject,
+                ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}),
                 html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
                   <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;">
-                    <strong style="font-size:18px;">SkorUp</strong>
+                    <strong style="font-size:18px;">${nomOrg}</strong>
                   </div>
                   <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
                     <p style="color:#111827;font-size:14px;line-height:1.6;">${emailBodyHtml}</p>
@@ -237,7 +271,7 @@ module.exports = async (req, res) => {
                       <a href="https://app.skorup.fr" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 30px;border-radius:10px;">Se connecter à SkorUp</a>
                     </div>
                     <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-                    <p style="color:#9ca3af;font-size:11px;">Email automatique — merci de ne pas répondre directement à ce message.</p>
+                    <p style="color:#9ca3af;font-size:11px;">Envoyé par ${nomOrg} via SkorUp.${organisme.replyTo ? ' Vous pouvez répondre directement à cet email.' : ''}</p>
                   </div>
                 </div>`,
               }),
