@@ -137,8 +137,17 @@ const handleDownloadNamedFile = async (doc) => {
   try {
     const extracted = extractStorageBucketAndPath(doc.url);
     if (!extracted) throw new Error('URL de fichier invalide.');
-    const { data, error } = await supabase.storage.from(extracted.bucket).download(extracted.path);
-    if (error) throw error;
+    let { data, error } = await supabase.storage.from(extracted.bucket).download(extracted.path);
+    // SÉCURITÉ (2026-10-12) : les règles de stockage réservent désormais le téléchargement direct
+    // aux fichiers de son organisme. Pour un ancien fichier sans auteur identifiable, on se rabat
+    // sur son lien public (comportement d'avant) plutôt que d'échouer.
+    if (error) {
+      const publicUrl = supabase.storage.from(extracted.bucket).getPublicUrl(extracted.path)?.data?.publicUrl;
+      const resp = publicUrl ? await fetch(publicUrl).catch(() => null) : null;
+      if (!resp || !resp.ok) throw error;
+      data = await resp.blob();
+      error = null;
+    }
     const ext = (extracted.path.split('.').pop() || '').toLowerCase();
     const baseName = (doc.nom || 'document').trim() || 'document';
     const hasExt = ext && baseName.toLowerCase().endsWith('.' + ext);
@@ -1601,10 +1610,16 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
         if (!finalSignedUrl) {
           // Fallback final : utiliser directement la pdfUrl publique SAUF si le fichier est clairement absent
-          const fileGenuinelyMissing = lastError && (
+          let fileGenuinelyMissing = lastError && (
             lastError.toLowerCase().includes('not found') ||
             lastError.toLowerCase().includes('object not found')
           );
+          // SÉCURITÉ (2026-10-12) : « not found » peut aussi vouloir dire « non autorisé » (règles de
+          // stockage par organisme). Si le lien public répond quand même, on l'utilise.
+          if (fileGenuinelyMissing && pdfUrl && pdfUrl.startsWith('http')) {
+            const headResp = await fetch(pdfUrl, { method: 'HEAD' }).catch(() => null);
+            if (headResp && headResp.ok) fileGenuinelyMissing = false;
+          }
           if (!fileGenuinelyMissing && pdfUrl && pdfUrl.startsWith('http')) {
             // Signed URL indisponible pour raison de config (pas "not found") → tenter l'URL publique
             console.warn('[DocumentViewerModal] Signed URL indisponible (non-404) — fallback sur URL publique directe.');
@@ -22190,12 +22205,17 @@ export default function App() {
       if (!extracted) return null;
 
       const { data: signData, error: signErr } = await supabase.storage.from(extracted.bucket).createSignedUrl(extracted.path, 300);
-      if (signErr || !signData?.signedUrl) {
+      // SÉCURITÉ (2026-10-12) : repli sur le lien public si le lien temporaire est refusé
+      // (ancien fichier sans auteur identifiable).
+      const readUrl = (!signErr && signData?.signedUrl)
+        ? signData.signedUrl
+        : supabase.storage.from(extracted.bucket).getPublicUrl(extracted.path)?.data?.publicUrl;
+      if (!readUrl) {
         throw new Error(`Erreur signature URL pour archivage: ${signErr?.message}`);
       }
 
       // 2. Récupérer le PDF original via l'URL signée
-      const existingPdfBytes = await fetch(signData.signedUrl).then(res => {
+      const existingPdfBytes = await fetch(readUrl).then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status} lors de la lecture du PDF original`);
         return res.arrayBuffer();
       });

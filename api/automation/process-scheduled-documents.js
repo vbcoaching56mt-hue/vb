@@ -313,7 +313,11 @@ async function generateAndSendOne(supabase, row) {
     }
   }
 
-  const finalFileName = `${String(row.template_titre).replace(/[^a-z0-9]/gi, '_')}_${safeName}_${Date.now()}.${finalExt}`;
+  // SÉCURITÉ (2026-10-12) : rangé dans le dossier de l'organisme (org_<id>/…). Le fichier étant
+  // déposé par le serveur (sans auteur), c'est ce dossier qui permet aux règles de stockage de le
+  // réserver aux seuls membres de cet organisme (voir securite_etape3.sql).
+  const orgFolder = `org_${client.organisation_id || row.organisation_id}`;
+  const finalFileName = `${orgFolder}/${String(row.template_titre).replace(/[^a-z0-9]/gi, '_')}_${safeName}_${Date.now()}.${finalExt}`;
   const { error: uploadError } = await supabase.storage.from('documents').upload(finalFileName, finalBuffer, { contentType: finalMime });
   if (uploadError) throw new Error('Upload échoué : ' + uploadError.message);
   const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(finalFileName);
