@@ -8,6 +8,8 @@ const SetupOrganisationPage = () => {
   const [orgName, setOrgName] = useState('');
   const [adminName, setAdminName] = useState('');
   const [sessionRef, setSessionRef] = useState(null);
+  const [estOrganisme, setEstOrganisme] = useState(false);
+  const [beneficiaireEmail, setBeneficiaireEmail] = useState('');
 
   const callSetupEdgeFunction = async (session, orgName, adminName) => {
     const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/setup-organisation`, {
@@ -46,7 +48,8 @@ const SetupOrganisationPage = () => {
     const { data: isBeneficiaire } = await supabase.rpc('email_est_beneficiaire', { p_email: session.user.email || '' });
     if (isBeneficiaire === true) {
       setError(BENEFICIAIRE_MSG);
-      setStatus('error');
+      setBeneficiaireEmail(session.user.email || '');
+      setStatus('beneficiaire');
       return;
     }
     const meta = session.user.user_metadata || {};
@@ -72,6 +75,7 @@ const SetupOrganisationPage = () => {
 
   const handleManualCreate = async (e) => {
     e.preventDefault();
+    if (!estOrganisme) { setError("Cochez la case confirmant que vous créez l'espace d'un organisme de formation."); return; }
     setStatus('creating');
     try {
       await callSetupEdgeFunction(sessionRef, orgName.trim(), adminName.trim());
@@ -105,6 +109,35 @@ const SetupOrganisationPage = () => {
     );
   }
 
+  // AJOUT (2026-10-12) : un bénéficiaire connecté qui arrive ici (compte de connexion pas encore relié à
+  // sa fiche) voit un écran clair — jamais le formulaire de création d'organisme ni une « erreur ».
+  if (status === 'beneficiaire') {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
+          <h1 className="text-xl font-extrabold text-gray-900 mb-3">Votre accès doit être réactivé</h1>
+          <p className="text-gray-600 text-sm mb-4">
+            L'adresse <strong>{beneficiaireEmail}</strong> est bien enregistrée comme bénéficiaire : vous n'avez pas besoin de créer d'espace.
+          </p>
+          <p className="text-gray-600 text-sm mb-6 bg-violet-50 border border-violet-100 rounded-xl p-3 text-left">
+            Demandez à votre organisme de formation de cliquer sur <strong>« Renvoyer le lien »</strong> depuis votre fiche.
+            Vous recevrez un email : cliquez sur le lien pour créer votre mot de passe et accéder à votre espace.
+          </p>
+          <button
+            onClick={async () => {
+              try { await supabase.auth.signOut(); } catch (e) { /* session déjà invalide, on ignore */ }
+              window.location.replace('/');
+            }}
+            className="w-full bg-gray-900 text-white font-bold py-4 rounded-2xl"
+          >
+            Retour à la connexion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'error') {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
@@ -133,8 +166,19 @@ const SetupOrganisationPage = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100">
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
-        <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Finaliser votre espace</h1>
-        <p className="text-gray-500 mb-8 text-center text-sm">Renseignez votre organisme pour activer votre compte.</p>
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Finaliser l'espace de votre organisme</h1>
+        <p className="text-gray-500 mb-4 text-center text-sm">Renseignez votre organisme de formation pour activer votre compte.</p>
+        <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          <strong>Vous êtes bénéficiaire ou formateur ?</strong> Ne remplissez pas ce formulaire : demandez à votre organisme de
+          formation de vous renvoyer votre lien de connexion.
+          <button
+            type="button"
+            onClick={async () => { try { await supabase.auth.signOut(); } catch (err) { /* ignore */ } window.location.replace('/?premiere-connexion=1'); }}
+            className="block mt-2 font-bold underline"
+          >
+            Je suis bénéficiaire : retour à la connexion
+          </button>
+        </div>
         <form onSubmit={handleManualCreate} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Nom de l'organisme</label>
@@ -144,9 +188,13 @@ const SetupOrganisationPage = () => {
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Votre nom complet</label>
             <input type="text" required value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="ex : Marie Dupont" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
+          <label className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200 cursor-pointer">
+            <input type="checkbox" checked={estOrganisme} onChange={e => setEstOrganisme(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600" />
+            <span className="text-xs text-gray-700">Je crée l'espace <strong>d'un organisme de formation</strong> (je ne suis pas bénéficiaire d'un accompagnement).</span>
+          </label>
           {error && <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{error}</p>}
-          <button type="submit" className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all">
-            Créer mon espace
+          <button type="submit" disabled={!estOrganisme} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50">
+            Créer l'espace de mon organisme
           </button>
         </form>
       </div>

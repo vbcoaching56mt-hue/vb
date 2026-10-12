@@ -12,6 +12,7 @@ const SignupPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [estOrganisme, setEstOrganisme] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,6 +23,10 @@ const SignupPage = () => {
     }
     if (password.length < 8) {
       setError('Le mot de passe doit contenir au moins 8 caractères.');
+      return;
+    }
+    if (!estOrganisme) {
+      setError("Cochez la case confirmant que vous créez l'espace d'un organisme de formation. Vous êtes bénéficiaire ? Utilisez « Première connexion » sur la page de connexion.");
       return;
     }
     setIsLoading(true);
@@ -80,11 +85,14 @@ const SignupPage = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
       <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-gray-100">
         <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
-        <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer votre espace</h1>
-        <p className="text-gray-500 mb-4 text-center text-sm">Votre organisme de formation en quelques secondes.</p>
-        <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
-          <strong>Vous êtes bénéficiaire ou formateur ?</strong> N'utilisez pas ce formulaire : il sert uniquement à créer un
-          nouvel organisme de formation. Connectez-vous avec le lien reçu par email de votre organisme.
+        <h1 className="text-2xl font-extrabold text-gray-900 mb-1 text-center">Créer l'espace de votre organisme</h1>
+        <p className="text-gray-500 mb-4 text-center text-sm">Réservé aux organismes de formation qui souhaitent utiliser SkorUp.</p>
+        <div className="mb-6 p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-sm text-amber-900">
+          <p className="font-black">Vous êtes accompagné(e) par un organisme, ou formateur ?</p>
+          <p className="mt-1 text-xs">Ne remplissez pas ce formulaire : votre organisme vous a déjà inscrit(e). Il vous suffit de créer votre mot de passe.</p>
+          <a href="/?premiere-connexion=1" className="mt-3 block text-center bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold py-2.5 rounded-xl">
+            Accéder à mon espace (première connexion)
+          </a>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -107,9 +115,13 @@ const SignupPage = () => {
             <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Confirmer le mot de passe</label>
             <input type="password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Répéter le mot de passe" className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-600 transition-all" />
           </div>
+          <label className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200 cursor-pointer">
+            <input type="checkbox" checked={estOrganisme} onChange={e => setEstOrganisme(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600" />
+            <span className="text-xs text-gray-700">Je crée l'espace <strong>d'un organisme de formation</strong> (je ne suis pas bénéficiaire d'un accompagnement).</span>
+          </label>
           {error && <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{error}</p>}
-          <button type="submit" disabled={isLoading} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50">
-            {isLoading ? 'Création en cours...' : 'Créer mon espace'}
+          <button type="submit" disabled={isLoading || !estOrganisme} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50">
+            {isLoading ? 'Création en cours...' : "Créer l'espace de mon organisme"}
           </button>
         </form>
         <p className="text-center text-sm text-gray-500 mt-6">

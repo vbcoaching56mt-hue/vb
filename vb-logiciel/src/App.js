@@ -3695,7 +3695,16 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // AJOUT (2026-10-12) : « Première connexion » — des bénéficiaires sans mot de passe (lien d'invitation
+  // expiré, perdu...) cliquaient sur « Créer votre espace » (réservé aux NOUVEAUX organismes) et se
+  // retrouvaient bloqués. Ils ont désormais un bouton clair qui leur envoie un lien pour créer leur
+  // mot de passe. Lien direct possible : /?premiere-connexion=1 (utilisé par la page d'inscription).
+  const [showForgotPassword, setShowForgotPassword] = useState(() => {
+    try { return new URLSearchParams(window.location.search).has('premiere-connexion'); } catch (e) { return false; }
+  });
+  const [forgotMode, setForgotMode] = useState(() => {
+    try { return new URLSearchParams(window.location.search).has('premiere-connexion') ? 'first' : 'forgot'; } catch (e) { return 'forgot'; }
+  });
   const [resetSent, setResetSent] = useState(false);
   const [legalPage, setLegalPage] = useState(null);
 
@@ -3785,7 +3794,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     setErrorMsg('');
     setIsLoading(true);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
 
     if (error) {
       setErrorMsg(error.message);
@@ -3800,12 +3809,17 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
       <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100 animate-fade-in">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg" style={{background:'#100524'}}><img src="/logo-mark.png" alt="SkorUp" className="w-12 h-12 object-contain" /></div>
-          <h1 className="text-2xl font-extrabold text-gray-900 mb-2">Mot de passe oublié</h1>
-          <p className="text-gray-500 mb-8">Saisissez votre email pour réinitialiser l'accès.</p>
+          <h1 className="text-2xl font-extrabold text-gray-900 mb-2">{forgotMode === 'first' ? 'Première connexion' : 'Mot de passe oublié'}</h1>
+          <p className="text-gray-500 mb-8">
+            {forgotMode === 'first'
+              ? "Vous êtes accompagné(e) par un organisme de formation ? Saisissez l'adresse email à laquelle il vous a inscrit(e) : vous recevrez un lien pour créer votre mot de passe."
+              : "Saisissez votre email pour réinitialiser l'accès."}
+          </p>
 
           {resetSent ? (
-            <div className="bg-green-50 text-green-700 p-4 rounded-xl text-sm font-medium mb-6">
-              Un email contenant le lien de réinitialisation vous a été envoyé.
+            <div className="bg-green-50 text-green-700 p-4 rounded-xl text-sm font-medium mb-6 text-left">
+              Si cette adresse est enregistrée, un email vient de vous être envoyé : cliquez sur le lien qu'il contient pour {forgotMode === 'first' ? 'créer' : 'choisir'} votre mot de passe.
+              <span className="block mt-2 text-green-600 text-xs font-normal">Rien reçu après quelques minutes ? Vérifiez vos courriers indésirables, ou demandez à votre organisme de formation de vous renvoyer le lien.</span>
             </div>
           ) : (
             <form onSubmit={handleResetPassword} className="space-y-5 text-left">
@@ -3830,14 +3844,14 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
                 disabled={isLoading}
                 className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                {isLoading ? 'Envoi en cours...' : 'Envoyer le lien'}
+                {isLoading ? 'Envoi en cours...' : (forgotMode === 'first' ? 'Recevoir mon lien de connexion' : 'Envoyer le lien')}
               </button>
             </form>
           )}
 
           <button
             type="button"
-            onClick={() => { setShowForgotPassword(false); setResetSent(false); setErrorMsg(''); }}
+            onClick={() => { setShowForgotPassword(false); setResetSent(false); setErrorMsg(''); setForgotMode('forgot'); try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* rien */ } }}
             className="mt-6 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors"
           >
             ← Retour à la connexion
@@ -3877,7 +3891,7 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
               <label className="block text-xs font-bold text-gray-400 uppercase">Mot de passe</label>
               <button
                 type="button"
-                onClick={() => { setShowForgotPassword(true); setErrorMsg(''); }}
+                onClick={() => { setForgotMode('forgot'); setShowForgotPassword(true); setErrorMsg(''); }}
                 className="text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
               >
                 Oublié ?
@@ -3916,9 +3930,21 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
           </button>
         </form>
 
-        <p className="text-center text-sm text-gray-500 mt-6">
-          Pas encore de compte ?{' '}
-          <a href="/signup" className="font-bold text-violet-600 hover:text-violet-700">Créer votre espace</a>
+        <div className="mt-6 p-4 rounded-2xl bg-violet-50 border border-violet-100 text-left">
+          <p className="text-sm font-bold text-gray-900">Première connexion ?</p>
+          <p className="text-xs text-gray-600 mt-1">Vous êtes accompagné(e) par un organisme de formation et n'avez pas encore de mot de passe (ou le lien reçu ne fonctionne plus) ?</p>
+          <button
+            type="button"
+            onClick={() => { setForgotMode('first'); setShowForgotPassword(true); setResetSent(false); setErrorMsg(''); }}
+            className="mt-3 w-full bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold py-3 rounded-xl transition-all"
+          >
+            Recevoir mon lien de connexion
+          </button>
+        </div>
+
+        <p className="text-center text-xs text-gray-400 mt-6">
+          Vous êtes un organisme de formation et souhaitez utiliser SkorUp ?{' '}
+          <a href="/signup" className="font-bold text-gray-500 hover:text-violet-700 underline underline-offset-2">Créer l'espace de votre organisme</a>
         </p>
       </div>
       {/* Pied de page légal */}
