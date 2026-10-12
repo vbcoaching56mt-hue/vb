@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
-  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet
+  Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet,
+  Layers, Target, ClipboardList, CalendarDays, BookOpen
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -36,6 +37,42 @@ const DndContext = (props) => {
 };
 
 
+
+// UX (2026-10-12) : les messages d'erreur techniques (en anglais, codes de base de données…) sont
+// traduits en message clair pour l'utilisateur. Le détail technique reste affiché dans la console
+// du navigateur pour le diagnostic. Les messages déjà rédigés en français ne sont jamais modifiés.
+const TECH_ERROR_RULES = [
+  [/row-level security|permission denied|not authorized|unauthorized|forbidden/i, "vous n'avez pas les droits nécessaires pour cette action."],
+  [/jwt|token (has )?expired|invalid token|refresh token|session (expired|missing|not found)|not authenticated|auth session missing/i, 'votre session a expiré. Reconnectez-vous puis réessayez.'],
+  [/failed to fetch|networkerror|network request failed|load failed|fetch failed|timed? ?out|econn/i, 'problème de connexion internet. Vérifiez votre connexion puis réessayez.'],
+  [/duplicate key|already exists|unique constraint/i, 'cet élément existe déjà.'],
+  [/payload too large|entity too large|maximum allowed size/i, 'fichier trop volumineux (50 Mo maximum).'],
+  [/mime type|invalid file type|unsupported file/i, "ce type de fichier n'est pas accepté."],
+  [/null value in column|violates not-null|violates check constraint|invalid input syntax|violates foreign key|out of range/i, 'certaines informations sont manquantes ou invalides.'],
+  [/object not found|not found|does not exist|no rows/i, 'élément introuvable (il a peut-être été supprimé).'],
+];
+const hasNonAscii = (t) => /[\u0080-\uFFFF]/.test(t);
+const looksTechnicalError = (t) => /[a-z]/i.test(t) && !hasNonAscii(t)
+  && /\b(the|is|not|of|to|for|with|failed|error|invalid|column|function|violates|denied|unexpected|cannot|could|unable|undefined|null|status|request)\b/i.test(t);
+const humanizeErrorMessage = (msg) => {
+  if (typeof msg !== 'string' || !msg.trim()) return msg;
+  const sep = msg.lastIndexOf(': ');
+  const prefix = sep > 0 ? msg.slice(0, sep).trim() : '';
+  const tail = sep > 0 ? msg.slice(sep + 2).trim() : msg.trim();
+  if (!tail) return msg;
+  const isAscii = !hasNonAscii(tail);
+  const rule = isAscii ? TECH_ERROR_RULES.find(([re]) => re.test(tail)) : null;
+  let friendly = rule ? rule[1] : null;
+  if (!friendly && looksTechnicalError(tail)) {
+    friendly = 'une erreur technique est survenue. Réessayez dans un instant ; si le problème continue, contactez le support.';
+  }
+  if (!friendly) return msg;
+  console.warn('[erreur technique]', msg);
+  if (prefix) return `${prefix} : ${friendly}`;
+  return friendly.charAt(0).toUpperCase() + friendly.slice(1);
+};
+const _toastErrorOriginal = toast.error;
+toast.error = (message, options) => _toastErrorOriginal(humanizeErrorMessage(message), options);
 
 if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
@@ -1353,6 +1390,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
+  // Détail technique gardé pour le diagnostic, dans la console uniquement (plus affiché à l'écran).
+  useEffect(() => { if (debugInfo) console.warn('[DocumentViewerModal] diagnostic :', debugInfo); }, [debugInfo]);
   const sigCanvasRef = useRef(null);
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef(null);
@@ -1725,16 +1764,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
               ? (pdfError.includes('Object not found') ? 'Fichier source introuvable dans le stockage' : 'Impossible de charger le document') 
               : 'Aucun fichier joint à cette session.'}
           </p>
-          {debugInfo && (
-            <div className="mt-4 p-3 bg-gray-100 rounded-lg text-[10px] font-mono text-left overflow-auto max-w-xs mx-auto border border-gray-200">
-              <p className="text-gray-500 uppercase font-bold mb-1 border-b border-gray-200 pb-1">Diagnostic Technique</p>
-              <p><span className="text-violet-700">Bucket:</span> {debugInfo.bucket}</p>
-              <p className="break-all"><span className="text-violet-700">Path:</span> {debugInfo.path}</p>
-              <p className="text-violet-600 mt-1 italic">{debugInfo.error}</p>
-            </div>
+          {pdfError && (
+            <p className="text-sm text-gray-500 mt-2 max-w-sm mx-auto">
+              Le fichier a peut-être été supprimé ou remplacé. Si le problème continue, prévenez votre organisme de formation.
+            </p>
           )}
         </div>
-        {pdfError && <p className="text-xs text-red-400 font-mono bg-red-50 px-3 py-2 rounded-lg">{pdfError}</p>}
         {isValidUrl && (
           <button
             onClick={() => window.open(blobUrl || pdfUrl, '_blank')}
@@ -2617,7 +2652,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
       if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
     } catch (err) {
       console.error('Error uploading file in modal:', err);
-      alert('Erreur lors de l\'import du fichier : ' + err.message);
+      toast.error('Erreur lors de l\'import du fichier : ' + err.message);
     } finally {
       setIsUploading(false);
     }
@@ -4801,10 +4836,10 @@ const ClientDetailView = ({
       <div className="flex gap-4 border-b border-gray-200 overflow-x-auto">
         <button onClick={() => setActiveTab('infos')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'infos' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Infos & Modalités</button>
         <button onClick={() => setActiveTab('seances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'seances' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Supervision Séances</button>
-        <button onClick={() => setActiveTab('administratif')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'administratif' ? 'border-b-2 border-violet-700 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>📄 Administratif</button>
-        <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📁 Documents Signés</button>
+        <button onClick={() => setActiveTab('administratif')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'administratif' ? 'border-b-2 border-violet-700 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>Administratif</button>
+        <button onClick={() => setActiveTab('docs_signes')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs_signes' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents Signés</button>
         <button onClick={() => setActiveTab('exercices')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'exercices' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
-          📝 Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
+          Exercices{clientExercises.length > 0 ? ` (${clientExercises.length})` : ''}
           {clientPendingCorrections > 0 && (
             <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
               {clientPendingCorrections}
@@ -4813,7 +4848,7 @@ const ClientDetailView = ({
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
         <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>📝 Questionnaires{displayedQuestionnaires.length > 0 ? ` (${displayedQuestionnaires.length})` : ''}</button>
-        <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>💶 Finances</button>
+        <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>Finances</button>
       </div>
 
       {activeTab === 'infos' && (
@@ -6161,7 +6196,7 @@ const AdminClientsView = ({
     <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Administration SkorUp
+          <span className="w-2 h-6 bg-indigo-600 rounded-full mr-3"></span> Clients
         </h2>
 
         <div className="bg-indigo-50 border border-indigo-100 p-5 md:p-6 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 shadow-sm">
@@ -7811,7 +7846,7 @@ const FormateurView = ({
               formateurMainSection === 'clients' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
-            👥 Mes Clients
+            Mes Clients
           </button>
           <button
             onClick={() => setFormateurMainSection('mes_docs')}
@@ -7819,7 +7854,7 @@ const FormateurView = ({
               formateurMainSection === 'mes_docs' ? 'bg-violet-700 text-white shadow-lg' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
-            📄 Docs Administratifs
+            Docs Administratifs
             {pendingDocsCount > 0 && (
               <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-md">
                 {pendingDocsCount}
@@ -8118,18 +8153,18 @@ const FormateurView = ({
               {isExpanded && (
                 <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
                   <div className="tabs-scroll flex gap-4 border-b border-gray-200 mb-6 font-sans">
-                    <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📅 Planning des Séances</button>
-                    <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📄 Administratif</button>
-                    <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>📁 Documents Signés</button>
+                    <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Planning des Séances</button>
+                    <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Administratif</button>
+                    <button onClick={() => setFormateurClientTab('docs_signes')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'docs_signes' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Documents Signés</button>
                     <button onClick={() => setFormateurClientTab('exercices')} className={`relative px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'exercices' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                      📝 Exercices
+                      Exercices
                       {clientPendingCorrections > 0 && (
                         <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">
                           {clientPendingCorrections}
                         </span>
                       )}
                     </button>
-                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>🎯 Quiz</button>
+                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Quiz</button>
                   </div>
 
                   {formateurClientTab === 'quiz' && (
@@ -8540,7 +8575,7 @@ const FormateurView = ({
                                           <td className="px-4 py-3 font-black text-indigo-900 border-l-4 border-indigo-500">
                                             <div className="flex items-center gap-2 text-xs">
                                               <Layout size={12} className="text-indigo-600" />
-                                              <span>SÉANCE {group.numero} : {group.nom}</span>
+                                              <span>SÉANCE {group.numero}{group.nom && !/^s[ée]ance\s*\d+$/i.test(String(group.nom).trim()) ? ` : ${group.nom}` : ''}</span>
                                               {isGroupOver && fActiveId && (
                                                 <span className="ml-2 text-[9px] font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full animate-pulse">Déposer ici</span>
                                               )}
@@ -8577,7 +8612,7 @@ const FormateurView = ({
                                             </div>
                                           </td>
                                           <td colSpan="2" className="mst-hide px-4 py-3 text-right">
-                                            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tighter">Container Séance</span>
+
                                           </td>
                                         </>
                                       )}
@@ -8593,17 +8628,17 @@ const FormateurView = ({
                                       </span>
                                       <span className="truncate">{session.ressource_titre || session.nom}</span>
                                     </td>
-                                    <td colSpan="2" className="mst-hide px-4 py-3 text-[10px] text-gray-400 italic">Hérité du dossier</td>
+                                    <td colSpan="2" className="mst-hide px-4 py-3 text-[10px] text-gray-400 italic">Mêmes date et horaires que la séance</td>
                                     <td className="px-4 py-3">
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Client: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Client : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-                                          <span className="text-[8px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+                                          <span className="text-[8px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
                                         )}
                                       </div>
@@ -11832,7 +11867,7 @@ const DocumentsView = ({
       {isAdmin && docAudienceTab !== 'a_signer' && (
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-            <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Gestion des documents
+            <span className="w-2 h-6 bg-amber-500 rounded-full mr-3"></span> Modèles de documents
           </h2>
 
           <div className="mb-8 p-5 bg-indigo-50 rounded-2xl border border-indigo-100">
@@ -13367,7 +13402,16 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
 };
 
 // ─── Accueil Client ────────────────────────────────────────────────────────────
-const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount, brandSettings }) => (
+// Prénom à partir du nom complet : « Jennifer SOLLIEZ » → Jennifer ; « SOLLIEZ Jennifer » → Jennifer.
+const prenomDe = (nomComplet) => {
+  const mots = String(nomComplet || '').trim().split(/\s+/).filter(Boolean);
+  if (mots.length === 0) return '';
+  const estMajuscules = (m) => m.length > 1 && m === m.toUpperCase() && m !== m.toLowerCase();
+  if (mots.length > 1 && estMajuscules(mots[0]) && !estMajuscules(mots[1])) return mots[1];
+  return mots[0];
+};
+
+const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, signedSessions, nextSession, coachName, pendingDocsCount, brandSettings, clientName }) => (
   <div className="flex flex-col items-center justify-center pt-8 md:pt-16 animate-fade-in">
     {brandSettings?.logo_url ? (
       <img src={brandSettings.logo_url} alt="Logo" className="w-20 h-20 rounded-full object-contain bg-white shadow-lg border border-gray-100 p-2 mb-5" />
@@ -13377,7 +13421,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
       </div>
     )}
-    <h1 className="text-4xl font-extrabold text-gray-900 mb-1 tracking-tight">Bonjour.</h1>
+    <h1 className="text-4xl font-extrabold text-gray-900 mb-1 tracking-tight">{prenomDe(clientName) ? `Bonjour, ${prenomDe(clientName)}` : 'Bonjour'} 👋</h1>
     {(brandSettings?.welcome_message || brandSettings?.org_name) && (
       <p className="text-sm mb-2" style={{color: brandSettings?.primary_color || '#7C3AED'}}>
         {brandSettings?.welcome_message || `Bienvenue sur l'espace ${brandSettings?.org_name}`}
@@ -13423,7 +13467,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
       <div className="flex items-center justify-between mt-2">
         <p className="text-[10px] text-gray-400 italic">Suivi de votre assiduité en temps réel.</p>
         {totalSessions > 0 && (
-          <p className="text-[10px] text-gray-400 font-semibold">{signedSessions} / {totalSessions} séances émargées</p>
+          <p className="text-[10px] text-gray-400 font-semibold">{signedSessions} / {totalSessions} étapes validées</p>
         )}
       </div>
     </div>
@@ -13436,7 +13480,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
       </div>
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('bilan')}>
         <h3 className="font-bold text-gray-800 text-lg mb-2">Synthèse de Bilan</h3>
-        <p className="text-sm text-gray-500 mb-4">Vos résultats d'évaluation ont été traités par notre approche IA.</p>
+        <p className="text-sm text-gray-500 mb-4">Retrouvez la synthèse de vos évaluations dès que votre formateur l'aura publiée.</p>
         <div className="bg-gray-900 text-white px-4 py-2 rounded-xl text-sm font-bold text-center">Consulter mon bilan</div>
       </div>
     </div>
@@ -13565,12 +13609,12 @@ const SessionsView = ({
     <div className="flex flex-col gap-1 items-start md:items-center">
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Moi: {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+        <span className="text-[9px] font-black uppercase text-gray-500">Vous : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
       {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
-        <span className="text-[9px] font-black uppercase text-gray-500">Formateur: {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
+        <span className="text-[9px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
       )}
     </div>
@@ -13579,7 +13623,16 @@ const SessionsView = ({
   return (
     <div className="space-y-6 animate-fade-in max-w-5xl mx-auto">
       <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Séances d'Accompagnement</h1>
-      <p className="text-gray-500 text-lg">Retrouvez le calendrier de vos 8 séances et signez vos émargements.</p>
+      {(() => {
+        const nbSeances = new Set(mySessions.filter(s => Number(s.numero_seance) >= 1).map(s => s.numero_seance)).size;
+        return (
+          <p className="text-gray-500 text-lg">
+            {nbSeances > 0
+              ? `Retrouvez le calendrier de vos ${nbSeances} séance${nbSeances > 1 ? 's' : ''} et signez vos émargements.`
+              : 'Retrouvez ici le calendrier de vos séances et signez vos émargements.'}
+          </p>
+        );
+      })()}
 
       <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-6">
@@ -13757,7 +13810,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
     return (
       <div className="space-y-6 max-w-5xl mx-auto">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Connaissance de soi</h1>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
           <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
         </div>
         <div className="bg-white rounded-3xl p-12 shadow-sm border border-gray-100 flex flex-col items-center text-center">
@@ -13784,7 +13837,7 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
     <div className="space-y-6 max-w-5xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Espace Connaissance de soi</h1>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
           <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
         </div>
         <button onClick={handleDownloadPDF} className="mt-4 md:mt-0 bg-gray-900 hover:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium shadow-md transition-all text-sm flex items-center w-fit">
@@ -14195,7 +14248,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [signingRequiresSignature, setSigningRequiresSignature] = React.useState(true);
   const isClientSignatureField = (f) => (f.tag || '') === 'signature_client' || (f.field_type === 'signature' && (f.tag || '').includes('client'));
   const [viewingResource, setViewingResource] = React.useState(null);
-  const [debugInfo, setDebugInfo] = React.useState(null);
+  const [, setDebugInfo] = React.useState(null);
   const [expandedGroupId, setExpandedGroupId] = React.useState(null);
   const [groupNames, setGroupNames] = React.useState({}); // { groupId: nom }
   const [isConservationModalOpen, setIsConservationModalOpen] = React.useState(false);
@@ -15524,12 +15577,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           <FileText size={48} className="mx-auto mb-4 text-gray-200" />
           <p className="font-bold text-gray-600">Aucun document pour le moment</p>
           <p className="text-sm mt-1">Votre accompagnateur n'a pas encore ajouté de documents à ce module.</p>
-          {debugInfo && (
-            <p className="text-[10px] font-mono text-gray-300 mt-3">
-              module: {debugInfo.moduleId} · ressources: {debugInfo.count ?? '?'} · docs visibles: {clientVisibleDocs.length}
-              {debugInfo.error && <span className="text-red-400"> · erreur: {debugInfo.error}</span>}
-            </p>
-          )}
         </div>
       )}
 
@@ -15585,7 +15632,7 @@ const ExercicesView = ({ setActiveTab, sessions, currentUserId, handleUploadExer
     <div className="space-y-6 animate-fade-in relative flex flex-col max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Outils Pédagogiques</h1>
+          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Exercices</h1>
           <p className="text-gray-500 text-lg">Exercices assignés par votre accompagnateur.</p>
         </div>
       </div>
@@ -24762,7 +24809,7 @@ export default function App() {
                 <Users className="w-5 h-5 mr-3" /> Formateurs
               </button>
               <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Layout className="w-5 h-5 mr-3" /> Calendrier
+                <CalendarDays className="w-5 h-5 mr-3" /> Calendrier
               </button>
               <button onClick={() => { setActiveTab('gestion_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'gestion_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <FileText className="w-5 h-5 mr-3" /> Documents
@@ -24771,7 +24818,7 @@ export default function App() {
                 <FileCheck className="w-5 h-5 mr-3" /> Questionnaires & Quiz
               </button>
               <button onClick={() => { setActiveTab('modules'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'modules' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Settings className="w-5 h-5 mr-3" /> Modules
+                <Layers className="w-5 h-5 mr-3" /> Modules
               </button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
@@ -24820,7 +24867,7 @@ export default function App() {
                 <Users className="w-5 h-5 mr-3" /> Mes Clients
               </button>
               <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Layout className="w-5 h-5 mr-3" /> Calendrier
+                <CalendarDays className="w-5 h-5 mr-3" /> Calendrier
               </button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
@@ -24850,12 +24897,12 @@ export default function App() {
             <>
               <button onClick={() => { setActiveTab('accueil'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'accueil' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><LayoutDashboard className="w-5 h-5 mr-3" /> Accueil</button>
               <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
-              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Calendrier</button>
+              <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><CalendarDays className="w-5 h-5 mr-3" /> Calendrier</button>
               <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Users className="w-5 h-5 mr-3" /> Mon bilan</button>
-              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Plus className="w-5 h-5 mr-3" /> Exercices</button>
+              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Target className="w-5 h-5 mr-3" /> Mon bilan</button>
+              <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><ClipboardList className="w-5 h-5 mr-3" /> Exercices</button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
-              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Layout className="w-5 h-5 mr-3" /> Ressources</button>
+              <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><BookOpen className="w-5 h-5 mr-3" /> Ressources</button>
               <button onClick={() => { setActiveTab('messagerie'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-3.5 rounded-xl transition-all duration-200 ${activeTab === 'messagerie' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                 Messagerie
@@ -25267,6 +25314,7 @@ export default function App() {
               coachName={_coach?.nom || null}
               pendingDocsCount={_pendingDocs}
               brandSettings={brandSettings}
+              clientName={_client?.nom_complet || ''}
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
