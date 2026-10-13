@@ -4,7 +4,8 @@ import {
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
   Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet,
   Layers, Target, ClipboardList, CalendarDays, BookOpen,
-  UserCircle, MessageCircle, Menu, CalendarCheck, KeyRound
+  UserCircle, MessageCircle, Menu, CalendarCheck, KeyRound,
+  UsersRound, UserPlus, UserMinus, Video, CalendarPlus
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -4277,9 +4278,11 @@ const ClientDetailView = ({
   onTimeChange, onSaveTimes, editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
-  handleRegenerateVisualDocs, instantiateDocument, currentOrgId
+  handleRegenerateVisualDocs, instantiateDocument, currentOrgId,
+  groupes = [], onOpenGroupe = null
 }) => {
   const [activeTab, setActiveTab] = React.useState('infos');
+  const groupeDuClient = client?.groupe_id ? (groupes || []).find(g => String(g.id) === String(client.groupe_id)) : null;
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [activeId, setActiveId] = React.useState(null);
   const [isSavingInfo, setIsSavingInfo] = React.useState(false);
@@ -4883,6 +4886,12 @@ const ClientDetailView = ({
         <div>
           <h2 className="text-2xl font-bold text-gray-900 break-words">{client.nomcomplet_client || client.nom || "Client sans nom"}</h2>
           <p className="text-gray-500 break-all">{client.email || "Aucun email"} - N° Dossier: {client.numero_dossier || "Non défini"}</p>
+          {groupeDuClient && (
+            <button onClick={() => onOpenGroupe && onOpenGroupe(groupeDuClient.id)} disabled={!onOpenGroupe}
+              className="mt-2 inline-flex items-start gap-1.5 text-left text-xs font-black px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 max-w-full">
+              <UsersRound size={13} className="mt-0.5 shrink-0" /> <span>Groupe : {groupeDuClient.nom}</span>
+            </button>
+          )}
         </div>
         <div className="mt-4 md:mt-0 flex flex-wrap items-center gap-2 md:gap-3">
           <button
@@ -6210,7 +6219,8 @@ const AdminClientsView = ({
   editedTimes, lastModifiedSessionId,
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
-  handleRegenerateVisualDocs, instantiateDocument, currentOrgId
+  handleRegenerateVisualDocs, instantiateDocument, currentOrgId,
+  groupes = [], onOpenGroupe = null
 }) => {
   const [clientSearchTerm, setClientSearchTerm] = React.useState('');
 
@@ -6264,6 +6274,8 @@ const AdminClientsView = ({
           handleRegenerateVisualDocs={handleRegenerateVisualDocs}
           instantiateDocument={instantiateDocument}
           currentOrgId={currentOrgId}
+          groupes={groupes}
+          onOpenGroupe={onOpenGroupe}
         />
       );
     }
@@ -13087,7 +13099,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
 };
 
 // ─── Calendrier des séances ────────────────────────────────────────────────────
-const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId, fetchSessions }) => {
+const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId, fetchSessions, groupes = [], groupeSeances = [], onOpenGroupe = null }) => {
   const [currentMonth, setCurrentMonth] = React.useState(new Date());
   const [selectedDay, setSelectedDay] = React.useState(null);
   const [editingSeanceSession, setEditingSeanceSession] = React.useState(null);
@@ -13126,8 +13138,21 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const startDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7;
 
+  // GROUPES (2026-10-13) : pour une séance de groupe, le formateur concerné est celui de la séance
+  // (s'il a été changé), sinon celui du groupe, sinon le formateur référent du client.
+  const groupeDe = (gid) => (groupes || []).find(g => String(g.id) === String(gid));
+  const seanceDeGroupe = (gid, numero) => (groupeSeances || []).find(x => String(x.groupe_id) === String(gid) && Number(x.numero) === Number(numero));
+  const formateurResponsable = (s) => {
+    const client = clients.find(c => c.id === s.client_id);
+    if (client?.groupe_id) {
+      const gs = seanceDeGroupe(client.groupe_id, s.numero_seance);
+      const g = groupeDe(client.groupe_id);
+      return gs?.formateur_id || g?.formateur_id || client?.formateur_id;
+    }
+    return client?.formateur_id;
+  };
   const filteredSessions = userRole === 'formateur'
-    ? sessions.filter(s => clients.find(c => c.id === s.client_id)?.formateur_id === currentUserId)
+    ? sessions.filter(s => String(formateurResponsable(s) || '') === String(currentUserId))
     : userRole === 'client'
     ? sessions.filter(s => String(s.client_id) === String(currentUserId))
     : sessions;
@@ -13137,6 +13162,29 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
     filteredSessions.forEach(s => { if (s.date) { if (!map[s.date]) map[s.date] = []; map[s.date].push(s); } });
     return map;
   }, [filteredSessions]);
+
+  const fusionnerGroupes = (liste) => {
+    if (userRole === 'client') return liste;
+    const out = [];
+    const parCle = new Map();
+    liste.forEach(g => {
+      const client = clients.find(c => c.id === g.client_id);
+      const gid = client?.groupe_id;
+      if (!gid || g.numero === null || g.numero === undefined || Number(g.numero) === 0) { out.push(g); return; }
+      const cle = `grp|${gid}|${g.numero}|${g.date || ''}`;
+      if (!parCle.has(cle)) {
+        const e = { cle, estGroupe: true, groupe_id: gid, client_id: g.client_id, numero: g.numero, date: g.date, heure_debut: g.heure_debut, heure_fin: g.heure_fin, membres: [], items: [] };
+        parCle.set(cle, e);
+        out.push(e);
+      }
+      const e = parCle.get(cle);
+      if (!e.heure_debut && g.heure_debut) e.heure_debut = g.heure_debut;
+      if (!e.heure_fin && g.heure_fin) e.heure_fin = g.heure_fin;
+      e.membres.push(g);
+      e.items.push(...g.items);
+    });
+    return out;
+  };
 
   const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
   const MONTHS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
@@ -13170,7 +13218,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
           {cells.map((day, idx) => {
             if (!day) return <div key={idx} className="h-20 border-b border-r border-gray-50 bg-gray-50/50" />;
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const dayGroups = regrouperParSeance(sessionsByDate[dateStr] || []);
+            const dayGroups = fusionnerGroupes(regrouperParSeance(sessionsByDate[dateStr] || []));
             const isToday = dateStr === todayStr;
             const isSelected = selectedDay === dateStr;
             return (
@@ -13180,6 +13228,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                 <div className="space-y-0.5">
                   {dayGroups.slice(0, 2).map((g, i) => {
                     const client = clients.find(c => c.id === g.client_id);
+                    if (g.estGroupe) return <div key={i} title={`${groupeDe(g.groupe_id)?.nom || 'Groupe'} · ${g.membres.length} participants`} className="flex items-center gap-1 text-[11px] bg-indigo-100 text-indigo-700 px-1 py-0.5 rounded font-bold"><span className="truncate">{g.heure_debut ? `${heureCourte(g.heure_debut)} ` : ''}{groupeDe(g.groupe_id)?.nom || 'Groupe'}</span><span className="shrink-0 ml-auto bg-white/70 rounded px-1">{g.membres.length}</span></div>;
                     return <div key={i} className="text-[11px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded truncate font-medium">{g.heure_debut ? `${g.heure_debut} ` : ''}{userRole === 'client' ? titreSeance(g) : (client?.nom?.split(' ')[0] || 'Séance')}</div>;
                   })}
                   {dayGroups.length > 2 && <div className="text-[11px] text-gray-400 font-medium">+{dayGroups.length - 2}</div>}
@@ -13196,8 +13245,49 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
             <h3 className="font-bold text-gray-900 text-sm">{new Date(selectedDay + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
           </div>
           <div className="divide-y divide-gray-50">
-            {regrouperParSeance(sessionsByDate[selectedDay]).map(g => {
+            {fusionnerGroupes(regrouperParSeance(sessionsByDate[selectedDay])).map(g => {
               const s = g.items[0];
+              if (g.estGroupe) {
+                const grp = groupeDe(g.groupe_id);
+                const gs = seanceDeGroupe(g.groupe_id, g.numero);
+                const fId = gs?.formateur_id || grp?.formateur_id;
+                const fNom = (formateurs || []).find(f => String(f.id) === String(fId))?.nom;
+                const nbSignes = g.membres.filter(seanceSignee).length;
+                const lien = g.items.map(i => lireMeta(i.metadata).lien_visio).find(isSafeVisioUrl);
+                return (
+                  <div key={g.cle} className="px-5 py-4">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm">
+                          {grp?.nom || 'Groupe'} — {gs?.titre && !/^Séance \d+$/.test(gs.titre) ? `${titreSeance(g)} · ${gs.titre}` : titreSeance(g)}
+                          <span className="ml-2 text-[11px] font-black px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 whitespace-nowrap">Groupe · {g.membres.length} participant{g.membres.length > 1 ? 's' : ''}</span>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {horaireSeance({ heure_debut: heureCourte(g.heure_debut), heure_fin: heureCourte(g.heure_fin) }) || 'Horaire à définir'}
+                          {fNom && userRole !== 'formateur' ? ` · avec ${fNom}` : ''}
+                          {gs?.lieu || grp?.lieu ? ` · ${gs?.lieu || grp?.lieu}` : ''}
+                        </p>
+                        <details className="mt-1">
+                          <summary className="text-xs text-violet-700 font-bold cursor-pointer select-none">Voir les participants</summary>
+                          <ul className="mt-1 text-xs text-gray-600 space-y-0.5">
+                            {g.membres.map(m => {
+                              const c = clients.find(x => x.id === m.client_id);
+                              return <li key={m.cle}>{seanceSignee(m) ? '✓' : '○'} {c?.nom || 'Participant'}</li>;
+                            })}
+                          </ul>
+                        </details>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-xs font-black px-2 py-1 rounded-lg ${nbSignes === g.membres.length ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{nbSignes}/{g.membres.length} signés</span>
+                        {onOpenGroupe && <button onClick={() => onOpenGroupe(g.groupe_id)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Ouvrir le groupe</button>}
+                      </div>
+                    </div>
+                    {lien && (
+                      <a href={lien} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">🎥 Rejoindre la visio</a>
+                    )}
+                  </div>
+                );
+              }
               const client = clients.find(c => c.id === g.client_id);
               const formateur = formateurs.find(f => f.id === client?.formateur_id);
               const metas = g.items.map(i => (typeof i.metadata === 'string')
@@ -20424,6 +20514,7 @@ const TAB_TO_PATH = {
   accueil: '/accueil',
   accueil_formateur: '/espace-formateur',
   clients: '/clients',
+  groupes: '/groupes',
   formateurs: '/formateurs',
   modules: '/modules',
   processus: '/processus',
@@ -20472,6 +20563,752 @@ const getPlanTier = (orgSettings) => {
   return PLAN_TIER_RANK[planKey] !== undefined ? planKey : 'essentiel';
 };
 const hasFeatureAccess = (orgSettings, minTier) => PLAN_TIER_RANK[getPlanTier(orgSettings)] >= PLAN_TIER_RANK[minTier];
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// GROUPES (2026-10-13) — formations collectives.
+// Un groupe réunit plusieurs clients autour d'un même module et d'un planning commun. Chaque
+// participant garde son propre dossier (séances, documents, signatures, n° de dossier) : le groupe
+// sert à tout faire EN UNE FOIS (création des dossiers, dates, horaires, lien visio, formateur).
+// Tables : groupes, groupe_seances, clients.groupe_id (voir groupes_etape1.sql).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const RE_EMAIL_GROUPE = /[A-Z0-9._%+'-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i;
+const nomDepuisEmail = (email) => String(email || '').split('@')[0].split(/[._-]+/).filter(Boolean)
+  .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+// Lit une liste collée (Excel, e-mail, une personne par ligne) : nom, e-mail, et un éventuel
+// n° de dossier (le premier morceau qui contient un chiffre).
+const analyserListeParticipants = (texte) => {
+  const vus = new Set();
+  return String(texte || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map((ligne) => {
+    const m = ligne.match(RE_EMAIL_GROUPE);
+    if (!m) return { ligne, erreur: "Pas d'adresse e-mail sur cette ligne" };
+    const email = m[0].toLowerCase();
+    const reste = `${ligne.slice(0, m.index)}\t${ligne.slice(m.index + m[0].length)}`;
+    const morceaux = reste.split(/[;\t|,]+/).map(x => x.trim().replace(/^["'<(]+|[">)']+$/g, '').trim()).filter(Boolean);
+    const nomParts = [];
+    let dossier = '';
+    morceaux.forEach(p => { if (/\d/.test(p)) { if (!dossier) dossier = p; } else nomParts.push(p); });
+    const nom = nomParts.join(' ').replace(/\s+/g, ' ').trim() || nomDepuisEmail(email);
+    if (vus.has(email)) return { ligne, email, nom, erreur: 'En double dans la liste' };
+    vus.add(email);
+    return { ligne, email, nom, numero_dossier: dossier };
+  });
+};
+const aujourdhuiISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const heureCourte = (h) => (h ? String(h).slice(0, 5) : '');
+const dateCourte = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '');
+const lireMeta = (m) => (typeof m === 'string' ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {}));
+const participantsDuGroupe = (clients, groupeId) => (clients || []).filter(c => c.groupe_id && String(c.groupe_id) === String(groupeId));
+const seancesDuGroupe = (groupeSeances, groupeId) => (groupeSeances || [])
+  .filter(s => String(s.groupe_id) === String(groupeId))
+  .sort((a, b) => Number(a.numero) - Number(b.numero));
+// Émargements d'une séance du groupe : combien de participants ont signé leur présence.
+const statsEmargementSeance = (seance, participants, sessions) => {
+  let signes = 0, attendus = 0;
+  (participants || []).forEach(p => {
+    const lignes = (sessions || []).filter(s => String(s.client_id) === String(p.id)
+      && Number(s.numero_seance) === Number(seance.numero) && s.type_activite === 'signature'
+      && lireMeta(s.metadata).requiresClientSignature !== false);
+    if (lignes.length === 0) return;
+    attendus++;
+    if (lignes.every(s => s.statut_client === 'Signé')) signes++;
+  });
+  return { signes, attendus };
+};
+// Analyse les participants saisis (liste collée + clients existants choisis) avant création.
+const analyserParticipantsGroupe = ({ texte, choisis, clients, groupes, moduleId, groupeId }) => {
+  const res = [];
+  const emailsVus = new Set();
+  const verifierExistant = (c) => {
+    if (c.groupe_id && String(c.groupe_id) !== String(groupeId || '')) {
+      const g = (groupes || []).find(x => String(x.id) === String(c.groupe_id));
+      return `Fait déjà partie du groupe « ${g?.nom || 'autre groupe'} »`;
+    }
+    if (groupeId && c.groupe_id && String(c.groupe_id) === String(groupeId)) return 'Fait déjà partie de ce groupe';
+    if (moduleId && c.module_id && String(c.module_id) !== String(moduleId)) return 'Suit déjà un autre module : changez-le dans sa fiche avant de l\'ajouter';
+    return null;
+  };
+  analyserListeParticipants(texte).forEach(l => {
+    if (l.erreur) { res.push({ type: 'erreur', nom: l.nom || l.ligne, email: l.email || '', erreur: l.erreur }); return; }
+    emailsVus.add(l.email);
+    const existant = (clients || []).find(c => (c.email_contact || c.email || '').toLowerCase() === l.email);
+    if (existant) {
+      const err = verifierExistant(existant);
+      res.push({ type: err ? 'erreur' : 'existant', clientId: existant.id, nom: existant.nom_complet || existant.nom, email: l.email, numero_dossier: l.numero_dossier, erreur: err });
+    } else {
+      res.push({ type: 'nouveau', nom: l.nom, email: l.email, numero_dossier: l.numero_dossier });
+    }
+  });
+  (choisis || []).forEach(id => {
+    const c = (clients || []).find(x => String(x.id) === String(id));
+    if (!c) return;
+    const email = (c.email_contact || c.email || '').toLowerCase();
+    if (email && emailsVus.has(email)) return;
+    emailsVus.add(email);
+    const err = verifierExistant(c);
+    res.push({ type: err ? 'erreur' : 'existant', clientId: c.id, nom: c.nom_complet || c.nom, email, erreur: err });
+  });
+  return res;
+};
+
+const champGroupe = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500';
+const libelleGroupe = 'block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5';
+
+// Saisie des participants : liste collée + choix parmi les clients existants + aperçu.
+const SaisieParticipantsGroupe = ({ texte, setTexte, choisis, setChoisis, clients, analyse, groupeId }) => {
+  const [aAjouter, setAAjouter] = React.useState('');
+  const disponibles = (clients || [])
+    .filter(c => !c.groupe_id && !(choisis || []).some(id => String(id) === String(c.id)))
+    .filter(c => !groupeId || String(c.groupe_id || '') !== String(groupeId));
+  const nb = (t) => analyse.filter(a => a.type === t).length;
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div className="space-y-3 min-w-0">
+        <label htmlFor="grp-liste" className={libelleGroupe}>Collez votre liste (une personne par ligne)</label>
+        <textarea id="grp-liste" value={texte} onChange={e => setTexte(e.target.value)} rows={9}
+          placeholder={'Sophie Laurent ; sophie.laurent@mail.fr\nKarim Benali ; k.benali@mail.fr ; 061/2026/1183\n…'}
+          className={`${champGroupe} font-mono text-[13px] leading-6 resize-y`} />
+        <p className="text-xs text-gray-500">Nom et e-mail, séparés par un point-virgule, une virgule ou une tabulation (copie depuis Excel). Vous pouvez ajouter le n° de dossier à la suite.</p>
+        <div>
+          <label htmlFor="grp-existant" className={libelleGroupe}>Ou ajoutez un client qui a déjà un dossier</label>
+          <div className="flex gap-2">
+            <select id="grp-existant" value={aAjouter} onChange={e => setAAjouter(e.target.value)} className={champGroupe}>
+              <option value="">Choisir un client…</option>
+              {disponibles.map(c => <option key={c.id} value={c.id}>{c.nom_complet || c.nom}{c.email_contact ? ` (${c.email_contact})` : ''}</option>)}
+            </select>
+            <button type="button" disabled={!aAjouter} onClick={() => { setChoisis([...(choisis || []), aAjouter]); setAAjouter(''); }}
+              className="px-4 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm disabled:opacity-40 hover:bg-violet-100 shrink-0">Ajouter</button>
+          </div>
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <p className={libelleGroupe + ' mb-0'}>Aperçu</p>
+          <p className="text-xs text-gray-500">{nb('nouveau')} nouveau(x) · {nb('existant')} déjà client(s){nb('erreur') ? ` · ${nb('erreur')} à corriger` : ''}</p>
+        </div>
+        {analyse.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">Les participants reconnus apparaîtront ici.</div>
+        ) : (
+          <ul className="rounded-2xl border border-gray-100 divide-y divide-gray-50 max-h-80 overflow-y-auto bg-white">
+            {analyse.map((a, i) => (
+              <li key={i} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-gray-900 truncate">{a.nom}</p>
+                  <p className="text-xs text-gray-500 truncate">{a.email}{a.numero_dossier ? ` · Dossier ${a.numero_dossier}` : ''}</p>
+                  {a.erreur && <p className="text-xs text-red-600 mt-0.5">{a.erreur}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {a.type === 'nouveau' && <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-50 text-violet-700">Nouveau dossier</span>}
+                  {a.type === 'existant' && <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-gray-100 text-gray-600">Déjà client</span>}
+                  {a.type === 'erreur' && <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-red-50 text-red-600">Non ajouté</span>}
+                  {a.clientId && (choisis || []).some(id => String(id) === String(a.clientId)) && (
+                    <button type="button" title="Retirer de la liste" onClick={() => setChoisis(choisis.filter(id => String(id) !== String(a.clientId)))}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50"><X size={14} /></button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Écran d'attente / rapport pendant la création ou l'ajout de participants.
+const RapportGroupe = ({ progression, rapport, onFermer, libelleFermer = 'Continuer' }) => (
+  <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 max-w-2xl">
+    {!rapport ? (
+      <div className="flex items-center gap-3">
+        <div className="w-5 h-5 rounded-full border-2 border-violet-200 border-t-violet-600 animate-spin" />
+        <div>
+          <p className="font-bold text-gray-900">Création en cours, ne fermez pas la page…</p>
+          <p className="text-sm text-gray-500 mt-0.5">{progression}</p>
+        </div>
+      </div>
+    ) : (
+      <div className="space-y-4">
+        <p className="text-lg font-black text-gray-900">{rapport.titre}</p>
+        <ul className="text-sm text-gray-700 space-y-1">
+          {rapport.invites > 0 && <li>✓ {rapport.invites} invitation{rapport.invites > 1 ? 's' : ''} envoyée{rapport.invites > 1 ? 's' : ''} par e-mail</li>}
+          {rapport.ajoutes > 0 && <li>✓ {rapport.ajoutes} client{rapport.ajoutes > 1 ? 's' : ''} existant{rapport.ajoutes > 1 ? 's' : ''} ajouté{rapport.ajoutes > 1 ? 's' : ''} au groupe</li>}
+          {rapport.seances > 0 && <li>✓ Dates et horaires reportés sur {rapport.seances} séance{rapport.seances > 1 ? 's' : ''} de chaque participant</li>}
+        </ul>
+        {rapport.erreurs.length > 0 && (
+          <div className="rounded-2xl bg-red-50 border border-red-100 p-4">
+            <p className="font-bold text-red-700 text-sm mb-2">{rapport.erreurs.length} participant{rapport.erreurs.length > 1 ? 's n\'ont' : ' n\'a'} pas pu être ajouté{rapport.erreurs.length > 1 ? 's' : ''} :</p>
+            <ul className="text-sm text-red-700 space-y-1">
+              {rapport.erreurs.map((e, i) => <li key={i}><b>{e.nom}</b>{e.email ? ` (${e.email})` : ''} : {humanizeErrorMessage(e.message)}</li>)}
+            </ul>
+            <p className="text-xs text-red-600 mt-2">Vous pourrez les ajouter plus tard depuis l'onglet « Participants » du groupe.</p>
+          </div>
+        )}
+        <button onClick={onFermer} className="px-5 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700">{libelleFermer}</button>
+      </div>
+    )}
+  </div>
+);
+
+// ─── Création d'un groupe en 3 étapes ─────────────────────────────────────────────────────────────
+const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTemplates, orgSettings, actions, onAnnuler, onCree }) => {
+  const [etape, setEtape] = React.useState(1);
+  const [infos, setInfos] = React.useState({ nom: '', module_id: '', formateur_id: '', lieu: '', lien_visio: '' });
+  const [seances, setSeances] = React.useState([]);
+  const [seancesPour, setSeancesPour] = React.useState(null);
+  const [heuresTous, setHeuresTous] = React.useState({ debut: '', fin: '' });
+  const [texte, setTexte] = React.useState('');
+  const [choisis, setChoisis] = React.useState([]);
+  const [progression, setProgression] = React.useState('');
+  const [rapport, setRapport] = React.useState(null);
+  const [enCours, setEnCours] = React.useState(false);
+  const [groupeCreeId, setGroupeCreeId] = React.useState(null);
+
+  const majInfo = (k, v) => setInfos(prev => ({ ...prev, [k]: v }));
+  const preparerSeances = () => {
+    const cle = String(infos.module_id || '');
+    if (seancesPour === cle && seances.length > 0) return;
+    const mod = (modules || []).find(m => String(m.id) === cle);
+    const tpl = (moduleSessionTemplates || []).filter(t => String(t.module_id) === cle && Number(t.ordre) >= 1)
+      .sort((a, b) => Number(a.ordre) - Number(b.ordre));
+    let lignes = tpl.map(t => ({ numero: Number(t.ordre), titre: t.titre || `Séance ${t.ordre}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: false }));
+    if (lignes.length === 0 && mod?.seances_prevues) {
+      lignes = Array.from({ length: Number(mod.seances_prevues) || 0 }, (_, i) => ({ numero: i + 1, titre: `Séance ${i + 1}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: false }));
+    }
+    if (lignes.length === 0) lignes = [{ numero: 1, titre: 'Séance 1', date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true }];
+    setSeances(lignes);
+    setSeancesPour(cle);
+  };
+  const majSeance = (i, k, v) => setSeances(prev => prev.map((s, j) => (j === i ? { ...s, [k]: v } : s)));
+  const ajouterSeance = () => setSeances(prev => {
+    const n = prev.reduce((m, s) => Math.max(m, Number(s.numero) || 0), 0) + 1;
+    return [...prev, { numero: n, titre: `Séance ${n}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true }];
+  });
+
+  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: infos.module_id }), [texte, choisis, clients, groupes, infos.module_id]);
+  const valides = analyse.filter(a => a.type === 'nouveau' || a.type === 'existant');
+  const nbNouveaux = analyse.filter(a => a.type === 'nouveau').length;
+  const limite = getClientLimitForOrg(orgSettings);
+  const restant = Number.isFinite(limite) ? limite - (clients || []).length : Infinity;
+  const depasse = Number.isFinite(restant) && nbNouveaux > restant;
+
+  const peutContinuer1 = infos.nom.trim().length > 0;
+  const creer = async () => {
+    setEnCours(true);
+    setRapport(null);
+    try {
+      const res = await actions.creerGroupe({ infos, seances, participants: valides }, setProgression);
+      setGroupeCreeId(res.groupeId);
+      setRapport({ ...res.rapport, titre: `Le groupe « ${infos.nom.trim()} » est créé.` });
+    } catch (e) {
+      toast.error(`Le groupe n'a pas pu être créé : ${e.message}`);
+      setEnCours(false);
+    }
+  };
+
+  if (enCours) {
+    return <RapportGroupe progression={progression} rapport={rapport} onFermer={() => onCree(groupeCreeId)} libelleFermer="Ouvrir le groupe" />;
+  }
+
+  const Etape = ({ n, label }) => (
+    <div className={`flex items-center gap-2 text-sm font-bold ${etape === n ? 'text-violet-700' : etape > n ? 'text-emerald-600' : 'text-gray-400'}`}>
+      <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black ${etape === n ? 'bg-violet-600 text-white' : etape > n ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>{etape > n ? <Check size={14} /> : n}</span>
+      {label}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
+      <button onClick={onAnnuler} className="text-gray-500 hover:text-gray-900 font-bold flex items-center transition-colors"><ChevronLeft className="w-5 h-5 mr-1" /> Retour aux groupes</button>
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-gray-900">Nouveau groupe</h1>
+          <p className="text-gray-500 text-sm mt-1">Les dates, horaires et participants sont saisis une seule fois pour tout le groupe.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Etape n={1} label="Infos" /><span className="w-6 h-0.5 bg-gray-200 hidden sm:block" />
+          <Etape n={2} label="Séances" /><span className="w-6 h-0.5 bg-gray-200 hidden sm:block" />
+          <Etape n={3} label="Participants" />
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 md:p-8">
+        {etape === 1 && (
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label htmlFor="grp-nom" className={libelleGroupe}>Nom du groupe *</label>
+              <input id="grp-nom" value={infos.nom} onChange={e => majInfo('nom', e.target.value)} placeholder="Ex : Management d'équipe · Promo novembre" className={champGroupe} />
+            </div>
+            <div>
+              <label htmlFor="grp-module" className={libelleGroupe}>Module de formation</label>
+              <select id="grp-module" value={infos.module_id} onChange={e => majInfo('module_id', e.target.value)} className={champGroupe}>
+                <option value="">Aucun module (séances libres)</option>
+                {(modules || []).map(m => <option key={m.id} value={m.id}>{m.nom}</option>)}
+              </select>
+              <p className="text-xs text-gray-500 mt-1.5">Chaque participant recevra les séances et documents de ce module, comme un client individuel.</p>
+            </div>
+            <div>
+              <label htmlFor="grp-formateur" className={libelleGroupe}>Formateur du groupe</label>
+              <select id="grp-formateur" value={infos.formateur_id} onChange={e => majInfo('formateur_id', e.target.value)} className={champGroupe}>
+                <option value="">À choisir plus tard</option>
+                {(formateurs || []).map(f => <option key={f.id} value={f.id}>{f.nom}</option>)}
+              </select>
+              <p className="text-xs text-gray-500 mt-1.5">Vous pourrez mettre un autre formateur sur certaines séances à l'étape suivante.</p>
+            </div>
+            <div>
+              <label htmlFor="grp-lieu" className={libelleGroupe}>Lieu (si en salle)</label>
+              <input id="grp-lieu" value={infos.lieu} onChange={e => majInfo('lieu', e.target.value)} placeholder="Ex : Salle de formation, Lille" className={champGroupe} />
+            </div>
+            <div>
+              <label htmlFor="grp-visio" className={libelleGroupe}>Lien visio (si à distance)</label>
+              <input id="grp-visio" type="url" value={infos.lien_visio} onChange={e => majInfo('lien_visio', e.target.value)} placeholder="https://meet.google.com/…" className={champGroupe} />
+            </div>
+          </div>
+        )}
+
+        {etape === 2 && (
+          <div className="space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
+              <p className="text-sm text-gray-600 max-w-2xl">Indiquez la date et les horaires de chaque séance. La durée est libre : une séance peut être une demi-journée, une journée ou une heure. Vous pourrez tout modifier ensuite.</p>
+              <div className="flex flex-wrap items-end gap-2 bg-gray-50 rounded-2xl p-3">
+                <div><label htmlFor="grp-h1" className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id="grp-h1" type="time" value={heuresTous.debut} onChange={e => setHeuresTous(p => ({ ...p, debut: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+                <div><label htmlFor="grp-h2" className="block text-[11px] font-bold text-gray-500 mb-1">Fin</label><input id="grp-h2" type="time" value={heuresTous.fin} onChange={e => setHeuresTous(p => ({ ...p, fin: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+                <button type="button" onClick={() => setSeances(prev => prev.map(s => ({ ...s, heure_debut: heuresTous.debut || s.heure_debut, heure_fin: heuresTous.fin || s.heure_fin })))}
+                  className="px-3 py-2 rounded-lg bg-white border border-gray-200 text-sm font-bold text-gray-700 hover:border-violet-300">Mettre ces horaires partout</button>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+              {seances.map((s, i) => (
+                <div key={s.numero} className="p-3 md:p-4 flex flex-wrap items-end gap-3">
+                  <div className="w-full sm:w-44 min-w-0">
+                    <p className="text-sm font-black text-gray-900">Séance {s.numero}</p>
+                    {s.ajoutee
+                      ? <input aria-label={`Titre de la séance ${s.numero}`} value={s.titre} onChange={e => majSeance(i, 'titre', e.target.value)} className="mt-1 w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs" />
+                      : (!/^Séance \d+$/.test(s.titre || '') && <p className="text-xs text-gray-500 truncate">{s.titre}</p>)}
+                  </div>
+                  <div><label htmlFor={`grp-d-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Date</label><input id={`grp-d-${i}`} type="date" value={s.date} onChange={e => majSeance(i, 'date', e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+                  <div><label htmlFor={`grp-hd-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id={`grp-hd-${i}`} type="time" value={s.heure_debut} onChange={e => majSeance(i, 'heure_debut', e.target.value)} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+                  <div><label htmlFor={`grp-hf-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Fin</label><input id={`grp-hf-${i}`} type="time" value={s.heure_fin} onChange={e => majSeance(i, 'heure_fin', e.target.value)} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+                  <div className="min-w-0 flex-1 sm:flex-none sm:w-56">
+                    <label htmlFor={`grp-f-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Formateur</label>
+                    <select id={`grp-f-${i}`} value={s.formateur_id} onChange={e => majSeance(i, 'formateur_id', e.target.value)} className="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+                      <option value="">Formateur du groupe</option>
+                      {(formateurs || []).map(f => <option key={f.id} value={f.id}>{f.nom}</option>)}
+                    </select>
+                  </div>
+                  {s.ajoutee && seances.length > 1 && (
+                    <button type="button" onClick={() => setSeances(prev => prev.filter((_, j) => j !== i))} title="Retirer cette séance"
+                      className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200"><Trash2 size={15} /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={ajouterSeance} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm hover:bg-violet-100"><Plus size={16} /> Ajouter une séance</button>
+          </div>
+        )}
+
+        {etape === 3 && (
+          <div className="space-y-4">
+            <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} />
+            <div className={`rounded-2xl p-4 text-sm ${depasse ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}`}>
+              {nbNouveaux} nouveau{nbNouveaux > 1 ? 'x' : ''} dossier{nbNouveaux > 1 ? 's' : ''} à créer
+              {Number.isFinite(restant) ? ` · il vous en reste ${Math.max(0, restant)} sur ${limite} dans votre offre.` : '.'}
+              {depasse && ' Retirez des participants ou passez à une offre supérieure.'}
+              {nbNouveaux > 0 && !depasse && ' Chaque nouveau participant reçoit un e-mail d\'invitation pour créer son mot de passe.'}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap justify-between gap-3 mt-8 pt-5 border-t border-gray-100">
+          <button onClick={() => (etape === 1 ? onAnnuler() : setEtape(etape - 1))} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-bold text-sm hover:bg-gray-50">{etape === 1 ? 'Annuler' : 'Retour'}</button>
+          {etape < 3 ? (
+            <button disabled={etape === 1 && !peutContinuer1}
+              onClick={() => { if (etape === 1) preparerSeances(); setEtape(etape + 1); }}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-40">Continuer</button>
+          ) : (
+            <button disabled={depasse} onClick={creer}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-40">
+              {valides.length > 0 ? `Créer le groupe avec ${valides.length} participant${valides.length > 1 ? 's' : ''}` : 'Créer le groupe (participants plus tard)'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Ligne de séance modifiable dans la fiche du groupe ───────────────────────────────────────────
+const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujourdhui, estPassee }) => {
+  const initial = React.useMemo(() => ({
+    date: seance.date || '', heure_debut: heureCourte(seance.heure_debut), heure_fin: heureCourte(seance.heure_fin),
+    formateur_id: seance.formateur_id ? String(seance.formateur_id) : '', lien_visio: seance.lien_visio || '', lieu: seance.lieu || '',
+  }), [seance]);
+  const [brouillon, setBrouillon] = React.useState(initial);
+  const [plus, setPlus] = React.useState(false);
+  const [enreg, setEnreg] = React.useState(false);
+  React.useEffect(() => { setBrouillon(initial); }, [initial]);
+  const modifie = Object.keys(initial).some(k => String(initial[k] || '') !== String(brouillon[k] || ''));
+  const maj = (k, v) => setBrouillon(p => ({ ...p, [k]: v }));
+  const enregistrer = async () => {
+    setEnreg(true);
+    try {
+      await actions.majSeanceGroupe(seance, brouillon);
+      toast.success(`Séance ${seance.numero} mise à jour pour tout le groupe`);
+    } catch (e) {
+      toast.error(`La séance n'a pas pu être enregistrée : ${e.message}`);
+    }
+    setEnreg(false);
+  };
+  const fId = brouillon.formateur_id || groupe.formateur_id;
+  const fNom = (formateurs || []).find(f => String(f.id) === String(fId))?.nom;
+  const pid = `gs-${seance.id}`;
+  return (
+    <div className={`p-4 ${estAujourdhui ? 'bg-violet-50/60' : ''}`}>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-44 min-w-0">
+          <p className="text-sm font-black text-gray-900 flex items-center gap-2">Séance {seance.numero}{estAujourdhui && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-violet-600 text-white">AUJOURD'HUI</span>}</p>
+          <p className="text-xs text-gray-500 truncate">{seance.titre && !/^Séance \d+$/.test(seance.titre) ? seance.titre : (fNom ? `avec ${fNom}` : '')}</p>
+        </div>
+        <div><label htmlFor={`${pid}-d`} className="block text-[11px] font-bold text-gray-500 mb-1">Date</label><input id={`${pid}-d`} type="date" value={brouillon.date} onChange={e => maj('date', e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+        <div><label htmlFor={`${pid}-hd`} className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id={`${pid}-hd`} type="time" value={brouillon.heure_debut} onChange={e => maj('heure_debut', e.target.value)} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+        <div><label htmlFor={`${pid}-hf`} className="block text-[11px] font-bold text-gray-500 mb-1">Fin</label><input id={`${pid}-hf`} type="time" value={brouillon.heure_fin} onChange={e => maj('heure_fin', e.target.value)} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+        <div className="min-w-0 flex-1 sm:flex-none sm:w-52">
+          <label htmlFor={`${pid}-f`} className="block text-[11px] font-bold text-gray-500 mb-1">Formateur</label>
+          <select id={`${pid}-f`} value={brouillon.formateur_id} onChange={e => maj('formateur_id', e.target.value)} className="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+            <option value="">Formateur du groupe</option>
+            {(formateurs || []).map(f => <option key={f.id} value={f.id}>{f.nom}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {stats.attendus > 0 && (
+            <span className={`text-xs font-black px-2 py-1 rounded-lg ${stats.signes === stats.attendus ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{stats.signes}/{stats.attendus} signés</span>
+          )}
+          {estPassee && stats.attendus > stats.signes && (
+            <span className="text-xs font-black px-2 py-1 rounded-lg bg-amber-50 text-amber-700">{stats.attendus - stats.signes} en attente</span>
+          )}
+          <button type="button" onClick={() => setPlus(!plus)} className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 hover:border-violet-300 inline-flex items-center gap-1.5"><Video size={14} /> Lieu / visio</button>
+          {seance.ajoutee && (
+            <button type="button" title="Supprimer cette séance" onClick={() => actions.demanderSuppressionSeance(seance)} className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200"><Trash2 size={15} /></button>
+          )}
+          {modifie && (
+            <button type="button" disabled={enreg} onClick={enregistrer} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-50">{enreg ? 'Enregistrement…' : 'Enregistrer'}</button>
+          )}
+        </div>
+      </div>
+      {plus && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 bg-gray-50 rounded-xl p-3">
+          <div><label htmlFor={`${pid}-l`} className="block text-[11px] font-bold text-gray-500 mb-1">Lieu de cette séance</label><input id={`${pid}-l`} value={brouillon.lieu} onChange={e => maj('lieu', e.target.value)} placeholder={groupe.lieu || 'Lieu du groupe'} className="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+          <div><label htmlFor={`${pid}-v`} className="block text-[11px] font-bold text-gray-500 mb-1">Lien visio de cette séance</label><input id={`${pid}-v`} type="url" value={brouillon.lien_visio} onChange={e => maj('lien_visio', e.target.value)} placeholder={groupe.lien_visio || 'https://…'} className="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+          <p className="sm:col-span-2 text-xs text-gray-500">Laissez vide pour utiliser le lieu et le lien du groupe.</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Fiche d'un groupe ────────────────────────────────────────────────────────────────────────────
+const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, formateurs, modules, orgSettings, actions, onRetour, ouvrirFicheClient }) => {
+  const [onglet, setOnglet] = React.useState('planning');
+  const [edition, setEdition] = React.useState(null);
+  const [ajoutSeance, setAjoutSeance] = React.useState(null);
+  const [ajoutParticipants, setAjoutParticipants] = React.useState(false);
+  const [texte, setTexte] = React.useState('');
+  const [choisis, setChoisis] = React.useState([]);
+  const [progression, setProgression] = React.useState('');
+  const [rapport, setRapport] = React.useState(null);
+  const [enCours, setEnCours] = React.useState(false);
+  const [confirm, setConfirm] = React.useState(null);
+
+  const participants = participantsDuGroupe(clients, groupe.id).sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr'));
+  const seances = seancesDuGroupe(groupeSeances, groupe.id);
+  const today = aujourdhuiISO();
+  const mod = (modules || []).find(m => String(m.id) === String(groupe.module_id));
+  const formateur = (formateurs || []).find(f => String(f.id) === String(groupe.formateur_id));
+  const passees = seances.filter(s => s.date && s.date < today);
+  const statsParSeance = Object.fromEntries(seances.map(s => [s.id, statsEmargementSeance(s, participants, sessions)]));
+  const totalAttendus = passees.reduce((n, s) => n + statsParSeance[s.id].attendus, 0);
+  const totalSignes = passees.reduce((n, s) => n + statsParSeance[s.id].signes, 0);
+  const enAttente = totalAttendus - totalSignes;
+
+  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: groupe.module_id, groupeId: groupe.id }), [texte, choisis, clients, groupes, groupe.module_id, groupe.id]);
+  const valides = analyse.filter(a => a.type === 'nouveau' || a.type === 'existant');
+  const nbNouveaux = analyse.filter(a => a.type === 'nouveau').length;
+  const limite = getClientLimitForOrg(orgSettings);
+  const restant = Number.isFinite(limite) ? limite - (clients || []).length : Infinity;
+  const depasse = Number.isFinite(restant) && nbNouveaux > restant;
+
+  const lancerAjout = async () => {
+    setEnCours(true); setRapport(null);
+    try {
+      const r = await actions.ajouterParticipants(groupe, valides, setProgression);
+      setRapport({ ...r, titre: 'Participants ajoutés au groupe.' });
+      setTexte(''); setChoisis([]);
+    } catch (e) {
+      toast.error(`Les participants n'ont pas pu être ajoutés : ${e.message}`);
+      setEnCours(false);
+    }
+  };
+
+  const actionsFiche = { ...actions, demanderSuppressionSeance: (s) => setConfirm({
+    titre: `Supprimer la séance ${s.numero} ?`,
+    message: 'Elle sera retirée du planning du groupe et du dossier de chaque participant. Impossible si quelqu\'un l\'a déjà signée.',
+    action: async () => { try { await actions.supprimerSeanceGroupe(s); toast.success('Séance supprimée'); } catch (e) { toast.error(e.message); } },
+  }) };
+
+  if (enCours) {
+    return (
+      <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
+        <RapportGroupe progression={progression} rapport={rapport} onFermer={() => { setEnCours(false); setAjoutParticipants(false); setOnglet('participants'); }} />
+      </div>
+    );
+  }
+
+  const Kpi = ({ valeur, libelle, ton = 'gray' }) => (
+    <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+      <p className={`text-2xl font-black tabular-nums ${ton === 'amber' ? 'text-amber-600' : 'text-gray-900'}`}>{valeur}</p>
+      <p className="text-xs text-gray-500 font-medium mt-0.5">{libelle}</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
+      <button onClick={onRetour} className="text-gray-500 hover:text-gray-900 font-bold flex items-center transition-colors"><ChevronLeft className="w-5 h-5 mr-1" /> Retour aux groupes</button>
+
+      <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col md:flex-row justify-between md:items-start gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-widest text-violet-600 mb-1">Groupe</p>
+          <h2 className="text-2xl font-bold text-gray-900 break-words">{groupe.nom}</h2>
+          <p className="text-gray-500 mt-1 text-sm">
+            {mod ? mod.nom : 'Sans module'} · {formateur ? `Formateur : ${formateur.nom}` : 'Formateur à choisir'}
+            {groupe.lieu ? ` · ${groupe.lieu}` : ''}
+          </p>
+          {groupe.lien_visio && /^https?:\/\//i.test(groupe.lien_visio) && (
+            <a href={groupe.lien_visio} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 mt-2 text-xs font-bold text-violet-700 hover:underline"><Video size={14} /> Lien visio du groupe</a>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <button onClick={() => setEdition({ nom: groupe.nom || '', formateur_id: groupe.formateur_id ? String(groupe.formateur_id) : '', lieu: groupe.lieu || '', lien_visio: groupe.lien_visio || '', appliquerFormateur: true })}
+            className="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-bold py-2 px-4 rounded-xl shadow-sm text-sm flex items-center gap-2"><Pencil size={15} /> Modifier</button>
+          <button onClick={() => { setOnglet('participants'); setAjoutParticipants(true); }}
+            className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-xl shadow-sm text-sm flex items-center gap-2"><UserPlus size={15} /> Ajouter des participants</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Kpi valeur={participants.length} libelle={participants.length > 1 ? 'participants' : 'participant'} />
+        <Kpi valeur={`${passees.length} / ${seances.length}`} libelle="séances réalisées" />
+        <Kpi valeur={totalAttendus ? `${Math.round((totalSignes / totalAttendus) * 100)} %` : '—'} libelle="présence signée" />
+        <Kpi valeur={enAttente} libelle={enAttente > 1 ? 'émargements en attente' : 'émargement en attente'} ton={enAttente ? 'amber' : 'gray'} />
+      </div>
+
+      <div className="flex gap-6 border-b border-gray-200 overflow-x-auto">
+        {[['planning', 'Planning'], ['participants', `Participants (${participants.length})`]].map(([k, l]) => (
+          <button key={k} onClick={() => setOnglet(k)} className={`pb-3 px-1 font-bold text-sm whitespace-nowrap border-b-2 transition-colors ${onglet === k ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>{l}</button>
+        ))}
+      </div>
+
+      {onglet === 'planning' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm divide-y divide-gray-100 overflow-hidden">
+            {seances.length === 0 && <p className="p-6 text-sm text-gray-500">Aucune séance pour l'instant.</p>}
+            {seances.map(s => (
+              <LigneSeanceGroupe key={s.id} seance={s} groupe={groupe} formateurs={formateurs} stats={statsParSeance[s.id]} actions={actionsFiche}
+                estAujourdhui={s.date === today} estPassee={!!s.date && s.date < today} />
+            ))}
+          </div>
+          {ajoutSeance ? (
+            <div className="bg-white rounded-3xl border border-violet-100 shadow-sm p-4 flex flex-wrap items-end gap-3">
+              <div className="min-w-0 flex-1 sm:flex-none sm:w-56"><label htmlFor="ns-t" className="block text-[11px] font-bold text-gray-500 mb-1">Titre</label><input id="ns-t" value={ajoutSeance.titre} onChange={e => setAjoutSeance(p => ({ ...p, titre: e.target.value }))} placeholder="Ex : Séance de rattrapage" className="w-full px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+              <div><label htmlFor="ns-d" className="block text-[11px] font-bold text-gray-500 mb-1">Date</label><input id="ns-d" type="date" value={ajoutSeance.date} onChange={e => setAjoutSeance(p => ({ ...p, date: e.target.value }))} className="px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+              <div><label htmlFor="ns-hd" className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id="ns-hd" type="time" value={ajoutSeance.heure_debut} onChange={e => setAjoutSeance(p => ({ ...p, heure_debut: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+              <div><label htmlFor="ns-hf" className="block text-[11px] font-bold text-gray-500 mb-1">Fin</label><input id="ns-hf" type="time" value={ajoutSeance.heure_fin} onChange={e => setAjoutSeance(p => ({ ...p, heure_fin: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+              <div className="flex gap-2">
+                <button onClick={() => setAjoutSeance(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                <button disabled={ajoutSeance.enCours} onClick={async () => {
+                  setAjoutSeance(p => ({ ...p, enCours: true }));
+                  try { await actions.ajouterSeanceGroupe(groupe, ajoutSeance); toast.success('Séance ajoutée pour tout le groupe'); setAjoutSeance(null); }
+                  catch (e) { toast.error(`La séance n'a pas pu être ajoutée : ${e.message}`); setAjoutSeance(p => ({ ...p, enCours: false })); }
+                }} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:opacity-50">{ajoutSeance.enCours ? 'Ajout…' : 'Ajouter la séance'}</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setAjoutSeance({ titre: '', date: '', heure_debut: '', heure_fin: '' })} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm hover:bg-violet-100"><CalendarPlus size={16} /> Ajouter une séance</button>
+          )}
+          <p className="text-xs text-gray-500">Une modification ici s'applique au dossier de chaque participant (son espace, ses rappels, le calendrier).</p>
+        </div>
+      )}
+
+      {onglet === 'participants' && (
+        <div className="space-y-4">
+          {ajoutParticipants && (
+            <div className="bg-white rounded-3xl border border-violet-100 shadow-sm p-5 md:p-6 space-y-4">
+              <p className="font-black text-gray-900">Ajouter des participants</p>
+              <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} groupeId={groupe.id} />
+              {depasse && <p className="text-sm text-red-600">Votre offre ne permet pas d'ajouter {nbNouveaux} nouveaux dossiers (il en reste {Math.max(0, restant)}).</p>}
+              <div className="flex flex-wrap gap-2 justify-end">
+                <button onClick={() => { setAjoutParticipants(false); setTexte(''); setChoisis([]); }} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                <button disabled={valides.length === 0 || depasse} onClick={lancerAjout} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">Ajouter {valides.length || ''} participant{valides.length > 1 ? 's' : ''}</button>
+              </div>
+            </div>
+          )}
+          {participants.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-8 text-center">
+              <p className="font-bold text-gray-800">Aucun participant pour l'instant</p>
+              <p className="text-sm text-gray-500 mt-1">Ajoutez-les en collant une liste de noms et d'e-mails.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+              <ul className="divide-y divide-gray-100">
+                {participants.map(p => {
+                  const signes = seances.filter(s => {
+                    const st = statsEmargementSeance(s, [p], sessions);
+                    return st.attendus > 0 && st.signes === st.attendus;
+                  }).length;
+                  const pct = seances.length ? Math.round((signes / seances.length) * 100) : 0;
+                  return (
+                    <li key={p.id} className="px-4 md:px-6 py-3.5 flex flex-wrap items-center gap-3 justify-between">
+                      <button onClick={() => ouvrirFicheClient(p.id)} className="flex items-center gap-3 min-w-0 text-left group">
+                        <span className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-xs font-black shrink-0">{(p.nom_complet || p.nom || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()}</span>
+                        <span className="min-w-0">
+                          <span className="block font-bold text-sm text-gray-900 group-hover:text-violet-700 truncate">{p.nom_complet || p.nom}</span>
+                          <span className="block text-xs text-gray-500 truncate">{p.email_contact || p.email}{p.numero_dossier ? ` · Dossier ${p.numero_dossier}` : ''}</span>
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-3">
+                        <div className="w-28 hidden sm:block">
+                          <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-violet-500 rounded-full" style={{ width: `${pct}%` }} /></div>
+                          <p className="text-[11px] text-gray-500 mt-1">{signes}/{seances.length} séances signées</p>
+                        </div>
+                        <button onClick={() => setConfirm({
+                          titre: `Retirer ${p.nom_complet || p.nom} du groupe ?`,
+                          message: 'Son dossier, ses séances, ses dates et ses signatures sont conservés : il redevient un client suivi individuellement.',
+                          libelle: 'Retirer',
+                          action: async () => { try { await actions.retirerDuGroupe(p.id); toast.success('Participant retiré du groupe'); } catch (e) { toast.error(e.message); } },
+                        })} className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 hover:text-red-600 hover:border-red-200 inline-flex items-center gap-1.5"><UserMinus size={14} /> Retirer</button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {edition && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4" onClick={() => setEdition(null)}>
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <p className="text-lg font-black text-gray-900">Modifier le groupe</p>
+            <div><label htmlFor="eg-nom" className={libelleGroupe}>Nom du groupe</label><input id="eg-nom" value={edition.nom} onChange={e => setEdition(p => ({ ...p, nom: e.target.value }))} className={champGroupe} /></div>
+            <div>
+              <label htmlFor="eg-f" className={libelleGroupe}>Formateur du groupe</label>
+              <select id="eg-f" value={edition.formateur_id} onChange={e => setEdition(p => ({ ...p, formateur_id: e.target.value }))} className={champGroupe}>
+                <option value="">À choisir plus tard</option>
+                {(formateurs || []).map(f => <option key={f.id} value={f.id}>{f.nom}</option>)}
+              </select>
+              {String(edition.formateur_id || '') !== String(groupe.formateur_id || '') && edition.formateur_id && participants.length > 0 && (
+                <label className="flex items-start gap-2 mt-2 text-sm text-gray-700"><input type="checkbox" className="mt-1" checked={edition.appliquerFormateur} onChange={e => setEdition(p => ({ ...p, appliquerFormateur: e.target.checked }))} /> En faire aussi le formateur référent des {participants.length} participants</label>
+              )}
+            </div>
+            <div><label htmlFor="eg-l" className={libelleGroupe}>Lieu</label><input id="eg-l" value={edition.lieu} onChange={e => setEdition(p => ({ ...p, lieu: e.target.value }))} className={champGroupe} /></div>
+            <div><label htmlFor="eg-v" className={libelleGroupe}>Lien visio</label><input id="eg-v" type="url" value={edition.lien_visio} onChange={e => setEdition(p => ({ ...p, lien_visio: e.target.value }))} className={champGroupe} /></div>
+            <p className="text-xs text-gray-500">Module : {mod ? mod.nom : 'aucun'} (il ne peut pas être changé une fois le groupe créé).</p>
+            <div className="flex flex-wrap justify-between gap-2 pt-2">
+              <button onClick={() => { setEdition(null); setConfirm({
+                titre: `Supprimer le groupe « ${groupe.nom} » ?`,
+                message: 'Aucun dossier n\'est supprimé : les participants redeviennent des clients individuels, avec leurs séances, dates et signatures.',
+                action: async () => { try { await actions.supprimerGroupe(groupe); toast.success('Groupe supprimé'); onRetour(); } catch (e) { toast.error(e.message); } },
+              }); }} className="px-4 py-2.5 rounded-xl text-sm font-bold text-red-600 hover:bg-red-50">Supprimer le groupe</button>
+              <div className="flex gap-2">
+                <button onClick={() => setEdition(null)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                <button disabled={!edition.nom.trim() || edition.enCours} onClick={async () => {
+                  setEdition(p => ({ ...p, enCours: true }));
+                  try { await actions.majGroupe(groupe, edition); toast.success('Groupe mis à jour'); setEdition(null); }
+                  catch (e) { toast.error(`Le groupe n'a pas pu être modifié : ${e.message}`); setEdition(p => ({ ...p, enCours: false })); }
+                }} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">{edition.enCours ? 'Enregistrement…' : 'Enregistrer'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal isOpen={!!confirm} title={confirm?.titre} message={confirm?.message} confirmLabel={confirm?.libelle || 'Supprimer'}
+        onCancel={() => setConfirm(null)} onConfirm={async () => { const c = confirm; setConfirm(null); await c.action(); }} />
+    </div>
+  );
+};
+
+// ─── Page « Groupes » (liste, création, fiche) ───────────────────────────────────────────────────
+const GroupesView = ({ groupes, groupeSeances, groupesDispo, clients, sessions, formateurs, modules, moduleSessionTemplates, orgSettings, selectedGroupeId, setSelectedGroupeId, actions, ouvrirFicheClient }) => {
+  const [creation, setCreation] = React.useState(false);
+  const groupe = (groupes || []).find(g => String(g.id) === String(selectedGroupeId));
+
+  if (!groupesDispo) {
+    return (
+      <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-2">
+        <h1 className="text-2xl font-black text-gray-900">Groupes</h1>
+        <p className="text-gray-600">Les formations de groupe ne sont pas encore activées sur votre espace. Elles le seront après la prochaine mise à jour de la base de données.</p>
+      </div>
+    );
+  }
+  if (creation) {
+    return <GroupeCreation clients={clients} groupes={groupes} formateurs={formateurs} modules={modules} moduleSessionTemplates={moduleSessionTemplates}
+      orgSettings={orgSettings} actions={actions} onAnnuler={() => setCreation(false)}
+      onCree={(id) => { setCreation(false); setSelectedGroupeId(id || null); }} />;
+  }
+  if (groupe) {
+    return <GroupeFiche groupe={groupe} groupes={groupes} groupeSeances={groupeSeances} clients={clients} sessions={sessions} formateurs={formateurs}
+      modules={modules} orgSettings={orgSettings} actions={actions} onRetour={() => setSelectedGroupeId(null)} ouvrirFicheClient={ouvrirFicheClient} />;
+  }
+
+  const today = aujourdhuiISO();
+  return (
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-gray-900">Groupes</h1>
+          <p className="text-gray-500 text-sm mt-1">Formations collectives : un planning commun, et chaque participant garde son propre dossier.</p>
+        </div>
+        <button onClick={() => setCreation(true)} className="inline-flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-bold py-2.5 px-5 rounded-xl shadow-sm text-sm"><Plus size={16} /> Nouveau groupe</button>
+      </div>
+
+      {(groupes || []).length === 0 ? (
+        <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-10 text-center max-w-2xl mx-auto">
+          <div className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center mx-auto mb-3"><UsersRound size={24} /></div>
+          <p className="font-black text-gray-900 text-lg">Aucun groupe pour l'instant</p>
+          <p className="text-sm text-gray-500 mt-1 mb-5">Créez un groupe pour inscrire plusieurs participants d'un coup et saisir les dates une seule fois.</p>
+          <button onClick={() => setCreation(true)} className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-bold py-2.5 px-5 rounded-xl text-sm"><Plus size={16} /> Créer mon premier groupe</button>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {groupes.map(g => {
+            const parts = participantsDuGroupe(clients, g.id);
+            const ss = seancesDuGroupe(groupeSeances, g.id);
+            const prochaine = ss.filter(s => s.date && s.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+            const faites = ss.filter(s => s.date && s.date < today).length;
+            const mod = (modules || []).find(m => String(m.id) === String(g.module_id));
+            const f = (formateurs || []).find(x => String(x.id) === String(g.formateur_id));
+            return (
+              <button key={g.id} onClick={() => setSelectedGroupeId(g.id)} className="text-left bg-white rounded-3xl border border-gray-100 shadow-sm p-5 hover:border-violet-200 hover:shadow-md transition-all">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-black text-gray-900 text-lg leading-snug break-words">{g.nom}</p>
+                  <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-50 text-violet-700 shrink-0">{parts.length} participant{parts.length > 1 ? 's' : ''}</span>
+                </div>
+                <p className="text-sm text-gray-500 mt-1">{mod ? mod.nom : 'Sans module'}{f ? ` · ${f.nom}` : ''}</p>
+                <div className="mt-4 h-1.5 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-violet-500 rounded-full" style={{ width: `${ss.length ? Math.round((faites / ss.length) * 100) : 0}%` }} /></div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
+                  <span>{faites}/{ss.length} séances réalisées</span>
+                  <span className="font-bold text-gray-700">{prochaine ? `Prochaine : ${dateCourte(prochaine.date)}${prochaine.heure_debut ? ` · ${heureCourte(prochaine.heure_debut)}` : ''}` : (ss.length ? 'Terminé ou sans date' : '')}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   // --- États Session et Navigation ---
@@ -20527,7 +21364,7 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
@@ -20769,6 +21606,350 @@ export default function App() {
     if (mRes.error || mstRes.error || msrRes.error) notifyLoadError('les modules');
   };
 
+  // ─── GROUPES (2026-10-13) : données et actions ─────────────────────────────────────────────────
+  // Voir GroupesView. Si les tables n'existent pas encore (SQL groupes_etape1.sql pas encore lancé),
+  // la page Groupes affiche simplement qu'ils ne sont pas activés : le reste de l'appli n'est pas touché.
+  const [groupes, setGroupes] = useState([]);
+  const [groupeSeances, setGroupeSeances] = useState([]);
+  const [groupesDispo, setGroupesDispo] = useState(true);
+  const [selectedGroupeId, setSelectedGroupeId] = useState(null);
+
+  const fetchGroupes = async () => {
+    if (!currentOrgId) { setGroupes([]); setGroupeSeances([]); return; }
+    const isStale = beginLoad('groupes');
+    const [gRes, sRes] = await Promise.all([
+      supabase.from('groupes').select('*').eq('organisation_id', currentOrgId).order('created_at', { ascending: false }),
+      supabase.from('groupe_seances').select('*').eq('organisation_id', currentOrgId).order('numero', { ascending: true }),
+    ]);
+    if (isStale()) return;
+    if (gRes.error || sRes.error) {
+      console.warn('[groupes] non disponibles :', (gRes.error || sRes.error)?.message);
+      setGroupesDispo(false); setGroupes([]); setGroupeSeances([]);
+      return;
+    }
+    setGroupesDispo(true);
+    setGroupes(gRes.data || []);
+    setGroupeSeances(sRes.data || []);
+  };
+
+  const idsParticipants = (groupeId) => participantsDuGroupe(clients, groupeId).map(c => c.id);
+
+  // Crée le dossier d'un nouveau participant (même chemin que « Nouveau client » : invitation par
+  // e-mail, fiche client, documents par défaut), directement rattaché au groupe.
+  const inviterParticipant = async ({ nom, email, formateurId, groupeId, numeroDossier }) => {
+    const { data: { session: authSession } } = await supabase.auth.getSession();
+    const resp = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession?.access_token}` },
+      body: JSON.stringify({ email, nom, role: 'client', action: 'invite', redirectTo: window.location.origin }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok || !result.userId) throw new Error(result.error || "L'invitation n'a pas pu être envoyée");
+    const formateurIntId = formateurId ? Number(formateurId) : null;
+    const formateurRecord = formateurIntId ? formateurs.find(f => Number(f.id) === formateurIntId) : null;
+    const { error: dbError } = await supabase.from('clients').insert([{
+      id: result.userId,
+      nom_complet: nom,
+      email_contact: email,
+      formateur_id: formateurIntId,
+      formateur_auth_uid: formateurRecord?.auth_uid || null,
+      organisation_id: currentOrgId,
+      groupe_id: groupeId,
+      ...(numeroDossier ? { numero_dossier: numeroDossier } : {}),
+    }]);
+    if (dbError) throw new Error(dbError.message);
+    const defaultClientDocs = Object.entries(documentTemplates || {})
+      .filter(([, tpl]) => (tpl.destination || 'client') === 'client')
+      .map(([titre, tpl], idx) => ({
+        client_id: result.userId, template_titre: titre, template_url: tpl.url || null,
+        destination: 'client', ordre: idx, organisation_id: currentOrgId,
+      }));
+    if (defaultClientDocs.length > 0) {
+      const { error: docsError } = await supabase.from('client_documents').insert(defaultClientDocs);
+      if (docsError) console.error('[groupes] init client_documents :', docsError);
+    }
+    return result.userId;
+  };
+
+  // Même chose que choisir un module dans la fiche client, sans recharger l'écran à chaque personne.
+  const affecterModuleParticipant = async (clientId, moduleId) => {
+    const { error } = await supabase.from('clients').update({ module_id: moduleId }).eq('id', clientId);
+    if (error) throw new Error(error.message);
+    const { data: c, error: e2 } = await supabase.from('clients').select('*').eq('id', clientId).single();
+    if (e2 || !c) throw new Error(e2?.message || 'Dossier introuvable');
+    const compatible = { ...c, nom: c.nom_complet || c.nom || c.email_contact || 'Bénéficiaire', module_id: moduleId };
+    await generateSessions(compatible);
+    await distributeDocumentsForModule(compatible, moduleId);
+  };
+
+  const lienVisioSeance = (seance, groupe) => String(seance?.lien_visio || groupe?.lien_visio || '').trim();
+
+  // Reporte la date, les horaires et le lien visio d'une séance du groupe sur les séances des participants.
+  const appliquerSeanceAuxParticipants = async (seance, groupe, clientIds) => {
+    if (!clientIds || clientIds.length === 0) return;
+    const { error } = await supabase.from('sessions')
+      .update({ date: seance.date || null, heure_debut: seance.heure_debut || null, heure_fin: seance.heure_fin || null })
+      .in('client_id', clientIds).eq('numero_seance', seance.numero);
+    if (error) throw new Error(error.message);
+    const lien = lienVisioSeance(seance, groupe);
+    if (lien && /^https?:\/\//i.test(lien)) {
+      const { data: lignes } = await supabase.from('sessions').select('id, metadata')
+        .in('client_id', clientIds).eq('numero_seance', seance.numero);
+      await Promise.all((lignes || []).map(r => {
+        const meta = lireMeta(r.metadata);
+        if (meta.lien_visio === lien) return null;
+        return supabase.from('sessions').update({ metadata: { ...meta, lien_visio: lien } }).eq('id', r.id);
+      }));
+    }
+  };
+
+  // Agenda Google des participants (et de leur formateur), comme pour une séance individuelle.
+  const synchroniserAgendasGroupe = (clientIds, numeros) => {
+    (async () => {
+      for (const id of clientIds) {
+        for (const n of numeros) {
+          syncSeanceToCalendar(id, n);
+          await new Promise(r => setTimeout(r, 150));
+        }
+      }
+    })();
+  };
+
+  // Séances ajoutées au groupe en plus de celles du module : une feuille d'émargement par participant.
+  const creerSeancesSupplementaires = async (clientIds, seancesAjoutees, groupe) => {
+    if (!clientIds.length || !seancesAjoutees.length) return;
+    const numeros = seancesAjoutees.map(s => s.numero);
+    const { data: deja } = await supabase.from('sessions').select('client_id, numero_seance')
+      .in('client_id', clientIds).in('numero_seance', numeros);
+    const lignes = [];
+    const ajoutsParClient = {};
+    clientIds.forEach(cid => {
+      const client = clients.find(c => String(c.id) === String(cid));
+      seancesAjoutees.forEach(s => {
+        if ((deja || []).some(d => String(d.client_id) === String(cid) && Number(d.numero_seance) === Number(s.numero))) return;
+        ajoutsParClient[cid] = (ajoutsParClient[cid] || 0) + 1;
+        lignes.push({
+          client_id: cid,
+          module_id: client?.module_id || groupe?.module_id || null,
+          organisation_id: currentOrgId,
+          numero_seance: Number(s.numero),
+          nom: `${s.titre || `Séance ${s.numero}`} - Émargement de présence`,
+          ressource_titre: 'Émargement de présence',
+          type_activite: 'signature',
+          is_administrative: false,
+          position: 0,
+          metadata: { isCustom: true, documentType: 'signature', requiresClientSignature: true, requiresTrainerSignature: true, groupe_id: groupe?.id || null },
+          statut: 'À venir', statut_client: 'À venir', statut_formateur: 'À venir',
+          date: s.date || null, heure_debut: s.heure_debut || null, heure_fin: s.heure_fin || null,
+        });
+      });
+    });
+    if (lignes.length === 0) return;
+    const { error } = await supabase.from('sessions').insert(lignes);
+    if (error) throw new Error(error.message);
+    const { data: totaux } = await supabase.from('clients').select('id, seances_totales').in('id', Object.keys(ajoutsParClient));
+    await Promise.all((totaux || []).map(c => supabase.from('clients')
+      .update({ seances_totales: (c.seances_totales || 0) + ajoutsParClient[c.id] }).eq('id', c.id)));
+  };
+
+  // Rattache une liste de participants (nouveaux ou existants) à un groupe, puis reporte le planning.
+  const integrerParticipants = async (groupe, seancesGroupe, participants, onProgress, rapport) => {
+    const ids = [];
+    let i = 0;
+    for (const p of participants) {
+      i++;
+      onProgress(`Participant ${i} sur ${participants.length} : ${p.nom}`);
+      try {
+        let clientId = p.clientId;
+        const existant = clientId ? clients.find(c => String(c.id) === String(clientId)) : null;
+        if (p.type === 'nouveau') {
+          clientId = await inviterParticipant({ nom: p.nom, email: p.email, formateurId: groupe.formateur_id, groupeId: groupe.id, numeroDossier: p.numero_dossier });
+          rapport.invites++;
+        } else {
+          const maj = { groupe_id: groupe.id };
+          if (!existant?.formateur_id && groupe.formateur_id) maj.formateur_id = groupe.formateur_id;
+          if (p.numero_dossier && !existant?.numero_dossier) maj.numero_dossier = p.numero_dossier;
+          const { error } = await supabase.from('clients').update(maj).eq('id', clientId);
+          if (error) throw new Error(error.message);
+          rapport.ajoutes++;
+        }
+        if (groupe.module_id && String(existant?.module_id || '') !== String(groupe.module_id)) {
+          await affecterModuleParticipant(clientId, Number(groupe.module_id));
+        }
+        await creerSeancesSupplementaires([clientId], seancesGroupe.filter(s => s.ajoutee), groupe);
+        ids.push(clientId);
+      } catch (e) {
+        rapport.erreurs.push({ nom: p.nom, email: p.email, message: e.message || String(e) });
+      }
+    }
+    if (ids.length) {
+      onProgress('Report des dates et horaires dans chaque dossier…');
+      for (const s of seancesGroupe) {
+        try { await appliquerSeanceAuxParticipants(s, groupe, ids); }
+        catch (e) { rapport.erreurs.push({ nom: `Séance ${s.numero}`, message: e.message }); }
+      }
+      rapport.seances = seancesGroupe.filter(s => s.date || s.heure_debut).length;
+      synchroniserAgendasGroupe(ids, seancesGroupe.filter(s => s.date).map(s => s.numero));
+    }
+    return ids;
+  };
+
+  const verifierQuotaGroupe = async (nbNouveaux) => {
+    if (!nbNouveaux) return;
+    const limite = getClientLimitForOrg(orgSettings);
+    if (!Number.isFinite(limite)) return;
+    const { count, error } = await supabase.from('clients').select('id', { count: 'exact', head: true }).eq('organisation_id', currentOrgId);
+    if (error) throw new Error('Impossible de vérifier votre nombre de dossiers clients pour le moment');
+    if ((count || 0) + nbNouveaux > limite) {
+      throw new Error(`votre offre permet ${limite} dossiers clients : il en reste ${Math.max(0, limite - (count || 0))} et ce groupe en ajoute ${nbNouveaux}`);
+    }
+  };
+
+  const rafraichirApresGroupe = async () => {
+    await Promise.all([fetchGroupes(), fetchUtilisateurs(), fetchSessions(), fetchDocuments()]);
+  };
+
+  const actionsGroupes = {
+    creerGroupe: async ({ infos, seances, participants }, onProgress = () => {}) => {
+      const rapport = { invites: 0, ajoutes: 0, seances: 0, erreurs: [] };
+      await verifierQuotaGroupe(participants.filter(p => p.type === 'nouveau').length);
+      onProgress('Création du groupe…');
+      const { data: g, error } = await supabase.from('groupes').insert([{
+        organisation_id: currentOrgId,
+        nom: infos.nom.trim(),
+        module_id: infos.module_id ? Number(infos.module_id) : null,
+        formateur_id: infos.formateur_id ? Number(infos.formateur_id) : null,
+        lieu: infos.lieu.trim() || null,
+        lien_visio: infos.lien_visio.trim() || null,
+      }]).select().single();
+      if (error || !g) throw new Error(error?.message || 'Groupe non créé');
+      const lignes = (seances || []).map(s => ({
+        groupe_id: g.id, organisation_id: currentOrgId, numero: Number(s.numero), titre: s.titre || null,
+        date: s.date || null, heure_debut: s.heure_debut || null, heure_fin: s.heure_fin || null,
+        formateur_id: s.formateur_id ? Number(s.formateur_id) : null, ajoutee: !!s.ajoutee,
+      }));
+      let seancesGroupe = [];
+      if (lignes.length) {
+        const { data: sg, error: e2 } = await supabase.from('groupe_seances').insert(lignes).select();
+        if (e2) { await supabase.from('groupes').delete().eq('id', g.id); throw new Error(e2.message); }
+        seancesGroupe = sg || lignes;
+      }
+      await integrerParticipants(g, seancesGroupe, participants, onProgress, rapport);
+      onProgress('Mise à jour de l\'affichage…');
+      await rafraichirApresGroupe();
+      return { groupeId: g.id, rapport };
+    },
+
+    ajouterParticipants: async (groupe, participants, onProgress = () => {}) => {
+      const rapport = { invites: 0, ajoutes: 0, seances: 0, erreurs: [] };
+      await verifierQuotaGroupe(participants.filter(p => p.type === 'nouveau').length);
+      await integrerParticipants(groupe, seancesDuGroupe(groupeSeances, groupe.id), participants, onProgress, rapport);
+      onProgress('Mise à jour de l\'affichage…');
+      await rafraichirApresGroupe();
+      return rapport;
+    },
+
+    majSeanceGroupe: async (seance, brouillon) => {
+      const groupe = groupes.find(g => String(g.id) === String(seance.groupe_id));
+      const payload = {
+        date: brouillon.date || null,
+        heure_debut: brouillon.heure_debut || null,
+        heure_fin: brouillon.heure_fin || null,
+        formateur_id: brouillon.formateur_id ? Number(brouillon.formateur_id) : null,
+        lieu: (brouillon.lieu || '').trim() || null,
+        lien_visio: (brouillon.lien_visio || '').trim() || null,
+      };
+      const { error } = await supabase.from('groupe_seances').update(payload).eq('id', seance.id);
+      if (error) throw new Error(error.message);
+      const ids = idsParticipants(seance.groupe_id);
+      const changePlanning = ['date', 'heure_debut', 'heure_fin', 'lien_visio']
+        .some(k => String(payload[k] || '') !== String((k.startsWith('heure') ? heureCourte(seance[k]) : seance[k]) || ''));
+      if (changePlanning && ids.length) {
+        await appliquerSeanceAuxParticipants({ ...seance, ...payload }, groupe, ids);
+        synchroniserAgendasGroupe(ids, [seance.numero]);
+      }
+      await Promise.all([fetchGroupes(), fetchSessions()]);
+    },
+
+    ajouterSeanceGroupe: async (groupe, data) => {
+      const ids = idsParticipants(groupe.id);
+      const maxGroupe = seancesDuGroupe(groupeSeances, groupe.id).reduce((m, s) => Math.max(m, Number(s.numero) || 0), 0);
+      const maxDossiers = sessions.filter(s => ids.some(id => String(id) === String(s.client_id)))
+        .reduce((m, s) => Math.max(m, Number(s.numero_seance) || 0), 0);
+      const numero = Math.max(maxGroupe, maxDossiers) + 1;
+      const { data: s, error } = await supabase.from('groupe_seances').insert([{
+        groupe_id: groupe.id, organisation_id: currentOrgId, numero, titre: (data.titre || '').trim() || null,
+        date: data.date || null, heure_debut: data.heure_debut || null, heure_fin: data.heure_fin || null, ajoutee: true,
+      }]).select().single();
+      if (error) throw new Error(error.message);
+      await creerSeancesSupplementaires(ids, [s], groupe);
+      await appliquerSeanceAuxParticipants(s, groupe, ids);
+      if (s.date) synchroniserAgendasGroupe(ids, [s.numero]);
+      await Promise.all([fetchGroupes(), fetchSessions(), fetchUtilisateurs()]);
+    },
+
+    supprimerSeanceGroupe: async (seance) => {
+      if (!seance.ajoutee) throw new Error('Les séances du module ne peuvent pas être supprimées depuis le groupe.');
+      const ids = idsParticipants(seance.groupe_id);
+      const lignes = sessions.filter(s => ids.some(id => String(id) === String(s.client_id)) && Number(s.numero_seance) === Number(seance.numero));
+      if (lignes.some(s => s.statut_client === 'Signé' || s.statut_formateur === 'Signé')) {
+        throw new Error('Cette séance a déjà été signée par au moins une personne : elle ne peut pas être supprimée.');
+      }
+      if (ids.length) {
+        const { error } = await supabase.from('sessions').delete().in('client_id', ids).eq('numero_seance', seance.numero);
+        if (error) throw new Error(error.message);
+        const parClient = {};
+        lignes.forEach(s => { parClient[s.client_id] = true; });
+        const { data: totaux } = await supabase.from('clients').select('id, seances_totales').in('id', Object.keys(parClient));
+        await Promise.all((totaux || []).map(c => supabase.from('clients')
+          .update({ seances_totales: Math.max(0, (c.seances_totales || 0) - 1) }).eq('id', c.id)));
+      }
+      const { error: e2 } = await supabase.from('groupe_seances').delete().eq('id', seance.id);
+      if (e2) throw new Error(e2.message);
+      await Promise.all([fetchGroupes(), fetchSessions(), fetchUtilisateurs()]);
+    },
+
+    retirerDuGroupe: async (clientId) => {
+      const { error } = await supabase.from('clients').update({ groupe_id: null }).eq('id', clientId);
+      if (error) throw new Error(error.message);
+      await fetchUtilisateurs();
+    },
+
+    majGroupe: async (groupe, edition) => {
+      const payload = {
+        nom: edition.nom.trim(),
+        formateur_id: edition.formateur_id ? Number(edition.formateur_id) : null,
+        lieu: (edition.lieu || '').trim() || null,
+        lien_visio: (edition.lien_visio || '').trim() || null,
+      };
+      const { error } = await supabase.from('groupes').update(payload).eq('id', groupe.id);
+      if (error) throw new Error(error.message);
+      const ids = idsParticipants(groupe.id);
+      if (edition.appliquerFormateur && payload.formateur_id && String(payload.formateur_id) !== String(groupe.formateur_id || '') && ids.length) {
+        const { error: e2 } = await supabase.from('clients').update({ formateur_id: payload.formateur_id }).in('id', ids);
+        if (e2) throw new Error(e2.message);
+      }
+      if (String(payload.lien_visio || '') !== String(groupe.lien_visio || '') && ids.length) {
+        const g2 = { ...groupe, ...payload };
+        for (const s of seancesDuGroupe(groupeSeances, groupe.id)) {
+          if (!s.lien_visio) await appliquerSeanceAuxParticipants(s, g2, ids);
+        }
+      }
+      await Promise.all([fetchGroupes(), fetchUtilisateurs(), fetchSessions()]);
+    },
+
+    supprimerGroupe: async (groupe) => {
+      const { error } = await supabase.from('groupes').delete().eq('id', groupe.id);
+      if (error) throw new Error(error.message);
+      setSelectedGroupeId(null);
+      await Promise.all([fetchGroupes(), fetchUtilisateurs()]);
+    },
+  };
+
+  const ouvrirGroupe = (groupeId) => { setSelectedGroupeId(groupeId); setActiveTab('groupes'); };
+  const ouvrirFicheClientDepuisGroupe = (clientId) => { setExpandedClientId(clientId); setActiveTab('clients'); };
+
+
   const fetchSessions = async () => {
     if (!currentOrgId) { setSessions([]); return; }
     const isStale = beginLoad('sessions');
@@ -20838,7 +22019,8 @@ export default function App() {
         prix_prestation: c.montant_prestation || '',
         pourcentage_formateur: c.pourcentage_formateur,
         modalite_formation: c.modalite_formation || 'Mixte',
-        organisation_id: c.organisation_id || null
+        organisation_id: c.organisation_id || null,
+        groupe_id: c.groupe_id || null
       }));
       // AJOUT (2026-09-17) : tri alphabétique à la source (même logique que formateurs ci-dessus).
       mappedClients.sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr', { sensitivity: 'base' }));
@@ -24772,6 +25954,7 @@ export default function App() {
     fetchDocuments();
     fetchModules();
     fetchSessions();
+    fetchGroupes();
     fetchPedagogicalResources();
     fetchClientSkills();
     fetchOrgSettings();
@@ -24814,6 +25997,7 @@ export default function App() {
       fetchDocuments();
       fetchModules();
       fetchSessions();
+      fetchGroupes();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -25018,6 +26202,9 @@ export default function App() {
               <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Suivi</p>
               <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'clients' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Clients
+              </button>
+              <button onClick={() => { setActiveTab('groupes'); setSelectedGroupeId(null); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'groupes' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <UsersRound className="w-5 h-5 mr-3" /> Groupes
               </button>
               <button onClick={() => { setActiveTab('formateurs'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'formateurs' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Users className="w-5 h-5 mr-3" /> Formateurs
@@ -25326,6 +26513,9 @@ export default function App() {
             userRole={userRole}
             currentUserId={currentUserId}
             fetchSessions={fetchSessions}
+            groupes={groupes}
+            groupeSeances={groupeSeances}
+            onOpenGroupe={userRole === 'admin' ? ouvrirGroupe : null}
           />}
           {activeTab === 'accueil_formateur' && userRole === 'formateur' && <FormateurAccueilView
             formateurs={assignableFormateurs}
@@ -25409,6 +26599,23 @@ export default function App() {
             handleRegenerateVisualDocs={handleRegenerateVisualDocs}
             instantiateDocument={instantiateDocument}
             currentOrgId={currentOrgId}
+            groupes={groupes}
+            onOpenGroupe={ouvrirGroupe}
+          />}
+          {activeTab === 'groupes' && userRole === 'admin' && <GroupesView
+            groupes={groupes}
+            groupeSeances={groupeSeances}
+            groupesDispo={groupesDispo}
+            clients={clients}
+            sessions={sessions}
+            formateurs={assignableFormateurs}
+            modules={modules}
+            moduleSessionTemplates={moduleSessionTemplates}
+            orgSettings={orgSettings}
+            selectedGroupeId={selectedGroupeId}
+            setSelectedGroupeId={setSelectedGroupeId}
+            actions={actionsGroupes}
+            ouvrirFicheClient={ouvrirFicheClientDepuisGroupe}
           />}
           {activeTab === 'formateurs' && userRole === 'admin' && <AdminFormateursView
             clients={clients}
