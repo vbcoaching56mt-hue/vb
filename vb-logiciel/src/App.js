@@ -2919,7 +2919,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                       className="w-full p-3 bg-white border border-indigo-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-400 text-sm font-medium"
                     />
                     <div className="flex gap-1.5">
-                      {(isQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
+                      {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
                         <button key={val} type="button" onClick={() => setQuestionType(q.id, val)}
                           className={`flex-1 py-1.5 rounded-lg text-xs font-black transition-all ${q.type === val ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-500 hover:border-indigo-400'}`}>{lbl}</button>
                       ))}
@@ -2929,14 +2929,24 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                         className="accent-violet-600 w-3.5 h-3.5" />
                       <span className="text-xs font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
                     </label>
+                    {isQuiz && (q.type === 'single' || q.type === 'multiple') && (
+                      <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                        <input type="checkbox" checked={q.notee !== false} onChange={e => updateQuestion(q.id, 'notee', e.target.checked)}
+                          className="accent-violet-600 w-3.5 h-3.5" />
+                        <span className="text-xs font-bold text-gray-500">Question notée — compte dans la note du quiz</span>
+                      </label>
+                    )}
+                    {isQuiz && (q.type === 'text' || q.notee === false) && (
+                      <p className="text-[11px] font-bold text-gray-400">Non notée : la réponse est enregistrée mais ne compte pas dans la note.</p>
+                    )}
                     {(q.type === 'single' || q.type === 'multiple') && (
                       <div className="space-y-1.5">
-                        {isQuiz && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                        {qEstNotee(q, isQuiz) && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
                         {q.options.map((opt, oi) => {
                           const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
                           return (
                             <div key={oi} className="flex items-center gap-2">
-                              {isQuiz ? (
+                              {qEstNotee(q, isQuiz) ? (
                                 <button type="button" onClick={() => toggleCorrectOption(q.id, opt)}
                                   title="Marquer comme bonne réponse"
                                   className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
@@ -2946,7 +2956,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                                 <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
                               )}
                               <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => updateOption(q.id, oi, e.target.value)}
-                                className={`flex-1 p-2 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400 ${isQuiz && isCorrect ? 'border-emerald-300' : 'border-indigo-100'}`} />
+                                className={`flex-1 p-2 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-indigo-400 ${qEstNotee(q, isQuiz) && isCorrect ? 'border-emerald-300' : 'border-indigo-100'}`} />
                               {q.options.length > 1 && (
                                 <button type="button" onClick={() => removeOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs transition-colors">✕</button>
                               )}
@@ -3064,7 +3074,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                 onSave({ type, title, metadata: { ...metadata, destination, ...questionsMeta }, resourceId: selectedResourceId, fileUrl: (selectedResourceId && selectedResourceId.includes('/')) ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
                 onClose();
               }}
-              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0) || (type === 'questionnaire' && isQuiz && questions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0) || (type === 'questionnaire' && isQuiz && qQuizInvalide(questions))}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
               {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
@@ -5727,7 +5737,7 @@ const ClientDetailView = ({
                         {questions.map((q, qi) => {
                           const answer = response.responses[q.id];
                           const hasAnswer = answer !== undefined && answer !== '' && (!Array.isArray(answer) || answer.length > 0);
-                          const isQuestionCorrect = isQuizResource && (q.type === 'single' || q.type === 'multiple')
+                          const isQuestionCorrect = qEstNotee(q, isQuizResource)
                             ? (q.type === 'single'
                                 ? answer === q.correctAnswer
                                 : (Array.isArray(q.correctAnswer) && Array.isArray(answer) && q.correctAnswer.length === answer.length && q.correctAnswer.every(o => answer.includes(o))))
@@ -10455,6 +10465,16 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
 // filtres période / formateur / module et export PDF (preuve pour l'audit Qualiopi).
 // Réservé à l'administrateur (voir ROLE_TABS et le menu latéral).
 // ═══════════════════════════════════════════════════════════════════════════
+// QUIZ (2026-10-13) : questions non notées (ex. « Nom et prénom », réponse libre). Une question compte
+// dans la note seulement si c'est un choix unique/multiple et qu'elle n'est pas marquée notee === false.
+// Les questions créées avant restent notées (notee absent = notée).
+const qEstNotee = (q, isQuiz = true) => !!isQuiz && (q?.type === 'single' || q?.type === 'multiple') && q?.notee !== false;
+const qManqueBonneReponse = (q) => qEstNotee(q) && (
+  (q.type === 'single' && !q.correctAnswer) ||
+  (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0)));
+// Quiz enregistrable : au moins une question notée, et chaque question notée a sa bonne réponse.
+const qQuizInvalide = (questions) => (questions || []).some(qManqueBonneReponse) || !(questions || []).some(q => qEstNotee(q));
+
 const parseQMeta = (q) => {
   try { return typeof q?.metadata === 'string' ? JSON.parse(q.metadata) : (q?.metadata || {}); }
   catch { return {}; }
@@ -10493,11 +10513,11 @@ const qQuizResult = (response, questions, seuil) => {
   if (typeof response.score_percent === 'number') {
     return { score: response.score_percent, passed: typeof response.passed === 'boolean' ? response.passed : response.score_percent >= seuil };
   }
-  const gradable = questions.filter(q => q.type === 'single' || q.type === 'multiple');
-  if (questions.length === 0) return { score: null, passed: null };
+  const gradable = questions.filter(q => qEstNotee(q));
+  if (gradable.length === 0) return { score: null, passed: null };
   const answers = parseQAnswers(response);
   const correctCount = gradable.filter(q => qIsAnswerCorrect(q, answers[q.id])).length;
-  const score = Math.round((correctCount / questions.length) * 100);
+  const score = Math.round((correctCount / gradable.length) * 100);
   return { score, passed: score >= seuil };
 };
 
@@ -10526,19 +10546,20 @@ const computeQuestionnaireStats = (questionnaire, responses) => {
       const a = r._answers[q.id];
       (Array.isArray(a) ? a : [a]).forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
     });
+    const notee = qEstNotee(q, isQuiz);
     const correctSet = new Set(q.type === 'multiple' ? (Array.isArray(q.correctAnswer) ? q.correctAnswer : []) : (q.correctAnswer ? [q.correctAnswer] : []));
     const options = Array.from(counts.entries()).map(([label, count]) => ({
       label,
       count,
       percent: answered.length > 0 ? Math.round((count / answered.length) * 100) : 0,
-      isCorrect: isQuiz && correctSet.has(label),
+      isCorrect: notee && correctSet.has(label),
       isLegacy: !(q.options || []).includes(label), // option supprimée/renommée depuis
     }));
-    const correctCount = isQuiz ? answered.filter(r => qIsAnswerCorrect(q, r._answers[q.id])).length : null;
+    const correctCount = notee ? answered.filter(r => qIsAnswerCorrect(q, r._answers[q.id])).length : null;
     return {
       ...base,
       options,
-      correctPercent: isQuiz && answered.length > 0 ? Math.round((correctCount / answered.length) * 100) : null,
+      correctPercent: notee && answered.length > 0 ? Math.round((correctCount / answered.length) * 100) : null,
     };
   });
 
@@ -10625,7 +10646,8 @@ const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, f
     pdf.line(M, y, M + CW, y);
     y += 3;
     write(`Q${qs.index}. ${qs.question.text || '(question sans titre)'}`, { size: 10.5, bold: true, gap: 0.5 });
-    const typeLabel = qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples (plusieurs réponses possibles)' : 'Choix unique';
+    const typeLabel = (qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples (plusieurs réponses possibles)' : 'Choix unique')
+      + (stats.isQuiz && !qEstNotee(qs.question) ? ' - non notée' : '');
     write(`${typeLabel} - ${qs.answeredCount} réponse(s)${qs.correctPercent != null ? ` - ${qs.correctPercent} % de bonnes réponses` : ''}`, { size: 8.5, color: GREY, gap: 2 });
 
     if (qs.question.type === 'text') {
@@ -10890,7 +10912,7 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
                         <p className="text-xs font-black text-violet-600 uppercase tracking-widest">Question {qs.index}</p>
                         <p className="font-bold text-gray-900">{qs.question.text || '(question sans titre)'}</p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
-                          {qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples — plusieurs réponses possibles' : 'Choix unique'} · {qs.answeredCount} réponse{qs.answeredCount > 1 ? 's' : ''}
+                          {qs.question.type === 'text' ? 'Réponse libre' : qs.question.type === 'multiple' ? 'Choix multiples — plusieurs réponses possibles' : 'Choix unique'}{stats.isQuiz && !qEstNotee(qs.question) ? ' · non notée' : ''} · {qs.answeredCount} réponse{qs.answeredCount > 1 ? 's' : ''}
                         </p>
                       </div>
                       {qs.correctPercent != null && (
@@ -11310,7 +11332,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                         <input type="text" placeholder="Texte de la question..." value={q.text} onChange={e => qUpdateQuestion(q.id, 'text', e.target.value)}
                           className="w-full p-2.5 bg-white border border-violet-200 rounded-lg text-sm outline-none focus:ring-1 focus:ring-violet-400" />
                         <div className="flex gap-1.5">
-                          {(qIsQuiz ? [['single', '◉ Unique'], ['multiple', '☑ Multiple']] : [['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']]).map(([val, lbl]) => (
+                          {[['single', '◉ Unique'], ['multiple', '☑ Multiple'], ['text', '✏️ Libre']].map(([val, lbl]) => (
                             <button key={val} type="button" onClick={() => qSetQuestionType(q.id, val)}
                               className={`flex-1 py-1 rounded text-xs font-black transition-all ${q.type === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-500 hover:border-violet-400'}`}>{lbl}</button>
                           ))}
@@ -11320,14 +11342,24 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                             className="accent-violet-600 w-3.5 h-3.5" />
                           <span className="text-xs font-bold text-gray-500">Obligatoire — le client devra y répondre pour valider</span>
                         </label>
+                        {qIsQuiz && (q.type === 'single' || q.type === 'multiple') && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                            <input type="checkbox" checked={q.notee !== false} onChange={e => qUpdateQuestion(q.id, 'notee', e.target.checked)}
+                              className="accent-violet-600 w-3.5 h-3.5" />
+                            <span className="text-xs font-bold text-gray-500">Question notée — compte dans la note du quiz</span>
+                          </label>
+                        )}
+                        {qIsQuiz && (q.type === 'text' || q.notee === false) && (
+                          <p className="text-[11px] font-bold text-gray-400">Non notée : la réponse est enregistrée mais ne compte pas dans la note.</p>
+                        )}
                         {(q.type === 'single' || q.type === 'multiple') && (
                           <div className="space-y-1">
-                            {qIsQuiz && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
+                            {qEstNotee(q, qIsQuiz) && <p className="text-[11px] font-black text-emerald-600 uppercase tracking-widest">Cochez la ou les bonne(s) réponse(s)</p>}
                             {q.options.map((opt, oi) => {
                               const isCorrect = q.type === 'single' ? (q.correctAnswer === opt && opt !== '') : (Array.isArray(q.correctAnswer) && q.correctAnswer.includes(opt) && opt !== '');
                               return (
                                 <div key={oi} className="flex items-center gap-2">
-                                  {qIsQuiz ? (
+                                  {qEstNotee(q, qIsQuiz) ? (
                                     <button type="button" onClick={() => qToggleCorrectOption(q.id, opt)}
                                       title="Marquer comme bonne réponse"
                                       className={`w-4 h-4 shrink-0 flex items-center justify-center rounded${q.type === 'multiple' ? '' : '-full'} border-2 transition-all ${isCorrect ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent hover:border-emerald-400'}`}>
@@ -11337,7 +11369,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                                     <span className="text-gray-400 text-xs">{q.type === 'single' ? '○' : '□'}</span>
                                   )}
                                   <input type="text" placeholder={`Option ${oi + 1}`} value={opt} onChange={e => qUpdateOption(q.id, oi, e.target.value)}
-                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qIsQuiz && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
+                                    className={`flex-1 p-1.5 bg-white border rounded-lg text-xs outline-none focus:ring-1 focus:ring-violet-400 ${qEstNotee(q, qIsQuiz) && isCorrect ? 'border-emerald-300' : 'border-violet-100'}`} />
                                   {q.options.length > 1 && <button type="button" onClick={() => qRemoveOption(q.id, oi)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>}
                                 </div>
                               );
@@ -11359,7 +11391,14 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                     value={qClosingMessage} onChange={e => setQClosingMessage(e.target.value)} />
                 </div>
 
-                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuestions.some(q => (q.type === 'single' && !q.correctAnswer) || (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0))))}
+                {qIsQuiz && qQuestions.length > 0 && qQuizInvalide(qQuestions) && (
+                  <p className="text-xs font-bold text-amber-700 bg-amber-50 rounded-xl px-3 py-2">
+                    {!qQuestions.some(q => qEstNotee(q))
+                      ? 'Un quiz noté doit avoir au moins une question notée (choix unique ou multiple).'
+                      : `Indiquez la bonne réponse de ${qQuestions.map((q, i) => (qManqueBonneReponse(q) ? `Q${i + 1}` : null)).filter(Boolean).join(', ')}, ou décochez « Question notée ».`}
+                  </p>
+                )}
+                <button onClick={handleSaveQTemplate} disabled={!qName.trim() || qQuestions.length === 0 || (qIsQuiz && qQuizInvalide(qQuestions))}
                   className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
                   {editingQId ? '✓ Mettre à jour le questionnaire' : '✓ Enregistrer le questionnaire'}
                 </button>
@@ -14312,9 +14351,10 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
   });
 
   const computeQuizScore = () => {
-    if (!isQuiz || questions.length === 0) return null;
+    const notees = questions.filter(q => qEstNotee(q, isQuiz));
+    if (!isQuiz || notees.length === 0) return null;
     let correctCount = 0;
-    questions.forEach(q => {
+    notees.forEach(q => {
       const answer = answers[q.id];
       if (q.type === 'single') {
         if (answer !== undefined && answer === q.correctAnswer) correctCount++;
@@ -14324,9 +14364,9 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
         if (correct.length > 0 && correct.length === given.length && correct.every(o => given.includes(o))) correctCount++;
       }
     });
-    const scorePercent = Math.round((correctCount / questions.length) * 100);
+    const scorePercent = Math.round((correctCount / notees.length) * 100);
     const passed = scorePercent >= (meta.seuilReussite ?? 50);
-    return { scorePercent, passed, correctCount, total: questions.length };
+    return { scorePercent, passed, correctCount, total: notees.length };
   };
 
   const handleSubmit = async () => {
