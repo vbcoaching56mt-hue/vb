@@ -2661,7 +2661,7 @@ const StepResourceSignatureModal = ({ isOpen, resource, onClose, onSave }) => {
   );
 };
 
-const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel }) => {
+const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, documentTemplates, supabase, momentLabel, currentOrgId }) => {
   const [type, setType] = useState('signature');
   const [title, setTitle] = useState('');
   const [metadata, setMetadata] = useState({
@@ -2680,6 +2680,21 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
   const [seuilReussite, setSeuilReussite] = useState(50);
   const [qDescription, setQDescription] = useState('');
   const [qClosingMessage, setQClosingMessage] = useState('');
+  // Reprendre un questionnaire déjà créé dans le menu « Questionnaires » (2026-10-13)
+  const [qSource, setQSource] = useState('nouveau'); // 'nouveau' | 'existant'
+  const [qExistants, setQExistants] = useState([]);
+  const [qExistantId, setQExistantId] = useState('');
+  React.useEffect(() => {
+    if (!isOpen || type !== 'questionnaire' || !supabase) return;
+    let q = supabase.from('module_step_resources').select('id, titre, metadata, module_id').eq('type', 'questionnaire');
+    if (currentOrgId) q = q.eq('organisation_id', currentOrgId);
+    q.then(({ data }) => {
+      setQExistants((data || []).filter(r => r.module_id === null || r.module_id === undefined)
+        .sort((a, b) => (a.titre || '').localeCompare(b.titre || '', 'fr', { sensitivity: 'base' })));
+    });
+  }, [isOpen, type, supabase, currentOrgId]);
+  const qExistant = qExistants.find(x => String(x.id) === String(qExistantId)) || null;
+  const qExistantMeta = qExistant ? parseQMeta(qExistant) : null;
 
   // Reset local state when modal opens
   React.useEffect(() => {
@@ -2700,6 +2715,8 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
       setSeuilReussite(50);
       setQDescription('');
       setQClosingMessage('');
+      setQSource('nouveau');
+      setQExistantId('');
     }
   }, [isOpen]);
 
@@ -2864,6 +2881,44 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
           {type === 'questionnaire' && (
             <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                {[['nouveau', '✏️ Créer un questionnaire'], ['existant', '📋 Reprendre un existant']].map(([val, lbl]) => (
+                  <button key={val} type="button" onClick={() => setQSource(val)}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-black transition-all ${qSource === val ? 'bg-violet-600 text-white' : 'bg-white border border-violet-200 text-gray-600 hover:border-violet-400'}`}>{lbl}</button>
+                ))}
+              </div>
+              {qSource === 'existant' && (
+                <div className="space-y-3">
+                  {qExistants.length === 0 ? (
+                    <p className="text-sm text-gray-500 bg-gray-50 rounded-2xl p-4">Aucun questionnaire pour l'instant. Créez-le d'abord dans le menu « Questionnaires », ou choisissez « Créer un questionnaire ».</p>
+                  ) : (
+                    <select value={qExistantId}
+                      onChange={e => {
+                        setQExistantId(e.target.value);
+                        const choisi = qExistants.find(x => String(x.id) === String(e.target.value));
+                        if (choisi) setTitle(choisi.titre || '');
+                      }}
+                      className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium">
+                      <option value="">Choisir un questionnaire ou un quiz…</option>
+                      {qExistants.map(x => {
+                        const m = parseQMeta(x);
+                        const n = (m.questions || []).length;
+                        return <option key={x.id} value={x.id}>{m.isQuiz ? '🎯 ' : '📝 '}{x.titre} ({n} question{n > 1 ? 's' : ''})</option>;
+                      })}
+                    </select>
+                  )}
+                  {qExistant && (
+                    <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4 space-y-1.5">
+                      <p className="text-sm font-black text-violet-900">{qExistantMeta.isQuiz ? '🎯 Quiz noté' : '📝 Questionnaire'} · {(qExistantMeta.questions || []).length} question{(qExistantMeta.questions || []).length > 1 ? 's' : ''}{qExistantMeta.isQuiz ? ` · réussite à ${qExistantMeta.seuilReussite ?? 50} %` : ''}</p>
+                      <ul className="text-xs text-violet-800 space-y-0.5 max-h-28 overflow-y-auto">
+                        {(qExistantMeta.questions || []).map((qq, i) => <li key={qq.id || i}>{i + 1}. {qq.text || '(sans titre)'}</li>)}
+                      </ul>
+                      <p className="text-xs text-violet-600 pt-1">Pour modifier ses questions, passez par le menu « Questionnaires » : le module sera mis à jour automatiquement.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {qSource === 'nouveau' && (<>
               <div>
                 <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1.5">Description (facultatif)</label>
                 <textarea
@@ -2980,6 +3035,7 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
                   onChange={e => setQClosingMessage(e.target.value)}
                 />
               </div>
+              </>)}
             </div>
           )}
 
@@ -3068,13 +3124,14 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
           <div className="pt-4 pb-2">
             <button
               onClick={() => {
-                const questionsMeta = type === 'questionnaire'
-                  ? { questions, isQuiz, ...(isQuiz ? { seuilReussite } : { seuilReussite: undefined }), description: qDescription.trim() || undefined, closingMessage: qClosingMessage.trim() || undefined }
-                  : {};
+                const questionsMeta = type !== 'questionnaire' ? {}
+                  : (qSource === 'existant' && qExistant)
+                    ? { ...qContenu(qExistantMeta), source_questionnaire_id: qExistant.id }
+                    : { questions, isQuiz, ...(isQuiz ? { seuilReussite } : { seuilReussite: undefined }), description: qDescription.trim() || undefined, closingMessage: qClosingMessage.trim() || undefined };
                 onSave({ type, title, metadata: { ...metadata, destination, ...questionsMeta }, resourceId: selectedResourceId, fileUrl: (selectedResourceId && selectedResourceId.includes('/')) ? selectedResourceId : null, destination, instructions: type === 'exercice' ? instructions : null });
                 onClose();
               }}
-              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && questions.length === 0) || (type === 'questionnaire' && isQuiz && qQuizInvalide(questions))}
+              disabled={!title.trim() || isUploading || (type !== 'signature' && type !== 'questionnaire' && !selectedResourceId) || (type === 'questionnaire' && qSource === 'existant' && !qExistant) || (type === 'questionnaire' && qSource === 'nouveau' && (questions.length === 0 || (isQuiz && qQuizInvalide(questions))))}
               className="w-full bg-indigo-600 hover:bg-black text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 transition-all disabled:opacity-50"
             >
               {isUploading ? 'Veuillez patienter...' : 'Enregistrer l\'activité'}
@@ -7685,6 +7742,7 @@ const IngenierieView = ({
         pedagogicalResources={pedagogicalResources}
         documentTemplates={documentTemplates}
         supabase={supabase}
+        currentOrgId={currentOrgId}
         momentLabel={activeMoment === 'debut' ? '🟢 Début de Parcours (Onboarding)' : activeMoment === 'fin' ? '🔴 Fin de Parcours (Outro)' : null}
         onSave={(data) => {
           if (activeMoment && activeMomentModuleId) {
@@ -10475,6 +10533,12 @@ const qManqueBonneReponse = (q) => qEstNotee(q) && (
 // Quiz enregistrable : au moins une question notée, et chaque question notée a sa bonne réponse.
 const qQuizInvalide = (questions) => (questions || []).some(qManqueBonneReponse) || !(questions || []).some(q => qEstNotee(q));
 
+// QUIZ (2026-10-13) : un questionnaire du menu « Questionnaires » peut être repris dans un module
+// (Documents de début / fin). Le module en garde une copie liée (metadata.source_questionnaire_id),
+// remise à jour à chaque modification du questionnaire d'origine.
+const Q_CONTENU_KEYS = ['questions', 'isQuiz', 'seuilReussite', 'description', 'closingMessage'];
+const qContenu = (meta) => Object.fromEntries(Q_CONTENU_KEYS.filter(k => meta && meta[k] !== undefined).map(k => [k, meta[k]]));
+
 const parseQMeta = (q) => {
   try { return typeof q?.metadata === 'string' ? JSON.parse(q.metadata) : (q?.metadata || {}); }
   catch { return {}; }
@@ -11182,14 +11246,26 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
         module_id: null,
         organisation_id: currentOrgId,
       };
+      let nbModulesMaj = 0;
       if (editingQId) {
         const { error } = await supabase.from('module_step_resources').update(payload).eq('id', editingQId);
         if (error) { toast.error('Erreur mise à jour : ' + error.message); return; }
+        // Copies reprises dans des modules (Documents de début / fin) : même contenu.
+        const { data: copies } = await supabase.from('module_step_resources').select('id, metadata, module_id')
+          .eq('type', 'questionnaire').eq('organisation_id', currentOrgId);
+        const liees = (copies || []).filter(c => c.module_id != null && String(parseQMeta(c).source_questionnaire_id) === String(editingQId));
+        const contenu = qContenu(JSON.parse(payload.metadata));
+        for (const c of liees) {
+          const m = parseQMeta(c);
+          const { error: e2 } = await supabase.from('module_step_resources')
+            .update({ metadata: { ...m, questions: undefined, isQuiz: undefined, seuilReussite: undefined, description: undefined, closingMessage: undefined, ...contenu } }).eq('id', c.id);
+          if (!e2) nbModulesMaj++;
+        }
       } else {
         const { data: inserted, error } = await supabase.from('module_step_resources').insert([payload]).select();
         if (error) { toast.error('Erreur création : ' + error.message); return; }
       }
-      toast.success(editingQId ? 'Questionnaire mis à jour.' : 'Questionnaire créé.');
+      toast.success(editingQId ? `Questionnaire mis à jour${nbModulesMaj ? ` (et dans ${nbModulesMaj} module${nbModulesMaj > 1 ? 's' : ''})` : ''}.` : 'Questionnaire créé.');
       setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
       setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
       await fetchQTemplates();
