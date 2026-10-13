@@ -195,6 +195,74 @@ async function handleNouveauDocument(req, res, authData) {
   return res.status(200).json(resultat);
 }
 
+// ── type: 'depot_client' (2026-10-13) — un client vient d'envoyer un document depuis son espace ─
+// Prévient le formateur et/ou l'admin selon le destinataire choisi par le client. L'appelant doit
+// être le client lui-même (son identifiant de connexion = clients.id = depots_clients.client_id).
+async function handleDepotClient(req, res, authData) {
+  const { depotId, origin } = req.body || {};
+  if (!depotId) return res.status(400).json({ error: 'depotId est requis.' });
+  const safeOrigin = safeOriginOf(origin);
+
+  const { data: depot, error: depotErr } = await supabaseAdmin
+    .from('depots_clients')
+    .select('id, client_id, organisation_id, titre, categorie, message, destinataire')
+    .eq('id', depotId)
+    .maybeSingle();
+  if (depotErr) throw depotErr;
+  if (!depot || String(depot.client_id) !== String(authData.user.id)) {
+    return res.status(403).json({ error: 'Document introuvable pour ce compte.' });
+  }
+
+  const { data: client, error: clientErr } = await supabaseAdmin
+    .from('clients')
+    .select('id, nom_complet, formateur_id, organisation_id')
+    .eq('id', depot.client_id)
+    .maybeSingle();
+  if (clientErr) throw clientErr;
+  if (!client) return res.status(404).json({ error: 'Client introuvable.' });
+
+  const destinataires = [];
+  if (depot.destinataire !== 'organisme' && client.formateur_id) {
+    const { data: f } = await supabaseAdmin.from('utilisateurs').select('id, nom, email, role')
+      .eq('id', client.formateur_id).eq('organisation_id', client.organisation_id).maybeSingle();
+    if (f) destinataires.push(f);
+  }
+  if (depot.destinataire !== 'formateur') {
+    const { data: admins } = await supabaseAdmin.from('utilisateurs').select('id, nom, email, role')
+      .eq('organisation_id', client.organisation_id).eq('role', 'admin');
+    (admins || []).forEach(a => { if (!destinataires.some(d => d.email && d.email === a.email)) destinataires.push(a); });
+  }
+  if (destinataires.length === 0) return res.status(200).json({ sent: false, message: 'Aucun destinataire.' });
+
+  const clientName = plainText(client.nom_complet || 'Un client');
+  const titre = plainText(depot.titre || 'Document');
+  const message = plainText(depot.message || '', 500);
+  const subject = `Nouveau document de ${clientName} : ${titre}`;
+  const resultats = [];
+  for (const dest of destinataires) {
+    const firstName = escapeHtml((dest.nom || '').split(' ')[0] || '');
+    const link = dest.role === 'admin'
+      ? `${safeOrigin}/clients`
+      : `${safeOrigin}/?view=formateur&client=${encodeURIComponent(client.id)}`;
+    const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+    <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${firstName},</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;"><strong>${escapeHtml(clientName)}</strong> vient de vous envoyer un document sur SkorUp : <strong>${escapeHtml(titre)}</strong>${depot.categorie ? ` (${escapeHtml(plainText(depot.categorie))})` : ''}.</p>
+      ${message ? `<p style="color:#374151;font-size:14px;line-height:1.7;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;">« ${escapeHtml(message)} »</p>` : ''}
+      <p style="text-align:center;margin:28px 0;">
+        <a href="${link}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir le document</a>
+      </p>
+      <p style="color:#6b7280;font-size:12px;line-height:1.6;">Vous le trouverez dans la fiche du client, onglet « Reçus du client ».</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+      <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
+    </div>
+  </div>`;
+    resultats.push(await envoyerEmailFormateur(dest, subject, bodyHtml));
+  }
+  return res.status(200).json({ sent: resultats.some(r => r.sent), resultats });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -214,7 +282,8 @@ module.exports = async (req, res) => {
     const { type } = req.body || {};
     if (type === 'assignation') return await handleAssignation(req, res, authData);
     if (type === 'nouveau_document') return await handleNouveauDocument(req, res, authData);
-    return res.status(400).json({ error: 'type invalide (attendu : "assignation" ou "nouveau_document").' });
+    if (type === 'depot_client') return await handleDepotClient(req, res, authData);
+    return res.status(400).json({ error: 'type invalide (attendu : "assignation", "nouveau_document" ou "depot_client").' });
   } catch (err) {
     console.error('[formateur/notify]', err);
     return res.status(500).json({ error: 'Erreur interne.' });

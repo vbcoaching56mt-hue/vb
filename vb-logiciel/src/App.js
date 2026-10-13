@@ -4346,9 +4346,15 @@ const ClientDetailView = ({
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
   handleRegenerateVisualDocs, instantiateDocument, currentOrgId,
-  groupes = [], onOpenGroupe = null
+  groupes = [], onOpenGroupe = null,
+  depotsNonLus = [], estPro = false, nomUtilisateur = '', onDepotsVus = null, ongletInitial = null, onOngletInitialUtilise = null
 }) => {
-  const [activeTab, setActiveTab] = React.useState('infos');
+  const [activeTab, setActiveTab] = React.useState(ongletInitial || 'infos');
+  React.useEffect(() => {
+    if (ongletInitial) { setActiveTab(ongletInitial); if (onOngletInitialUtilise) onOngletInitialUtilise(); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ongletInitial, client?.id]);
+  const nbRecusNonLus = (depotsNonLus || []).filter(d => String(d.client_id) === String(client?.id)).length;
   const groupeDuClient = client?.groupe_id ? (groupes || []).find(g => String(g.id) === String(client.groupe_id)) : null;
   const [correctionModalSession, setCorrectionModalSession] = React.useState(null);
   const [activeId, setActiveId] = React.useState(null);
@@ -5001,6 +5007,10 @@ const ClientDetailView = ({
         </button>
         <button onClick={() => setActiveTab('docs')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'docs' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Documents liés</button>
         <button onClick={() => setActiveTab('questionnaires')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'questionnaires' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>Questionnaires{displayedQuestionnaires.length > 0 ? ` (${displayedQuestionnaires.length})` : ''}</button>
+        <button onClick={() => setActiveTab('recus')} className={`relative shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'recus' ? 'border-b-2 border-violet-600 text-violet-700' : 'text-gray-500 hover:text-gray-800'}`}>
+          Reçus du client
+          {nbRecusNonLus > 0 && <span className="absolute -top-1 -right-1 bg-violet-600 text-white text-[11px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-md">{nbRecusNonLus}</span>}
+        </button>
         <button onClick={() => setActiveTab('finances')} className={`shrink-0 px-4 py-3 font-bold text-sm ${activeTab === 'finances' ? 'border-b-2 border-emerald-600 text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>Finances</button>
       </div>
 
@@ -6137,6 +6147,10 @@ const ClientDetailView = ({
         </div>
       )}
 
+      {activeTab === 'recus' && (
+        <DepotsClientPanel client={client} currentOrgId={currentOrgId} userRole="admin" estPro={estPro} nomUtilisateur={nomUtilisateur} onVu={onDepotsVus} />
+      )}
+
       {activeTab === 'finances' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Euro size={20} className="text-emerald-600" /> Finances</h3>
@@ -6287,7 +6301,8 @@ const AdminClientsView = ({
   setDocSettingsTarget, setIsDocSettingsOpen, setViewingDocId,
   handleMoveSessionItem, handleSaveCorrection, handleAddAdminBloc,
   handleRegenerateVisualDocs, instantiateDocument, currentOrgId,
-  groupes = [], onOpenGroupe = null
+  groupes = [], onOpenGroupe = null,
+  depotsNonLus = [], estPro = false, nomUtilisateur = '', onDepotsVus = null, ongletInitial = null, onOngletInitialUtilise = null
 }) => {
   const [clientSearchTerm, setClientSearchTerm] = React.useState('');
 
@@ -6343,6 +6358,12 @@ const AdminClientsView = ({
           currentOrgId={currentOrgId}
           groupes={groupes}
           onOpenGroupe={onOpenGroupe}
+          depotsNonLus={depotsNonLus}
+          estPro={estPro}
+          nomUtilisateur={nomUtilisateur}
+          onDepotsVus={onDepotsVus}
+          ongletInitial={ongletInitial}
+          onOngletInitialUtilise={onOngletInitialUtilise}
         />
       );
     }
@@ -7780,7 +7801,8 @@ const FormateurView = ({
   setIsSessionItemModalOpen, setTargetSessionForAddition, setViewingSession,
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
-  handleMoveSessionItem, handleSaveCorrection, currentOrgId, handleAddCompletedExercise
+  handleMoveSessionItem, handleSaveCorrection, currentOrgId, handleAddCompletedExercise,
+  depotsNonLus = [], estPro = false, nomUtilisateur = '', onDepotsVus = null, ongletInitial = null, onOngletInitialUtilise = null
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -7839,7 +7861,9 @@ const FormateurView = ({
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
 
   React.useEffect(() => {
-    setFormateurClientTab('seances');
+    setFormateurClientTab(ongletInitial || 'seances');
+    if (ongletInitial && onOngletInitialUtilise) onOngletInitialUtilise();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedClientId]);
 
   // FIX (2026-10-02) : les horaires n'étaient enregistrés qu'en cliquant sur la petite icône disquette —
@@ -8322,7 +8346,19 @@ const FormateurView = ({
                       )}
                     </button>
                     <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Quiz</button>
+                    <button onClick={() => setFormateurClientTab('recus')} className={`relative px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'recus' ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                      Reçus du client
+                      {(depotsNonLus || []).filter(d => String(d.client_id) === String(client.id) && d.destinataire !== 'organisme').length > 0 && (
+                        <span className="ml-1.5 inline-flex bg-violet-600 text-white text-[11px] font-black w-4 h-4 rounded-full items-center justify-center align-middle">
+                          {(depotsNonLus || []).filter(d => String(d.client_id) === String(client.id) && d.destinataire !== 'organisme').length}
+                        </span>
+                      )}
+                    </button>
                   </div>
+
+                  {formateurClientTab === 'recus' && (
+                    <DepotsClientPanel client={client} currentOrgId={currentOrgId} userRole="formateur" estPro={estPro} nomUtilisateur={nomUtilisateur} onVu={onDepotsVus} />
+                  )}
 
                   {formateurClientTab === 'quiz' && (
                     <div className="space-y-3">
@@ -13015,13 +13051,25 @@ const DocumentsView = ({
 };
 
 // ─── Cloche de notifications ──────────────────────────────────────────────────
-const NotificationBell = ({ sessions, documents, clients, userRole, currentUserId, setActiveTab }) => {
+const NotificationBell = ({ sessions, documents, clients, userRole, currentUserId, setActiveTab, depotsNonLus = [], piecesAFournir = 0, onOpenClient = null }) => {
   const [isOpen, setIsOpen] = React.useState(false);
   const today = new Date().toISOString().split('T')[0];
   const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
   const notifications = React.useMemo(() => {
     const notifs = [];
+    // AJOUT (2026-10-13) : documents envoyés par les clients, pas encore ouverts.
+    if ((userRole === 'admin' || userRole === 'formateur') && depotsNonLus.length > 0) {
+      const parClient = new Map();
+      depotsNonLus.forEach(d => parClient.set(String(d.client_id), [...(parClient.get(String(d.client_id)) || []), d]));
+      parClient.forEach((liste, cid) => {
+        const c = clients.find(x => String(x.id) === cid);
+        notifs.push({ type: 'warning', message: liste.length > 1 ? `${liste.length} nouveaux documents de ${c?.nom || 'un client'}` : `Nouveau document de ${c?.nom || 'un client'} : ${liste[0].titre}`, action: 'clients', clientId: cid });
+      });
+    }
+    if (userRole === 'client' && piecesAFournir > 0) {
+      notifs.push({ type: 'warning', message: `${piecesAFournir} pièce${piecesAFournir > 1 ? 's' : ''} à fournir`, action: 'mes_documents' });
+    }
     if (userRole === 'admin') {
       // FIX (2026-10-05) : ne compte plus les documents simplement transmis (sans signature) ni les signatures
       // non demandées (ex. document destiné au client seul : pas de signature formateur attendue).
@@ -13063,7 +13111,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
       if (nextSess) notifs.push({ type: 'info', message: `Prochaine séance : ${new Date(nextSess.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`, action: 'calendrier' });
     }
     return notifs;
-  }, [sessions, documents, clients, userRole, currentUserId, today, in7Days]);
+  }, [sessions, documents, clients, userRole, currentUserId, today, in7Days, depotsNonLus, piecesAFournir]);
 
   const count = notifications.length;
   return (
@@ -13081,7 +13129,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
               {count === 0
                 ? <div className="py-8 text-center"><p className="text-gray-400 text-sm">Aucune notification</p></div>
                 : notifications.map((n, i) => (
-                    <button key={i} onClick={() => { setActiveTab(n.action); setIsOpen(false); }}
+                    <button key={i} onClick={() => { if (n.clientId && onOpenClient) onOpenClient(n.clientId); else setActiveTab(n.action); setIsOpen(false); }}
                       className="w-full px-4 py-3.5 text-left hover:bg-gray-50 border-b border-gray-50 transition-colors last:border-0 flex items-start gap-3">
                       <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${n.type === 'warning' ? 'bg-amber-400' : 'bg-blue-400'}`}></div>
                       <p className="text-sm text-gray-700">{n.message}</p>
@@ -15850,6 +15898,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mes Documents</h1>
         <p className="text-gray-500 text-lg mt-1">Documents administratifs de votre parcours d'accompagnement.</p>
       </div>
+
+      <MesEnvoisClient currentUserId={currentUserId} client={currentClient} />
 
       {(debutResources.length > 0 || extraDebutDocs.length > 0) && (
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6">
@@ -21426,6 +21476,570 @@ const GroupesView = ({ groupes, groupeSeances, groupesDispo, clients, sessions, 
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// DOCUMENTS ENVOYÉS PAR LES CLIENTS + PIÈCES À FOURNIR (2026-10-13)
+// Le client envoie un document (justificatif, attestation, travail…) à son formateur et/ou à
+// l'organisme depuis « Mes documents ». Admin et formateur le retrouvent dans l'onglet « Reçus du
+// client » de la fiche. Offre Pro : chaque organisme crée SA liste de pièces (aucune par défaut),
+// les demande à un client et suit leur réception (à fournir → reçue → validée / à refaire).
+// Tables : depots_clients, pieces_catalogue, pieces_demandees (voir depots_etape1.sql).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const DEPOT_TAILLE_MAX = 10 * 1024 * 1024;
+const DEPOT_CATEGORIES = ["Pièce d'identité", 'Justificatif', 'Attestation', 'CV', 'Travail demandé', 'Autre'];
+const DEPOT_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf';
+const DEPOT_DESTINATAIRES = { formateur: 'Mon formateur', organisme: "L'organisme", les_deux: 'Formateur et organisme' };
+const DEPOT_DESTINATAIRES_STAFF = { formateur: 'Pour le formateur', organisme: "Pour l'organisme", les_deux: 'Pour le formateur et l\'organisme' };
+const PIECE_STATUTS = {
+  a_fournir: { label: 'À fournir', cls: 'bg-amber-50 text-amber-700' },
+  recue: { label: 'Reçue', cls: 'bg-blue-50 text-blue-700' },
+  validee: { label: 'Validée', cls: 'bg-emerald-50 text-emerald-700' },
+  a_refaire: { label: 'À refaire', cls: 'bg-red-50 text-red-600' },
+};
+const tailleLisible = (o) => (!o ? '' : o < 1024 * 1024 ? `${Math.max(1, Math.round(o / 1024))} Ko` : `${(o / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`);
+const dateHeureFr = (d) => (d ? new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+const nomFichierSur = (nom) => String(nom || 'document').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-80);
+const cheminStockage = (url) => {
+  const m = String(url || '').match(/\/storage\/v1\/object\/(?:public|sign)\/([^/?]+)\/(.+?)(?:\?|$)/);
+  return m ? { bucket: m[1], path: decodeURIComponent(m[2]) } : null;
+};
+
+// Réduit une photo prise au téléphone avant l'envoi (2000 px maximum, JPEG qualité 0,8).
+const compresserImageDepot = async (file) => {
+  if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size < 1.5 * 1024 * 1024) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url; });
+    const ratio = Math.min(1, 2000 / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * ratio);
+    canvas.height = Math.round(img.height * ratio);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const blob = await new Promise(ok => canvas.toBlob(ok, 'image/jpeg', 0.8));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+};
+
+// E-mail au formateur et/ou à l'admin (voir api/formateur/notify.js, type « depot_client »).
+const notifierDepotClient = (depotId) => {
+  supabase.auth.getSession().then(({ data }) => {
+    const token = data?.session?.access_token;
+    if (!token) return;
+    fetch('/api/formateur/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: 'depot_client', depotId, origin: window.location.origin }),
+    }).catch(() => {});
+  }).catch(() => {});
+};
+
+// ─── Fenêtre d'envoi d'un document (côté client) ─────────────────────────────────────────────────
+const EnvoiDocumentModal = ({ isOpen, onClose, piece, aUnFormateur, onEnvoyer }) => {
+  const [fichier, setFichier] = React.useState(null);
+  const [titre, setTitre] = React.useState('');
+  const [categorie, setCategorie] = React.useState('');
+  const [destinataire, setDestinataire] = React.useState('les_deux');
+  const [message, setMessage] = React.useState('');
+  const [enCours, setEnCours] = React.useState(false);
+  const [erreur, setErreur] = React.useState('');
+  const [survol, setSurvol] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setFichier(null); setMessage(''); setErreur(''); setEnCours(false);
+    setTitre(piece ? piece.nom : '');
+    setCategorie(piece ? 'Justificatif' : '');
+    setDestinataire(aUnFormateur ? 'les_deux' : 'organisme');
+  }, [isOpen, piece, aUnFormateur]);
+
+  if (!isOpen) return null;
+
+  const choisir = (f) => {
+    if (!f) return;
+    setErreur('');
+    setFichier(f);
+    if (!piece && !titre.trim()) setTitre(f.name.replace(/\.[^.]+$/, ''));
+  };
+  const envoyer = async () => {
+    if (!fichier) { setErreur('Choisissez un fichier.'); return; }
+    if (!titre.trim()) { setErreur('Donnez un titre à votre document.'); return; }
+    setEnCours(true); setErreur('');
+    try {
+      await onEnvoyer({ fichier, titre: titre.trim(), categorie: categorie || null, destinataire, message: message.trim() || null, piece_id: piece?.id || null });
+      onClose();
+    } catch (e) {
+      setErreur(e.message || 'Le document n\'a pas pu être envoyé.');
+      setEnCours(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4" onClick={() => !enCours && onClose()}>
+      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="bg-violet-600 p-6 text-white relative">
+          <p className="text-violet-200 text-xs font-black uppercase tracking-widest mb-1">{piece ? 'Pièce demandée' : 'Nouveau document'}</p>
+          <h2 className="text-lg font-black leading-tight">{piece ? piece.nom : 'Envoyer un document'}</h2>
+          {piece?.description && <p className="text-sm text-violet-100 mt-1">{piece.description}</p>}
+          <button onClick={onClose} disabled={enCours} aria-label="Fermer" className="absolute top-5 right-5 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
+        </div>
+        <div className="p-6 space-y-4 overflow-y-auto">
+          <div
+            onDragOver={e => { e.preventDefault(); setSurvol(true); }}
+            onDragLeave={() => setSurvol(false)}
+            onDrop={e => { e.preventDefault(); setSurvol(false); choisir(e.dataTransfer.files?.[0]); }}
+            onClick={() => inputRef.current?.click()}
+            className={`cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition-colors ${survol ? 'border-violet-500 bg-violet-50' : 'border-gray-200 bg-gray-50 hover:border-violet-300'}`}>
+            <input ref={inputRef} type="file" accept={DEPOT_ACCEPT} className="hidden" onChange={e => choisir(e.target.files?.[0])} />
+            {fichier ? (
+              <div>
+                <p className="font-bold text-gray-900 break-all">📎 {fichier.name}</p>
+                <p className="text-xs text-gray-500 mt-1">{tailleLisible(fichier.size)} · cliquez pour changer</p>
+              </div>
+            ) : (
+              <div>
+                <p className="font-bold text-gray-800"><Upload size={18} className="inline mr-1.5 -mt-0.5" />Choisir un fichier</p>
+                <p className="text-xs text-gray-500 mt-1">PDF, photo, Word… 10 Mo maximum. Sur téléphone, vous pouvez prendre une photo.</p>
+              </div>
+            )}
+          </div>
+          <div>
+            <label htmlFor="depot-titre" className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5">Titre</label>
+            <input id="depot-titre" value={titre} onChange={e => setTitre(e.target.value)} placeholder="Ex : Attestation employeur" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          </div>
+          {!piece && (
+            <div>
+              <label htmlFor="depot-cat" className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5">Type de document</label>
+              <select id="depot-cat" value={categorie} onChange={e => setCategorie(e.target.value)} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                <option value="">Choisir…</option>
+                {DEPOT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <p className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5">Envoyer à</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {(aUnFormateur ? ['formateur', 'organisme', 'les_deux'] : ['organisme']).map(d => (
+                <button key={d} type="button" onClick={() => setDestinataire(d)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${destinataire === d ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-200 hover:border-violet-300'}`}>{DEPOT_DESTINATAIRES[d]}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label htmlFor="depot-msg" className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5">Message (facultatif)</label>
+            <textarea id="depot-msg" value={message} onChange={e => setMessage(e.target.value)} rows={2} placeholder="Ex : voici mon attestation signée" className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          </div>
+          {erreur && <p className="text-sm font-bold text-red-600 bg-red-50 rounded-xl px-3 py-2">{erreur}</p>}
+        </div>
+        <div className="p-6 pt-0 flex gap-3">
+          <button onClick={onClose} disabled={enCours} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold text-sm hover:bg-gray-50">Annuler</button>
+          <button onClick={envoyer} disabled={enCours} className="flex-1 py-3 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 disabled:opacity-50">{enCours ? 'Envoi…' : 'Envoyer'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── « Mes documents » côté client : envoyer, pièces demandées, historique ──────────────────────
+const MesEnvoisClient = ({ currentUserId, client }) => {
+  const [dispo, setDispo] = React.useState(true);
+  const [depots, setDepots] = React.useState([]);
+  const [pieces, setPieces] = React.useState([]);
+  const [modal, setModal] = React.useState(null); // null | { piece }
+  const [aRetirer, setARetirer] = React.useState(null);
+
+  const charger = React.useCallback(async () => {
+    if (!currentUserId) return;
+    const [d, p] = await Promise.all([
+      supabase.from('depots_clients').select('*').eq('client_id', currentUserId).order('created_at', { ascending: false }),
+      supabase.from('pieces_demandees').select('*').eq('client_id', currentUserId).order('demande_le', { ascending: true }),
+    ]);
+    if (d.error) { console.warn('[depots] non disponibles :', d.error.message); setDispo(false); return; }
+    setDispo(true);
+    setDepots(d.data || []);
+    setPieces(p.error ? [] : (p.data || []));
+  }, [currentUserId]);
+  React.useEffect(() => { charger(); }, [charger]);
+
+  if (!dispo || !client) return null;
+
+  const envoyer = async ({ fichier, titre, categorie, destinataire, message, piece_id }) => {
+    const f = await compresserImageDepot(fichier);
+    if (f.size > DEPOT_TAILLE_MAX) throw new Error(`Ce fichier fait ${tailleLisible(f.size)} : la limite est de 10 Mo. Réduisez-le ou envoyez une photo.`);
+    const chemin = `depots/${currentUserId}/${Date.now()}_${nomFichierSur(f.name)}`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(chemin, f, { contentType: f.type || undefined, upsert: false });
+    if (upErr) throw new Error(`Le fichier n'a pas pu être envoyé : ${upErr.message}`);
+    const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(chemin);
+    const { data: ligne, error } = await supabase.from('depots_clients').insert([{
+      organisation_id: client.organisation_id, client_id: currentUserId, titre, categorie, message, destinataire,
+      fichier_url: publicUrl, fichier_nom: f.name, taille: f.size, piece_id,
+    }]).select().single();
+    if (error) {
+      await supabase.storage.from('documents').remove([chemin]).catch(() => {});
+      throw new Error(`Le document n'a pas pu être enregistré : ${error.message}`);
+    }
+    notifierDepotClient(ligne.id);
+    toast.success('Document envoyé. Votre interlocuteur est prévenu par e-mail.');
+    await charger();
+  };
+
+  const retirer = async (depot) => {
+    const { data, error } = await supabase.from('depots_clients').delete().eq('id', depot.id).select('id');
+    if (error || !data || data.length === 0) {
+      toast.error('Ce document a déjà été consulté : il ne peut plus être retiré.');
+      await charger();
+      return;
+    }
+    const ch = cheminStockage(depot.fichier_url);
+    if (ch) await supabase.storage.from(ch.bucket).remove([ch.path]).catch(() => {});
+    toast.success('Document retiré.');
+    await charger();
+  };
+
+  const aFournir = pieces.filter(p => p.statut === 'a_fournir' || p.statut === 'a_refaire');
+
+  return (
+    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-2 h-6 bg-amber-500 rounded-full mt-0.5 shrink-0"></div>
+          <div>
+            <h2 className="font-bold text-gray-900 text-lg">Envoyer un document</h2>
+            <p className="text-sm text-gray-500">Transmettez un justificatif, une attestation ou un travail à votre formateur ou à votre organisme.</p>
+          </div>
+        </div>
+        <button onClick={() => setModal({ piece: null })} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 shrink-0"><Upload size={16} /> Envoyer un document</button>
+      </div>
+
+      {pieces.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h3 className="font-bold text-gray-900">Pièces demandées</h3>
+            {aFournir.length > 0 && <span className="text-xs font-black px-2 py-1 rounded-lg bg-amber-50 text-amber-700">{aFournir.length} à fournir</span>}
+          </div>
+          <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+            {pieces.map(p => (
+              <li key={p.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-gray-900">{p.nom}</p>
+                  {p.description && <p className="text-xs text-gray-500">{p.description}</p>}
+                  {p.statut === 'a_refaire' && p.motif && <p className="text-xs text-red-600 mt-0.5">À refaire : {p.motif}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${PIECE_STATUTS[p.statut || 'a_fournir']?.cls || ''}`}>{PIECE_STATUTS[p.statut || 'a_fournir']?.label || p.statut}</span>
+                  {(p.statut === 'a_fournir' || p.statut === 'a_refaire') && (
+                    <button onClick={() => setModal({ piece: p })} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700">Envoyer</button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {depots.length > 0 && (
+        <div>
+          <h3 className="font-bold text-gray-900 mb-2">Mes envois</h3>
+          <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+            {depots.map(d => (
+              <li key={d.id} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-gray-900 break-words">{d.titre}</p>
+                  <p className="text-xs text-gray-500">{[d.categorie, dateHeureFr(d.created_at), DEPOT_DESTINATAIRES[d.destinataire], tailleLisible(d.taille)].filter(Boolean).join(' · ')}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {d.consulte_le
+                    ? <span className="text-xs font-black px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700">Consulté</span>
+                    : <span className="text-xs font-black px-2 py-1 rounded-lg bg-gray-100 text-gray-600">Envoyé</span>}
+                  <button onClick={() => openSecureStorageFile(d.fichier_url)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Voir</button>
+                  {!d.consulte_le && <button onClick={() => setARetirer(d)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-500 hover:text-red-600 hover:border-red-200">Retirer</button>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <EnvoiDocumentModal isOpen={!!modal} piece={modal?.piece || null} aUnFormateur={!!client.formateur_id}
+        onClose={() => setModal(null)} onEnvoyer={envoyer} />
+      <ConfirmModal isOpen={!!aRetirer} title="Retirer ce document ?" message="Il sera supprimé. Vous pourrez en envoyer un autre."
+        confirmLabel="Retirer" onCancel={() => setARetirer(null)} onConfirm={async () => { const d = aRetirer; setARetirer(null); await retirer(d); }} />
+    </div>
+  );
+};
+
+// ─── Liste des pièces de l'organisme (admin) ─────────────────────────────────────────────────────
+const CataloguePiecesModal = ({ isOpen, onClose, currentOrgId, catalogue, onChange }) => {
+  const [nom, setNom] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [edition, setEdition] = React.useState(null);
+  if (!isOpen) return null;
+  const ajouter = async () => {
+    if (!nom.trim()) return;
+    const { error } = await supabase.from('pieces_catalogue').insert([{ organisation_id: currentOrgId, nom: nom.trim(), description: description.trim() || null, ordre: (catalogue || []).length + 1 }]);
+    if (error) { toast.error(`La pièce n'a pas pu être ajoutée : ${error.message}`); return; }
+    setNom(''); setDescription('');
+    await onChange();
+  };
+  const enregistrer = async () => {
+    const { error } = await supabase.from('pieces_catalogue').update({ nom: edition.nom.trim(), description: (edition.description || '').trim() || null }).eq('id', edition.id);
+    if (error) { toast.error(`Modification impossible : ${error.message}`); return; }
+    setEdition(null);
+    await onChange();
+  };
+  const supprimer = async (p) => {
+    const { error } = await supabase.from('pieces_catalogue').delete().eq('id', p.id);
+    if (error) { toast.error(`Suppression impossible : ${error.message}`); return; }
+    await onChange();
+  };
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-black text-gray-900">Ma liste de pièces</p>
+            <p className="text-sm text-gray-500">Les pièces que votre organisme demande habituellement. Vous les cochez ensuite dans la fiche de chaque client.</p>
+          </div>
+          <button onClick={onClose} aria-label="Fermer" className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200">✕</button>
+        </div>
+        {(catalogue || []).length === 0 ? (
+          <p className="text-sm text-gray-500 bg-gray-50 rounded-2xl p-4">Votre liste est vide. Ajoutez ci-dessous les pièces dont vous avez besoin.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+            {catalogue.map(p => (
+              <li key={p.id} className="p-3">
+                {edition?.id === p.id ? (
+                  <div className="space-y-2">
+                    <input aria-label="Nom de la pièce" value={edition.nom} onChange={e => setEdition(x => ({ ...x, nom: e.target.value }))} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+                    <input aria-label="Explication pour le client" value={edition.description || ''} onChange={e => setEdition(x => ({ ...x, description: e.target.value }))} placeholder="Explication pour le client (facultatif)" className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setEdition(null)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold">Annuler</button>
+                      <button onClick={enregistrer} disabled={!edition.nom.trim()} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-40">Enregistrer</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-bold text-sm text-gray-900">{p.nom}</p>
+                      {p.description && <p className="text-xs text-gray-500">{p.description}</p>}
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => setEdition({ ...p })} title="Modifier" className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:text-violet-600"><Pencil size={14} /></button>
+                      <button onClick={() => supprimer(p)} title="Supprimer" className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="bg-violet-50 rounded-2xl p-4 space-y-2">
+          <p className="text-xs font-black text-violet-800 uppercase tracking-wider">Ajouter une pièce</p>
+          <input aria-label="Nom de la nouvelle pièce" value={nom} onChange={e => setNom(e.target.value)} placeholder="Nom de la pièce" className="w-full px-3 py-2 rounded-lg border border-violet-200 text-sm bg-white" />
+          <input aria-label="Explication de la nouvelle pièce" value={description} onChange={e => setDescription(e.target.value)} placeholder="Explication pour le client (facultatif)" className="w-full px-3 py-2 rounded-lg border border-violet-200 text-sm bg-white" />
+          <div className="flex justify-end"><button onClick={ajouter} disabled={!nom.trim()} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-bold disabled:opacity-40">Ajouter à ma liste</button></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Onglet « Reçus du client » (admin et formateur) ─────────────────────────────────────────────
+const DepotsClientPanel = ({ client, currentOrgId, userRole, estPro, nomUtilisateur, onVu }) => {
+  const [dispo, setDispo] = React.useState(true);
+  const [depots, setDepots] = React.useState([]);
+  const [pieces, setPieces] = React.useState([]);
+  const [catalogue, setCatalogue] = React.useState([]);
+  const [catalogueOuvert, setCatalogueOuvert] = React.useState(false);
+  const [choix, setChoix] = React.useState([]);
+  const [ponctuelle, setPonctuelle] = React.useState('');
+  const [refaire, setRefaire] = React.useState(null); // { piece, motif }
+  const [confirm, setConfirm] = React.useState(null);
+
+  const charger = React.useCallback(async () => {
+    if (!client?.id) return;
+    const [d, p, c] = await Promise.all([
+      supabase.from('depots_clients').select('*').eq('client_id', client.id).order('created_at', { ascending: false }),
+      supabase.from('pieces_demandees').select('*').eq('client_id', client.id).order('demande_le', { ascending: true }),
+      currentOrgId ? supabase.from('pieces_catalogue').select('*').eq('organisation_id', currentOrgId).order('ordre', { ascending: true }) : Promise.resolve({ data: [] }),
+    ]);
+    if (d.error) { console.warn('[depots] non disponibles :', d.error.message); setDispo(false); return; }
+    setDispo(true);
+    setDepots(d.data || []);
+    setPieces(p.error ? [] : (p.data || []));
+    setCatalogue(c.error ? [] : (c.data || []));
+  }, [client?.id, currentOrgId]);
+  React.useEffect(() => { charger(); }, [charger]);
+
+  if (!dispo) {
+    return <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm text-gray-500 text-sm">L'envoi de documents par les clients n'est pas encore activé sur votre espace.</div>;
+  }
+
+  const marquerConsulte = async (d) => {
+    if (d.consulte_le) return;
+    await supabase.from('depots_clients').update({ consulte_le: new Date().toISOString(), consulte_par: nomUtilisateur || null }).eq('id', d.id);
+    await charger();
+    if (onVu) onVu();
+  };
+  const ouvrir = async (d) => { await openSecureStorageFile(d.fichier_url); marquerConsulte(d); };
+  const telecharger = async (d) => { await handleDownloadNamedFile({ url: d.fichier_url, nom: d.titre }); marquerConsulte(d); };
+  const supprimerDepot = async (d) => {
+    const { error } = await supabase.from('depots_clients').delete().eq('id', d.id);
+    if (error) { toast.error(`Suppression impossible : ${error.message}`); return; }
+    const ch = cheminStockage(d.fichier_url);
+    if (ch) await supabase.storage.from(ch.bucket).remove([ch.path]).catch(() => {});
+    toast.success('Document supprimé.');
+    await charger();
+    if (onVu) onVu();
+  };
+
+  const demander = async (lignes) => {
+    if (lignes.length === 0) return;
+    const { error } = await supabase.from('pieces_demandees').insert(lignes.map(l => ({ organisation_id: currentOrgId, client_id: client.id, statut: 'a_fournir', demande_le: new Date().toISOString(), ...l })));
+    if (error) { toast.error(`La demande n'a pas pu être enregistrée : ${error.message}`); return; }
+    notifyClientByEmail(client.id, lignes.length > 1 ? `${lignes.length} pièces à fournir` : `Pièce à fournir : ${lignes[0].nom}`);
+    toast.success(lignes.length > 1 ? `${lignes.length} pièces demandées au client` : 'Pièce demandée au client');
+    setChoix([]); setPonctuelle('');
+    await charger();
+  };
+  const changerStatut = async (p, statut, motif = null) => {
+    const { error } = await supabase.from('pieces_demandees').update({ statut, motif, traite_le: new Date().toISOString() }).eq('id', p.id);
+    if (error) { toast.error(`Modification impossible : ${error.message}`); return; }
+    await charger();
+  };
+  const supprimerPiece = async (p) => {
+    const { error } = await supabase.from('pieces_demandees').delete().eq('id', p.id);
+    if (error) { toast.error(`Suppression impossible : ${error.message}`); return; }
+    await charger();
+  };
+
+  const dejaDemandees = new Set(pieces.map(p => String(p.catalogue_id || '')));
+  const proposables = catalogue.filter(c => !dejaDemandees.has(String(c.id)));
+  const nonLus = depots.filter(d => !d.consulte_le).length;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800">Documents envoyés par le client</h3>
+            <p className="text-sm text-gray-500">Ouvrir un document le marque comme consulté pour le client.</p>
+          </div>
+          {nonLus > 0 && <span className="text-xs font-black px-2 py-1 rounded-lg bg-violet-600 text-white shrink-0">{nonLus} nouveau{nonLus > 1 ? 'x' : ''}</span>}
+        </div>
+        {depots.length === 0 ? (
+          <p className="text-sm text-gray-400 bg-gray-50 rounded-2xl p-5 text-center">Aucun document reçu pour l'instant.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+            {depots.map(d => (
+              <li key={d.id} className={`p-4 flex flex-wrap items-start justify-between gap-3 ${d.consulte_le ? '' : 'bg-violet-50/50'}`}>
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-gray-900 break-words flex items-center gap-2 flex-wrap">
+                    {d.titre}
+                    {!d.consulte_le && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-violet-600 text-white">NOUVEAU</span>}
+                    {d.piece_id && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">PIÈCE DEMANDÉE</span>}
+                  </p>
+                  <p className="text-xs text-gray-500">{[d.categorie, `reçu le ${dateHeureFr(d.created_at)}`, DEPOT_DESTINATAIRES_STAFF[d.destinataire], tailleLisible(d.taille)].filter(Boolean).join(' · ')}</p>
+                  {d.message && <p className="text-sm text-gray-700 mt-1.5 bg-gray-50 rounded-lg px-3 py-2">« {d.message} »</p>}
+                  {d.consulte_le && <p className="text-[11px] text-gray-400 mt-1">Consulté le {dateHeureFr(d.consulte_le)}{d.consulte_par ? ` par ${d.consulte_par}` : ''}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => ouvrir(d)} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700">Ouvrir</button>
+                  <button onClick={() => telecharger(d)} title="Télécharger" className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:text-violet-600"><Download size={14} /></button>
+                  <button onClick={() => setConfirm({ titre: 'Supprimer ce document ?', message: 'Le fichier sera définitivement supprimé.', action: () => supprimerDepot(d) })} title="Supprimer" className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">Pièces à fournir {!estPro && <span className="text-[11px] font-black bg-violet-500 text-white px-1.5 py-0.5 rounded-md">PRO</span>}</h3>
+            <p className="text-sm text-gray-500">Demandez au client les pièces dont vous avez besoin et suivez leur réception.</p>
+          </div>
+          {estPro && userRole === 'admin' && (
+            <button onClick={() => setCatalogueOuvert(true)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Gérer ma liste de pièces</button>
+          )}
+        </div>
+        {!estPro ? (
+          <p className="text-sm text-gray-600 bg-violet-50 rounded-2xl p-4">Cette fonction fait partie de l'offre Pro. Elle permet de créer votre propre liste de pièces, de la demander à chaque client et de suivre ce qui manque.</p>
+        ) : (
+          <div className="space-y-4">
+            {pieces.length > 0 && (
+              <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+                {pieces.map(p => {
+                  const depot = depots.find(d => String(d.id) === String(p.depot_id));
+                  return (
+                    <li key={p.id} className="p-4 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-gray-900">{p.nom}</p>
+                          <p className="text-xs text-gray-500">Demandée le {dateHeureFr(p.demande_le).slice(0, 10)}{p.statut === 'a_refaire' && p.motif ? ` · À refaire : ${p.motif}` : ''}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-xs font-black px-2 py-1 rounded-lg ${PIECE_STATUTS[p.statut || 'a_fournir']?.cls || ''}`}>{PIECE_STATUTS[p.statut || 'a_fournir']?.label || p.statut}</span>
+                          {depot && <button onClick={() => ouvrir(depot)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Voir</button>}
+                          {p.statut === 'recue' && <button onClick={() => changerStatut(p, 'validee')} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700">Valider</button>}
+                          {(p.statut === 'recue' || p.statut === 'validee') && <button onClick={() => setRefaire({ piece: p, motif: '' })} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 hover:text-red-600 hover:border-red-200">À refaire</button>}
+                          <button onClick={() => setConfirm({ titre: `Ne plus demander « ${p.nom} » ?`, message: 'La demande sera retirée de la liste du client. Un document déjà envoyé reste dans la liste des documents reçus.', libelle: 'Retirer', action: () => supprimerPiece(p) })} title="Retirer la demande" className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                        </div>
+                      </div>
+                      {refaire?.piece.id === p.id && (
+                        <div className="flex flex-wrap gap-2 items-center bg-red-50 rounded-xl p-3">
+                          <input aria-label="Motif" value={refaire.motif} onChange={e => setRefaire(r => ({ ...r, motif: e.target.value }))} placeholder="Motif pour le client (ex : document illisible)" className="flex-1 min-w-[12rem] px-3 py-2 rounded-lg border border-red-100 text-sm bg-white" />
+                          <button onClick={() => setRefaire(null)} className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-bold bg-white">Annuler</button>
+                          <button onClick={async () => { const r = refaire; setRefaire(null); await changerStatut(r.piece, 'a_refaire', r.motif.trim() || null); }} className="px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-bold">Demander à refaire</button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
+              <p className="text-xs font-black text-gray-500 uppercase tracking-wider">Demander des pièces</p>
+              {catalogue.length === 0 ? (
+                <p className="text-sm text-gray-500">{userRole === 'admin' ? 'Votre liste de pièces est vide : cliquez sur « Gérer ma liste de pièces » pour la créer.' : 'La liste de pièces de votre organisme est vide. Vous pouvez demander une pièce ponctuelle ci-dessous.'}</p>
+              ) : proposables.length === 0 ? (
+                <p className="text-sm text-gray-500">Toutes les pièces de votre liste ont déjà été demandées à ce client.</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {proposables.map(c => (
+                    <label key={c.id} className="flex items-start gap-2 bg-white rounded-xl border border-gray-200 px-3 py-2 cursor-pointer">
+                      <input type="checkbox" className="mt-1 accent-violet-600" checked={choix.includes(c.id)} onChange={e => setChoix(prev => e.target.checked ? [...prev, c.id] : prev.filter(x => x !== c.id))} />
+                      <span className="min-w-0"><span className="block text-sm font-bold text-gray-800">{c.nom}</span>{c.description && <span className="block text-xs text-gray-500">{c.description}</span>}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {choix.length > 0 && (
+                <div className="flex justify-end">
+                  <button onClick={() => demander(catalogue.filter(c => choix.includes(c.id)).map(c => ({ catalogue_id: c.id, nom: c.nom, description: c.description || null })))}
+                    className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold">Demander {choix.length} pièce{choix.length > 1 ? 's' : ''}</button>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <input aria-label="Pièce ponctuelle" value={ponctuelle} onChange={e => setPonctuelle(e.target.value)} placeholder="Ou une pièce juste pour ce client…" className="flex-1 min-w-[12rem] px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white" />
+                <button onClick={() => demander([{ nom: ponctuelle.trim() }])} disabled={!ponctuelle.trim()} className="px-4 py-2 rounded-lg border border-violet-200 bg-white text-violet-700 text-sm font-bold disabled:opacity-40">Demander</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <CataloguePiecesModal isOpen={catalogueOuvert} onClose={() => setCatalogueOuvert(false)} currentOrgId={currentOrgId} catalogue={catalogue} onChange={charger} />
+      <ConfirmModal isOpen={!!confirm} title={confirm?.titre} message={confirm?.message} confirmLabel={confirm?.libelle || 'Supprimer'}
+        onCancel={() => setConfirm(null)} onConfirm={async () => { const c = confirm; setConfirm(null); await c.action(); }} />
+    </div>
+  );
+};
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -22064,6 +22678,42 @@ export default function App() {
 
   const ouvrirGroupe = (groupeId) => { setSelectedGroupeId(groupeId); setActiveTab('groupes'); };
   const ouvrirFicheClientDepuisGroupe = (clientId) => { setExpandedClientId(clientId); setActiveTab('clients'); };
+
+  // ─── DOCUMENTS ENVOYÉS PAR LES CLIENTS (2026-10-13) : notifications et navigation ──────────────
+  const [depotsNonLus, setDepotsNonLus] = useState([]);
+  const [piecesAFournirClient, setPiecesAFournirClient] = useState(0);
+  const [ongletFicheDemande, setOngletFicheDemande] = useState(null);
+  const fetchDepotsNonLus = async () => {
+    if (!currentOrgId || !userRole) { setDepotsNonLus([]); setPiecesAFournirClient(0); return; }
+    if (userRole === 'client') {
+      const { data, error } = await supabase.from('pieces_demandees').select('id, statut').eq('client_id', currentUserId);
+      setPiecesAFournirClient(error ? 0 : (data || []).filter(p => p.statut === 'a_fournir' || p.statut === 'a_refaire').length);
+      return;
+    }
+    const { data, error } = await supabase.from('depots_clients').select('id, client_id, titre, destinataire, created_at')
+      .eq('organisation_id', currentOrgId).is('consulte_le', null).order('created_at', { ascending: false });
+    setDepotsNonLus(error ? [] : (data || []));
+  };
+  React.useEffect(() => {
+    fetchDepotsNonLus();
+    const t = setInterval(fetchDepotsNonLus, 120000);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentOrgId, userRole, currentUserId]);
+  // Ce que la cloche affiche : l'admin voit ce qui est adressé à l'organisme (ou à lui-même s'il est
+  // le formateur du client) ; un formateur voit ce que ses clients lui ont adressé.
+  const depotsPourMoi = React.useMemo(() => (depotsNonLus || []).filter(d => {
+    const c = clients.find(x => String(x.id) === String(d.client_id));
+    const estMonClient = c && String(c.formateur_id) === String(currentUserId);
+    if (userRole === 'formateur') return estMonClient && d.destinataire !== 'organisme';
+    return d.destinataire !== 'formateur' || estMonClient;
+  }), [depotsNonLus, clients, currentUserId, userRole]);
+  const ouvrirRecusClient = (clientId) => { setOngletFicheDemande('recus'); setExpandedClientId(clientId); setActiveTab('clients'); };
+
+  const estPro = hasFeatureAccess(orgSettings, 'pro');
+  const nomUtilisateurConnecte = assignableFormateurs.find(f => String(f.id) === String(currentUserId))?.nom
+    || (userRole === 'admin' ? (orgSettings?.nom || 'Administrateur') : 'Formateur');
+
 
 
   const fetchSessions = async () => {
@@ -26522,7 +27172,7 @@ export default function App() {
                   <span className="font-bold text-gray-900 truncate">{nomEspace}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <NotificationBell sessions={sessions} documents={documents} clients={clients} userRole={userRole} currentUserId={currentUserId} setActiveTab={setActiveTab} />
+                  <NotificationBell sessions={sessions} documents={documents} clients={clients} userRole={userRole} currentUserId={currentUserId} setActiveTab={setActiveTab} depotsNonLus={depotsPourMoi} piecesAFournir={piecesAFournirClient} onOpenClient={ouvrirRecusClient} />
                   <button onClick={() => setActiveTab('profil')} aria-label="Mon profil"
                     className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 text-xs font-black flex items-center justify-center">
                     {computeInitials(nomPersonne || '') || <UserCircle size={20} />}
@@ -26549,6 +27199,9 @@ export default function App() {
               userRole={userRole}
               currentUserId={currentUserId}
               setActiveTab={setActiveTab}
+              depotsNonLus={depotsPourMoi}
+              piecesAFournir={piecesAFournirClient}
+              onOpenClient={ouvrirRecusClient}
             />
             {(() => {
               let displayName = "";
@@ -26717,6 +27370,12 @@ export default function App() {
             currentOrgId={currentOrgId}
             groupes={groupes}
             onOpenGroupe={ouvrirGroupe}
+            depotsNonLus={depotsNonLus}
+            estPro={estPro}
+            nomUtilisateur={nomUtilisateurConnecte}
+            onDepotsVus={fetchDepotsNonLus}
+            ongletInitial={ongletFicheDemande}
+            onOngletInitialUtilise={() => setOngletFicheDemande(null)}
           />}
           {activeTab === 'groupes' && userRole === 'admin' && <GroupesView
             groupes={groupes}
@@ -26893,6 +27552,12 @@ export default function App() {
             handleMoveSessionItem={handleMoveSessionItem}
             handleSaveCorrection={handleSaveCorrection}
             handleAddCompletedExercise={handleAddCompletedExercise}
+            depotsNonLus={depotsNonLus}
+            estPro={estPro}
+            nomUtilisateur={nomUtilisateurConnecte}
+            onDepotsVus={fetchDepotsNonLus}
+            ongletInitial={ongletFicheDemande}
+            onOngletInitialUtilise={() => setOngletFicheDemande(null)}
           />}
           {activeTab === 'accueil' && (() => {
             const _client = clients.find(c => c.id === currentUserId);
