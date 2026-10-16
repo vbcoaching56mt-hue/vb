@@ -168,10 +168,27 @@ const openSecureStorageFile = async (rawUrl) => {
   window.open(resolveFileUrl(rawUrl) || rawUrl, '_blank');
 };
 
+// AJOUT (2026-10-16) : nom des fichiers téléchargés = « Nom du document - Nom du client ».
+// Caractères interdits par Windows retirés ; le nom de la personne n'est pas répété s'il figure
+// déjà dans le nom du document.
+const nettoyerNomFichier = (s) => String(s || '')
+  .split('').filter(ch => ch.charCodeAt(0) >= 32).join('')
+  .replace(/[\\/:*?"<>|]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .replace(/^[\s.]+|[\s.]+$/g, '');
+const nomTelechargement = (nomDoc, nomPersonne) => {
+  const base = nettoyerNomFichier(nomDoc) || 'Document';
+  const personne = nettoyerNomFichier(nomPersonne);
+  const simple = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (!personne || simple(base).includes(simple(personne))) return base.slice(0, 150);
+  return `${base.slice(0, 110).trim()} - ${personne.slice(0, 60)}`;
+};
+
 // Télécharge un fichier de stockage en forçant le nom donné par l'utilisateur (doc.nom), au lieu du nom
 // technique généré à l'upload (horodatage, dossier, etc.) — utilisé partout où un document du "dossier
 // client" (organisme + formateur) doit se télécharger sous le nom que la personne lui a donné.
-const handleDownloadNamedFile = async (doc) => {
+// nomPersonne (2026-10-16) : nom du client (ou du formateur) ajouté à la fin du nom du fichier.
+const handleDownloadNamedFile = async (doc, nomPersonne = '') => {
   if (!doc?.url) return;
   try {
     const extracted = extractStorageBucketAndPath(doc.url);
@@ -187,10 +204,13 @@ const handleDownloadNamedFile = async (doc) => {
       data = await resp.blob();
       error = null;
     }
-    const ext = (extracted.path.split('.').pop() || '').toLowerCase();
-    const baseName = (doc.nom || 'document').trim() || 'document';
-    const hasExt = ext && baseName.toLowerCase().endsWith('.' + ext);
-    const fileName = hasExt ? baseName : (ext ? `${baseName}.${ext}` : baseName);
+    const ext = (extracted.path.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    // Si le nom du document finit déjà par l'extension (« scan.pdf »), on la retire avant d'ajouter
+    // le nom de la personne, puis on la remet à la fin.
+    let nomDoc = String(doc.nom || 'document').trim() || 'document';
+    if (ext && nomDoc.toLowerCase().endsWith('.' + ext)) nomDoc = nomDoc.slice(0, -(ext.length + 1));
+    const baseName = nomTelechargement(nomDoc, nomPersonne);
+    const fileName = ext && ext.length <= 5 ? `${baseName}.${ext}` : baseName;
     const blobUrl = URL.createObjectURL(data);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -200,8 +220,10 @@ const handleDownloadNamedFile = async (doc) => {
     document.body.removeChild(a);
     URL.revokeObjectURL(blobUrl);
   } catch (e) {
-    console.error('Erreur téléchargement document:', e);
-    toast.error('Erreur lors du téléchargement : ' + e.message);
+    // Repli : on ouvre le fichier comme avant (nom technique) plutôt que de ne rien faire.
+    console.warn('Téléchargement nommé impossible, ouverture du fichier :', e?.message);
+    try { await openSecureStorageFile(doc.url); }
+    catch (e2) { toast.error('Erreur lors du téléchargement : ' + (e?.message || e2?.message)); }
   }
 };
 
@@ -5155,7 +5177,7 @@ const ClientDetailView = ({
                         <Eye size={14} /> Voir
                       </button>
                       <button
-                        onClick={() => openSecureStorageFile(signedUrl)}
+                        onClick={() => handleDownloadNamedFile({ url: signedUrl, nom: session.ressource_titre || session.nom || session.titre || 'Document signé' }, client.nom_complet || client.nom)}
                         className="flex items-center gap-2 bg-white text-green-700 px-4 py-2 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                       >
                         <Download size={14} /> Télécharger
@@ -5189,7 +5211,7 @@ const ClientDetailView = ({
                       <Eye size={14} /> Voir
                     </button>
                     <button
-                      onClick={() => openSecureStorageFile(doc.url || doc.file_url)}
+                      onClick={() => handleDownloadNamedFile({ url: doc.url || doc.file_url, nom: doc.nom }, client.nom_complet || client.nom)}
                       className="flex items-center gap-2 bg-white text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
                     >
                       <Download size={14} /> Télécharger
@@ -5247,7 +5269,7 @@ const ClientDetailView = ({
                       Ouvrir
                     </button>
                     <button
-                      onClick={() => handleDownloadNamedFile(doc)}
+                      onClick={() => handleDownloadNamedFile(doc, client.nom_complet || client.nom)}
                       className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
                       title="Télécharger sous le nom indiqué"
                     >
@@ -6131,7 +6153,7 @@ const ClientDetailView = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
-                  <button onClick={() => openSecureStorageFile(doc.url || doc.file_url)} className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></button>
+                  <button onClick={() => handleDownloadNamedFile({ url: doc.url || doc.file_url, nom: doc.nom }, client.nom_complet || client.nom)} className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></button>
                   <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
                 </div>
               </div>
@@ -6826,7 +6848,7 @@ const FormateurDetailView = ({
                     </button>
                     {isSigned && doc.signed_pdf_url && (
                       <button
-                        onClick={() => openSecureStorageFile(doc.signed_pdf_url)}
+                        onClick={() => handleDownloadNamedFile({ url: doc.signed_pdf_url, nom: doc.nom }, formateur.nom)}
                         className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-sm"
                         title="Télécharger le PDF signé"
                       >
@@ -6891,7 +6913,7 @@ const FormateurDetailView = ({
                           Ouvrir
                         </button>
                         <button
-                          onClick={() => handleDownloadNamedFile(doc)}
+                          onClick={() => handleDownloadNamedFile(doc, formateur.nom)}
                           className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-1.5 rounded-lg transition-all"
                           title="Télécharger sous le nom indiqué"
                         >
@@ -8484,7 +8506,7 @@ const FormateurView = ({
                                         Ouvrir
                                       </button>
                                       <button
-                                        onClick={() => handleDownloadNamedFile(doc)}
+                                        onClick={() => handleDownloadNamedFile(doc, client.nom_complet || client.nom)}
                                         className="text-gray-400 hover:text-violet-700 hover:bg-violet-50 p-2 rounded-lg transition-all"
                                         title="Télécharger sous le nom indiqué"
                                       >
@@ -8667,7 +8689,7 @@ const FormateurView = ({
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                           <button
-                                            onClick={() => openSecureStorageFile(signedUrl)}
+                                            onClick={() => handleDownloadNamedFile({ url: signedUrl, nom: session.ressource_titre || session.nom || session.titre || 'Émargement signé' }, client.nom_complet || client.nom)}
                                             className="inline-flex items-center gap-1.5 bg-white text-green-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-green-200 hover:bg-green-600 hover:text-white transition-all shadow-sm"
                                           >
                                             <Download size={13} /> Télécharger
@@ -8881,7 +8903,7 @@ const FormateurView = ({
                                               {signedUrl && (
                                                 <button
                                                   onPointerDown={e => e.stopPropagation()}
-                                                  onClick={() => handleDownloadResource(signedUrl)}
+                                                  onClick={() => handleDownloadNamedFile({ url: signedUrl, nom: session.ressource_titre || session.nom || 'Document signé' }, client.nom_complet || client.nom)}
                                                   className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                                                   title="Télécharger"
                                                 >
@@ -21885,7 +21907,7 @@ const DepotsClientPanel = ({ client, currentOrgId, userRole, estPro, nomUtilisat
     if (onVu) onVu();
   };
   const ouvrir = async (d) => { await openSecureStorageFile(d.fichier_url); marquerConsulte(d); };
-  const telecharger = async (d) => { await handleDownloadNamedFile({ url: d.fichier_url, nom: d.titre }); marquerConsulte(d); };
+  const telecharger = async (d) => { await handleDownloadNamedFile({ url: d.fichier_url, nom: d.titre }, client?.nom_complet || client?.nom); marquerConsulte(d); };
   const supprimerDepot = async (d) => {
     const { error } = await supabase.from('depots_clients').delete().eq('id', d.id);
     if (error) { toast.error(`Suppression impossible : ${error.message}`); return; }
@@ -26565,7 +26587,7 @@ export default function App() {
             yOffset += sliceHeightPx;
             isFirstPage = false;
           }
-          pdf.save(`${isEmargementOnly ? 'Emargements' : 'Recapitulatif'}_${doc.nom || 'Client'}_${Date.now()}.pdf`);
+          pdf.save(`${nomTelechargement(isEmargementOnly ? 'Émargements' : 'Récapitulatif', doc.nom || doc.nom_complet || 'Client')}.pdf`);
           
           toast.success(isEmargementOnly ? "Récap émargements généré !" : "Récapitulatif généré !", { id: 'recap' });
           return;
@@ -26697,7 +26719,10 @@ export default function App() {
 
         const downloadLink = document.createElement('a');
         downloadLink.href = URL.createObjectURL(finalBlob);
-        downloadLink.download = `certificat_signature_${doc.id}_${Date.now()}.pdf`;
+        // 2026-10-16 : « Nom du document - Nom du client.pdf » au lieu de certificat_signature_<id>_<date>.
+        const _clientDuDoc = (clients || []).find(c => String(c.id) === String(doc.user_id));
+        const _nomDocPdf = String(doc.nom || 'Document').replace(/\.pdf$/i, '');
+        downloadLink.download = `${nomTelechargement(_nomDocPdf, _clientDuDoc?.nom_complet || _clientDuDoc?.nom)}.pdf`;
         document.body.appendChild(downloadLink);
         downloadLink.click();
         document.body.removeChild(downloadLink);
