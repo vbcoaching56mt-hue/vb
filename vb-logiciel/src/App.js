@@ -5008,9 +5008,11 @@ const ClientDetailView = ({
           >
             <Mail size={16} /> Renvoyer le lien
           </button>
-          <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-            {client.status || 'Actif'}
-          </span>
+          <BadgeCompteClient clientId={client.id} detail={false} fallback={
+            <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+              {client.status || 'Actif'}
+            </span>
+          } />
         </div>
       </div>
 
@@ -5038,6 +5040,7 @@ const ClientDetailView = ({
 
       {activeTab === 'infos' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
+          <BlocAccesCompte client={client} onRenvoyer={handleResendInvite} />
           <h3 className="text-lg font-bold text-gray-800">Configuration</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -6337,7 +6340,17 @@ const AdminClientsView = ({
       })
     : clients;
 
-  const clientsGroupedByFormateur = filteredClients.reduce((acc, client) => {
+  // AJOUT (2026-10-19) : filtre par statut du compte (activé / en attente / sans compte).
+  const ctxComptes = React.useContext(ComptesClientsContext);
+  const [filtreCompte, setFiltreCompte] = React.useState('tous');
+  const clientsFiltresCompte = (!ctxComptes?.dispo || filtreCompte === 'tous')
+    ? filteredClients
+    : filteredClients.filter(c => {
+        const st = statutCompteDe(ctxComptes.statuts[String(c.id)]);
+        return filtreCompte === 'a_activer' ? (st === 'attente' || st === 'aucun') : st === filtreCompte;
+      });
+
+  const clientsGroupedByFormateur = clientsFiltresCompte.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
     if (!acc[fId]) acc[fId] = [];
     acc[fId].push(client);
@@ -6436,8 +6449,13 @@ const AdminClientsView = ({
             )}
           </div>
         </div>
+        <BandeauComptesAActiver clientIds={clients.map(c => c.id)} onVoir={() => setFiltreCompte('a_activer')} />
+        <FiltresComptes clients={filteredClients} valeur={filtreCompte} onChange={setFiltreCompte} />
         {clientSearchTerm && filteredClients.length === 0 && (
           <p className="text-sm text-gray-500 italic py-4">Aucun client trouvé pour "{clientSearchTerm}".</p>
+        )}
+        {filtreCompte !== 'tous' && filteredClients.length > 0 && clientsFiltresCompte.length === 0 && (
+          <p className="text-sm text-gray-500 italic py-4">Aucun client dans cette catégorie.</p>
         )}
         <div className="space-y-8">
           {Object.keys(clientsGroupedByFormateur).map(fId => {
@@ -6460,11 +6478,14 @@ const AdminClientsView = ({
                           <span className="text-xs text-gray-500">{client.email || 'Email non renseigné'}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                          {client.status || 'Actif'}
-                        </span>
-                        <ChevronRight className="w-5 h-5 text-gray-400" />
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <ActionCompteClient client={client} />
+                        <BadgeCompteClient clientId={client.id} fallback={
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                            {client.status || 'Actif'}
+                          </span>
+                        } />
+                        <ChevronRight className="w-5 h-5 text-gray-400 shrink-0" />
                       </div>
                     </li>
                   ))}
@@ -8279,6 +8300,7 @@ const FormateurView = ({
       })()}
 
       {/* Section : Mes Clients */}
+      {formateurMainSection === 'clients' && <BandeauComptesAActiver clientIds={assignedClients.map(c => c.id)} />}
       {formateurMainSection === 'clients' && (
       <div className="grid grid-cols-1 gap-6">
         {assignedClients.length > 0 ? assignedClients.map(client => {
@@ -8305,6 +8327,7 @@ const FormateurView = ({
                   <div>
                     <h3 className="font-bold text-gray-900 text-xl">{client.nom}</h3>
                     <p className="text-sm text-gray-500 font-medium">{client.email}</p>
+                    <div className="mt-1.5"><BadgeCompteClient clientId={client.id} align="left" /></div>
                   </div>
                 </div>
 
@@ -8318,7 +8341,9 @@ const FormateurView = ({
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <BoutonCreerCompte client={client} />
+                  <MasquerSiSansCompte clientId={client.id}>
                   <button
                     onClick={async () => {
                       const email = client.email || client.email_contact || client.client_email;
@@ -8344,6 +8369,7 @@ const FormateurView = ({
                   >
                     <Mail size={15} /> Renvoyer le lien
                   </button>
+                  </MasquerSiSansCompte>
                   <button
                     onClick={() => setExpandedClientId(isExpanded ? null : client.id)}
                     className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${isExpanded ? 'bg-gray-100 text-gray-700' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'}`}
@@ -22062,6 +22088,235 @@ const DepotsClientPanel = ({ client, currentOrgId, userRole, estPro, nomUtilisat
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// STATUT DES COMPTES CLIENTS (2026-10-19)
+// Admin et formateur voient si chaque client a bien activé son compte SkorUp :
+//   • « Compte activé »      : le client s'est déjà connecté (date de dernière connexion) ;
+//   • « Invitation envoyée » : compte créé, mais jamais de connexion → bouton « Renvoyer le lien » ;
+//   • « Aucun compte »       : la fiche existe sans compte de connexion → « Créer le compte ».
+// Les dates viennent de la fonction SQL statut_comptes_clients() (comptes_clients.sql) : l'admin
+// voit son organisme, un formateur seulement ses clients. Tant que le SQL n'est pas lancé, rien ne
+// s'affiche (l'application reste identique). Relance automatique à 3 et 7 jours : offre Pro
+// (api/automation/process.js).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const ComptesClientsContext = React.createContext(null);
+
+const statutCompteDe = (info) => (!info ? null : (!info.compte_existe ? 'aucun' : (info.derniere_connexion ? 'active' : 'attente')));
+
+const STATUT_COMPTE_UI = {
+  active: { label: 'Compte activé', icone: '✓', cls: 'bg-green-100 text-green-700' },
+  attente: { label: 'Invitation envoyée', icone: '⏳', cls: 'bg-amber-100 text-amber-700' },
+  aucun: { label: 'Aucun compte', icone: '⛔', cls: 'bg-red-100 text-red-700' },
+};
+
+const depuisQuandCompte = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const jours = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (jours <= 0) return "aujourd'hui";
+  if (jours === 1) return 'hier';
+  if (jours < 45) return `il y a ${jours} jours`;
+  return `le ${d.toLocaleDateString('fr-FR')}`;
+};
+
+const dateHeureCompte = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+};
+
+const sousTexteCompte = (info, st) => {
+  if (st === 'active') return `Dernière connexion : ${depuisQuandCompte(info.derniere_connexion)}`;
+  if (st === 'attente') return `Invitation ${depuisQuandCompte(info.invite_le)} · jamais connecté`;
+  if (st === 'aucun') return info.email_deja_utilise ? 'email déjà utilisé par un autre compte' : 'la fiche existe, pas le compte';
+  return '';
+};
+
+const useCompteClient = (clientId) => {
+  const ctx = React.useContext(ComptesClientsContext);
+  const info = ctx?.dispo ? ctx.statuts[String(clientId)] : null;
+  return { ctx, info, st: statutCompteDe(info) };
+};
+
+// Même envoi que le bouton « Renvoyer le lien » de la fiche client (fonction invite-user).
+const renvoyerLienClient = async (client) => {
+  const email = client.email || client.email_contact || client.client_email;
+  if (!email) { toast.error('Aucun email trouvé pour ce client.'); return; }
+  try {
+    const { data: { session: authSession } } = await supabase.auth.getSession();
+    const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession?.access_token}` },
+      body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin }),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) { toast.error(`Erreur : ${result.error || 'envoi impossible'}`); return; }
+    toast.success(result.method === 'reset'
+      ? `Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`
+      : `Email d'invitation envoyé à ${email}.`, { duration: 6000 });
+  } catch (err) {
+    toast.error(`Erreur : ${err.message}`);
+  }
+};
+
+const BadgeCompteClient = ({ clientId, detail = true, align = 'right', fallback = null }) => {
+  const { info, st } = useCompteClient(clientId);
+  if (!st) return fallback;
+  const ui = STATUT_COMPTE_UI[st];
+  return (
+    <div className={align === 'right' ? 'text-right' : 'text-left'}>
+      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black whitespace-nowrap ${ui.cls}`}>
+        {ui.icone} {ui.label}
+      </span>
+      {detail && <div className="text-[11px] text-gray-500 mt-0.5">{sousTexteCompte(info, st)}</div>}
+    </div>
+  );
+};
+
+const BoutonCreerCompte = ({ client, petit = false }) => {
+  const { ctx, info, st } = useCompteClient(client.id);
+  const [enCours, setEnCours] = React.useState(false);
+  if (st !== 'aucun' || !ctx?.creerCompte) return null;
+  return (
+    <button
+      type="button"
+      disabled={enCours}
+      onClick={async (e) => { e.stopPropagation(); setEnCours(true); try { await ctx.creerCompte(client); } finally { setEnCours(false); } }}
+      title={info?.email_deja_utilise ? "Cette adresse email est déjà utilisée par un autre compte : changez l'email du client avant." : 'Crée le compte de connexion du client et lui envoie un lien pour choisir son mot de passe'}
+      className={`inline-flex items-center gap-1.5 font-bold rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all disabled:opacity-60 whitespace-nowrap ${petit ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'}`}
+    >
+      <UserPlus size={petit ? 13 : 15} /> {enCours ? 'Création…' : 'Créer le compte et envoyer le lien'}
+    </button>
+  );
+};
+
+// Bouton d'action rapide dans les listes : « Renvoyer le lien » (en attente) ou « Créer le compte ».
+const ActionCompteClient = ({ client }) => {
+  const { st } = useCompteClient(client.id);
+  if (st === 'aucun') return <span className="hidden sm:inline-flex"><BoutonCreerCompte client={client} petit /></span>;
+  if (st !== 'attente') return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); renvoyerLienClient(client); }}
+      className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 whitespace-nowrap"
+    >
+      <Mail size={13} /> Renvoyer le lien
+    </button>
+  );
+};
+
+// Masque son contenu pour un client sans compte (ex. « Renvoyer le lien » ne peut pas marcher).
+const MasquerSiSansCompte = ({ clientId, children }) => {
+  const { st } = useCompteClient(clientId);
+  return st === 'aucun' ? null : children;
+};
+
+const BandeauComptesAActiver = ({ clientIds = [], onVoir = null }) => {
+  const ctx = React.useContext(ComptesClientsContext);
+  if (!ctx?.dispo) return null;
+  const sts = clientIds.map(id => statutCompteDe(ctx.statuts[String(id)]));
+  const attente = sts.filter(s => s === 'attente').length;
+  const aucun = sts.filter(s => s === 'aucun').length;
+  const total = attente + aucun;
+  if (total === 0) return null;
+  const details = [attente ? `${attente} invitation${attente > 1 ? 's' : ''} en attente` : '', aucun ? `${aucun} sans compte` : ''].filter(Boolean).join(' · ');
+  return (
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <p>
+        ⚠️ <b>{total} client{total > 1 ? 's' : ''}</b> {total > 1 ? "n'ont" : "n'a"} pas encore activé {total > 1 ? 'leur' : 'son'} compte SkorUp
+        <span className="text-amber-700"> ({details})</span>.
+      </p>
+      {onVoir && (
+        <button type="button" onClick={onVoir} className="text-xs font-black px-3 py-1.5 rounded-lg bg-white border border-amber-200 text-amber-800 hover:bg-amber-100">
+          Voir {total > 1 ? 'ces clients' : 'ce client'}
+        </button>
+      )}
+    </div>
+  );
+};
+
+const FiltresComptes = ({ clients = [], valeur, onChange }) => {
+  const ctx = React.useContext(ComptesClientsContext);
+  if (!ctx?.dispo || clients.length === 0) return null;
+  const compte = (st) => clients.filter(c => statutCompteDe(ctx.statuts[String(c.id)]) === st).length;
+  const options = [
+    ['tous', `Tous (${clients.length})`],
+    ['active', `✅ Activés (${compte('active')})`],
+    ['attente', `⏳ En attente (${compte('attente')})`],
+    ['aucun', `⛔ Sans compte (${compte('aucun')})`],
+  ];
+  if (valeur === 'a_activer') options.push(['a_activer', `À activer (${compte('attente') + compte('aucun')}) ✕`]);
+  return (
+    <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="Filtrer par statut du compte">
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={valeur === v}
+          onClick={() => onChange(valeur === v && v === 'a_activer' ? 'tous' : v)}
+          className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-all ${valeur === v ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300'}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const BlocAccesCompte = ({ client, onRenvoyer }) => {
+  const { ctx, info, st } = useCompteClient(client.id);
+  if (!st) return null;
+  const ligne = (label, valeur) => (
+    <>
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="font-bold text-gray-900">{valeur}</dd>
+    </>
+  );
+  let relance = null;
+  if (st === 'attente') {
+    if (!ctx.estPro) {
+      relance = <>Avec l'offre <span className="text-[10px] font-black bg-violet-600 text-white rounded px-1.5 py-0.5">PRO</span>, SkorUp renvoie automatiquement le lien au client au bout de 3 jours, puis de 7 jours, et vous prévient.</>;
+    } else if (info.relance_2_le) {
+      relance = <>2 relances envoyées (le {new Date(info.relance_1_le || info.relance_2_le).toLocaleDateString('fr-FR')} et le {new Date(info.relance_2_le).toLocaleDateString('fr-FR')}). Plus de rappel automatique : contactez le client directement.</>;
+    } else if (info.relance_1_le) {
+      relance = <>1<sup>re</sup> relance envoyée le {new Date(info.relance_1_le).toLocaleDateString('fr-FR')}. Dernière relance automatique 7 jours après l'invitation.</>;
+    } else {
+      relance = <>S'il ne se connecte pas, SkorUp lui renverra le lien au bout de 3 jours, puis de 7 jours, et vous préviendra.</>;
+    }
+  }
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="font-black text-sm text-gray-800">Accès à SkorUp</h4>
+        <BadgeCompteClient clientId={client.id} detail={false} />
+      </div>
+      {st !== 'aucun' ? (
+        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
+          {ligne('Invitation', dateHeureCompte(info.invite_le))}
+          {ligne('Compte activé le', st === 'active' ? dateHeureCompte(info.active_le) : '—')}
+          {ligne('Dernière connexion', st === 'active' ? `${dateHeureCompte(info.derniere_connexion)} (${depuisQuandCompte(info.derniere_connexion)})` : '—')}
+        </dl>
+      ) : (
+        <p className="mt-3 text-sm text-gray-600">
+          {info.email_deja_utilise
+            ? "L'adresse email de ce client est déjà utilisée par un autre compte SkorUp. Corrigez son email ci-dessous, puis créez son compte."
+            : "La fiche de ce client existe, mais son compte de connexion n'a jamais été créé (ou a été supprimé) : il ne peut pas se connecter."}
+        </p>
+      )}
+      {relance && <p className="mt-3 text-xs text-gray-500 leading-relaxed">{relance}</p>}
+      {st === 'attente' && onRenvoyer && (
+        <button type="button" onClick={onRenvoyer} className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200">
+          <Mail size={15} /> Renvoyer le lien
+        </button>
+      )}
+      {st === 'aucun' && <div className="mt-3"><BoutonCreerCompte client={client} /></div>}
+    </div>
+  );
+};
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -22735,6 +22990,46 @@ export default function App() {
   const estPro = hasFeatureAccess(orgSettings, 'pro');
   const nomUtilisateurConnecte = assignableFormateurs.find(f => String(f.id) === String(currentUserId))?.nom
     || (userRole === 'admin' ? (orgSettings?.nom || 'Administrateur') : 'Formateur');
+
+  // ─── STATUT DES COMPTES CLIENTS (2026-10-19) : lu via statut_comptes_clients() ─────────────────
+  const [statutsComptes, setStatutsComptes] = useState({});
+  const [statutsComptesDispo, setStatutsComptesDispo] = useState(false);
+  const chargerStatutsComptes = React.useCallback(async () => {
+    if (!currentOrgId || (userRole !== 'admin' && userRole !== 'formateur')) { setStatutsComptesDispo(false); return; }
+    const { data, error } = await supabase.rpc('statut_comptes_clients');
+    if (error) { setStatutsComptesDispo(false); return; } // SQL pas encore lancé : rien ne s'affiche
+    const parClient = {};
+    (data || []).forEach(r => { parClient[String(r.client_id)] = r; });
+    setStatutsComptes(parClient);
+    setStatutsComptesDispo(true);
+  }, [currentOrgId, userRole]);
+  React.useEffect(() => {
+    chargerStatutsComptes();
+    const t = setInterval(chargerStatutsComptes, 300000);
+    return () => clearInterval(t);
+  }, [chargerStatutsComptes, clients.length]);
+  const creerCompteClient = async (client) => {
+    try {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const resp = await fetch('/api/formateur/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s?.access_token}` },
+        body: JSON.stringify({ type: 'compte_client', clientId: client.id, origin: window.location.origin }),
+      });
+      const r = await resp.json().catch(() => ({}));
+      if (!resp.ok) { toast.error(r.error || "Le compte n'a pas pu être créé.", { duration: 8000 }); return false; }
+      const email = client.email || client.email_contact || 'ce client';
+      toast.success(r.sent
+        ? `Compte créé : un lien pour choisir son mot de passe a été envoyé à ${email}.`
+        : "Compte créé, mais l'email n'a pas pu partir : utilisez « Renvoyer le lien ».", { duration: 7000 });
+      await chargerStatutsComptes();
+      return true;
+    } catch (e) {
+      toast.error('Erreur : ' + e.message);
+      return false;
+    }
+  };
+  const comptesCtx = { statuts: statutsComptes, dispo: statutsComptesDispo, estPro, recharger: chargerStatutsComptes, creerCompte: creerCompteClient };
 
 
 
@@ -26935,6 +27230,7 @@ export default function App() {
   })();
 
   return (
+    <ComptesClientsContext.Provider value={comptesCtx}>
     <div className="flex h-dvh bg-gray-50 font-sans overflow-hidden">
       {/* Sidebar Mobile Overlay */}
       <div className={`fixed inset-0 bg-gray-900/50 z-40 transition-opacity md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setMobileMenuOpen(false)}></div>
@@ -27880,5 +28176,6 @@ export default function App() {
 
       <Toaster />
     </div>
+    </ComptesClientsContext.Provider>
   );
 }

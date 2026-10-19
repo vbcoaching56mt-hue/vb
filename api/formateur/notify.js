@@ -263,6 +263,102 @@ async function handleDepotClient(req, res, authData) {
   return res.status(200).json({ sent: resultats.some(r => r.sent), resultats });
 }
 
+// ── type: 'compte_client' (2026-10-19) — « Créer le compte et envoyer le lien » ──────────────────
+// Pour un client dont la fiche existe mais dont le compte de connexion n'a jamais été créé (ou a
+// été supprimé). Le compte est recréé avec le MÊME identifiant que la fiche (sinon le client ne
+// retrouverait ni ses séances ni ses documents), puis un lien « choisir mon mot de passe » lui est
+// envoyé. Réservé à l'admin de l'organisme et au formateur du client.
+async function appelantEquipe(authData) {
+  let { data: row } = await supabaseAdmin.from('utilisateurs')
+    .select('id, role, organisation_id').eq('auth_uid', authData.user.id).maybeSingle();
+  if (!row && authData.user.email) {
+    const fb = await supabaseAdmin.from('utilisateurs')
+      .select('id, role, organisation_id').is('auth_uid', null).eq('email', authData.user.email).maybeSingle();
+    row = fb.data;
+  }
+  return row && row.organisation_id && (row.role === 'admin' || row.role === 'formateur') ? row : null;
+}
+
+function emailAccesClient({ nomClient, nomOrganisme, lien, relance }) {
+  const prenom = escapeHtml(String(nomClient || '').split(' ')[0] || '');
+  const org = escapeHtml(nomOrganisme || 'votre organisme de formation');
+  const intro = relance
+    ? `Votre espace de formation chez <strong>${org}</strong> vous attend, mais vous ne l'avez pas encore activé.`
+    : `<strong>${org}</strong> vous a ouvert un espace personnel sur SkorUp pour suivre votre formation : séances, documents à signer, émargements.`;
+  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">${org}</div>
+    <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${prenom},</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">${intro}</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Cliquez sur le bouton ci-dessous pour choisir votre mot de passe et accéder à votre espace.</p>
+      <p style="text-align:center;margin:28px 0;">
+        <a href="${lien}" style="background:#7C3AED;color:white;text-decoration:none;padding:13px 28px;border-radius:10px;font-size:14px;font-weight:bold;display:inline-block;">Activer mon espace</a>
+      </p>
+      <p style="color:#6b7280;font-size:12px;line-height:1.6;">Ce lien est personnel et valable pour une durée limitée. S'il a expiré, demandez-en un nouveau à votre formateur ou utilisez « Mot de passe oublié » sur la page de connexion.</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+      <p style="color:#9ca3af;font-size:11px;">Envoyé par ${org} via SkorUp.</p>
+    </div>
+  </div>`;
+}
+
+async function handleCompteClient(req, res, authData) {
+  const appelant = await appelantEquipe(authData);
+  if (!appelant) return res.status(403).json({ error: "Réservé à l'équipe de l'organisme." });
+
+  const { clientId, origin } = req.body || {};
+  if (!clientId) return res.status(400).json({ error: 'clientId est requis.' });
+  const safeOrigin = safeOriginOf(origin);
+
+  const { data: client, error: clientErr } = await supabaseAdmin.from('clients')
+    .select('id, nom_complet, email_contact, organisation_id, formateur_id, formateur_auth_uid')
+    .eq('id', clientId).eq('organisation_id', appelant.organisation_id).maybeSingle();
+  if (clientErr) throw clientErr;
+  if (!client) return res.status(404).json({ error: 'Client introuvable dans votre organisme.' });
+  if (appelant.role === 'formateur'
+    && String(client.formateur_id) !== String(appelant.id)
+    && String(client.formateur_auth_uid || '') !== String(authData.user.id)) {
+    return res.status(403).json({ error: "Ce client n'est pas suivi par vous." });
+  }
+
+  const email = String(client.email_contact || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: "Ce client n'a pas d'adresse email valide dans sa fiche." });
+  }
+
+  const existant = await supabaseAdmin.auth.admin.getUserById(client.id);
+  if (existant.data && existant.data.user) {
+    return res.status(409).json({ error: 'Ce client a déjà un compte : utilisez « Renvoyer le lien ».' });
+  }
+
+  const { error: createErr } = await supabaseAdmin.auth.admin.createUser({
+    id: client.id,
+    email,
+    email_confirm: true,
+    user_metadata: { role: 'client', nom: client.nom_complet || '' },
+  });
+  if (createErr) {
+    if (/already|registered|exists|duplicate/i.test(createErr.message || '')) {
+      return res.status(409).json({ error: "Cette adresse email est déjà utilisée par un autre compte SkorUp. Changez l'email dans la fiche du client, puis réessayez." });
+    }
+    throw createErr;
+  }
+
+  const { data: lienData, error: lienErr } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'recovery', email, options: { redirectTo: safeOrigin },
+  });
+  if (lienErr) throw lienErr;
+  const lien = lienData && lienData.properties && lienData.properties.action_link;
+  if (!lien) throw new Error('Lien de connexion non généré.');
+
+  const { data: org } = await supabaseAdmin.from('organisations').select('nom').eq('id', client.organisation_id).maybeSingle();
+  const resultat = await envoyerEmailFormateur(
+    { email },
+    `Votre espace de formation ${org && org.nom ? `chez ${plainText(org.nom, 60)} ` : ''}vous attend`,
+    emailAccesClient({ nomClient: client.nom_complet, nomOrganisme: org && org.nom, lien, relance: false }),
+  );
+  return res.status(200).json({ created: true, ...resultat });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -283,7 +379,8 @@ module.exports = async (req, res) => {
     if (type === 'assignation') return await handleAssignation(req, res, authData);
     if (type === 'nouveau_document') return await handleNouveauDocument(req, res, authData);
     if (type === 'depot_client') return await handleDepotClient(req, res, authData);
-    return res.status(400).json({ error: 'type invalide (attendu : "assignation", "nouveau_document" ou "depot_client").' });
+    if (type === 'compte_client') return await handleCompteClient(req, res, authData);
+    return res.status(400).json({ error: 'type invalide (attendu : "assignation", "nouveau_document", "depot_client" ou "compte_client").' });
   } catch (err) {
     console.error('[formateur/notify]', err);
     return res.status(500).json({ error: 'Erreur interne.' });

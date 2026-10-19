@@ -79,6 +79,162 @@ function addDaysToDateStr(dateStr, days) {
   return dt.toISOString().split('T')[0];
 }
 
+// ── Relance automatique « activez votre espace » (2026-10-19, offres Pro et Illimité) ────────────
+// Un client invité qui ne s'est jamais connecté reçoit un nouveau lien au bout de 3 jours, puis de
+// 7 jours (2 relances maximum). L'admin reçoit un récapitulatif. Les dates des relances sont notées
+// dans la fiche client (clients.relance_compte_1_le / relance_compte_2_le, cf. comptes_clients.sql).
+// Garde-fous : pas de relance pour une invitation de plus de 45 jours (anciens dossiers), et
+// 60 emails maximum par jour (limite du plan gratuit Resend : 100/jour).
+const JOUR_MS = 24 * 60 * 60 * 1000;
+const MAX_RELANCES_COMPTE_PAR_JOUR = 60;
+
+async function tousLesComptesAuth(supabase) {
+  const comptes = new Map();
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    const users = (data && data.users) || [];
+    users.forEach(u => comptes.set(String(u.id), u));
+    if (users.length < 1000) break;
+  }
+  return comptes;
+}
+
+function emailRelanceCompte({ nomClient, nomOrganisme, lien, etape }) {
+  const prenom = escapeHtml(String(nomClient || '').split(' ')[0] || '');
+  const org = escapeHtml(nomOrganisme || 'votre organisme de formation');
+  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;"><strong style="font-size:18px;">${org}</strong></div>
+    <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${prenom},</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">${etape === 2 ? 'Petit rappel : v' : 'V'}otre espace de formation vous attend, mais vous ne l'avez pas encore activé. C'est là que vous retrouverez vos séances, vos documents à signer et vos émargements.</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Il suffit de cliquer sur le bouton ci-dessous et de choisir votre mot de passe.</p>
+      <div style="text-align:center;margin:28px 0;">
+        <a href="${lien}" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 30px;border-radius:10px;">Activer mon espace</a>
+      </div>
+      <p style="color:#6b7280;font-size:12px;line-height:1.6;">Ce lien est personnel et valable pour une durée limitée. S'il a expiré, utilisez « Mot de passe oublié » sur la page de connexion.</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+      <p style="color:#9ca3af;font-size:11px;">Envoyé par ${org} via SkorUp.</p>
+    </div>
+  </div>`;
+}
+
+async function envoyerViaResend(resendApiKey, message) {
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(message),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || `Resend erreur HTTP ${r.status}`);
+  }
+}
+
+async function relancerComptesClients(supabase, resendApiKey) {
+  const bilan = { relances: 0, erreurs: 0 };
+  if (!resendApiKey) return bilan;
+
+  const { data: orgs, error: orgErr } = await supabase.from('organisations')
+    .select('id, nom, subscription_status, subscribed_plan');
+  if (orgErr) throw orgErr;
+  const orgsPro = (orgs || []).filter(o => {
+    const offre = String(o.subscribed_plan || '').split('_')[0];
+    return (offre === 'pro' || offre === 'illimite') && !['trialing', 'canceled', 'past_due'].includes(o.subscription_status);
+  });
+  if (orgsPro.length === 0) return bilan;
+
+  const { data: clients, error: cErr } = await supabase.from('clients')
+    .select('id, nom_complet, email_contact, organisation_id, relance_compte_1_le, relance_compte_2_le')
+    .in('organisation_id', orgsPro.map(o => o.id))
+    .is('relance_compte_2_le', null);
+  if (cErr) {
+    // Colonnes absentes tant que comptes_clients.sql n'a pas été lancé : on ne fait rien.
+    console.warn('[automation/process] relance des comptes ignorée :', cErr.message);
+    return bilan;
+  }
+  if (!clients || clients.length === 0) return bilan;
+
+  const comptes = await tousLesComptesAuth(supabase);
+  const maintenant = Date.now();
+  const appUrl = (process.env.APP_URL || 'https://app.skorup.fr').replace(/\/+$/, '');
+  const relancesParOrg = new Map();
+
+  for (const c of clients) {
+    if (bilan.relances >= MAX_RELANCES_COMPTE_PAR_JOUR) break;
+    const u = comptes.get(String(c.id));
+    if (!u || u.last_sign_in_at) continue;                       // pas de compte, ou déjà connecté
+    const email = String(c.email_contact || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) continue;
+    const invite = new Date(u.invited_at || u.confirmation_sent_at || u.created_at).getTime();
+    if (!invite) continue;
+    const jours = (maintenant - invite) / JOUR_MS;
+    if (jours > 45) continue;
+
+    let etape = 0;
+    if (!c.relance_compte_1_le && jours >= 3) etape = 1;
+    else if (c.relance_compte_1_le && jours >= 7 && maintenant - new Date(c.relance_compte_1_le).getTime() >= 3 * JOUR_MS) etape = 2;
+    if (!etape) continue;
+
+    try {
+      const { data: lienData, error: lienErr } = await supabase.auth.admin.generateLink({
+        type: 'recovery', email, options: { redirectTo: appUrl },
+      });
+      if (lienErr) throw lienErr;
+      const lien = lienData && lienData.properties && lienData.properties.action_link;
+      if (!lien) throw new Error('lien non généré');
+
+      const org = orgsPro.find(o => String(o.id) === String(c.organisation_id)) || {};
+      const organisme = await infosOrganisme(supabase, c.organisation_id);
+      await envoyerViaResend(resendApiKey, {
+        from: expediteurPour(organisme.nom),
+        to: [email],
+        subject: etape === 2 ? 'Rappel : votre espace de formation vous attend' : 'Votre espace de formation vous attend',
+        ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}),
+        html: emailRelanceCompte({ nomClient: c.nom_complet, nomOrganisme: organisme.nom || org.nom, lien, etape }),
+      });
+
+      await supabase.from('clients')
+        .update(etape === 1 ? { relance_compte_1_le: new Date().toISOString() } : { relance_compte_2_le: new Date().toISOString() })
+        .eq('id', c.id);
+      bilan.relances++;
+      const liste = relancesParOrg.get(String(c.organisation_id)) || [];
+      liste.push({ nom: c.nom_complet || email, etape });
+      relancesParOrg.set(String(c.organisation_id), liste);
+    } catch (e) {
+      bilan.erreurs++;
+      console.warn('[automation/process] relance compte échouée :', e.message);
+    }
+  }
+
+  // Récapitulatif pour les admins de chaque organisme concerné
+  for (const [orgId, liste] of relancesParOrg) {
+    try {
+      const { data: admins } = await supabase.from('utilisateurs').select('email').eq('organisation_id', orgId).eq('role', 'admin');
+      const destinataires = [...new Set((admins || []).map(a => String(a.email || '').trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];
+      if (destinataires.length === 0) continue;
+      const lignes = liste.map(l => `<li>${escapeHtml(l.nom)}${l.etape === 2 ? ' — 2<sup>e</sup> et dernière relance' : ''}</li>`).join('');
+      await envoyerViaResend(resendApiKey, {
+        from: FROM_EMAIL_ORG,
+        to: destinataires,
+        subject: `${liste.length} client${liste.length > 1 ? 's' : ''} relancé${liste.length > 1 ? 's' : ''} pour activer son espace SkorUp`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+          <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+            <p style="color:#111827;font-size:14px;line-height:1.7;">Ces clients n'avaient pas encore activé leur espace. SkorUp vient de leur renvoyer leur lien :</p>
+            <ul style="color:#111827;font-size:14px;line-height:1.8;">${lignes}</ul>
+            <p style="color:#6b7280;font-size:12px;line-height:1.6;">Après la 2<sup>e</sup> relance, plus aucun rappel n'est envoyé : pensez à les contacter directement. Le statut de chaque compte est visible dans la liste des clients.</p>
+            <div style="text-align:center;margin:24px 0 8px;"><a href="${appUrl}/clients" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 26px;border-radius:10px;">Voir mes clients</a></div>
+          </div>
+        </div>`,
+      });
+    } catch (e) {
+      console.warn('[automation/process] récapitulatif admin non envoyé :', e.message);
+    }
+  }
+  return bilan;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Non autorisé.' });
@@ -115,6 +271,15 @@ module.exports = async (req, res) => {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
+  // AJOUT (2026-10-19) : relance des clients qui n'ont pas activé leur espace (offre Pro). Séparé
+  // des relances de séances : une erreur ici ne bloque jamais les autres envois.
+  let relancesComptes = { relances: 0, erreurs: 0 };
+  try {
+    relancesComptes = await relancerComptesClients(supabase, resendApiKey);
+  } catch (e) {
+    console.warn('[automation/process] relance des comptes :', e.message);
+  }
+
   try {
     // ── 1. Récupérer les relances actives (TOUS organismes — c'est le cron global) ──
     const { data: settings, error: settingsErr } = await supabase
@@ -124,7 +289,7 @@ module.exports = async (req, res) => {
 
     if (settingsErr) throw new Error('Erreur lecture automation_settings : ' + settingsErr.message);
     if (!settings || settings.length === 0) {
-      return res.json({ sent: 0, message: 'Aucune relance active configurée.' });
+      return res.json({ sent: 0, comptes: relancesComptes.relances, message: 'Aucune relance active configurée.' });
     }
 
     // ── 2. Récupérer clients, sessions et modules ─────────────────────────────
@@ -321,6 +486,7 @@ module.exports = async (req, res) => {
     // emails des clients de tous les organismes).
     return res.json({
       sent,
+      comptes: relancesComptes.relances,
       processed: results.length,
       timestamp: new Date().toISOString(),
     });
