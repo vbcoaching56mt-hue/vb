@@ -17810,7 +17810,12 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
   const [brandLogoUrl, setBrandLogoUrl] = useState(brandSettings?.logo_url || '');
   const [isBrandUploading, setIsBrandUploading] = useState(false);
   const [isBrandSaving, setIsBrandSaving] = useState(false);
-  const [settingsTab, setSettingsTab] = useState('organisme');
+  const [settingsTab, setSettingsTab] = useState(() => {
+    const st = orgSettings?.subscription_status;
+    const bloque = ['canceled', 'past_due', 'unpaid', 'paused'].includes(st)
+      || (st === 'trialing' && orgSettings?.trial_ends_at && new Date(orgSettings.trial_ends_at) < new Date());
+    return bloque ? 'abonnement' : 'organisme';
+  });
 
   useEffect(() => {
     if (brandSettings) {
@@ -20485,7 +20490,8 @@ function TrialBanner({ orgSettings, onUpgrade }) {
 }
 
 // ─── PaywallScreen ───────────────────────────────────────────────────────────
-function PaywallScreen({ onSubscribe, isAdmin = true }) {
+function PaywallScreen({ onSubscribe, isAdmin = true, status = null }) {
+  const paiementEnAttente = ['past_due', 'unpaid', 'paused'].includes(status);
   // Seul l'admin de l'organisme peut gérer l'abonnement : un formateur ou un client dont
   // l'organisme a un abonnement expiré/impayé voit un message d'attente, pas le bouton de paiement
   // (parametres_org, où mène onSubscribe, ne lui est de toute façon pas accessible).
@@ -20513,16 +20519,19 @@ function PaywallScreen({ onSubscribe, isAdmin = true }) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
         </svg>
       </div>
-      <h2 className="text-2xl font-extrabold text-gray-900 mb-3">Votre période d'essai est terminée</h2>
+      <h2 className="text-2xl font-extrabold text-gray-900 mb-3">
+        {paiementEnAttente ? 'Un paiement est en attente' : status === 'canceled' ? 'Votre abonnement est arrêté' : "Votre période d'essai est terminée"}
+      </h2>
       <p className="text-gray-500 mb-8 max-w-md">
-        Merci d'avoir essayé SkorUp ! Pour continuer à utiliser la plateforme,
-        veuillez souscrire à l'un de nos plans.
+        {paiementEnAttente
+          ? "Le dernier paiement de votre abonnement n'a pas abouti. Mettez à jour votre moyen de paiement depuis « Mon abonnement » : l'accès sera rétabli automatiquement."
+          : "Merci d'avoir essayé SkorUp ! Pour continuer à utiliser la plateforme, veuillez souscrire à l'un de nos plans."}
       </p>
       <button
         onClick={onSubscribe}
         className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-4 px-10 rounded-2xl shadow-lg transition-all text-lg"
       >
-        Choisir mon plan →
+        {paiementEnAttente ? 'Régulariser mon abonnement →' : 'Choisir mon plan →'}
       </button>
       <p className="text-xs text-gray-400 mt-4">
         Accès immédiat après paiement — Sans engagement pour le plan mensuel
@@ -20614,6 +20623,9 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
     active:   { label: `Abonné — ${planLabel}`, color: 'bg-green-50 text-green-700 border-green-200' },
     canceled: { label: 'Abonnement annulé', color: 'bg-red-50 text-red-700 border-red-200' },
     past_due: { label: 'Paiement en retard', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+    unpaid:   { label: 'Paiement en retard', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+    paused:   { label: 'Abonnement suspendu', color: 'bg-orange-50 text-orange-700 border-orange-200' },
+    incomplete: { label: 'Paiement en cours de validation', color: 'bg-orange-50 text-orange-700 border-orange-200' },
   }[status] || { label: status, color: 'bg-gray-50 text-gray-700 border-gray-200' };
 
   return (
@@ -20629,8 +20641,9 @@ function AbonnementView({ orgId, orgSettings, onRefresh }) {
         {statusInfo.label}
       </div>
 
-      {/* Si abonnement actif → portail Stripe */}
-      {isActive && (
+      {/* Si abonnement actif → portail Stripe. 2026-10-19 : aussi en cas de retard de paiement, pour
+          mettre à jour la carte au lieu de souscrire un second abonnement. */}
+      {(isActive || (orgSettings?.stripe_customer_id && ['past_due', 'unpaid', 'paused', 'incomplete'].includes(status))) && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8">
           <h2 className="text-lg font-bold text-gray-900 mb-1">Gérer votre abonnement</h2>
           <p className="text-sm text-gray-500 mb-4">
@@ -20773,6 +20786,9 @@ const PLAN_TIER_RANK = { essentiel: 0, pro: 1, illimite: 2 };
 const getPlanTier = (orgSettings) => {
   if (!orgSettings) return 'essentiel';
   if (orgSettings.subscription_status === 'trialing') return 'essentiel';
+  // SÉCURITÉ (2026-10-19) : un abonnement impayé / suspendu (past_due, unpaid, paused,
+  // incomplete…) ne donne plus accès aux fonctionnalités de l'offre souscrite.
+  if (orgSettings.subscription_status && orgSettings.subscription_status !== 'active') return 'essentiel';
   const planKey = (orgSettings.subscribed_plan || '').split('_')[0];
   return PLAN_TIER_RANK[planKey] !== undefined ? planKey : 'essentiel';
 };
@@ -22130,7 +22146,7 @@ const dateHeureCompte = (iso) => {
 const sousTexteCompte = (info, st) => {
   if (st === 'active') return `Dernière connexion : ${depuisQuandCompte(info.derniere_connexion)}`;
   if (st === 'attente') return `Invitation ${depuisQuandCompte(info.invite_le)} · jamais connecté`;
-  if (st === 'aucun') return info.email_deja_utilise ? 'email déjà utilisé par un autre compte' : 'la fiche existe, pas le compte';
+  if (st === 'aucun') return info.email_deja_utilise ? 'email déjà utilisé par un autre compte de votre organisme' : 'la fiche existe, pas le compte';
   return '';
 };
 
@@ -22317,6 +22333,9 @@ const BlocAccesCompte = ({ client, onRenvoyer }) => {
   );
 };
 
+// Apparence par défaut (aucun organisme) — 2026-10-19.
+const MARQUE_PAR_DEFAUT = { org_name: 'SkorUp', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' };
+
 export default function App() {
   // --- États Session et Navigation ---
   const [userRole, setUserRole] = useState(null); // 'admin' | 'formateur' | 'client' | null
@@ -22412,7 +22431,7 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
-  const [brandSettings, setBrandSettings] = useState({ org_name: 'SkorUp', primary_color: '#7C3AED', logo_url: null, welcome_message: 'Bienvenue sur votre espace de formation.' });
+  const [brandSettings, setBrandSettings] = useState(MARQUE_PAR_DEFAUT);
   const [sidebarLegalPage, setSidebarLegalPage] = useState(null);
 
   // --- Modale de confirmation suppression globale ---
@@ -23211,8 +23230,13 @@ export default function App() {
   const fetchBrandSettings = React.useCallback(async () => {
     if (!currentOrgId) return;
     const { data } = await supabase.from('organisation_settings').select('*').eq('organisation_id', currentOrgId).maybeSingle();
+    // 2026-10-19 : on repart toujours des valeurs par défaut (avant : fusion avec l'organisme précédent).
+    if (!data) {
+      setBrandSettings(MARQUE_PAR_DEFAUT);
+      ['--brand-primary', '--brand-primary-light', '--brand-primary-dark'].forEach(v => document.documentElement.style.removeProperty(v));
+    }
     if (data) {
-      setBrandSettings(prev => ({ ...prev, ...data }));
+      setBrandSettings({ ...MARQUE_PAR_DEFAUT, ...data });
       if (data.primary_color) {
         document.documentElement.style.setProperty('--brand-primary', data.primary_color);
         document.documentElement.style.setProperty('--brand-primary-light', data.primary_color + '20');
@@ -23411,6 +23435,11 @@ export default function App() {
     setUserRole(null);
     setCurrentUserId(null);
     setCurrentOrgId(null);
+    // SÉCURITÉ (2026-10-19) : la personne suivante sur le même navigateur ne doit pas voir le logo,
+    // le nom ni les couleurs de l'organisme précédent.
+    setOrgSettings(null);
+    setBrandSettings(MARQUE_PAR_DEFAUT);
+    ['--brand-primary', '--brand-primary-light', '--brand-primary-dark'].forEach(v => document.documentElement.style.removeProperty(v));
     setIsAdminActingAsFormateur(false);
     setActiveTab('accueil');
     setMobileMenuOpen(false);
@@ -27222,7 +27251,8 @@ export default function App() {
   const isSubscriptionExpired = orgSettings && (() => {
     const { subscription_status, trial_ends_at } = orgSettings;
     if (!subscription_status || subscription_status === 'active') return false;
-    if (subscription_status === 'canceled' || subscription_status === 'past_due') return true;
+    // 2026-10-19 : Stripe utilise aussi unpaid / paused pour un abonnement impayé ou suspendu.
+    if (['canceled', 'past_due', 'unpaid', 'paused'].includes(subscription_status)) return true;
     if (subscription_status === 'trialing' && trial_ends_at) {
       return new Date(trial_ends_at) < new Date();
     }
@@ -27571,7 +27601,7 @@ export default function App() {
             // pas monté — avant, ce n'était qu'une superposition visuelle par-dessus un contenu resté
             // actif (chargements/mutations de données en arrière-plan malgré le blocage à l'écran).
             <div className="w-full h-full flex items-center justify-center">
-              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} isAdmin={userRole === 'admin'} />
+              <PaywallScreen onSubscribe={() => setActiveTab('parametres_org')} isAdmin={userRole === 'admin'} status={orgSettings?.subscription_status} />
             </div>
           ) : (
           <>

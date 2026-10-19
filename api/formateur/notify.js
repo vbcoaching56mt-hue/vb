@@ -338,7 +338,7 @@ async function handleCompteClient(req, res, authData) {
   });
   if (createErr) {
     if (/already|registered|exists|duplicate/i.test(createErr.message || '')) {
-      return res.status(409).json({ error: "Cette adresse email est déjà utilisée par un autre compte SkorUp. Changez l'email dans la fiche du client, puis réessayez." });
+      return res.status(409).json({ error: "Impossible de créer un compte avec cette adresse email. Vérifiez l'email dans la fiche du client (ou utilisez-en un autre), puis réessayez." });
     }
     throw createErr;
   }

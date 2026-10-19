@@ -144,10 +144,14 @@ async function relancerComptesClients(supabase, resendApiKey) {
   });
   if (orgsPro.length === 0) return bilan;
 
+  // 2026-10-19 : seulement les fiches récentes (une invitation de plus de 45 jours n'est jamais
+  // relancée) — évite de parcourir tous les clients et tous les comptes de la plateforme.
+  const depuis = new Date(Date.now() - 50 * JOUR_MS).toISOString();
   const { data: clients, error: cErr } = await supabase.from('clients')
-    .select('id, nom_complet, email_contact, organisation_id, relance_compte_1_le, relance_compte_2_le')
+    .select('id, nom_complet, email_contact, organisation_id, relance_compte_1_le, relance_compte_2_le, created_at')
     .in('organisation_id', orgsPro.map(o => o.id))
-    .is('relance_compte_2_le', null);
+    .is('relance_compte_2_le', null)
+    .gte('created_at', depuis);
   if (cErr) {
     // Colonnes absentes tant que comptes_clients.sql n'a pas été lancé : on ne fait rien.
     console.warn('[automation/process] relance des comptes ignorée :', cErr.message);
@@ -155,16 +159,17 @@ async function relancerComptesClients(supabase, resendApiKey) {
   }
   if (!clients || clients.length === 0) return bilan;
 
-  const comptes = await tousLesComptesAuth(supabase);
   const maintenant = Date.now();
   const appUrl = (process.env.APP_URL || 'https://app.skorup.fr').replace(/\/+$/, '');
   const relancesParOrg = new Map();
 
   for (const c of clients) {
     if (bilan.relances >= MAX_RELANCES_COMPTE_PAR_JOUR) break;
-    const u = comptes.get(String(c.id));
+    const { data: compte } = await supabase.auth.admin.getUserById(c.id);
+    const u = compte && compte.user;
     if (!u || u.last_sign_in_at) continue;                       // pas de compte, ou déjà connecté
-    const email = String(c.email_contact || '').trim().toLowerCase();
+    // 2026-10-19 : l'adresse du COMPTE de connexion (celle de la fiche peut avoir été modifiée).
+    const email = String(u.email || c.email_contact || '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) continue;
     const invite = new Date(u.invited_at || u.confirmation_sent_at || u.created_at).getTime();
     if (!invite) continue;

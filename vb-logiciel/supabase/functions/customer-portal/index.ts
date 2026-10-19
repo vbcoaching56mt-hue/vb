@@ -13,6 +13,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// ── SÉCURITÉ (2026-10-19) : seul un ADMIN de l'organisme peut gérer son abonnement ──────────────
+// Avant : l'organisme venait du corps de la requête sans aucune vérification de l'appelant.
+async function estAdminDeOrganisme(req: Request, supabase: any, orgId: string): Promise<boolean> {
+  const jeton = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+  if (!jeton) return false
+  const { data, error } = await supabase.auth.getUser(jeton)
+  const user = data?.user
+  if (error || !user) return false
+  const { data: parUid } = await supabase
+    .from('utilisateurs').select('role, organisation_id').eq('auth_uid', user.id)
+  let lignes = parUid || []
+  if (user.email) {
+    const { data: parEmail } = await supabase
+      .from('utilisateurs').select('role, organisation_id').is('auth_uid', null).eq('email', user.email)
+    lignes = lignes.concat(parEmail || [])
+  }
+  return lignes.some((l: any) => l.role === 'admin' && String(l.organisation_id) === String(orgId))
+}
+
+// Retour vers l'application uniquement (pas vers un site choisi par l'appelant).
+function origineSure(req: Request): string {
+  const origine = (req.headers.get('origin') || '').replace(/\/+$/, '')
+  const autorisees = ['https://app.skorup.fr', ...(Deno.env.get('ALLOWED_ORIGINS') || '').split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean)]
+  if (autorisees.includes(origine) || /^http:\/\/localhost(:\d+)?$/.test(origine)) return origine
+  return 'https://app.skorup.fr'
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -32,6 +59,12 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    if (!(await estAdminDeOrganisme(req, supabase, orgId))) {
+      return new Response(JSON.stringify({ error: "Seul un administrateur de l'organisme peut gérer l'abonnement." }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const { data: org, error } = await supabase
       .from('organisations')
       .select('stripe_customer_id')
@@ -43,7 +76,7 @@ Deno.serve(async (req: Request) => {
       throw new Error('Aucun abonnement Stripe actif pour cette organisation. Souscrivez d\'abord un plan.')
     }
 
-    const origin = req.headers.get('origin') || 'https://app.skorup.fr'
+    const origin = origineSure(req)
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: org.stripe_customer_id,
       // Marqueur "billing=return" détecté côté app pour rafraîchir automatiquement

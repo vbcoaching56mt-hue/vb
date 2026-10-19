@@ -46,6 +46,24 @@ function resolvePlanFromSubscription(sub: Stripe.Subscription): string | null {
   return plan && billing ? `${plan}_${billing}` : null
 }
 
+// ── 2026-10-19 : fiabilité ─────────────────────────────────────────────────────────────────────
+// • Une erreur d'écriture en base renvoie 500 : Stripe réessaie automatiquement (avant : 200 et
+//   l'organisme pouvait rester non activé alors qu'il avait payé).
+// • Un abonnement Stripe en essai (« trialing ») est traité comme actif (comme avant), et les
+//   statuts transitoires d'un paiement non abouti (incomplete / incomplete_expired) ne modifient
+//   pas le statut de l'organisme.
+// • Un événement concernant un AUTRE abonnement que celui enregistré (ancien abonnement, doublon)
+//   ne peut plus annuler ou dégrader l'abonnement en cours.
+function statutPourOrganisme(statutStripe: string): string | null {
+  if (statutStripe === 'active' || statutStripe === 'trialing') return 'active'
+  if (statutStripe === 'incomplete' || statutStripe === 'incomplete_expired') return null
+  return statutStripe
+}
+async function ecrire(requete: PromiseLike<{ error: any }>, contexte: string) {
+  const { error } = await requete
+  if (error) throw new Error(`${contexte} : ${error.message}`)
+}
+
 Deno.serve(async (req: Request) => {
   const signature = req.headers.get('stripe-signature')
   const body = await req.text()
@@ -91,12 +109,19 @@ Deno.serve(async (req: Request) => {
           break
         }
 
-        await supabase.from('organisations').update({
-          subscription_status:     'active',
+        let statut = 'active'
+        if (session.subscription) {
+          try {
+            const abo = await stripe.subscriptions.retrieve(session.subscription as string)
+            statut = statutPourOrganisme(abo.status) || 'active'
+          } catch (_) { /* on garde 'active' comme avant */ }
+        }
+        await ecrire(supabase.from('organisations').update({
+          subscription_status:     statut,
           stripe_customer_id:      session.customer as string,
           stripe_subscription_id:  session.subscription as string,
           subscribed_plan:         plan && billing ? `${plan}_${billing}` : null,
-        }).eq('id', orgId)
+        }).eq('id', orgId), 'checkout.session.completed')
 
         console.log(`[stripe-webhook] Org ${orgId} activée (${plan}_${billing})`)
         break
@@ -105,32 +130,34 @@ Deno.serve(async (req: Request) => {
       // ── Mise à jour d'un abonnement (renouvellement, changement de plan) ──
       case 'customer.subscription.updated': {
         const sub = event.data.object as Stripe.Subscription
-        const orgId = sub.metadata?.org_id
         const resolvedPlan = resolvePlanFromSubscription(sub)
-
+        let orgId = sub.metadata?.org_id
         if (!orgId) {
           // Fallback : retrouver l'org via stripe_customer_id
           const { data: org } = await supabase
-            .from('organisations')
-            .select('id')
-            .eq('stripe_customer_id', sub.customer as string)
-            .single()
+            .from('organisations').select('id').eq('stripe_customer_id', sub.customer as string).maybeSingle()
+          orgId = org?.id
+        }
+        if (!orgId) break
 
-          if (org) {
-            await supabase.from('organisations').update({
-              subscription_status: sub.status === 'active' ? 'active' : sub.status,
-              stripe_subscription_id: sub.id,
-              subscribed_plan: resolvedPlan,
-            }).eq('id', org.id)
-          }
+        const { data: actuel } = await supabase
+          .from('organisations').select('stripe_subscription_id').eq('id', orgId).maybeSingle()
+        const statut = statutPourOrganisme(sub.status)
+        const autreAbonnement = actuel?.stripe_subscription_id && actuel.stripe_subscription_id !== sub.id
+        if (autreAbonnement && statut !== 'active') {
+          console.log(`[stripe-webhook] Ancien abonnement ${sub.id} ignoré pour l'org ${orgId}`)
+          break
+        }
+        if (!statut) {
+          console.log(`[stripe-webhook] Statut transitoire ${sub.status} ignoré pour l'org ${orgId}`)
           break
         }
 
-        await supabase.from('organisations').update({
-          subscription_status: sub.status === 'active' ? 'active' : sub.status,
+        await ecrire(supabase.from('organisations').update({
+          subscription_status: statut,
           stripe_subscription_id: sub.id,
           subscribed_plan: resolvedPlan,
-        }).eq('id', orgId)
+        }).eq('id', orgId), 'customer.subscription.updated')
 
         console.log(`[stripe-webhook] Org ${orgId} mise à jour → ${sub.status} (${resolvedPlan})`)
         break
@@ -147,18 +174,21 @@ Deno.serve(async (req: Request) => {
           subscribed_plan:         null,
         }
 
-        if (orgId) {
-          await supabase.from('organisations').update(updatePayload).eq('id', orgId)
-        } else {
+        let cible = orgId
+        if (!cible) {
           // Retrouver l'org via customer ID
           const { data: org } = await supabase
-            .from('organisations')
-            .select('id')
-            .eq('stripe_customer_id', sub.customer as string)
-            .single()
-          if (org) {
-            await supabase.from('organisations').update(updatePayload).eq('id', org.id)
+            .from('organisations').select('id').eq('stripe_customer_id', sub.customer as string).maybeSingle()
+          cible = org?.id
+        }
+        if (cible) {
+          const { data: actuel } = await supabase
+            .from('organisations').select('stripe_subscription_id').eq('id', cible).maybeSingle()
+          if (actuel?.stripe_subscription_id && actuel.stripe_subscription_id !== sub.id) {
+            console.log(`[stripe-webhook] Suppression d'un ancien abonnement ${sub.id} ignorée pour l'org ${cible}`)
+            break
           }
+          await ecrire(supabase.from('organisations').update(updatePayload).eq('id', cible), 'customer.subscription.deleted')
         }
 
         console.log(`[stripe-webhook] Abonnement annulé — org ${orgId || 'inconnu'}`)
@@ -172,14 +202,19 @@ Deno.serve(async (req: Request) => {
 
         const { data: org } = await supabase
           .from('organisations')
-          .select('id')
+          .select('id, stripe_subscription_id')
           .eq('stripe_customer_id', customerId)
-          .single()
+          .maybeSingle()
 
+        const aboFacture = (invoice as any).subscription as string | null
+        if (org && aboFacture && org.stripe_subscription_id && org.stripe_subscription_id !== aboFacture) {
+          console.log(`[stripe-webhook] Échec de paiement d'un ancien abonnement ignoré — org ${org.id}`)
+          break
+        }
         if (org) {
-          await supabase.from('organisations').update({
+          await ecrire(supabase.from('organisations').update({
             subscription_status: 'past_due',
-          }).eq('id', org.id)
+          }).eq('id', org.id), 'invoice.payment_failed')
           console.log(`[stripe-webhook] Paiement échoué — org ${org.id}`)
         }
         break
@@ -190,8 +225,11 @@ Deno.serve(async (req: Request) => {
     }
   } catch (err: any) {
     console.error('[stripe-webhook] Erreur traitement:', err.message)
-    // On retourne 200 quand même pour éviter que Stripe ne réessaie indéfiniment
-    // (l'erreur est loggée pour debug)
+    // 2026-10-19 : 500 → Stripe réessaie (pendant 3 jours au maximum). Les mises à jour sont
+    // idempotentes : rejouer un événement ne pose pas de problème.
+    return new Response(JSON.stringify({ received: false }), {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   return new Response(JSON.stringify({ received: true }), {
