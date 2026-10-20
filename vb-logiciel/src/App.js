@@ -118,6 +118,37 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
+// ─── DOCUMENTS AUTOMATIQUES (2026-10-20, lot 3) ───────────────────────────────────────────────────
+// Date du jour à l'heure LOCALE (avant : toISOString = heure UTC → « hier » entre 0 h et 2 h en France).
+const jourLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// « 2026-11-03 » → « 03/11/2026 » sans passer par un objet Date (pas de décalage de fuseau).
+const dateIsoVersFr = (iso) => { const m = String(iso || '').slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+// Valeurs « formation / dates / organisme » des modèles. Les dates viennent des VRAIES séances
+// (numéro ≥ 1 : ni le bloc administratif, ni les exercices de début/fin).
+const valeursFormationOrganisme = ({ moduleNom, seances, orgSettings }) => {
+  const dates = (seances || []).filter(x => Number(x.numero_seance) >= 1 && x.date).map(x => String(x.date).slice(0, 10)).sort();
+  return {
+    formation_nom: moduleNom || '',
+    date_debut: dates.length ? dateIsoVersFr(dates[0]) : '',
+    date_fin: dates.length ? dateIsoVersFr(dates[dates.length - 1]) : '',
+    org_nom: orgSettings?.nom || '',
+    org_siret: orgSettings?.siret || '',
+    org_nda: orgSettings?.nda || '',
+    org_adresse: orgSettings?.adresse || '',
+    org_code_postal: orgSettings?.code_postal || '',
+    org_ville: orgSettings?.ville || '',
+    org_region: orgSettings?.region || '',
+    org_site_web: orgSettings?.site_web || '',
+  };
+};
+// Document de FIN de parcours pas encore débloqué (le parcours n'est pas terminé).
+const docDeFinVerrouille = (doc, parcoursTermine) => {
+  if (parcoursTermine) return false;
+  let m = doc?.metadata;
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch (_) { m = {}; } }
+  return !!(m && m.moment === 'fin');
+};
+
 // ─── CONSERVATION DES SIGNATURES (2026-10-20, lot 2) ──────────────────────────────────────────────
 // Un document ou un élément de séance signé par QUI QUE CE SOIT (client, formateur, organisme) n'est
 // jamais supprimé ni remplacé depuis l'application. Vérification faite sur la base (données à jour).
@@ -4607,7 +4638,7 @@ const ClientDetailView = ({
   const [clientPaiements, setClientPaiements] = React.useState([]);
   const [isLoadingPaiements, setIsLoadingPaiements] = React.useState(false);
   const [newPaiementMontant, setNewPaiementMontant] = React.useState('');
-  const [newPaiementDate, setNewPaiementDate] = React.useState(() => new Date().toISOString().split('T')[0]);
+  const [newPaiementDate, setNewPaiementDate] = React.useState(() => jourLocalISO(new Date()));
   const [newPaiementMode, setNewPaiementMode] = React.useState('Virement');
   const [newPaiementNote, setNewPaiementNote] = React.useState('');
   const [isSavingPaiement, setIsSavingPaiement] = React.useState(false);
@@ -5036,7 +5067,7 @@ const ClientDetailView = ({
       client_id: client.id,
       organisation_id: currentOrgId,
       montant,
-      date_paiement: newPaiementDate || new Date().toISOString().split('T')[0],
+      date_paiement: newPaiementDate || jourLocalISO(new Date()),
       mode_paiement: newPaiementMode,
       note: newPaiementNote || null,
     });
@@ -9164,7 +9195,7 @@ const FormateurView = ({
                   {formateurClientTab === 'exercices' && (() => {
                     const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
                     const seanceNumbers = [...new Set(allClientSessions.map(s => s.numero_seance).filter(n => n != null && Number(n) > 0).map(Number))].sort((a, b) => a - b);
-                    const todayStr = new Date().toISOString().split('T')[0];
+                    const todayStr = jourLocalISO(new Date());
                     const defaultNumero = (() => {
                       const past = allClientSessions.filter(s => s.numero_seance && s.date && s.date <= todayStr).map(s => Number(s.numero_seance));
                       return past.length ? Math.max(...past) : (seanceNumbers[0] || 1);
@@ -13236,8 +13267,8 @@ const DocumentsView = ({
 // ─── Cloche de notifications ──────────────────────────────────────────────────
 const NotificationBell = ({ sessions, documents, clients, userRole, currentUserId, setActiveTab, depotsNonLus = [], piecesAFournir = 0, onOpenClient = null }) => {
   const [isOpen, setIsOpen] = React.useState(false);
-  const today = new Date().toISOString().split('T')[0];
-  const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = jourLocalISO(new Date());
+  const in7Days = jourLocalISO(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
   const notifications = React.useMemo(() => {
     const notifs = [];
@@ -13282,7 +13313,8 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     } else if (userRole === 'client') {
       // Même logique que isSignedByClient dans ClientDocumentsView :
       // un document est considéré signé si UN enregistrement avec le même nom a signe_par_client = true
-      const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && docAwaitsClientSignature(d));
+      const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions); // lot 3
+      const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && docAwaitsClientSignature(d) && !docDeFinVerrouille(d, _parcoursFini));
       const trulyPending = myDocs.filter(d => {
         const effectivelySigned = documents.some(other =>
           String(other.user_id) === String(currentUserId) && other.nom === d.nom && other.signe_par_client
@@ -13330,13 +13362,13 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
 // ─── Tableau de bord Admin ─────────────────────────────────────────────────────
 const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiveTab, modules, orgSettings, currentOrgId }) => {
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = jourLocalISO(today);
   const weekStart = new Date(today);
   weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 6);
-  const weekStartStr = weekStart.toISOString().split('T')[0];
-  const weekEndStr = weekEnd.toISOString().split('T')[0];
+  const weekStartStr = jourLocalISO(weekStart);
+  const weekEndStr = jourLocalISO(weekEnd);
 
   const issuedDocs = documents.filter(d => d.user_id || d.assigned_formateur_id);
   const pendingDocs = issuedDocs.filter(d => docAwaitsClientSignature(d) || docAwaitsFormateurSignature(d)); // FIX (2026-10-05), voir docRequiresSignature
@@ -13536,7 +13568,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
 
   const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
   const MONTHS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = jourLocalISO(new Date());
 
   const cells = [];
   for (let i = 0; i < startDayOfWeek; i++) cells.push(null);
@@ -13781,8 +13813,8 @@ const FormateurAccueilView = ({ formateurs, clients, sessions, documents, curren
   const formateur = formateurs.find(f => f.id === currentUserId);
   const myClients = clients.filter(c => c.formateur_id === currentUserId);
   const myClientIds = myClients.map(c => c.id);
-  const today = new Date().toISOString().split('T')[0];
-  const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = jourLocalISO(new Date());
+  const in7Days = jourLocalISO(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   const todaySessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date === today);
   const weekSessions = sessions.filter(s => myClientIds.includes(s.client_id) && s.date > today && s.date <= in7Days);
   const todayGroups = regrouperParSeance(todaySessions);
@@ -14885,6 +14917,17 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     [...(sessions || []), ...ownSessions].forEach(s => { if (s && s.id != null) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s }); });
     return isModuleCompletedForClient(currentUserId, Array.from(byId.values()));
   }, [currentUserId, sessions, ownSessions]);
+  // LOT 3 (2026-10-20) : nom de la formation et séances du client, pour remplir les modèles
+  // (formation, date de début, date de fin) — avant : toujours vides.
+  const [moduleNomClient, setModuleNomClient] = React.useState('');
+  React.useEffect(() => {
+    if (!moduleId || !supabase) return;
+    supabase.from('modules').select('nom').eq('id', moduleId).maybeSingle()
+      .then(({ data }) => setModuleNomClient(data?.nom || ''), () => {});
+  }, [moduleId, supabase]);
+  const seancesDuClient = React.useMemo(
+    () => [...(sessions || []), ...ownSessions].filter(x => String(x.client_id) === String(currentUserId)),
+    [sessions, ownSessions, currentUserId]);
 
   React.useEffect(() => {
     if (!moduleId) { setLoading(false); return; }
@@ -15017,22 +15060,30 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     return titles;
   }, [moduleResources, documents]);
 
+  // LOT 3 (2026-10-20) : un document est « de fin » s'il est marqué comme tel, ou (anciens documents Word
+  // « Titre - Client ») si son nom correspond à une ressource de fin de parcours du module.
+  const titresDeFin = React.useMemo(() => moduleResources.filter(r => r.moment === 'fin').map(r => r.titre).filter(Boolean), [moduleResources]);
+  const estDocDeFin = React.useCallback((d) => {
+    if (docDeFinVerrouille(d, false)) return true;
+    return titresDeFin.some(t => d.nom === t || String(d.nom || '').startsWith(`${t} - `));
+  }, [titresDeFin]);
   const extraDebutDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
+    if (estDocDeFin(d)) return false; // lot 3 : jamais dans « début »
     if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
     // Considère "debut" si moment=debut OU si c'est un type administratif sans moment précisé
     return meta.moment === 'debut' || (!meta.moment && (d.type_document === 'À signer' || d.type_document === 'Contrat' || d.type_document === 'Convention'));
-  }), [clientVisibleDocs, allKnownTitles]);
+  }), [clientVisibleDocs, allKnownTitles, estDocDeFin]);
 
   const extraFinDocs = React.useMemo(() => clientVisibleDocs.filter(d => {
     if (allKnownTitles.has(d.nom)) return false;
     if (isBlockedBySigningOrder(d, 'client')) return false; // pas encore son tour (mode séquentiel) → masqué
     const meta = typeof d.metadata === 'object' && d.metadata !== null ? d.metadata :
       (typeof d.metadata === 'string' && d.metadata?.startsWith('{') ? (() => { try { return JSON.parse(d.metadata); } catch { return {}; } })() : {});
-    return meta.moment === 'fin';
-  }), [clientVisibleDocs, allKnownTitles]);
+    return meta.moment === 'fin' || estDocDeFin(d); // lot 3
+  }), [clientVisibleDocs, allKnownTitles, estDocDeFin]);
 
   // Filet de sécurité (ajouté le 2026-09-02) : tout document visible du client qui n'est ni dans
   // extraDebutDocs ni dans extraFinDocs (ex: envoyé via "Ajouts personnalisés" → "Envoyer", qui ne
@@ -15305,6 +15356,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           tel_consultant:        formateur?.telephone || '',
         };
         // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+        Object.assign(dataValues, valeursFormationOrganisme({ moduleNom: moduleNomClient, seances: seancesDuClient, orgSettings })); // lot 3
         dataValues.adresse_client = [dataValues.rue_client, dataValues.code_postal_client, dataValues.ville_client].filter(Boolean).join(', ');
         { const _fAddr = parseAddressString(dataValues.adresse_formateur);
           dataValues.rue_formateur = _fAddr.rue;
@@ -15341,7 +15393,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // Fallback : ouvrir avec template brut
       setSigningResource(resource);
     }
-  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings]);
+  }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings, moduleNomClient, seancesDuClient]);
 
   const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => {
     if (!signingResource || !currentClient) return;
@@ -15530,6 +15582,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               tel_consultant:        formateur?.telephone || '',
             };
             // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+            Object.assign(dataValues, valeursFormationOrganisme({ moduleNom: moduleNomClient, seances: seancesDuClient, orgSettings })); // lot 3
             dataValues.adresse_client = [dataValues.rue_client, dataValues.code_postal_client, dataValues.ville_client].filter(Boolean).join(', ');
             { const _fAddr = parseAddressString(dataValues.adresse_formateur);
               dataValues.rue_formateur = _fAddr.rue;
@@ -23906,8 +23959,12 @@ export default function App() {
     const assignedFormateurId = visFormateur ? (client.formateur_id || null) : null;
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
-    const { data: existing } = await supabase.from('documents')
-      .select('id, url, signe_par_client, signe_par_formateur, signe_par_organisme, statut, signed_pdf_url, metadata').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
+    // LOT 3 (2026-10-20) : .limit(1) au lieu de .maybeSingle() — dès que 2 lignes avaient le même nom,
+    // maybeSingle renvoyait une erreur → « aucun document » → un doublon de plus à chaque distribution.
+    const { data: _existants } = await supabase.from('documents')
+      .select('id, url, signe_par_client, signe_par_formateur, signe_par_organisme, statut, signed_pdf_url, metadata').eq('user_id', client.id).eq('nom', templateResource.titre)
+      .order('id', { ascending: true }).limit(1);
+    const existing = (_existants || [])[0] || null;
     if (existing) {
       if (!hasVisualFields) return; // doc classique : anti-doublon strict
       if (documentEstSigne(existing)) return; // SIGNÉ (par qui que ce soit, lot 2) : ne jamais écraser
@@ -23986,6 +24043,14 @@ export default function App() {
           tel_consultant:      formateur?.telephone || '',
         };
         // Balises d'adresse dérivées : adresse_client combinée, rue/CP/ville_formateur éclatées
+        // LOT 3 (2026-10-20) : formation, dates réelles des séances et organisme (avant : toujours vides).
+        try {
+          const { data: _seancesClient } = await supabase.from('sessions').select('numero_seance, date').eq('client_id', client.id);
+          Object.assign(resolvedValues, valeursFormationOrganisme({
+            moduleNom: (modules || []).find(m => String(m.id) === String(client.module_id))?.nom,
+            seances: _seancesClient || [], orgSettings,
+          }));
+        } catch (_) { /* valeurs laissées vides, comme avant */ }
         resolvedValues.adresse_client = [resolvedValues.rue_client, resolvedValues.code_postal_client, resolvedValues.ville_client].filter(Boolean).join(', ');
         { const _fAddr = parseAddressString(resolvedValues.adresse_formateur);
           resolvedValues.rue_formateur = _fAddr.rue;
@@ -24027,6 +24092,7 @@ export default function App() {
           visual_template_id: visualTemplateId,
           template_url: templateResource.file_url,
           prefilled: true,
+          moment, // lot 3 : 'debut' | 'fin'
           signature_fields: sigFields,
           destination_roles: destRoles,
           signing_mode: meta.signing_mode || 'simultane',
@@ -24060,6 +24126,7 @@ export default function App() {
           template_url: templateResource.file_url,
           fields: tplFields || [],
           resolved_values: resolvedValues || {},
+          moment, // lot 3
           destination_roles: destRoles,
           signing_mode: meta.signing_mode || 'simultane',
           ...(meta.signing_mode === 'sequentiel' ? { signing_order: normalizeSigningOrder(meta) } : {}),
@@ -24087,7 +24154,13 @@ export default function App() {
     // ── Branche 2 : template DOCX classique à générer (remplacement de balises Word) ──
     } else if (classification === 'a_generer') {
       try {
-        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true);
+        // LOT 3 (2026-10-20) : le document Word généré s'appelle « Titre - Client » (et non « Titre ») →
+        // l'anti-doublon ci-dessus ne le trouvait jamais : un nouveau document (et un email) à chaque
+        // distribution. On vérifie donc aussi ce nom-là.
+        const { data: _dejaGeneres } = await supabase.from('documents').select('id')
+          .eq('user_id', client.id).like('nom', `${templateResource.titre} - %`).limit(1);
+        if (_dejaGeneres && _dejaGeneres.length > 0) return;
+        const generatedDoc = await handleGenerateDocx(client, templateResource.titre, false, null, true, 'send', null, { moment });
         if (generatedDoc) docId = generatedDoc.id;
       } catch (e) {
         console.error("Erreur génération automatique :", e);
@@ -24102,6 +24175,7 @@ export default function App() {
         url: templateResource.file_url,
         type_document: classification === 'a_signer' ? 'À signer' : 'Téléchargeable',
         visible_client: visClient && moment === 'debut',
+        metadata: { moment }, // lot 3
         visible_formateur: visFormateur,
         ...(assignedFormateurId ? { assigned_formateur_id: assignedFormateurId } : {}),
       }]).select().single();
@@ -26062,7 +26136,8 @@ export default function App() {
     }
   };
 
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null) => {
+  // extraMeta (lot 3, 2026-10-20) : ex. { moment: 'fin' } pour un document de fin de parcours.
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null, extraMeta = null) => {
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -26155,7 +26230,7 @@ export default function App() {
         // Extraction impérative des dates via requête sur sessions
         const { data: sessionDates, error: dateError } = await supabase
           .from('sessions')
-          .select('date')
+          .select('date, numero_seance')
           .eq('client_id', clientRow.id)
           .not('date', 'is', null)
           .order('date', { ascending: true });
@@ -26163,9 +26238,12 @@ export default function App() {
         let dateDebut = '[Date non définie]';
         let dateFin = '[Date non définie]';
 
-        if (!dateError && sessionDates && sessionDates.length > 0) {
-          dateDebut = new Date(sessionDates[0].date).toLocaleDateString('fr-FR');
-          dateFin = new Date(sessionDates[sessionDates.length - 1].date).toLocaleDateString('fr-FR');
+        // LOT 3 (2026-10-20) : seulement les vraies séances (numéro ≥ 1) — avant, le bloc administratif
+        // (daté 7 jours avant la séance 1) donnait une date de début 7 jours trop tôt.
+        const _vraies = valeursFormationOrganisme({ seances: dateError ? [] : (sessionDates || []) });
+        if (_vraies.date_debut) {
+          dateDebut = _vraies.date_debut;
+          dateFin = _vraies.date_fin;
         }
 
         dataToMerge = {
@@ -26195,6 +26273,10 @@ export default function App() {
           rue_client: finalClient.rue || '',
           code_postal_client: finalClient.code_postal || '',
           ville_client: finalClient.ville || '',
+          // LOT 3 (2026-10-20) : balise {adresse_client} (adresse complète) — absente du Word jusqu'ici.
+          adresse_client: finalClient.rue
+            ? [finalClient.rue, finalClient.code_postal, finalClient.ville].filter(Boolean).join(', ')
+            : (finalClient.adresse_postale || [finalClient.code_postal, finalClient.ville].filter(Boolean).join(' ')),
           region_client: finalClient.region || '',
           adresse_session: finalClient.adresse_postale || finalClient.adresse_session || finalClient.adresse_client || '',
           modalite_formation: finalClient.modalite_formation || 'Mixte',
@@ -26361,7 +26443,7 @@ export default function App() {
           ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
           visible_admin: true,
           template_id: templateInfo.id || null, // ← lien vers le template pour incrustation signature
-          metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
+          metadata: { ..._tplMetaForInsert, ...(extraMeta || {}), destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
           // requiresTrainerSignature retiré (2026-09-03) : ce n'est pas une colonne de la table
           // `documents`, seulement un champ du JSONB metadata des templates — l'insérer en top-level
           // faisait échouer TOUT `handleGenerateDocx` avec "Could not find the 'requiresTrainerSignature'
@@ -26408,7 +26490,7 @@ export default function App() {
         if (insertErr) throw new Error('Erreur Supabase : ' + insertErr.message);
         await fetchDocuments();
         toast.success(`Document "${type}" généré.`, { id: 'gen-doc' });
-        notifyDocumentRecipients(docToInsert, type);
+        if (!(extraMeta && extraMeta.moment === 'fin')) notifyDocumentRecipients(docToInsert, type); // lot 3
         return;
       }
       // ── Fin branche visuelle ──
@@ -26544,7 +26626,7 @@ export default function App() {
         ...(_visFormateurForInsert ? { signe_par_formateur: false } : {}),
         ...(_requiresOrganismeForInsert ? { signe_par_organisme: false } : {}),
         visible_admin: true,
-        metadata: { ..._tplMetaForInsert, destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
+        metadata: { ..._tplMetaForInsert, ...(extraMeta || {}), destination_roles: _destRolesForInsert, signature_requise: !!needsSignatureForInsert },
         // requiresTrainerSignature retiré (2026-09-03), voir commentaire équivalent ci-dessus (branche visuelle).
         // organisation_id manquant ici auparavant → violait la policy RLS "documents_insert_..."
         // (elle exige organisation_id::text = app_current_org_id()::text pour un staff admin/formateur).
@@ -26589,7 +26671,7 @@ export default function App() {
       } else {
         toast.success(`Document généré et archivé.`, { id: 'gen-doc' });
       }
-      notifyDocumentRecipients(docToInsert, type);
+      if (!(extraMeta && extraMeta.moment === 'fin')) notifyDocumentRecipients(docToInsert, type); // lot 3
       return insertedDocs ? insertedDocs[0] : null;
     } catch (error) {
       console.error("Docx Error:", error);
@@ -27753,7 +27835,8 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {userRole === 'client' && (() => {
-          const docsASigner = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client')).length;
+          const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions); // lot 3
+          const docsASigner = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client') && !docDeFinVerrouille(d, _parcoursFini)).length;
           const onglets = [
             { onglet: 'accueil', label: 'Accueil', Icone: LayoutDashboard, badge: 0 },
             { onglet: 'mes_seances', label: 'Séances', Icone: CalendarCheck, badge: 0 },
@@ -28194,10 +28277,10 @@ export default function App() {
             const _signed = _clientSessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
             const _total = _clientSessions.length;
             const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
-            const _today = new Date().toISOString().split('T')[0];
+            const _today = jourLocalISO(new Date());
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
-            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client')).length;
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client') && !docDeFinVerrouille(d, isModuleCompletedForClient(currentUserId, sessions))).length;
             // UX (2026-10-12) : prochaine séance (regroupée, avec horaires et lien visio) + liste « À faire ».
             const _todayL = localTodayISO();
             const _metaDe = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
