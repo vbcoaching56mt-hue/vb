@@ -564,7 +564,24 @@ const titreSeance = (g) => {
   if (Number(g.numero) === 0) return 'Bloc administratif';
   return `Séance ${g.numero}`;
 };
-const seanceSignee = (g) => g.items.every(s => s.statut === 'Signé' || s.statut_client === 'Signé');
+// AFFICHAGE (2026-10-20) : signatures réellement attendues sur un élément de séance. Un document à
+// simple consultation, un exercice ou un dossier vide n'attend AUCUNE signature (avant, plusieurs
+// écrans affichaient « Attente » sur tout, comme si chaque élément était un émargement). Même règle
+// que les boutons « Signer » de l'espace client ; ce qui a déjà été signé reste toujours affiché.
+const signaturesAttendues = (s) => {
+  const m = lireMeta(s?.metadata);
+  const type = s?.type_activite;
+  const aSigner = type === 'signature' || !!m.isToSign
+    || (type === 'document' && !!(m.requiresSignature || m.documentType === 'signature'));
+  return {
+    client: s?.statut_client === 'Signé' || (!s?.statut_client && s?.statut === 'Signé')
+      || (aSigner && m.requiresClientSignature !== false),
+    formateur: s?.statut_formateur === 'Signé' || m.requiresTrainerSignature === true
+      || (type === 'signature' && m.requiresTrainerSignature !== false),
+  };
+};
+const seanceAttendSignature = (g) => (g?.items || []).some(s => signaturesAttendues(s).client);
+const seanceSignee = (g) => g.items.filter(s => signaturesAttendues(s).client).every(s => s.statut === 'Signé' || s.statut_client === 'Signé');
 const horaireSeance = (g) => g.heure_debut ? `${g.heure_debut}${g.heure_fin ? '–' + g.heure_fin : ''}` : '';
 
 // UX (2026-10-12) : guide « Bien démarrer » affiché sur le tableau de bord d'un nouvel admin,
@@ -5979,9 +5996,10 @@ const ClientDetailView = ({
 
                             <div className="p-4 space-y-3">
                               {group.items.map(s => {
-                                const sMeta = s.metadata || {};
-                                const clientRequired = sMeta.requiresClientSignature !== false;
-                                const coachRequired = sMeta.requiresTrainerSignature === true || (s.type_activite === 'signature' && sMeta.requiresTrainerSignature !== false);
+                                // AFFICHAGE (2026-10-20) : seulement les signatures réellement attendues (voir signaturesAttendues).
+                                const _sig = signaturesAttendues(s);
+                                const clientRequired = _sig.client;
+                                const coachRequired = _sig.formateur;
                                 return (
                                   <SessDragItem key={s.id} itemId={s.id} activeId={activeId}>
                                     <div className="flex items-center gap-4">
@@ -5994,7 +6012,10 @@ const ClientDetailView = ({
                                       <div>
                                         <h5 className="font-bold text-gray-900 text-sm">{s.ressource_titre || s.titre || s.nom || 'Activité'}</h5>
                                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                                          <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">{s.type_activite || 'Signature'}</span>
+                                          <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">{s.type_activite === 'signature' ? 'Émargement' : (s.type_activite || 'Activité')}</span>
+                                          {!clientRequired && !coachRequired ? (
+                                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-50 text-gray-400">Aucune signature</span>
+                                          ) : (
                                           <div className="flex flex-wrap items-center gap-2">
                                             {clientRequired ? (
                                               <span className={`text-[11px] font-black uppercase px-2 py-0.5 rounded-md ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
@@ -6011,6 +6032,7 @@ const ClientDetailView = ({
                                               <span className="text-[11px] font-black uppercase px-2 py-0.5 rounded-md bg-gray-100 text-gray-400">Formateur: N/A</span>
                                             )}
                                           </div>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
@@ -7158,15 +7180,20 @@ const AdminFormateursView = ({
                           {s.type_activite}
                         </span>
                       </td>
+                      {/* AFFICHAGE (2026-10-20) : « — » quand l'élément n'attend pas de signature. */}
                       <td className="p-4 text-center">
+                        {signaturesAttendues(s).client ? (
                         <span className={`px-2 py-1 rounded-lg text-[11px] font-black uppercase ${s.statut_client === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {s.statut_client === 'Signé' ? 'OK ✓' : 'Attente'}
                         </span>
+                        ) : <span className="text-gray-300 font-bold">—</span>}
                       </td>
                       <td className="p-4 text-center">
+                        {signaturesAttendues(s).formateur ? (
                         <span className={`px-2 py-1 rounded-lg text-[11px] font-black uppercase ${s.statut_formateur === 'Signé' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                           {s.statut_formateur === 'Signé' ? 'OK ✓' : 'Attente'}
                         </span>
+                        ) : <span className="text-gray-300 font-bold">—</span>}
                       </td>
                     </tr>
                   ))}
@@ -7568,7 +7595,7 @@ const IngenierieView = ({
                     </button>
                   </div>
                 )}
-                <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{mod.seances_prevues} Séance(s)</span>
+                <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-1.5 rounded-xl absolute top-5 right-5">{templates.length > 0 ? templates.filter(t => Number(t.ordre) >= 1).length : (Number(mod.seances_prevues) || 0)} Séance(s)</span>
 
                 <div className="flex gap-2 flex-wrap mt-6">
                   <button onClick={() => setModelingModuleId(modelingModuleId === mod.id ? null : mod.id)} className="text-xs font-bold text-indigo-600 hover:text-white hover:bg-indigo-600 flex items-center bg-white border border-indigo-200 px-4 py-2 rounded-lg transition-all">⚙️ Modéliser Parcours</button>
@@ -8872,11 +8899,14 @@ const FormateurView = ({
                                     <td colSpan="2" className="mst-hide px-4 py-3 text-xs text-gray-400 italic">Mêmes date et horaires que la séance</td>
                                     <td className="px-4 py-3">
                                       <div className="flex flex-col gap-1">
+                                        {/* AFFICHAGE (2026-10-20) : seulement les signatures réellement attendues. */}
+                                        {signaturesAttendues(session).client && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[11px] font-black uppercase text-gray-500">Client : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
                                         </div>
-                                        {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
+                                        )}
+                                        {signaturesAttendues(session).formateur && (
                                         <div className="flex items-center gap-1.5">
                                           <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
                                           <span className="text-[11px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
@@ -13208,8 +13238,10 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
   const signedDocs = issuedDocs.filter(d => d.signe_par_client && d.signe_par_formateur);
   const weekSessions = sessions.filter(s => s.date >= weekStartStr && s.date <= weekEndStr);
   const todaySessions = sessions.filter(s => s.date === todayStr);
-  const completedSessions = sessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
-  const completionRate = sessions.length > 0 ? Math.round((completedSessions / sessions.length) * 100) : 0;
+  // AFFICHAGE (2026-10-20) : on ne compte que les éléments qui attendent une signature du client.
+  const sessionsASigner = sessions.filter(s => signaturesAttendues(s).client);
+  const completedSessions = sessionsASigner.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
+  const completionRate = sessionsASigner.length > 0 ? Math.round((completedSessions / sessionsASigner.length) * 100) : 0;
   const upcomingGroups = regrouperParSeance(sessions.filter(s => s.date >= todayStr)).slice(0, 5);
   const weekGroups = regrouperParSeance(weekSessions);
   const todayGroups = regrouperParSeance(todaySessions);
@@ -13242,7 +13274,7 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
         <div className="bg-white rounded-2xl p-5 border border-emerald-100 shadow-sm">
           <p className="text-xs font-black text-emerald-500 uppercase tracking-widest">Complétion</p>
           <p className="text-3xl font-black text-emerald-500 mt-2">{completionRate}%</p>
-          <p className="text-xs text-gray-400 mt-1">{completedSessions}/{sessions.length} émargements</p>
+          <p className="text-xs text-gray-400 mt-1">{completedSessions}/{sessionsASigner.length} signatures</p>
         </div>
       </div>
 
@@ -13464,6 +13496,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                 const fId = gs?.formateur_id || grp?.formateur_id;
                 const fNom = (formateurs || []).find(f => String(f.id) === String(fId))?.nom;
                 const nbSignes = g.membres.filter(seanceSignee).length;
+                const aSigner = g.membres.some(seanceAttendSignature); // AFFICHAGE (2026-10-20)
                 const lien = g.items.map(i => lireMeta(i.metadata).lien_visio).find(isSafeVisioUrl);
                 return (
                   <div key={g.cle} className="px-5 py-4">
@@ -13483,13 +13516,13 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                           <ul className="mt-1 text-xs text-gray-600 space-y-0.5">
                             {g.membres.map(m => {
                               const c = clients.find(x => x.id === m.client_id);
-                              return <li key={m.cle}>{seanceSignee(m) ? '✓' : '○'} {c?.nom || 'Participant'}</li>;
+                              return <li key={m.cle}>{aSigner ? (seanceSignee(m) ? '✓ ' : '○ ') : '• '}{c?.nom || 'Participant'}</li>;
                             })}
                           </ul>
                         </details>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-xs font-black px-2 py-1 rounded-lg ${nbSignes === g.membres.length ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{nbSignes}/{g.membres.length} signés</span>
+                        {aSigner && <span className={`text-xs font-black px-2 py-1 rounded-lg ${nbSignes === g.membres.length ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{nbSignes}/{g.membres.length} signés</span>}
                         {onOpenGroupe && <button onClick={() => onOpenGroupe(g.groupe_id)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Ouvrir le groupe</button>}
                       </div>
                     </div>
@@ -13508,6 +13541,7 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
               const noteSeance = metas.map(m => m.note_seance).find(Boolean);
               const canEdit = userRole === 'formateur' || userRole === 'admin';
               const signee = seanceSignee(g);
+              const aSignerSeance = seanceAttendSignature(g); // AFFICHAGE (2026-10-20)
               return (
                 <div key={g.cle} className="px-5 py-4">
                   <div className="flex items-center justify-between gap-3">
@@ -13522,9 +13556,11 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      {aSignerSeance && (
                       <span className={`text-xs font-black px-2 py-1 rounded-lg ${signee ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                         {signee ? '✓ Signé' : 'En attente'}
                       </span>
+                      )}
                       {canEdit && (
                         <button
                           onClick={() => setEditingSeanceSession(s)}
@@ -14036,11 +14072,14 @@ const SessionsView = ({
   // Badges de statut (Moi / Formateur) — partagés entre les deux vues.
   const renderStatus = (session) => (
     <div className="flex flex-col gap-1 items-start md:items-center">
+      {/* AFFICHAGE (2026-10-20) : seulement les signatures réellement attendues. */}
+      {signaturesAttendues(session).client && (
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_client === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
         <span className="text-[11px] font-black uppercase text-gray-500">Vous : {session.statut_client || (session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
       </div>
-      {(session.metadata?.requiresTrainerSignature === true || (session.type_activite === 'signature' && session.metadata?.requiresTrainerSignature !== false)) && (
+      )}
+      {signaturesAttendues(session).formateur && (
       <div className="flex items-center gap-1.5">
         <span className={`w-1.5 h-1.5 rounded-full ${session.statut_formateur === 'Signé' ? 'bg-green-500' : 'bg-orange-400'}`}></span>
         <span className="text-[11px] font-black uppercase text-gray-500">Formateur : {session.statut_formateur || (session.type_activite === 'signature' && session.statut === 'Signé' ? 'Signé' : 'À venir')}</span>
@@ -21006,14 +21045,14 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
     if (lignes.length === 0 && mod?.seances_prevues) {
       lignes = Array.from({ length: Number(mod.seances_prevues) || 0 }, (_, i) => ({ numero: i + 1, titre: `Séance ${i + 1}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: false }));
     }
-    if (lignes.length === 0) lignes = [{ numero: 1, titre: 'Séance 1', date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true }];
+    if (lignes.length === 0) lignes = [{ numero: 1, titre: 'Séance 1', date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true, emargement: true }];
     setSeances(lignes);
     setSeancesPour(cle);
   };
   const majSeance = (i, k, v) => setSeances(prev => prev.map((s, j) => (j === i ? { ...s, [k]: v } : s)));
   const ajouterSeance = () => setSeances(prev => {
     const n = prev.reduce((m, s) => Math.max(m, Number(s.numero) || 0), 0) + 1;
-    return [...prev, { numero: n, titre: `Séance ${n}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true }];
+    return [...prev, { numero: n, titre: `Séance ${n}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true, emargement: true }];
   });
 
   const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: infos.module_id }), [texte, choisis, clients, groupes, infos.module_id]);
@@ -21116,6 +21155,12 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
                     {s.ajoutee
                       ? <input aria-label={`Titre de la séance ${s.numero}`} value={s.titre} onChange={e => majSeance(i, 'titre', e.target.value)} className="mt-1 w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs" />
                       : (!/^Séance \d+$/.test(s.titre || '') && <p className="text-xs text-gray-500 truncate">{s.titre}</p>)}
+                    {s.ajoutee && (
+                      <label className="mt-1.5 flex items-center gap-1.5 text-[11px] font-bold text-gray-600 cursor-pointer select-none" title="Séance hors module : une feuille d'émargement est ajoutée au dossier de chaque participant si la case est cochée">
+                        <input type="checkbox" checked={s.emargement !== false} onChange={e => majSeance(i, 'emargement', e.target.checked)} className="rounded text-violet-600" />
+                        Feuille d'émargement
+                      </label>
+                    )}
                   </div>
                   <div><label htmlFor={`grp-d-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Date</label><input id={`grp-d-${i}`} type="date" value={s.date} onChange={e => majSeance(i, 'date', e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
                   <div><label htmlFor={`grp-hd-${i}`} className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id={`grp-hd-${i}`} type="time" value={s.heure_debut} onChange={e => majSeance(i, 'heure_debut', e.target.value)} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
@@ -21213,6 +21258,9 @@ const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujo
         <div className="flex items-center gap-2 flex-wrap">
           {stats.attendus > 0 && (
             <span className={`text-xs font-black px-2 py-1 rounded-lg ${stats.signes === stats.attendus ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{stats.signes}/{stats.attendus} signés</span>
+          )}
+          {stats.attendus === 0 && seance.ajoutee && seance.emargement === false && (
+            <span className="text-xs font-bold px-2 py-1 rounded-lg bg-gray-50 text-gray-400">Sans émargement</span>
           )}
           {estPassee && stats.attendus > stats.signes && (
             <span className="text-xs font-black px-2 py-1 rounded-lg bg-amber-50 text-amber-700">{stats.attendus - stats.signes} en attente</span>
@@ -21353,6 +21401,10 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
               <div><label htmlFor="ns-d" className="block text-[11px] font-bold text-gray-500 mb-1">Date</label><input id="ns-d" type="date" value={ajoutSeance.date} onChange={e => setAjoutSeance(p => ({ ...p, date: e.target.value }))} className="px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
               <div><label htmlFor="ns-hd" className="block text-[11px] font-bold text-gray-500 mb-1">Début</label><input id="ns-hd" type="time" value={ajoutSeance.heure_debut} onChange={e => setAjoutSeance(p => ({ ...p, heure_debut: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
               <div><label htmlFor="ns-hf" className="block text-[11px] font-bold text-gray-500 mb-1">Fin</label><input id="ns-hf" type="time" value={ajoutSeance.heure_fin} onChange={e => setAjoutSeance(p => ({ ...p, heure_fin: e.target.value }))} className="w-28 px-2 py-2 rounded-lg border border-gray-200 text-sm" /></div>
+              <label className="flex items-center gap-1.5 py-2 text-xs font-bold text-gray-600 cursor-pointer select-none" title="Une feuille d'émargement est ajoutée au dossier de chaque participant si la case est cochée">
+                <input type="checkbox" checked={ajoutSeance.emargement !== false} onChange={e => setAjoutSeance(p => ({ ...p, emargement: e.target.checked }))} className="rounded text-violet-600" />
+                Feuille d'émargement
+              </label>
               <div className="flex gap-2">
                 <button onClick={() => setAjoutSeance(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
                 <button disabled={ajoutSeance.enCours} onClick={async () => {
@@ -21363,7 +21415,7 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
               </div>
             </div>
           ) : (
-            <button onClick={() => setAjoutSeance({ titre: '', date: '', heure_debut: '', heure_fin: '' })} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm hover:bg-violet-100"><CalendarPlus size={16} /> Ajouter une séance</button>
+            <button onClick={() => setAjoutSeance({ titre: '', date: '', heure_debut: '', heure_fin: '', emargement: true })} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-50 text-violet-700 font-bold text-sm hover:bg-violet-100"><CalendarPlus size={16} /> Ajouter une séance</button>
           )}
           <p className="text-xs text-gray-500">Une modification ici s'applique au dossier de chaque participant (son espace, ses rappels, le calendrier).</p>
         </div>
@@ -22754,6 +22806,24 @@ export default function App() {
       seancesAjoutees.forEach(s => {
         if ((deja || []).some(d => String(d.client_id) === String(cid) && Number(d.numero_seance) === Number(s.numero))) return;
         ajoutsParClient[cid] = (ajoutsParClient[cid] || 0) + 1;
+        // 2026-10-20 : émargement décoché → simple dossier de séance (comme une séance vide du module),
+        // pour que la séance, sa date et ses horaires apparaissent quand même dans le dossier.
+        if (s.emargement === false) {
+          lignes.push({
+            client_id: cid,
+            module_id: client?.module_id || groupe?.module_id || null,
+            organisation_id: currentOrgId,
+            numero_seance: Number(s.numero),
+            nom: s.titre || `Séance ${s.numero}`,
+            type_activite: 'Dossier (Vide)',
+            is_administrative: false,
+            position: 0,
+            metadata: { isCustom: true, documentType: 'info', groupe_id: groupe?.id || null },
+            statut: 'À venir', statut_client: 'À venir', statut_formateur: 'À venir',
+            date: s.date || null, heure_debut: s.heure_debut || null, heure_fin: s.heure_fin || null,
+          });
+          return;
+        }
         lignes.push({
           client_id: cid,
           module_id: client?.module_id || groupe?.module_id || null,
@@ -22853,6 +22923,8 @@ export default function App() {
         groupe_id: g.id, organisation_id: currentOrgId, numero: Number(s.numero), titre: s.titre || null,
         date: s.date || null, heure_debut: s.heure_debut || null, heure_fin: s.heure_fin || null,
         formateur_id: s.formateur_id ? Number(s.formateur_id) : null, ajoutee: !!s.ajoutee,
+        // 2026-10-20 : envoyé seulement quand on DÉcoche l'émargement (sinon comportement d'avant).
+        ...(s.ajoutee && s.emargement === false ? { emargement: false } : {}),
       }));
       let seancesGroupe = [];
       if (lignes.length) {
@@ -22906,6 +22978,7 @@ export default function App() {
       const { data: s, error } = await supabase.from('groupe_seances').insert([{
         groupe_id: groupe.id, organisation_id: currentOrgId, numero, titre: (data.titre || '').trim() || null,
         date: data.date || null, heure_debut: data.heure_debut || null, heure_fin: data.heure_fin || null, ajoutee: true,
+        ...(data.emargement === false ? { emargement: false } : {}),
       }]).select().single();
       if (error) throw new Error(error.message);
       await creerSeancesSupplementaires(ids, [s], groupe);
