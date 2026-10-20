@@ -118,6 +118,33 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
+// ─── CONSERVATION DES SIGNATURES (2026-10-20, lot 2) ──────────────────────────────────────────────
+// Un document ou un élément de séance signé par QUI QUE CE SOIT (client, formateur, organisme) n'est
+// jamais supprimé ni remplacé depuis l'application. Vérification faite sur la base (données à jour).
+const MESSAGE_DOCUMENT_SIGNE = 'Ce document est signé : il est conservé dans le dossier et ne peut pas être supprimé.';
+const documentEstSigne = (d) => !!(d && (d.signe_par_client || d.signe_par_formateur || d.signe_par_organisme
+  || d.statut === 'Signé' || d.signed_pdf_url));
+const elementSeanceEstSigne = (s) => {
+  if (!s) return false;
+  let m = s.metadata;
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch (_) { m = {}; } }
+  return !!(s.statut_client === 'Signé' || s.statut_formateur === 'Signé' || s.statut === 'Signé'
+    || s.signed_pdf_url || s.signature_client || s.signature_formateur || (m && m.file_url_signed));
+};
+// Relit le document en base : true si on peut le supprimer, sinon message et false.
+const peutSupprimerDocument = async (id) => {
+  const { data, error } = await supabase.from('documents').select('*').eq('id', id).maybeSingle();
+  if (error) { toast.error('Vérification impossible, suppression annulée : ' + error.message); return false; }
+  if (documentEstSigne(data)) { toast.error(MESSAGE_DOCUMENT_SIGNE, { duration: 7000 }); return false; }
+  return true;
+};
+const peutSupprimerElementSeance = async (id) => {
+  const { data, error } = await supabase.from('sessions').select('*').eq('id', id).maybeSingle();
+  if (error) { toast.error('Vérification impossible, suppression annulée : ' + error.message); return false; }
+  if (elementSeanceEstSigne(data)) { toast.error('Cet élément a déjà été signé : il est conservé dans le dossier et ne peut pas être supprimé.', { duration: 7000 }); return false; }
+  return true;
+};
+
 // ─── SIGNATURES (2026-10-20) : documents « à signer » placés dans une séance ─────────────────────
 // Lit un fichier du stockage pour le retravailler (lien temporaire, sinon lien public).
 const lireFichierStockage = async (rawUrl) => {
@@ -4889,6 +4916,7 @@ const ClientDetailView = ({
   };
 
   const handleDeleteAdminDoc = async (docId) => {
+    if (!(await peutSupprimerDocument(docId))) return; // lot 2 : jamais un document signé
     const { error } = await supabase.from('documents').delete().eq('id', docId);
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
     toast.success('Document supprimé.');
@@ -5060,6 +5088,7 @@ const ClientDetailView = ({
       'Cette action est irréversible. La séance sera définitivement supprimée.',
       async () => {
         hideDeleteConfirm();
+        if (!(await peutSupprimerElementSeance(id))) return; // lot 2 : jamais un élément signé
         const { error } = await supabase.from('sessions').delete().eq('id', id);
         if (error) { toast.error('Erreur suppression : ' + error.message); return; }
         if (fetchSessions) fetchSessions();
@@ -6258,7 +6287,7 @@ const ClientDetailView = ({
                 <div className="flex items-center gap-2">
                   <button onClick={() => setViewingDocId && setViewingDocId(doc.id)} className="p-2 text-indigo-500 hover:bg-indigo-50 bg-gray-50 rounded-lg transition-colors" title="Voir"><Eye size={18} /></button>
                   <button onClick={() => handleDownloadNamedFile({ url: doc.url || doc.file_url, nom: doc.nom }, client.nom_complet || client.nom)} className="p-2 text-gray-400 hover:text-indigo-600 bg-gray-50 rounded-lg" title="Télécharger"><Download size={18} /></button>
-                  <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
+                  <button onClick={() => showDeleteConfirm(`Supprimer "${doc.nom}" ?`, 'Ce document sera définitivement supprimé.', async () => { hideDeleteConfirm(); if (!(await peutSupprimerDocument(doc.id))) return; await supabase.from('documents').delete().eq('id', doc.id); fetchDocuments && await fetchDocuments(); })} className="p-2 text-gray-300 hover:text-red-500 bg-gray-50 rounded-lg transition-colors" title="Supprimer"><Trash2 size={18} /></button>
                 </div>
               </div>
               );
@@ -6631,6 +6660,7 @@ const FormateurDetailView = ({
     // Scopé strictement à l'organisme courant — plus aucune tolérance pour les lignes historiques
     // sans organisation_id (elles ont été rattachées à leur organisme d'origine par migration SQL).
     if (!currentOrgId) { toast.error('Organisme introuvable — suppression annulée par sécurité.'); return; }
+    if (!(await peutSupprimerDocument(docToDelete.id))) { setDocToDelete(null); return; } // lot 2
     const delQuery = supabase.from('documents').delete().eq('id', docToDelete.id).eq('organisation_id', currentOrgId);
     const { error } = await delQuery;
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); console.error('[handleDeleteDoc]', error); }
@@ -8112,6 +8142,7 @@ const FormateurView = ({
   };
 
   const handleDeleteDossierDoc = async (docId) => {
+    if (!(await peutSupprimerDocument(docId))) return; // lot 2 : jamais un document signé
     const { error } = await supabase.from('documents').delete().eq('id', docId);
     if (error) { toast.error('Erreur lors de la suppression : ' + error.message); return; }
     toast.success('Document supprimé.');
@@ -11876,7 +11907,7 @@ const DocumentsView = ({
         }]);
         if (msrErr) throw msrErr;
       }
-      let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
+      let docQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null).is('assigned_formateur_id', null); // lot 2
       docQuery = currentOrgId ? docQuery.eq('organisation_id', currentOrgId) : docQuery.limit(0);
       const { data: existingDoc } = await docQuery;
       if (existingDoc && existingDoc.length > 0) {
@@ -12001,15 +12032,10 @@ const DocumentsView = ({
 
   const handleDeleteIssuedDoc = async () => {
     if (!issuedDocToDelete) return;
-    // Supprimer du Storage si URL présente
-    if (issuedDocToDelete.url) {
-      try {
-        const urlParts = issuedDocToDelete.url.split('/storage/v1/object/public/documents/');
-        if (urlParts.length > 1) {
-          await supabase.storage.from('documents').remove([decodeURIComponent(urlParts[1])]);
-        }
-      } catch (e) { console.warn('Storage remove error:', e); }
-    }
+    // LOT 2 (2026-10-20) : un document signé n'est jamais supprimé, et le FICHIER n'est plus effacé du
+    // stockage — c'était souvent le modèle partagé par tous les autres clients, ou un PDF signé. Les
+    // fichiers devenus inutiles seront nettoyés à part.
+    if (!(await peutSupprimerDocument(issuedDocToDelete.id))) { setIssuedDocToDelete(null); return; }
     const { error } = await supabase.from('documents').delete().eq('id', issuedDocToDelete.id);
     if (error) { toast.error('Erreur suppression : ' + error.message); }
     else { toast.success('Document supprimé.'); if (fetchDocuments) fetchDocuments(); }
@@ -23070,12 +23096,19 @@ export default function App() {
     supprimerSeanceGroupe: async (seance) => {
       if (!seance.ajoutee) throw new Error('Les séances du module ne peuvent pas être supprimées depuis le groupe.');
       const ids = idsParticipants(seance.groupe_id);
-      const lignes = sessions.filter(s => ids.some(id => String(id) === String(s.client_id)) && Number(s.numero_seance) === Number(seance.numero));
-      if (lignes.some(s => s.statut_client === 'Signé' || s.statut_formateur === 'Signé')) {
+      // LOT 2 (2026-10-20) : lignes relues en base (pas seulement l'écran), et seules ces lignes-là
+      // sont supprimées — jamais si l'une d'elles est signée.
+      let lignes = [];
+      if (ids.length) {
+        const { data: lu, error: errLu } = await supabase.from('sessions').select('*').in('client_id', ids).eq('numero_seance', seance.numero);
+        if (errLu) throw new Error(errLu.message);
+        lignes = lu || [];
+      }
+      if (lignes.some(elementSeanceEstSigne)) {
         throw new Error('Cette séance a déjà été signée par au moins une personne : elle ne peut pas être supprimée.');
       }
-      if (ids.length) {
-        const { error } = await supabase.from('sessions').delete().in('client_id', ids).eq('numero_seance', seance.numero);
+      if (lignes.length) {
+        const { error } = await supabase.from('sessions').delete().in('id', lignes.map(l => l.id));
         if (error) throw new Error(error.message);
         const parClient = {};
         lignes.forEach(s => { parClient[s.client_id] = true; });
@@ -23874,10 +23907,10 @@ export default function App() {
 
     // Anti-doublon : ne pas recréer un document déjà existant pour ce client
     const { data: existing } = await supabase.from('documents')
-      .select('id, url, signe_par_client, metadata').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
+      .select('id, url, signe_par_client, signe_par_formateur, signe_par_organisme, statut, signed_pdf_url, metadata').eq('user_id', client.id).eq('nom', templateResource.titre).maybeSingle();
     if (existing) {
       if (!hasVisualFields) return; // doc classique : anti-doublon strict
-      if (existing.signe_par_client) return; // SIGNÉ : ne jamais écraser
+      if (documentEstSigne(existing)) return; // SIGNÉ (par qui que ce soit, lot 2) : ne jamais écraser
       // Vérifier si le doc a déjà été préparé avec le nouveau système (metadata.fields + resolved_values)
       const existMeta = (() => { try { return typeof existing.metadata === 'string' ? JSON.parse(existing.metadata) : (existing.metadata || {}); } catch { return {}; } })();
       if (existMeta.prefilled === true) return; // PDF pré-généré → skip (format le plus récent)
@@ -24220,20 +24253,22 @@ export default function App() {
         if (!meta.has_visual_fields) continue; // ignorer les non-visuels
 
         // Supprimer les docs non signés avec l'URL brute du template (pour forcer régénération)
-        await supabase.from('documents').delete()
-          .eq('user_id', clientId)
-          .eq('nom', res.titre)
-          .eq('signe_par_client', false);
+        // LOT 2 (2026-10-20) : seulement les documents que PERSONNE n'a signés.
+        {
+          const { data: cands } = await supabase.from('documents').select('*').eq('user_id', clientId).eq('nom', res.titre);
+          const aSuppr = (cands || []).filter(d => !documentEstSigne(d)).map(d => d.id);
+          if (aSuppr.length) await supabase.from('documents').delete().in('id', aSuppr);
+        }
 
         // Destination "Les deux" : une COPIE SÉPARÉE existe aussi pour le formateur assigné
         // (user_id NULL, assigned_formateur_id renseigné à la place — voir instantiateDocument) —
         // sans ce nettoyage, cette copie-là restait figée avec l'ancienne métadonnée (sans
         // signature_fields) même après une "régénération" côté client.
         if ((res.destination || 'client') === 'both' && fullClient.formateur_id) {
-          await supabase.from('documents').delete()
-            .eq('assigned_formateur_id', fullClient.formateur_id)
-            .eq('nom', res.titre)
-            .eq('signe_par_formateur', false);
+          const { data: cands } = await supabase.from('documents').select('*')
+            .eq('assigned_formateur_id', fullClient.formateur_id).eq('nom', res.titre).is('user_id', null);
+          const aSuppr = (cands || []).filter(d => !documentEstSigne(d)).map(d => d.id);
+          if (aSuppr.length) await supabase.from('documents').delete().in('id', aSuppr);
         }
       }
 
@@ -25382,6 +25417,7 @@ export default function App() {
 
     showAppConfirm(confirmTitle, confirmMsg, async () => {
       hideAppConfirm();
+      if (!(await peutSupprimerElementSeance(session.id))) return; // lot 2 : jamais un élément signé
       const { error: delError } = await supabase.from('sessions').delete().eq('id', session.id);
       if (!delError) {
         if (!isCustom) {
@@ -25484,7 +25520,7 @@ export default function App() {
       }
 
       // Sync avec documents
-      let docCheckQuery = supabase.from('documents').select('id').eq('nom', type).is('user_id', null);
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', type).is('user_id', null).is('assigned_formateur_id', null); // lot 2
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
@@ -25652,7 +25688,7 @@ export default function App() {
 
       // 4. Sync avec table documents (Modèle Référence) — stocker visual_template_id + champs pour Priority 2
       const visualDocMeta = JSON.stringify({ has_visual_fields: true, visual_template_id: msrId, template_fields: embeddedFields });
-      let docCheckQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null);
+      let docCheckQuery = supabase.from('documents').select('id').eq('nom', name).is('user_id', null).is('assigned_formateur_id', null); // lot 2
       if (currentOrgId) docCheckQuery = docCheckQuery.eq('organisation_id', currentOrgId);
       const { data: existingDoc } = await docCheckQuery;
       if (existingDoc && existingDoc.length > 0) {
@@ -25762,8 +25798,9 @@ export default function App() {
       // Extraction du nom du fichier pour le storage
       const fileName = template.url.split('/').pop().split('?')[0];
 
-      // 1. Supprimer du storage
-      await supabase.storage.from('documents').remove([fileName]);
+      // 1. LOT 2 (2026-10-20) : le fichier n'est PLUS supprimé du stockage — les documents déjà
+      // envoyés aux clients (y compris signés) l'utilisent encore. Nettoyage des fichiers inutiles à part.
+      void fileName;
 
       // 2. Supprimer de documents (Modèle Référence) — limité à l'organisme courant (+ lignes
       // historiques sans organisation_id). Avant ce correctif, aucun filtre d'organisme n'existait :
