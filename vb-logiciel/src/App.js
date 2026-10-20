@@ -118,6 +118,71 @@ const resolveFileUrl = (rawUrl) => {
   return data?.publicUrl || null;
 };
 
+// ─── SIGNATURES (2026-10-20) : documents « à signer » placés dans une séance ─────────────────────
+// Lit un fichier du stockage pour le retravailler (lien temporaire, sinon lien public).
+const lireFichierStockage = async (rawUrl) => {
+  let url = null;
+  try {
+    const ext = extractStorageBucketAndPath(rawUrl);
+    if (ext) {
+      const { data, error } = await supabase.storage.from(ext.bucket).createSignedUrl(ext.path, 300);
+      if (!error && data?.signedUrl) url = data.signedUrl;
+    }
+  } catch (_) { /* repli sur le lien public */ }
+  if (!url) url = resolveFileUrl(rawUrl);
+  if (!url) throw new Error('fichier du document introuvable');
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`lecture du document impossible (HTTP ${r.status})`);
+  return r.blob();
+};
+
+// Construit le PDF signé d'un document de séance pour UN signataire (role = 'client' | 'formateur').
+// Part de la DERNIÈRE version (déjà signée par l'autre partie le cas échéant). La signature, les cases
+// et les textes sont posés aux emplacements prévus (balises signature_/checkbox_/texte_<role>) ; sans
+// emplacement de signature, la signature est ajoutée en bas de la dernière page (client à gauche,
+// formateur à droite), avec le nom et la date. Lève une erreur si quoi que ce soit échoue.
+const construirePdfSigneSeance = async ({ sourceUrl, meta, role, signatureDataUrl, checkedIds, textValues, nomSignataire }) => {
+  let blob = await lireFichierStockage(sourceUrl);
+  if (/\.(docx|doc)$/i.test(String(sourceUrl).split('?')[0])) {
+    const docx = new Blob([await blob.arrayBuffer()], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    try { blob = await convertDocxBlobToPdf(docx); } catch (_) { blob = await convertDocxBlobToPdfLocal(docx); }
+  } else {
+    blob = new Blob([await blob.arrayBuffer()], { type: 'application/pdf' });
+  }
+  const m = meta || {};
+  const champs = (Array.isArray(m.signature_fields) && m.signature_fields.length > 0) ? m.signature_fields
+    : (Array.isArray(m.template_fields) && m.template_fields.length > 0) ? m.template_fields
+    : (Array.isArray(m.fields) ? m.fields : []);
+  const tags = [`signature_${role}`, `checkbox_${role}`, `texte_${role}`];
+  const mesChamps = champs.filter(f => tags.includes(f.tag));
+  const coches = checkedIds instanceof Set ? checkedIds
+    : new Set(Array.isArray(checkedIds) ? checkedIds : Object.keys(checkedIds || {}).filter(k => checkedIds[k]));
+  const textes = textValues instanceof Map ? Object.fromEntries(textValues) : (textValues || {});
+  let signaturePosee = false;
+  if (mesChamps.length > 0) {
+    const checkedMap = {};
+    mesChamps.filter(f => f.tag === `checkbox_${role}`).forEach(f => { const k = fieldKey(f); if (coches.has(k)) checkedMap[k] = true; });
+    const textMap = {};
+    mesChamps.filter(f => f.tag === `texte_${role}`).forEach(f => { const k = fieldKey(f); if (textes[k]) textMap[k] = textes[k]; });
+    blob = await overlayFieldsOnPdf(blob, mesChamps, {}, signatureDataUrl ? { [`signature_${role}`]: signatureDataUrl } : {}, checkedMap, textMap);
+    signaturePosee = !!signatureDataUrl && mesChamps.some(f => f.tag === `signature_${role}`);
+  }
+  const pdfDoc = await PDFDocument.load(await blob.arrayBuffer(), { ignoreEncryption: true });
+  if (signatureDataUrl && !signaturePosee) {
+    const pages = pdfDoc.getPages();
+    const page = pages[pages.length - 1];
+    const { width } = page.getSize();
+    const img = await pdfDoc.embedPng(Uint8Array.from(atob(signatureDataUrl.split(',')[1]), c => c.charCodeAt(0)));
+    const k = Math.min(160 / img.width, 60 / img.height, 1);
+    const x = role === 'client' ? 60 : Math.max(width / 2 + 40, 60), y = 110;
+    page.drawImage(img, { x, y, width: img.width * k, height: img.height * k });
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    if (nomSignataire) page.drawText(String(nomSignataire).slice(0, 60), { x, y: y - 14, size: 8, font, color: rgb(0.2, 0.2, 0.2) });
+    page.drawText(`Signé le ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`, { x, y: y - 26, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+  }
+  return new Blob([await pdfDoc.save()], { type: 'application/pdf' });
+};
+
 // --- Ouverture sécurisée d'un fichier de stockage ---
 // Au lieu d'ouvrir directement l'URL publique (permanente, devinable, partageable sans limite),
 // on génère un lien signé à courte durée de vie (5 min) avant d'ouvrir l'onglet.
@@ -1026,6 +1091,10 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
   const [fDrawing, setFDrawing] = useState(false);
   const [cDrawing, setCDrawing] = useState(false);
   const isClient = signerRole === 'client';
+  // SIGNATURES (2026-10-20) : un seul envoi à la fois (avant : double clic = séance comptée 2 fois).
+  const [envoiEnCours, setEnvoiEnCours] = useState(false);
+  const envoiRef = useRef(false);
+  useEffect(() => { envoiRef.current = false; setEnvoiEnCours(false); }, [isOpen]);
 
   // FIX (2026-09-14, v2) : la 1ère correction (ratio canvas.width/rect.width appliqué aux coordonnées
   // souris) n'a pas suffi — une formatrice a de nouveau signalé un décalage net et constant ("ma
@@ -1084,16 +1153,20 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
     return !Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data).some(v => v !== 0);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (envoiRef.current) return;
+    let fSig = null, cSig = null;
     if (isClient) {
       if (isEmpty(cCanvasRef.current)) { toast.error('Votre signature est requise.'); return; }
-      onSave(null, cCanvasRef.current.toDataURL('image/png'));
+      cSig = cCanvasRef.current.toDataURL('image/png');
     } else {
       if (isEmpty(fCanvasRef.current)) { toast.error('La signature du formateur est requise.'); return; }
-      const fSig = fCanvasRef.current.toDataURL('image/png');
       // Le formateur ne peut pas signer à la place du client (légal)
-      onSave(fSig, null);
+      fSig = fCanvasRef.current.toDataURL('image/png');
     }
+    envoiRef.current = true; setEnvoiEnCours(true);
+    try { await onSave(fSig, cSig); }
+    finally { envoiRef.current = false; setEnvoiEnCours(false); }
   };
 
   if (!isOpen) return null;
@@ -1137,7 +1210,7 @@ const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = '
         </div>
         <div className="flex justify-between gap-3">
           <button onClick={onClose} className="px-5 py-3 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
-          <button onClick={handleSave} className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg">{isClient ? 'Valider ma signature' : "Valider l'émargement"}</button>
+          <button onClick={handleSave} disabled={envoiEnCours} className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors shadow-lg disabled:opacity-50">{envoiEnCours ? 'Enregistrement…' : (isClient ? 'Valider ma signature' : "Valider l'émargement")}</button>
         </div>
       </div>
     </div>
@@ -1513,6 +1586,10 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const isDrawingRef = useRef(false);
   const lastPosRef = useRef(null);
   const [hasSig, setHasSig] = useState(false);
+  // SIGNATURES (2026-10-20) : un seul envoi à la fois (avant : double clic = double enregistrement).
+  const [enregistrementSig, setEnregistrementSig] = useState(false);
+  const enregistrementSigRef = useRef(false);
+  useEffect(() => { enregistrementSigRef.current = false; setEnregistrementSig(false); }, [isOpen, url]);
   const [documentChoice, setDocumentChoice] = useState(null); // 'autorise' | 'refuse' | null
   const [checkedBoxIds, setCheckedBoxIds] = useState(() => new Set());
   // Au moins UNE case cochée suffit à débloquer la signature (pas besoin de toutes les cocher).
@@ -2217,8 +2294,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                 <div className="flex justify-end gap-3">
                   <button onClick={onClose} className="px-5 py-2.5 text-gray-700 font-bold hover:bg-gray-100 rounded-xl transition-colors text-sm">Annuler</button>
                   <button
-                    onClick={() => {
-                      if (!onSave) return;
+                    onClick={async () => {
+                      if (!onSave || enregistrementSigRef.current) return;
                       const canvas = sigCanvasRef.current;
                       let sigDataUrl = null;
                       if (canvas && hasSig) {
@@ -2234,12 +2311,14 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
                         ctx.putImageData(imgData, 0, 0);
                         sigDataUrl = tmp.toDataURL('image/png');
                       }
-                      onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues);
+                      enregistrementSigRef.current = true; setEnregistrementSig(true);
+                      try { await onSave(sigDataUrl, isInteractiveConsent ? documentChoice : null, checkedBoxIds, textFieldValues); }
+                      finally { enregistrementSigRef.current = false; setEnregistrementSig(false); }
                     }}
-                    disabled={!agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || (requiresSignature && !hasSig)}
-                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                    disabled={enregistrementSig || !agreed || (isInteractiveConsent && !documentChoice) || !allRequiredChecked || (requiresSignature && !hasSig)}
+                    className={`px-6 py-2.5 font-bold rounded-xl transition-all text-sm shadow-lg ${(!enregistrementSig && agreed && (!isInteractiveConsent || documentChoice) && allRequiredChecked && (!requiresSignature || hasSig)) ? 'bg-violet-700 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                   >
-                    Signer ce document
+                    {enregistrementSig ? 'Enregistrement…' : 'Signer ce document'}
                   </button>
                 </div>
               </div>
@@ -14012,7 +14091,8 @@ const SessionsView = ({
                 signSession && signSession(session);
               } else {
                 const fileUrl = docUrl || null;
-                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign' });
+                // SIGNATURES (2026-10-20) : source 'session' → enregistré sur la séance (voir signerDocumentDeSeance).
+                setViewingSession && setViewingSession({ session: { ...session, file_url: fileUrl }, mode: 'sign', source: 'session' });
               }
             }}
             className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-all ${
@@ -24987,6 +25067,54 @@ export default function App() {
     }
   };
 
+  // SIGNATURES (2026-10-20) : signature d'un « document à signer » placé dans une séance. Relit la
+  // séance, construit le PDF signé, l'enregistre, puis seulement ensuite marque la séance signée.
+  // Si une étape échoue : message d'erreur et RIEN n'est enregistré (le signataire peut réessayer).
+  const signerDocumentDeSeance = async (sessionId, role, signatureDataUrl, checkedIds = null, textValues = null) => {
+    const toastId = `sign-seance-${sessionId}`;
+    toast.loading('Enregistrement de votre signature…', { id: toastId });
+    try {
+      const { data: frais, error: errLecture } = await supabase.from('sessions').select('*').eq('id', sessionId).maybeSingle();
+      if (errLecture || !frais) throw new Error(errLecture?.message || 'séance introuvable');
+      const colStatut = role === 'client' ? 'statut_client' : 'statut_formateur';
+      if (frais[colStatut] === 'Signé') {
+        toast.success('Ce document est déjà signé.', { id: toastId });
+        await fetchSessions();
+        return true;
+      }
+      const meta = lireMeta(frais.metadata);
+      const source = meta.file_url_signed || frais.signed_pdf_url || frais.file_url || frais.ressource_url;
+      if (!source) throw new Error('aucun fichier n\'est rattaché à ce document');
+      const client = clients.find(c => String(c.id) === String(frais.client_id));
+      const pdf = await construirePdfSigneSeance({
+        sourceUrl: source, meta, role, signatureDataUrl, checkedIds, textValues,
+        nomSignataire: role === 'client' ? (client?.nom_complet || client?.nom || '') : (nomUtilisateurConnecte || ''),
+      });
+      const chemin = `signed-documents/seances/${Date.now()}_${String(sessionId).slice(0, 8)}_${role}.pdf`;
+      const { error: errUpload } = await supabase.storage.from('documents').upload(chemin, pdf, { contentType: 'application/pdf' });
+      if (errUpload) throw new Error('envoi du PDF signé impossible : ' + errUpload.message);
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(chemin);
+      const maintenant = new Date().toISOString();
+      const maj = role === 'client'
+        ? { signature_client: signatureDataUrl, statut_client: 'Signé', date_signature_client: maintenant }
+        : { signature_formateur: signatureDataUrl, statut_formateur: 'Signé', date_signature_formateur: maintenant };
+      maj.metadata = { ...meta, file_url_signed: publicUrl };
+      maj.signed_pdf_url = publicUrl;
+      const clientOk = role === 'client' || frais.statut_client === 'Signé';
+      const formateurOk = role === 'formateur' || frais.statut_formateur === 'Signé';
+      if ((meta.requiresClientSignature === false || clientOk) && (meta.requiresTrainerSignature !== true || formateurOk)) maj.statut = 'Signé';
+      const { error: errMaj } = await supabase.from('sessions').update(maj).eq('id', sessionId);
+      if (errMaj) throw new Error(errMaj.message);
+      await fetchSessions();
+      toast.success('Document signé avec succès !', { id: toastId });
+      return true;
+    } catch (e) {
+      console.error('[signerDocumentDeSeance]', e);
+      toast.error(`La signature n'a pas pu être enregistrée (${e.message || e}). Rien n'a été modifié : vous pouvez réessayer.`, { id: toastId, duration: 8000 });
+      return false;
+    }
+  };
+
   const handleEmargementSave = async (formateurSig, clientSig) => {
     const sessionId = signingSessionId;
     if (!sessionId) return;
@@ -25013,8 +25141,35 @@ export default function App() {
     // apparaître le bouton "Signer" du formateur en "Signé ✓" (désactivé) dans
     // "Mes Clients > Planning des Séances" alors qu'il n'avait pas encore signé lui-même —
     // l'empêchant purement et simplement d'émarger.
-    const emargementSession = sessions.find(s => String(s.id) === String(sessionId));
-    const emargementMeta = emargementSession?.metadata || {};
+    // SIGNATURES (2026-10-20) : on relit la séance (l'autre partie a pu signer depuis l'ouverture de la
+    // page) — sinon le statut final et le compteur pouvaient être faux.
+    const { data: _seanceFraiche } = await supabase.from('sessions').select('*').eq('id', sessionId).maybeSingle();
+    const emargementSession = _seanceFraiche || sessions.find(s => String(s.id) === String(sessionId));
+    const emargementMeta = lireMeta(emargementSession?.metadata);
+    // Un « document à signer » (et non un émargement) signé par le formateur : la signature est aussi
+    // posée sur le PDF du document. Si cela échoue, rien n'est enregistré.
+    if (emargementSession?.type_activite === 'document' && (formateurSig || clientSig)
+      && (emargementMeta.file_url_signed || emargementSession.signed_pdf_url || emargementSession.file_url || emargementSession.ressource_url)) {
+      const _role = formateurSig ? 'formateur' : 'client';
+      try {
+        const _client = clients.find(c => String(c.id) === String(emargementSession.client_id));
+        const _pdf = await construirePdfSigneSeance({
+          sourceUrl: emargementMeta.file_url_signed || emargementSession.signed_pdf_url || emargementSession.file_url || emargementSession.ressource_url,
+          meta: emargementMeta, role: _role, signatureDataUrl: formateurSig || clientSig,
+          nomSignataire: _role === 'client' ? (_client?.nom_complet || _client?.nom || '') : (nomUtilisateurConnecte || ''),
+        });
+        const _chemin = `signed-documents/seances/${Date.now()}_${String(sessionId).slice(0, 8)}_${_role}.pdf`;
+        const { error: _errUp } = await supabase.storage.from('documents').upload(_chemin, _pdf, { contentType: 'application/pdf' });
+        if (_errUp) throw new Error('envoi du PDF signé impossible : ' + _errUp.message);
+        const { data: { publicUrl: _url } } = supabase.storage.from('documents').getPublicUrl(_chemin);
+        updateData.metadata = { ...emargementMeta, file_url_signed: _url };
+        updateData.signed_pdf_url = _url;
+      } catch (e) {
+        console.error('[handleEmargementSave] PDF signé :', e);
+        toast.error(`La signature n'a pas pu être enregistrée (${e.message || e}). Rien n'a été modifié : vous pouvez réessayer.`, { duration: 8000 });
+        return;
+      }
+    }
     const requiresClientSig = emargementMeta.requiresClientSignature !== false;
     const requiresTrainerSig = emargementMeta.requiresTrainerSignature === true;
     const clientNowSigned = !!clientSig || emargementSession?.statut_client === 'Signé';
@@ -26466,8 +26621,10 @@ export default function App() {
   };
 
   const handleSignDocument = async (docId, signerType, signatureDataUrl = null, checkedIds = null, textValues = null) => {
-    const doc = documents.find(d => d.id === docId);
-    if (!doc) return;
+    // SIGNATURES (2026-10-20) : renvoie true seulement si la signature est réellement enregistrée.
+    const doc = documents.find(d => String(d.id) === String(docId));
+    if (!doc) { toast.error('Document introuvable : actualisez la page puis réessayez.'); return false; }
+    let _pdfAttendu = false, _pdfOk = false;
     // Valeurs tapées dans les balises "texte libre" appartenant à ce signataire (clé = fieldKey(field))
     const _textValueMap = {};
     if (textValues) {
@@ -26487,7 +26644,6 @@ export default function App() {
     }
 
     const simulatedDoc = { ...doc, ...updateColumn };
-    setDocuments(documents.map(d => d.id === docId ? simulatedDoc : d));
 
     if (signerType === 'client') {
       const client = clients.find(c => c.id === simulatedDoc.user_id);
@@ -26562,6 +26718,7 @@ export default function App() {
             console.warn('[handleSignDocument] Impossible de récupérer la dernière version du PDF, utilisation de la version locale :', e.message);
           }
           if (pdfUrl && /\.pdf$/i.test(pdfUrl.split('?')[0])) {
+            _pdfAttendu = true;
             const pdfResp = await fetch(pdfUrl);
             if (pdfResp.ok) {
               const pdfBlob = await pdfResp.blob();
@@ -26587,13 +26744,20 @@ export default function App() {
               if (!upErr) {
                 const { data: { publicUrl: newPdfUrl } } = supabase.storage.from('documents').getPublicUrl(fileName);
                 signedPdfUpdate = { signed_pdf_url: newPdfUrl, url: newPdfUrl };
+                _pdfOk = true;
               }
             }
           }
         }
       } catch (sigErr) {
-        console.warn('[handleSignDocument] Incrustation signature échouée (non bloquant):', sigErr.message);
+        console.warn('[handleSignDocument] Incrustation signature échouée :', sigErr.message);
       }
+    }
+    // SIGNATURES (2026-10-20) : la signature devait être posée sur le PDF et ça a échoué → on n'écrit
+    // RIEN (avant : « Signé » enregistré sans signature sur le document).
+    if (_pdfAttendu && !_pdfOk) {
+      toast.error("La signature n'a pas pu être ajoutée au document. Rien n'a été modifié : réessayez dans un instant.", { duration: 8000 });
+      return false;
     }
 
     // FIX (2026-09-04) : le statut ne passe "Signé" que si TOUS les rôles requis ont signé (pas
@@ -26615,7 +26779,9 @@ export default function App() {
     if (error) {
       toast.error("Erreur signature: " + error.message);
       await fetchDocuments();
+      return false;
     } else {
+      setDocuments(prev => prev.map(d => String(d.id) === String(docId) ? { ...d, ...simulatedDoc, ...signedPdfUpdate, statut: _finalStatut } : d));
       // FIX (nouvelle fonctionnalité, 2026-09-11) : document séquentiel — cette signature vient
       // peut-être de débloquer le TOUR d'un autre rôle requis (ex : ordre formateur → client, le
       // formateur vient de signer → c'est maintenant au client, qui doit être notifié MAINTENANT,
@@ -26639,6 +26805,7 @@ export default function App() {
         }
       }
     }
+    return true;
   };
 
   const handleDocumentSignatureSave = async (docId, signatureDataUrl = null, documentChoice = null) => {
@@ -28203,7 +28370,7 @@ export default function App() {
           // voir commentaire détaillé plus bas sur requiresSignature.
           const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
             : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
-          return sessFields.filter(f => f.tag === 'checkbox_formateur');
+          return sessFields.filter(f => f.tag === (viewingSession?.source === 'session' ? 'checkbox_client' : 'checkbox_formateur'));
         })()}
         requiredTextFields={(() => {
           const sess = viewingSession?.session;
@@ -28211,7 +28378,7 @@ export default function App() {
           const meta = (() => { try { return typeof sess.metadata === 'string' ? JSON.parse(sess.metadata) : (sess.metadata || {}); } catch { return {}; } })();
           const sessFields = (Array.isArray(meta.signature_fields) && meta.signature_fields.length > 0) ? meta.signature_fields
             : (Array.isArray(meta.template_fields) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []));
-          return sessFields.filter(f => f.tag === 'texte_formateur');
+          return sessFields.filter(f => f.tag === (viewingSession?.source === 'session' ? 'texte_client' : 'texte_formateur'));
         })()}
         requiresSignature={(() => {
           const sess = viewingSession?.session;
@@ -28231,17 +28398,22 @@ export default function App() {
           // on garde le comportement historique (signature toujours exigée). Sinon, on ne l'exige
           // que si une balise "signature_formateur" a effectivement été posée sur ce document.
           if (!Array.isArray(sigFields) || sigFields.length === 0) return true;
-          return sigFields.some(f => f.tag === 'signature_formateur');
+          return sigFields.some(f => f.tag === (viewingSession?.source === 'session' ? 'signature_client' : 'signature_formateur'));
         })()}
         onClose={() => setViewingSession(null)}
         onSave={async (sigDataUrl, _choice, checkedIds, textValues) => {
           const sess = viewingSession?.session;
-          if (sess?.id) {
-            // Signature d'un document administratif par le formateur
-            await handleSignDocument(sess.id, 'formateur', sigDataUrl, checkedIds, textValues);
-            toast.success('Document signé avec succès !');
+          if (!sess?.id) { setViewingSession(null); return; }
+          // SIGNATURES (2026-10-20) : un document placé dans une séance est enregistré sur la séance
+          // (avant : cherché dans les documents → rien enregistré, message de succès quand même).
+          if (viewingSession?.source === 'session') {
+            const ok = await signerDocumentDeSeance(sess.id, 'client', sigDataUrl, checkedIds, textValues);
+            if (ok) setViewingSession(null);
+            return;
           }
-          setViewingSession(null);
+          // Signature d'un document administratif par le formateur
+          const ok = await handleSignDocument(sess.id, 'formateur', sigDataUrl, checkedIds, textValues);
+          if (ok) { toast.success('Document signé avec succès !'); setViewingSession(null); }
         }}
       />
 
