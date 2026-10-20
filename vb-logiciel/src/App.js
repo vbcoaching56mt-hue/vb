@@ -19500,7 +19500,7 @@ function FinancesView({ supabase, currentOrgId, clients }) {
   );
 }
 
-function ProspectsView({ supabase, currentOrgId, userRole }) {
+function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null }) {
   const isAdmin = userRole === 'admin';
   const [templates, setTemplates] = useState([]);
   const [envois, setEnvois] = useState([]);
@@ -19547,7 +19547,9 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
       .select('*')
       .eq('organisation_id', currentOrgId)
       .order('envoye_at', { ascending: false });
-    if (!error) setEnvois(data || []);
+    // FIX (2026-10-20) : en espace formateur, uniquement SES envois (liste et statistiques). La base
+    // le fait déjà pour un vrai formateur ; ce filtre couvre aussi l'admin en « Mon espace Formateur ».
+    if (!error) setEnvois(isAdmin ? (data || []) : (data || []).filter(e => currentUserId != null && String(e.envoye_par) === String(currentUserId)));
   };
 
   const fetchStaff = async () => {
@@ -19570,7 +19572,7 @@ function ProspectsView({ supabase, currentOrgId, userRole }) {
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrgId]);
+  }, [currentOrgId, currentUserId, userRole]);
 
   const activeTemplates = templates.filter(t => t.actif);
   const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
@@ -27812,9 +27814,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
-              <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
-                <Wallet className="w-5 h-5 mr-3" /> Finances
-              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -28208,6 +28207,7 @@ export default function App() {
             supabase={supabase}
             currentOrgId={currentOrgId}
             userRole={userRole}
+            currentUserId={currentUserId}
           />}
           {activeTab === 'finances' && userRole === 'admin' && <FinancesView
             supabase={supabase}
