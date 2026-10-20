@@ -141,6 +141,13 @@ const valeursFormationOrganisme = ({ moduleNom, seances, orgSettings }) => {
     org_site_web: orgSettings?.site_web || '',
   };
 };
+// DÉCISION (20/10/2026) : les balises « date de signature » reçoivent la date à laquelle la personne
+// SIGNE (et non plus la date de création du document) ; « date du jour » reste la date de création.
+const TAGS_DATE_SIGNATURE = ['date_signature', 'date_signature_formateur', 'date_signature_organisme'];
+const estDateSignature = (f) => TAGS_DATE_SIGNATURE.includes(f && f.tag);
+const tagDateSignature = (role) => (role === 'client' ? 'date_signature' : `date_signature_${role}`);
+const dateDuJourFr = () => new Date().toLocaleDateString('fr-FR');
+
 // Document de FIN de parcours pas encore débloqué (le parcours n'est pas terminé).
 const docDeFinVerrouille = (doc, parcoursTermine) => {
   if (parcoursTermine) return false;
@@ -211,7 +218,7 @@ const construirePdfSigneSeance = async ({ sourceUrl, meta, role, signatureDataUr
   const champs = (Array.isArray(m.signature_fields) && m.signature_fields.length > 0) ? m.signature_fields
     : (Array.isArray(m.template_fields) && m.template_fields.length > 0) ? m.template_fields
     : (Array.isArray(m.fields) ? m.fields : []);
-  const tags = [`signature_${role}`, `checkbox_${role}`, `texte_${role}`];
+  const tags = [`signature_${role}`, `checkbox_${role}`, `texte_${role}`, tagDateSignature(role)];
   const mesChamps = champs.filter(f => tags.includes(f.tag));
   const coches = checkedIds instanceof Set ? checkedIds
     : new Set(Array.isArray(checkedIds) ? checkedIds : Object.keys(checkedIds || {}).filter(k => checkedIds[k]));
@@ -222,7 +229,7 @@ const construirePdfSigneSeance = async ({ sourceUrl, meta, role, signatureDataUr
     mesChamps.filter(f => f.tag === `checkbox_${role}`).forEach(f => { const k = fieldKey(f); if (coches.has(k)) checkedMap[k] = true; });
     const textMap = {};
     mesChamps.filter(f => f.tag === `texte_${role}`).forEach(f => { const k = fieldKey(f); if (textes[k]) textMap[k] = textes[k]; });
-    blob = await overlayFieldsOnPdf(blob, mesChamps, {}, signatureDataUrl ? { [`signature_${role}`]: signatureDataUrl } : {}, checkedMap, textMap);
+    blob = await overlayFieldsOnPdf(blob, mesChamps, { [tagDateSignature(role)]: dateDuJourFr() }, signatureDataUrl ? { [`signature_${role}`]: signatureDataUrl } : {}, checkedMap, textMap);
     signaturePosee = !!signatureDataUrl && mesChamps.some(f => f.tag === `signature_${role}`);
   }
   const pdfDoc = await PDFDocument.load(await blob.arrayBuffer(), { ignoreEncryption: true });
@@ -2910,11 +2917,13 @@ const StepResourceModal = ({ isOpen, onClose, onSave, pedagogicalResources, docu
 
       let publicUrl;
       if (uploadError) {
+        // Bibliothèque propre à l'organisme (20/10/2026) : rangé dans org_<organisme>/
+        const cheminBiblio = currentOrgId ? `org_${currentOrgId}/${filePath}` : filePath;
         const { error: fallbackError } = await supabase.storage
           .from('ressources-pedagogiques')
-          .upload(filePath, file, { cacheControl: '3600', upsert: true });
+          .upload(cheminBiblio, file, { cacheControl: '3600', upsert: true });
         if (fallbackError) throw fallbackError;
-        ({ data: { publicUrl } } = supabase.storage.from('ressources-pedagogiques').getPublicUrl(filePath));
+        ({ data: { publicUrl } } = supabase.storage.from('ressources-pedagogiques').getPublicUrl(cheminBiblio));
       } else {
         ({ data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath));
       }
@@ -3562,7 +3571,7 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
                 >
                   <option value="">-- Choisir une ressource existante --</option>
                   {pedagogicalResources.map(res => (
-                    <option key={res.name} value={res.url}>{res.name}</option>
+                    <option key={res.path || res.name} value={res.url || res.name}>{res.name}</option>
                   ))}
                 </select>
               </div>
@@ -11048,7 +11057,7 @@ const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, f
   pdf.save(`Statistiques - ${safeName}.pdf`);
 };
 
-const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit, recipients = [] }) => {
+const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, clients, formateurs, modules, orgName, onBack, onEdit, recipients = [], questionnaireIds = null }) => {
   const [dateFrom, setDateFrom] = React.useState('');
   const [dateTo, setDateTo] = React.useState('');
   const [formateurFilter, setFormateurFilter] = React.useState('');
@@ -11067,8 +11076,12 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
   const moduleOfClient = (clientId) => { const c = clientById.get(String(clientId)); return c?.module_id ? moduleNameById(c.module_id) : '—'; };
 
   const allForQ = React.useMemo(
-    () => (responses || []).filter(r => String(r.questionnaire_id) === String(questionnaire.id)),
-    [responses, questionnaire.id]
+    () => {
+      // 20/10/2026 : le questionnaire d'origine et toutes ses copies (voir idsDuQuestionnaire).
+      const ids = new Set((questionnaireIds && questionnaireIds.length ? questionnaireIds : [questionnaire.id]).map(String));
+      return (responses || []).filter(r => ids.has(String(r.questionnaire_id)));
+    },
+    [responses, questionnaire.id, questionnaireIds]
   );
   const filtered = React.useMemo(() => allForQ.filter(r => {
     const c = clientById.get(String(r.client_id));
@@ -11404,9 +11417,26 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
     });
     return Array.from(byClient.values());
   };
+  // DÉCISION (20/10/2026) : un questionnaire de la bibliothèque regroupe ses réponses ET celles de toutes
+  // ses copies placées dans des modules (metadata.source_questionnaire_id).
+  const idsDuQuestionnaire = (q) => {
+    if (!q) return [];
+    if (q.module_id != null) return [String(q.id)];
+    return [String(q.id), ...moduleQuestionnaires
+      .filter(c => String(parseQMeta(c).source_questionnaire_id) === String(q.id)).map(c => String(c.id))];
+  };
+  const destinatairesRegroupes = (q) => {
+    const ids = idsDuQuestionnaire(q);
+    const parClient = new Map();
+    [q, ...moduleQuestionnaires.filter(x => ids.includes(String(x.id)))].forEach(x =>
+      getRecipients(x).forEach(rc => { if (!parClient.has(String(rc.clientId))) parClient.set(String(rc.clientId), rc); }));
+    return Array.from(parClient.values());
+  };
+  const nbReponsesRegroupees = (q) => idsDuQuestionnaire(q).reduce((n, id) => n + (responseCountById.get(id) || 0), 0);
   const pendingCountFor = (q) => {
-    const answered = new Set(responses.filter(r => String(r.questionnaire_id) === String(q.id)).map(r => String(r.client_id)));
-    return getRecipients(q).filter(rc => !answered.has(String(rc.clientId))).length;
+    const ids = idsDuQuestionnaire(q);
+    const answered = new Set(responses.filter(r => ids.includes(String(r.questionnaire_id))).map(r => String(r.client_id)));
+    return destinatairesRegroupes(q).filter(rc => !answered.has(String(rc.clientId))).length;
   };
 
   // ── États Questionnaires (déplacés depuis DocumentsView le 2026-10-01) ────────────────────────────────
@@ -11579,7 +11609,8 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
           modules={modules}
           orgName={orgName}
           onBack={() => setSelectedStatsId(null)}
-          recipients={getRecipients(selectedQuestionnaire)}
+          recipients={destinatairesRegroupes(selectedQuestionnaire)}
+          questionnaireIds={idsDuQuestionnaire(selectedQuestionnaire)}
           onEdit={selectedQuestionnaire.module_id == null ? () => { setSelectedStatsId(null); handleEditQTemplate(selectedQuestionnaire); } : null}
         />
       </div>
@@ -11764,7 +11795,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                           <button type="button" onClick={() => setSelectedStatsId(q.id)}
                             className="w-full flex items-center justify-between mt-1 px-3 py-2 rounded-lg bg-violet-700 text-white hover:bg-violet-800 transition-colors">
                             <span className="text-[11px] font-black uppercase tracking-widest">📊 Voir les statistiques</span>
-                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${responseCountById.get(String(q.id)) || 0} réponse${(responseCountById.get(String(q.id)) || 0) > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
+                            <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${nbReponsesRegroupees(q)} réponse${nbReponsesRegroupees(q) > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
                           </button>
                           <button
                             type="button"
@@ -15215,7 +15246,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           const resp = await fetch(tplUrl);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           let pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
+          const dataFields = pregenMeta.fields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_') && !estDateSignature(f));
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
           }
@@ -15370,7 +15401,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // 2026-07-24 : champ "texte libre formateur" resté visible/figé sous la saisie du formateur).
         const dataOnlyFields = tplFields.filter(f => {
           const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-          return !isInteractive;
+          return !isInteractive && !estDateSignature(f); // date de signature : posée au moment de signer
         });
         if (dataOnlyFields.length > 0) {
           pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataOnlyFields, dataValues, {});
@@ -15483,7 +15514,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             // (ni valeur, ni case, ni placeholder vide) — sinon sa case vide se retrouve gravée en dur
             // dans le PDF à l'instant où le CLIENT signe, et reste visible/figée sous le champ de saisie
             // du formateur quand il complète son propre champ plus tard (bug constaté en test 2026-07-24).
-            const _isSigOrChk = f => (f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')) && (f.tag || '').endsWith('_client');
+            const _isSigOrChk = f => (f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')) && (f.tag || '').endsWith('_client') || f.tag === 'date_signature';
             // Chercher les champs signature/case à cocher : P1 = signature_fields (nouveau format pré-généré)
             //   P2 = fields[] (ancien format fallback) → P3 = embarqués resource.metadata → P4 = DB
             const _docMeta = _parseMeta(existingGeneratedDoc?.metadata);
@@ -15510,7 +15541,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             sigFields.forEach(f => { const k = fieldKey(f); if (_textValueMap[k]) textInputMap[k] = _textValueMap[k]; });
             if (sigFields.length > 0 && (signatureDataUrl || Object.keys(checkedMap).length > 0 || Object.keys(textInputMap).length > 0)) {
               const sigMap = signatureDataUrl ? { signature_client: signatureDataUrl } : {};
-              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, sigMap, checkedMap, textInputMap);
+              pdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, { date_signature: dateDuJourFr() }, sigMap, checkedMap, textInputMap);
               signatureEmbeddedByOverlay = true;
             }
           }
@@ -15600,7 +15631,8 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             // signe — visible et figé plus tard sous la saisie du formateur (bug constaté 2026-07-24).
             const fieldsForOverlay = (templateFields || []).filter(f => {
               const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-              return !isInteractive || (f.tag || '').endsWith('_client');
+              // Les dates de signature du formateur / de l'organisme seront posées quand EUX signeront.
+              return (!isInteractive || (f.tag || '').endsWith('_client')) && f.tag !== 'date_signature_formateur' && f.tag !== 'date_signature_organisme';
             });
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, fieldsForOverlay, dataValues, sigMap, checkedMap, textInputMap);
             signatureEmbeddedByOverlay = true;
@@ -17015,13 +17047,13 @@ const RessourcesView = ({ pedagogicalResources, supabase, currentUserId }) => {
       {pedagogicalResources.length > 0 && (
         <div>
           <div className="mb-5">
-            <h2 className="text-xl font-extrabold text-gray-700 tracking-tight">Bibliothèque Partagée</h2>
-            <p className="text-gray-400 text-sm">Documents mis à disposition par l'administration.</p>
+            <h2 className="text-xl font-extrabold text-gray-700 tracking-tight">Bibliothèque de l'organisme</h2>
+            <p className="text-gray-400 text-sm">Documents mis à disposition par votre organisme.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {pedagogicalResources.map(res => {
               const displayName = res.name.split('_').slice(1).join('_') || res.name;
-              return <ResourceCard key={res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadShared(res.name)} accent="emerald" />;
+              return <ResourceCard key={res.path || res.name} name={res.name} displayName={displayName} onDownload={() => handleDownloadShared(res.path || res.name)} accent="emerald" />;
             })}
           </div>
         </div>
@@ -17633,7 +17665,7 @@ const SharedProcessesView = ({ supabase, userRole, currentUserId, currentOrgId }
 // MESSAGERIE INTERNE
 // ==========================================
 
-const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, currentOrgId }) => {
+const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, currentOrgId, orgName = '' }) => {
   const isAdmin = userRole === 'admin';
   const isFormateur = userRole === 'formateur';
   const isClient = userRole === 'client';
@@ -17651,6 +17683,16 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
 
   const db = supabase;
 
+  // DÉCISION (20/10/2026) : « Admin SkorUp » n'arrivait chez personne. Le formateur écrit maintenant à
+  // l'administration de SON organisme (le premier compte administrateur de l'organisme).
+  const [adminOrganisme, setAdminOrganisme] = React.useState(null);
+  React.useEffect(() => {
+    if (!db || !currentOrgId || isAdmin) return;
+    db.from('utilisateurs').select('id').eq('organisation_id', currentOrgId).eq('role', 'admin')
+      .order('id', { ascending: true }).limit(1)
+      .then(({ data }) => setAdminOrganisme((data || [])[0] || null), () => {});
+  }, [db, currentOrgId, isAdmin]);
+
   // Déterminer les interlocuteurs possibles selon le rôle
   const possibleReceivers = React.useMemo(() => {
     if (isAdmin) {
@@ -17661,8 +17703,9 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
     if (isFormateur) {
       const myClients = (clients || []).filter(c => String(c.formateur_id) === String(currentUserId));
       const c = myClients.map(u => ({ id: String(u.id), label: `${u.nom || ''} ${u.prenom || ''}`.trim(), role: 'client' }));
-      // Admin
-      const adminEntry = [{ id: 'admin', label: 'Admin SkorUp', role: 'admin' }];
+      // Administration de l'organisme (sauf si c'est moi-même, en « espace formateur »)
+      const adminEntry = adminOrganisme && String(adminOrganisme.id) !== String(currentUserId)
+        ? [{ id: String(adminOrganisme.id), label: `Administration${orgName ? ` (${orgName})` : ''}`, role: 'admin' }] : [];
       return [...adminEntry, ...c];
     }
     if (isClient) {
@@ -17675,7 +17718,7 @@ const MessagesView = ({ supabase, userRole, currentUserId, clients, formateurs, 
       return [];
     }
     return [];
-  }, [isAdmin, isFormateur, isClient, clients, formateurs, currentUserId]);
+  }, [isAdmin, isFormateur, isClient, clients, formateurs, currentUserId, adminOrganisme, orgName]);
 
   // Charger les conversations (dernier message par paire)
   const fetchConversations = React.useCallback(async () => {
@@ -23486,10 +23529,23 @@ export default function App() {
 
   React.useEffect(() => { fetchBrandSettings(); }, [fetchBrandSettings]);
 
+  // DÉCISION (20/10/2026) : la bibliothèque pédagogique est propre à chaque organisme — la fonction
+  // skorup_bibliotheque ne renvoie que ses ressources (dossier org_<organisme>/ + anciens fichiers
+  // déposés par une personne de l'organisme). Repli sur l'ancienne liste tant que le SQL n'est pas lancé.
   const fetchPedagogicalResources = async () => {
+    const versRessource = (chemin, extra = {}) => ({
+      ...extra, id: chemin, path: chemin, name: chemin.split('/').pop(),
+      url: supabase.storage.from('ressources-pedagogiques').getPublicUrl(chemin).data?.publicUrl,
+    });
+    if (!currentOrgId) { setPedagogicalResources([]); return; }
+    const { data: lignes, error: errRpc } = await supabase.rpc('skorup_bibliotheque');
+    if (!errRpc && Array.isArray(lignes)) {
+      setPedagogicalResources(lignes.map(l => versRessource(l.chemin, { metadata: { size: l.taille }, created_at: l.cree_le })));
+      return;
+    }
     const { data, error } = await supabase.storage.from('ressources-pedagogiques').list();
     if (!error && data) {
-      setPedagogicalResources(data.filter(f => f.name !== '.emptyFolderPlaceholder'));
+      setPedagogicalResources(data.filter(f => f.id && f.name !== '.emptyFolderPlaceholder').map(f => versRessource(f.name, f)));
     }
   };
 
@@ -24066,7 +24122,7 @@ export default function App() {
         // remplis par le SIGNATAIRE au moment de signer, pas par l'admin à la génération — ils ne
         // doivent donc PAS recevoir l'overlay "données" ici (sinon la boîte vide se retrouve gravée
         // en dur, non modifiable, dans le PDF pré-généré).
-        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_'));
+        const dataFields = tplFields.filter(f => f.field_type !== 'signature' && f.field_type !== 'checkbox' && f.field_type !== 'text_input' && !(f.tag || '').startsWith('signature_') && !(f.tag || '').startsWith('checkbox_') && !(f.tag || '').startsWith('texte_') && !estDateSignature(f));
         if (dataFields.length > 0) {
           pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, resolvedValues, {});
         }
@@ -24083,7 +24139,7 @@ export default function App() {
         const { data: { publicUrl: prefilledUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
 
         // 5. Stocker avec URL pré-remplie + positions des champs signature/case/texte libre pour l'étape de signature
-        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_'));
+        const sigFields = tplFields.filter(f => f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_') || estDateSignature(f));
         // Mode de signature (Stage 3, 2026-07-24) : copié depuis le modèle (meta.signing_mode/signing_order,
         // réglé une fois dans VisualTemplateEditor) sur CHAQUE document instancié — isBlockedBySigningOrder
         // lit ces champs directement sur la ligne `documents`, sans avoir à retourner interroger le modèle.
@@ -24227,7 +24283,7 @@ export default function App() {
               }
               fDocSigFields = (fTplFields || []).filter(f =>
                 f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' ||
-                (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_')
+                (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_') || estDateSignature(f)
               );
             } catch (e) {
               console.warn('[instantiateDocument] Impossible de résoudre les champs interactifs (doc formateur, destination=both) :', e.message);
@@ -26184,11 +26240,11 @@ export default function App() {
           tel_formateur: theFormateur.telephone || '',
           compagnie_assurance: theFormateur.compagnie_assurance || '',
           numero_assurance_rcp: theFormateur.numero_assurance_rcp || '',
-          date_signature: new Date().toLocaleDateString('fr-FR'),
+          date_signature: '', // 20/10/2026 : vraie date posée au moment de signer
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
           // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
-          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
+          date_signature_formateur: '', // 20/10/2026 : vraie date posée au moment de signer
+          date_signature_organisme: '', // 20/10/2026 : vraie date posée au moment de signer
           // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
           // (Pas de client dans cette branche — initiales_client reste vide.)
           initiales_formateur: computeInitials(theFormateur.nom || ''),
@@ -26282,11 +26338,11 @@ export default function App() {
           modalite_formation: finalClient.modalite_formation || 'Mixte',
           date_debut: dateDebut,
           date_fin: dateFin,
-          date_signature: new Date().toLocaleDateString('fr-FR'),
+          date_signature: '', // 20/10/2026 : vraie date posée au moment de signer
           date_du_jour: new Date().toLocaleDateString('fr-FR'),
           // AJOUT (2026-09-15) : équivalent de date_signature (client) pour le formateur/organisme.
-          date_signature_formateur: new Date().toLocaleDateString('fr-FR'),
-          date_signature_organisme: new Date().toLocaleDateString('fr-FR'),
+          date_signature_formateur: '', // 20/10/2026 : vraie date posée au moment de signer
+          date_signature_organisme: '', // 20/10/2026 : vraie date posée au moment de signer
           // AJOUT (2026-09-16) : balises "initiales" — voir computeInitials() en haut du fichier.
           initiales_client: computeInitials(finalClient.nom_complet || finalClient.nomcomplet_client || `${finalClient.nom || ''} ${finalClient.prenom || ''}`.trim()),
           initiales_formateur: computeInitials(theCoach.nom || ''),
@@ -26360,7 +26416,7 @@ export default function App() {
         toast.loading('Superposition des données…', { id: 'gen-doc' });
         const _dataOnlyFields = (templateFieldsData || []).filter(f => {
           const isInteractive = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || (f.tag || '').startsWith('signature_') || (f.tag || '').startsWith('checkbox_') || (f.tag || '').startsWith('texte_');
-          return !isInteractive;
+          return !isInteractive && !estDateSignature(f); // date de signature : posée au moment de signer
         });
         const filledPdfBlob = await overlayFieldsOnPdf(basePdfBlob, _dataOnlyFields, dataToMerge);
 
@@ -26786,6 +26842,7 @@ export default function App() {
         const sigTag = `signature_${signerType}`;
         const checkboxTag = `checkbox_${signerType}`;
         const textTag = `texte_${signerType}`;
+        const dateTag = tagDateSignature(signerType); // décision du 20/10/2026
         let sigFields = null;
 
         // FIX (2026-09-03, round 2) : priorité désormais metadata AVANT la table technique DB —
@@ -26799,7 +26856,7 @@ export default function App() {
           : (Array.isArray(docMeta.template_fields) && docMeta.template_fields.length > 0) ? docMeta.template_fields
           : (Array.isArray(docMeta.fields) ? docMeta.fields : []);
         {
-          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag);
+          const match = _candidateFields.filter(f => f.tag === sigTag || f.tag === checkboxTag || f.tag === textTag || f.tag === dateTag);
           if (match.length > 0) sigFields = match;
         }
 
@@ -26810,7 +26867,7 @@ export default function App() {
         if (!sigFields && doc.template_id) {
           const { data: dbFields } = await supabase
             .from('template_fields').select('*')
-            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag, textTag]);
+            .eq('template_id', doc.template_id).in('tag', [sigTag, checkboxTag, textTag, dateTag]);
           if (dbFields && dbFields.length > 0) sigFields = dbFields;
         }
 
@@ -26856,7 +26913,7 @@ export default function App() {
                 if (_textValueMap[k]) textInputMap[k] = _textValueMap[k];
               });
               console.debug('[handleSignDocument]', signerType, 'textInputMap filled:', Object.keys(textInputMap).length, '/', sigFields.filter(f => f.tag === textTag).length);
-              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, {}, signaturesMap, checkedMap, textInputMap);
+              const updatedPdfBlob = await overlayFieldsOnPdf(pdfBlob, sigFields, { [dateTag]: dateDuJourFr() }, signaturesMap, checkedMap, textInputMap);
               const fileName = `signed_${docId}_${signerType}_${Date.now()}.pdf`;
               const { error: upErr } = await supabase.storage.from('documents')
                 .upload(fileName, new File([updatedPdfBlob], fileName, { type: 'application/pdf' }));
@@ -28173,6 +28230,7 @@ export default function App() {
               clients={clients}
               formateurs={assignableFormateurs}
               currentOrgId={currentOrgId}
+              orgName={orgSettings?.nom || ''}
             />
           )}
           {activeTab === 'modules' && userRole === 'admin' && <IngenierieView
