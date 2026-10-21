@@ -792,8 +792,17 @@ const computeInitials = (fullName) => {
 // séance = la date renseignée sur l'une de ses lignes ; le parcours est terminé quand toutes les
 // séances sont planifiées et que la date de la dernière est arrivée (le jour même inclus). Les
 // statuts de signature / de rendu ne sont volontairement PAS pris en compte.
-const isModuleCompletedForClient = (clientId, sessions) => {
-  const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null);
+// LOT A (2026-10-21) : après un changement de module, les séances de l'ancien module restent en base
+// (rien n'est perdu) mais ne comptent plus : seul le module ACTUEL du client décide de la fin de parcours
+// et apparaît dans le planning. Une séance sans module (anciennes données) compte toujours.
+const lireMetaSeance = (m) => (typeof m === 'string' ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {}));
+const estDuModuleActuel = (s, moduleId) => moduleId == null || moduleId === '' || s.module_id == null || String(s.module_id) === String(moduleId);
+const moduleDuClient = (clients, clientId) => {
+  const c = (clients || []).find(x => String(x.id) === String(clientId));
+  return c ? (c.module_id ?? null) : null;
+};
+const isModuleCompletedForClient = (clientId, sessions, moduleId = null) => {
+  const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null && estDuModuleActuel(s, moduleId));
   if (realSessions.length === 0) return false;
   const seanceDates = new Map(); // numero_seance → date la plus tardive trouvée sur ses lignes (ou null)
   realSessions.forEach(s => {
@@ -4973,7 +4982,10 @@ const ClientDetailView = ({
   // badges/compteurs d'exercices (et l'onglet "Exercices" du dossier client) continuent d'inclure ces
   // exercices de début/fin normalement.
   const allClientSessions = sessions ? sessions.filter(s => s.client_id === client.id) : [];
-  const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+  const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined && estDuModuleActuel(s, client.module_id)).sort((a, b) => a.numero_seance - b.numero_seance);
+  // LOT A (2026-10-21) : séances d'un ancien module — conservées, affichées à part en lecture seule.
+  const seancesAncienModule = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined && !estDuModuleActuel(s, client.module_id))
+    .sort((a, b) => (Number(a.numero_seance) - Number(b.numero_seance)) || String(a.nom || '').localeCompare(String(b.nom || '')));
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
   const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
   const clientPendingCorrections = clientExercises.filter(s =>
@@ -5034,7 +5046,8 @@ const ClientDetailView = ({
       toast.error("Erreur lors de la sauvegarde : " + error.message);
     } else {
       await fetchUtilisateurs();
-      if (client.module_id) await generateSessions(client);
+      // LOT A (2026-10-21) : enregistrer les informations ne touche plus aux séances (avant : les
+      // éléments supprimés ou renommés étaient recréés à chaque « Enregistrer »).
       toast.success("Informations personnelles sauvegardées !");
       if (missingFields.length > 0) {
         toast(`Attention : toutes les informations ne sont pas remplies (${missingFields.join(', ')}).`, {
@@ -6247,6 +6260,25 @@ const ClientDetailView = ({
                 <History className="w-12 h-12 text-gray-200 mx-auto mb-4" />
                 <p className="text-gray-400 italic text-sm">Aucune séance n'est encore programmée.</p>
               </div>
+            )}
+            {seancesAncienModule.length > 0 && (
+              <details className="mt-6 rounded-2xl border border-gray-200 bg-gray-50/60 p-4">
+                <summary className="cursor-pointer text-sm font-bold text-gray-600">
+                  📁 Séances d'un ancien module ({seancesAncienModule.length}) — conservées, en lecture seule
+                </summary>
+                <p className="mt-2 text-xs text-gray-500">Ce client a changé de module. Ces éléments restent dans son dossier (preuves, signatures) mais ne comptent plus dans son parcours actuel.</p>
+                <div className="mt-3 divide-y divide-gray-100 rounded-xl bg-white border border-gray-100">
+                  {seancesAncienModule.map(s => (
+                    <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                      <span className="font-semibold text-gray-700">Séance {s.numero_seance} · {s.ressource_titre || s.nom}</span>
+                      <span className="text-xs text-gray-500">
+                        {s.date ? new Date(String(s.date).slice(0, 10) + 'T12:00:00').toLocaleDateString('fr-FR') : 'sans date'}
+                        {elementSeanceEstSigne(s) ? ' · ✓ signé' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
           </div>
         </div>
@@ -8469,7 +8501,7 @@ const FormateurView = ({
           // synthétiques de début/fin de module n'apparaissent plus comme une "séance" à dater ; les
           // compteurs d'exercices utilisent `allClientSessions` pour continuer à tout inclure.
           const allClientSessions = sessions.filter(s => s.client_id === client.id);
-          const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined);
+          const clientSessions = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined && estDuModuleActuel(s, client.module_id));
           const clientExercisesCount = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice').length;
           const clientPendingCorrections = allClientSessions.filter(s =>
             (s.type_activite === 'exercice' || s.type_activite === 'Exercice') &&
@@ -13309,7 +13341,7 @@ const NotificationBell = ({ sessions, documents, clients, userRole, currentUserI
     } else if (userRole === 'client') {
       // Même logique que isSignedByClient dans ClientDocumentsView :
       // un document est considéré signé si UN enregistrement avec le même nom a signe_par_client = true
-      const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions); // lot 3
+      const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions, moduleDuClient(clients, currentUserId)); // lot 3
       const myDocs = documents.filter(d => String(d.user_id) === String(currentUserId) && docAwaitsClientSignature(d) && !docDeFinVerrouille(d, _parcoursFini));
       const trulyPending = myDocs.filter(d => {
         const effectivelySigned = documents.some(other =>
@@ -14077,11 +14109,11 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
 
 const SessionsView = ({
   sessions, signSession, currentUserId, handleDownloadAttendanceCertificate, userRole,
-  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession
+  pedagogicalResources, handleDownloadResource, handleUploadExerciseResponse, setViewingSession, moduleActuelId = null
 }) => {
   // AJOUT (2026-09-19) : exclut les exercices synthétiques de début/fin (numero_seance: null) de "Mes
   // Séances" — ils vivent désormais uniquement dans l'onglet "Exercices", jamais ici comme séance à venir.
-  const mySessions = sessions.filter(s => s.client_id === currentUserId && s.numero_seance !== null && s.numero_seance !== undefined).sort((a, b) => a.numero_seance - b.numero_seance);
+  const mySessions = sessions.filter(s => s.client_id === currentUserId && s.numero_seance !== null && s.numero_seance !== undefined && estDuModuleActuel(s, moduleActuelId)).sort((a, b) => a.numero_seance - b.numero_seance);
   // UX (2026-10-12) : les séances passées et entièrement faites sont repliées (bouton pour les revoir).
   const [afficherTerminees, setAfficherTerminees] = React.useState(false);
   const libelleType = (t) => ({ signature: 'Émargement', document: 'Document', exercice: 'Exercice', Exercice: 'Exercice' }[t] || t);
@@ -14811,14 +14843,14 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   const [ownSessions, setOwnSessions] = React.useState([]);
   React.useEffect(() => {
     if (!currentUserId || !supabase) return;
-    supabase.from('sessions').select('id, client_id, numero_seance, date').eq('client_id', currentUserId)
+    supabase.from('sessions').select('id, client_id, numero_seance, date, module_id').eq('client_id', currentUserId)
       .then(({ data, error }) => { if (!error && data) setOwnSessions(data); });
   }, [currentUserId, supabase, sessions]);
   const moduleCompleted = React.useMemo(() => {
     const byId = new Map();
     [...(sessions || []), ...ownSessions].forEach(s => { if (s && s.id != null) byId.set(s.id, { ...(byId.get(s.id) || {}), ...s }); });
-    return isModuleCompletedForClient(currentUserId, Array.from(byId.values()));
-  }, [currentUserId, sessions, ownSessions]);
+    return isModuleCompletedForClient(currentUserId, Array.from(byId.values()), moduleDuClient(clients, currentUserId));
+  }, [currentUserId, sessions, ownSessions, clients]);
   // LOT 3 (2026-10-20) : nom de la formation et séances du client, pour remplir les modèles
   // (formation, date de début, date de fin) — avant : toujours vides.
   const [moduleNomClient, setModuleNomClient] = React.useState('');
@@ -22898,23 +22930,41 @@ export default function App() {
   const lienVisioSeance = (seance, groupe) => String(seance?.lien_visio || groupe?.lien_visio || '').trim();
 
   // Reporte la date, les horaires et le lien visio d'une séance du groupe sur les séances des participants.
-  const appliquerSeanceAuxParticipants = async (seance, groupe, clientIds) => {
-    if (!clientIds || clientIds.length === 0) return;
-    const { error } = await supabase.from('sessions')
-      .update({ date: seance.date || null, heure_debut: seance.heure_debut || null, heure_fin: seance.heure_fin || null })
+  // LOT A (2026-10-21) :
+  //  - une séance déjà signée (émargement ou document, par qui que ce soit) chez un participant ne change
+  //    JAMAIS de date ni d'horaires : c'est la preuve de sa présence (renvoie le nombre de participants concernés) ;
+  //  - options.dates : 'tout' (modification volontaire de la séance du groupe), 'renseignees' (intégration
+  //    d'un participant : une séance du groupe sans date n'efface pas la date déjà prévue chez lui),
+  //    'aucune' (changement du lien visio : les dates ne sont pas touchées).
+  const appliquerSeanceAuxParticipants = async (seance, groupe, clientIds, options = {}) => {
+    if (!clientIds || clientIds.length === 0) return 0;
+    const modeDates = options.dates || 'tout';
+    const { data: lignes, error: errLignes } = await supabase.from('sessions').select('*')
       .in('client_id', clientIds).eq('numero_seance', seance.numero);
-    if (error) throw new Error(error.message);
+    if (errLignes) throw new Error(errLignes.message);
+    const clientsSignes = new Set((lignes || []).filter(elementSeanceEstSigne).map(r => String(r.client_id)));
+    const modifiables = (lignes || []).filter(r => !clientsSignes.has(String(r.client_id)));
+    const maj = {};
+    if (modeDates !== 'aucune') {
+      ['date', 'heure_debut', 'heure_fin'].forEach(k => {
+        if (modeDates === 'tout' || seance[k]) maj[k] = seance[k] || null;
+      });
+    }
+    if (Object.keys(maj).length && modifiables.length) {
+      const { error } = await supabase.from('sessions').update(maj).in('id', modifiables.map(r => r.id));
+      if (error) throw new Error(error.message);
+    }
     const lien = lienVisioSeance(seance, groupe);
     if (lien && /^https?:\/\//i.test(lien)) {
-      const { data: lignes } = await supabase.from('sessions').select('id, metadata')
-        .in('client_id', clientIds).eq('numero_seance', seance.numero);
-      await Promise.all((lignes || []).map(r => {
+      await Promise.all(modifiables.map(r => {
         const meta = lireMeta(r.metadata);
         if (meta.lien_visio === lien) return null;
         return supabase.from('sessions').update({ metadata: { ...meta, lien_visio: lien } }).eq('id', r.id);
       }));
     }
+    return clientsSignes.size;
   };
+  const MESSAGE_SEANCE_SIGNEE_GROUPE = (n) => `${n} participant${n > 1 ? 's ont' : ' a'} déjà signé cette séance : sa date est conservée (preuve de présence).`;
 
   // Agenda Google des participants (et de leur formateur), comme pour une séance individuelle.
   const synchroniserAgendasGroupe = (clientIds, numeros) => {
@@ -23015,10 +23065,12 @@ export default function App() {
     }
     if (ids.length) {
       onProgress('Report des dates et horaires dans chaque dossier…');
+      let seancesSigneesConservees = 0;
       for (const s of seancesGroupe) {
-        try { await appliquerSeanceAuxParticipants(s, groupe, ids); }
+        try { seancesSigneesConservees += await appliquerSeanceAuxParticipants(s, groupe, ids, { dates: 'renseignees' }); }
         catch (e) { rapport.erreurs.push({ nom: `Séance ${s.numero}`, message: e.message }); }
       }
+      if (seancesSigneesConservees > 0) toast(`Des séances déjà signées par des participants ont gardé leur date (${seancesSigneesConservees}).`, { icon: '🔒', duration: 7000 });
       rapport.seances = seancesGroupe.filter(s => s.date || s.heure_debut).length;
       synchroniserAgendasGroupe(ids, seancesGroupe.filter(s => s.date).map(s => s.numero));
     }
@@ -23098,7 +23150,8 @@ export default function App() {
       const changePlanning = ['date', 'heure_debut', 'heure_fin', 'lien_visio']
         .some(k => String(payload[k] || '') !== String((k.startsWith('heure') ? heureCourte(seance[k]) : seance[k]) || ''));
       if (changePlanning && ids.length) {
-        await appliquerSeanceAuxParticipants({ ...seance, ...payload }, groupe, ids);
+        const signes = await appliquerSeanceAuxParticipants({ ...seance, ...payload }, groupe, ids, { dates: 'tout' });
+        if (signes > 0) toast(MESSAGE_SEANCE_SIGNEE_GROUPE(signes), { icon: '🔒', duration: 7000 });
         synchroniserAgendasGroupe(ids, [seance.numero]);
       }
       await Promise.all([fetchGroupes(), fetchSessions()]);
@@ -23117,7 +23170,7 @@ export default function App() {
       }]).select().single();
       if (error) throw new Error(error.message);
       await creerSeancesSupplementaires(ids, [s], groupe);
-      await appliquerSeanceAuxParticipants(s, groupe, ids);
+      await appliquerSeanceAuxParticipants(s, groupe, ids, { dates: 'tout' });
       if (s.date) synchroniserAgendasGroupe(ids, [s.numero]);
       await Promise.all([fetchGroupes(), fetchSessions(), fetchUtilisateurs()]);
     },
@@ -23173,7 +23226,7 @@ export default function App() {
       if (String(payload.lien_visio || '') !== String(groupe.lien_visio || '') && ids.length) {
         const g2 = { ...groupe, ...payload };
         for (const s of seancesDuGroupe(groupeSeances, groupe.id)) {
-          if (!s.lien_visio) await appliquerSeanceAuxParticipants(s, g2, ids);
+          if (!s.lien_visio) await appliquerSeanceAuxParticipants(s, g2, ids, { dates: 'aucune' });
         }
       }
       await Promise.all([fetchGroupes(), fetchUtilisateurs(), fetchSessions()]);
@@ -23931,7 +23984,7 @@ export default function App() {
   // signalé par l'utilisateur le 2026-09-18 ("il faut que les documents de début du module apparaissent
   // chez TOUS les clients qui y sont assignés", sans dépendre de l'onglet visité par le client.
   const instantiateExerciceSession = async (client, resource, moment) => {
-    if (moment === 'fin' && !isModuleCompletedForClient(client.id, sessions)) return; // pas encore débloqué
+    if (moment === 'fin' && !isModuleCompletedForClient(client.id, sessions, client.module_id)) return; // pas encore débloqué
     try {
       const { data: existing } = await supabase.from('sessions').select('id').eq('client_id', client.id).eq('nom', resource.titre).maybeSingle();
       if (existing) return; // anti-doublon (même principe que instantiateDocument)
@@ -24877,13 +24930,26 @@ export default function App() {
       console.log('[generateSessions] Récupération des séances existantes pour déduplication...');
       const { data: alreadyInDb, error: fetchSessionsErr } = await supabase
         .from('sessions')
-        .select('nom, ressource_titre')
+        .select('nom, ressource_titre, metadata, is_administrative')
         .eq('client_id', finalClientId)
         .eq('module_id', finalModuleId);
 
       if (fetchSessionsErr) {
-        console.error('[generateSessions] Erreur lors de la récupération pour déduplication:', fetchSessionsErr);
-        // On continue quand même, au risque de créer des doublons si le fetch échoue
+        // LOT A (2026-10-21) : sans vérification possible, on ne crée rien (pas de risque de doublons).
+        console.error('[generateSessions] Vérification impossible, aucune séance créée :', fetchSessionsErr);
+        return;
+      }
+      // LOT A (2026-10-21) : les séances d'un module ne sont créées qu'UNE fois pour un client. S'il a déjà
+      // des séances de ce module (hors bloc administratif et éléments ajoutés à la main ou par un groupe),
+      // on ne recrée rien : ce que l'admin a supprimé ou renommé reste supprimé ou renommé.
+      const moduleDejaGenere = (alreadyInDb || []).some(s => {
+        const m = lireMetaSeance(s.metadata);
+        return !s.is_administrative && !m.isCustom && !m.groupe_id;
+      });
+      if (moduleDejaGenere) {
+        console.log('[generateSessions] Séances du module déjà présentes : rien à créer.');
+        if (typeof fetchSessions === 'function') await fetchSessions();
+        return;
       }
 
       const finalSessionsToInsert = sessionsToInsert.filter(newSession => {
@@ -27846,7 +27912,7 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {userRole === 'client' && (() => {
-          const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions); // lot 3
+          const _parcoursFini = isModuleCompletedForClient(currentUserId, sessions, moduleDuClient(clients, currentUserId)); // lot 3
           const docsASigner = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client') && !docDeFinVerrouille(d, _parcoursFini)).length;
           const onglets = [
             { onglet: 'accueil', label: 'Accueil', Icone: LayoutDashboard, badge: 0 },
@@ -28291,7 +28357,7 @@ export default function App() {
             const _today = jourLocalISO(new Date());
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
-            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client') && !docDeFinVerrouille(d, isModuleCompletedForClient(currentUserId, sessions))).length;
+            const _pendingDocs = documents.filter(d => d.user_id === currentUserId && docAwaitsClientSignature(d) && !isBlockedBySigningOrder(d, 'client') && !docDeFinVerrouille(d, isModuleCompletedForClient(currentUserId, sessions, moduleDuClient(clients, currentUserId)))).length;
             // UX (2026-10-12) : prochaine séance (regroupée, avec horaires et lien visio) + liste « À faire ».
             const _todayL = localTodayISO();
             const _metaDe = (m) => (typeof m === 'string') ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {});
@@ -28328,7 +28394,7 @@ export default function App() {
               todos={_todos}
             />;
           })()}
-          {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
+          {activeTab === 'mes_seances' && <SessionsView moduleActuelId={moduleDuClient(clients, currentUserId)} sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'questionnaires' && userRole === 'admin' && <QuestionnairesView supabase={supabase} currentOrgId={currentOrgId} clients={clients} formateurs={assignableFormateurs} modules={modules} orgName={orgSettings?.nom || ''} />}
