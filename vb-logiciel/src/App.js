@@ -3,7 +3,7 @@ import {
   Plus, Users, FileText, Settings, LogOut, LayoutDashboard, ChevronDown, ChevronUp,
   Save, Trash2, Download, ChevronLeft, ChevronRight, Layout, FileCheck,
   Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet,
-  Layers, Target, ClipboardList, CalendarDays, BookOpen,
+  Layers, ClipboardList, CalendarDays, BookOpen,
   UserCircle, MessageCircle, Menu, CalendarCheck, KeyRound,
   UsersRound, UserPlus, UserMinus, Video, CalendarPlus
 } from 'lucide-react';
@@ -33,7 +33,6 @@ if (typeof window !== 'undefined') {
     }
   });
 }
-const GraphiqueAncres = React.lazy(() => import('./GraphiqueAncres'));
 // Référentiel ROME (260 Ko) : chargé à l'ouverture de « Fiches métiers » seulement.
 const ROME_VIDE = { grandsDomaines: [] };
 let _romePromesse = null;
@@ -370,17 +369,6 @@ const handleDownloadNamedFile = async (doc, nomPersonne = '') => {
     catch (e2) { toast.error('Erreur lors du téléchargement : ' + (e?.message || e2?.message)); }
   }
 };
-
-const ANCHOR_KEYS = [
-  { key: 'score_technique', label: 'Expertise Technique', description: "Le contenu du travail est votre motivation. Vous cherchez à être expert et reconnu par vos pairs." },
-  { key: 'score_management', label: 'Compétence Managériale', description: "Vous avez un désir intense de diriger, de contrôler et de prendre des décisions stratégiques." },
-  { key: 'score_autonomie', label: 'Autonomie / Indépendance', description: "Vous cherchez avant tout à être libre dans vos décisions et refusez les réglementations restrictives." },
-  { key: 'score_securite', label: 'Sécurité / Stabilité', description: "Vous valorisez la stabilité de l'emploi et la pérennité de l'entreprise avant tout." },
-  { key: 'score_entrepreneur', label: 'Créativité / Entrepreneuriat', description: "Vous avez un besoin impérieux de créer de nouvelles activités et de vaincre les obstacles par votre ténacité." },
-  { key: 'score_service', label: 'Dévouement / Service', description: "Votre carrière est une cause. Vous voulez réaliser quelque chose qui a de la valeur, comme aider les autres." },
-  { key: 'score_defi', label: 'Défi Pur', description: "Vous définissez votre vie par la compétition. Seuls les problèmes insolubles vous attirent." },
-  { key: 'score_lifestyle', label: 'Style de vie', description: "L'équilibre entre vie privée et vie professionnelle est votre priorité absolue." },
-];
 
 
 // ==========================================
@@ -14078,10 +14066,10 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
         <p className="text-sm text-gray-500 mb-4">Consultez vos dates et émargez vos rapports de présence.</p>
         <div className="bg-violet-50 text-violet-700 px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes séances</div>
       </div>
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('bilan')}>
-        <h3 className="font-bold text-gray-800 text-lg mb-2">Synthèse de Bilan</h3>
-        <p className="text-sm text-gray-500 mb-4">Retrouvez la synthèse de vos évaluations dès que votre formateur l'aura publiée.</p>
-        <div className="bg-gray-900 text-white px-4 py-2 rounded-xl text-sm font-bold text-center">Consulter mon bilan</div>
+      <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab('mes_documents')}>
+        <h3 className="font-bold text-gray-800 text-lg mb-2">Mes documents</h3>
+        <p className="text-sm text-gray-500 mb-4">Retrouvez et signez les documents de votre formation.</p>
+        <div className="bg-gray-900 text-white px-4 py-2 rounded-xl text-sm font-bold text-center">Voir mes documents</div>
       </div>
     </div>
   </div>
@@ -14426,99 +14414,9 @@ const SessionsView = ({
   );
 };
 
-const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
-  const skill = (clientSkills || []).find(s => s.client_id === clientId) || null;
-
-  if (!skill) {
-    return (
-      <div className="space-y-6 max-w-7xl mx-auto">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
-          <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
-        </div>
-        <div className="bg-white rounded-3xl p-12 shadow-sm border border-gray-100 flex flex-col items-center text-center">
-          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mb-4">
-            <Clock className="text-amber-400" size={32} />
-          </div>
-          <h2 className="text-xl font-bold text-gray-800 mb-2">Synthèse en cours de préparation</h2>
-          <p className="text-gray-500 text-sm">Votre formateur est en train de préparer votre synthèse.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const dynamicRadarData = ANCHOR_KEYS.map(({ key, label, description }) => ({
-    subject: label,
-    A: parseFloat(skill[key]) || 0,
-    fullMark: 10,
-    description,
-  }));
-  const topAncres = [...dynamicRadarData].sort((a, b) => b.A - a.A).slice(0, 2);
-  const topSkills = [skill.top_skill_1, skill.top_skill_2, skill.top_skill_3].filter(Boolean);
-
-  return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Mon bilan</h1>
-          <p className="text-gray-500 text-lg mt-1">Retrouvez la synthèse de vos évaluations.</p>
-        </div>
-        <button onClick={handleDownloadPDF} className="mt-4 md:mt-0 bg-gray-900 hover:bg-gray-800 text-white px-5 py-2.5 rounded-xl font-medium shadow-md transition-all text-sm flex items-center w-fit">
-          <DownloadIcon /> Télécharger la synthèse
-        </button>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-          <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center"><span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span>Mes Points Forts</h2>
-          <div className="space-y-3">
-            {topSkills.length > 0 ? topSkills.map((sk, i) => (
-              <div key={i} className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-8 h-8 bg-indigo-500 text-white rounded-xl flex items-center justify-center font-bold text-sm shrink-0">{i + 1}</div>
-                <span className="font-semibold text-indigo-900">{sk}</span>
-              </div>
-            )) : (
-              <p className="text-sm text-gray-400 italic">Aucun point fort renseigné.</p>
-            )}
-            {skill.target_job && (
-              <div className="mt-4 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-center gap-3">
-                <TrendingUp className="text-emerald-600 shrink-0" size={20} />
-                <div>
-                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Métier cible</p>
-                  <p className="font-semibold text-emerald-900 mt-0.5">{skill.target_job}</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md flex flex-col items-center">
-          <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
-          <div className="w-full h-[250px] relative -ml-4">
-            <React.Suspense fallback={null}>
-              <GraphiqueAncres data={dynamicRadarData} />
-            </React.Suspense>
-          </div>
-          {topAncres.length > 0 && (
-            <div className="w-full mt-2 space-y-2">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider text-center">Vos dominantes</p>
-              {topAncres.map((a, i) => (
-                <div key={a.subject} className={`rounded-2xl p-4 border ${i === 0 ? 'bg-violet-50 border-violet-100' : 'bg-indigo-50 border-indigo-100'}`}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-sm font-bold ${i === 0 ? 'text-violet-700' : 'text-indigo-700'}`}>{a.subject}</span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${i === 0 ? 'bg-violet-200 text-violet-800' : 'bg-indigo-200 text-indigo-800'}`}>{a.A} / 10</span>
-                  </div>
-                  <p className="text-xs text-gray-600 italic">{a.description}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // ─── Modal de signature spécifique : Autorisation de conservation ──────────────
-const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, formateurNom, dateDebut }) => {
+const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, formateurNom, dateDebut, orgNom = '' }) => {
+  const organisme = orgNom || "l'organisme de formation";
   const [choice, setChoice] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const canvasRef = React.useRef(null);
@@ -14589,15 +14487,16 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
         <div className="px-8 py-6 space-y-5">
           {/* Texte légal */}
           <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4 text-xs text-gray-700 leading-relaxed">
-            Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, <strong>sauf accord écrit du bénéficiaire</strong>.
+            Les documents élaborés dans le cadre de votre accompagnement sont conservés ou détruits selon votre choix ci-dessous. Pour un bilan de compétences, l'article R6313-7 du Code du travail prévoit leur destruction à l'issue de la prestation, <strong>sauf accord écrit du bénéficiaire</strong>.
           </div>
 
           {/* Tableau d'informations */}
           <div className="bg-gray-50 rounded-2xl p-5 space-y-3 text-sm">
             {[
               { label: 'Bénéficiaire', value: `Mme / M. ${clientFullName}` },
-              { label: 'Consultant', value: formateurNom || '—' },
-              { label: 'Date de début du bilan', value: dateDebut || '—' },
+              { label: 'Organisme', value: orgNom || '—' },
+              { label: 'Formateur / consultant', value: formateurNom || '—' },
+              { label: 'Date de début', value: dateDebut || '—' },
             ].map(({ label, value }, i, arr) => (
               <React.Fragment key={label}>
                 <div className="flex justify-between items-center">
@@ -14615,13 +14514,13 @@ const ConservationModal = ({ isOpen, onClose, onSave, clientPrenom, clientNom, f
             <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'conserve' ? 'border-emerald-400 bg-emerald-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
               <input type="radio" name="conservation" value="conserve" checked={choice === 'conserve'} onChange={() => setChoice('conserve')} className="mt-0.5 shrink-0 accent-emerald-500" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                J'autorise SkorUp à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.
+                J'autorise {organisme} à conserver mes documents pendant une durée maximale de <strong>3 ans</strong> à compter de la fin de la prestation, dans le but d'assurer le suivi de ma situation.
               </span>
             </label>
             <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${choice === 'detruire' ? 'border-violet-400 bg-violet-50' : 'border-gray-100 hover:border-gray-200 bg-white'}`}>
               <input type="radio" name="conservation" value="detruire" checked={choice === 'detruire'} onChange={() => setChoice('detruire')} className="mt-0.5 shrink-0 accent-violet-600" />
               <span className="text-sm text-gray-700 leading-relaxed">
-                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. SkorUp procédera à leur destruction dès la clôture du bilan.
+                Je <strong>ne souhaite pas</strong> que mes documents soient conservés. {organisme} procédera à leur destruction à la clôture de la prestation.
               </span>
             </label>
           </div>
@@ -15747,36 +15646,42 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const checkDetruire = !conserveSel ? '&#9745;' : '&#9744;';
       const checkColorConserve = conserveSel ? '#16a34a' : '#9ca3af';
       const checkColorDetruire = !conserveSel ? '#dc2626' : '#9ca3af';
+      // 2026-10-21 : document au nom (et avec le logo) de l'organisme, texte valable pour toute prestation.
+      const orgNom = escHtml(orgSettings?.nom || "l'organisme de formation");
+      const orgLogo = orgSettings?.logo_url ? safeImgSrc(orgSettings.logo_url) : '';
+      const orgAdresse = escHtml([orgSettings?.adresse, orgSettings?.ville].filter(Boolean).join(' — '));
 
       // ── Générer le HTML du document ────────────────────────────────────────
       const el = document.createElement('div');
       el.style.cssText = 'width:794px;min-height:1100px;padding:56px 60px;font-family:Arial,Helvetica,sans-serif;background:#ffffff;position:fixed;left:-9999px;top:-9999px;color:#111827;box-sizing:border-box;';
       el.innerHTML = `
         <div style="text-align:center;margin-bottom:28px;">
-          <div style="font-size:26px;font-weight:900;color:#7C3AED;letter-spacing:3px;font-family:Georgia,serif;">SkorUp</div>
-          <div style="font-size:8px;color:#9ca3af;letter-spacing:2px;margin-top:2px;text-transform:uppercase;">Gestion de formation</div>
+          ${orgLogo ? `<img src="${orgLogo}" crossorigin="anonymous" style="max-height:64px;max-width:220px;object-fit:contain;margin:0 auto 8px;display:block;" />` : ''}
+          <div style="font-size:20px;font-weight:900;color:#111827;">${orgNom}</div>
+          ${orgAdresse ? `<div style="font-size:8.5px;color:#6b7280;margin-top:3px;">${orgAdresse}</div>` : ''}
           <div style="margin-top:14px;height:1px;background:linear-gradient(to right,transparent,#7C3AED,transparent);"></div>
         </div>
         <h1 style="text-align:center;font-size:15px;font-weight:900;color:#7C3AED;text-transform:uppercase;letter-spacing:1px;margin:0 0 22px;">Autorisation de conservation des documents</h1>
         <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:12px 16px;margin-bottom:22px;font-size:9.5px;color:#374151;line-height:1.6;">
-          Conformément à l'article R6313-7 du Code du travail (modifié par le décret n°2023-1350 du 28 décembre 2023), les documents élaborés dans le cadre d'un bilan de compétences doivent être détruits à l'issue de la prestation, sauf accord écrit du bénéficiaire.
+          Les documents élaborés dans le cadre de l'accompagnement sont conservés ou détruits selon le choix du bénéficiaire ci-dessous. Pour un bilan de compétences, l'article R6313-7 du Code du travail prévoit leur destruction à l'issue de la prestation, sauf accord écrit du bénéficiaire.
         </div>
         <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:10px;">
           <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;width:38%;" >Bénéficiaire</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">Mme / M. ${escHtml(clientFullName)}</td></tr>
-          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(formateurNom || '—')}</td></tr>
-          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Date de début du bilan</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(dateDebut || '—')}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Organisme</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${orgNom}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Formateur / consultant</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(formateurNom || '—')}</td></tr>
+          <tr><td style="background:#7C3AED;color:white;font-weight:700;padding:8px 12px;border:1px solid #7C3AED;">Date de début</td><td style="border:1px solid #e5e7eb;padding:8px 12px;">${escHtml(dateDebut || '—')}</td></tr>
         </table>
         <h2 style="font-size:12px;font-weight:800;color:#7C3AED;margin:0 0 12px;">Choix du bénéficiaire</h2>
         <p style="font-size:9.5px;color:#374151;margin:0 0 16px;line-height:1.6;">
-          Je soussigné(e) ${escHtml(clientFullName)}, bénéficiaire du bilan de compétences réalisé par SkorUp, autorise SkorUp à conserver les documents élaborés dans le cadre de mon bilan de compétences selon les modalités suivantes :
+          Je soussigné(e) ${escHtml(clientFullName)}, bénéficiaire d'une prestation réalisée par ${orgNom}, indique mon choix concernant la conservation des documents élaborés dans le cadre de cette prestation :
         </p>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
           <span style="font-size:18px;line-height:1;color:${checkColorConserve};flex-shrink:0;">${checkConserve}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise SkorUp à conserver mes documents de bilan pendant une durée maximale de <strong>3 ans</strong> à compter de la date de fin de mon bilan, dans le but d'assurer le suivi de ma situation.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">J'autorise ${orgNom} à conserver mes documents pendant une durée maximale de <strong>3 ans</strong> à compter de la fin de la prestation, dans le but d'assurer le suivi de ma situation.</span>
         </div>
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:30px;">
           <span style="font-size:18px;line-height:1;color:${checkColorDetruire};flex-shrink:0;">${checkDetruire}</span>
-          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. SkorUp procédera à leur destruction dès la clôture du bilan.</span>
+          <span style="font-size:9.5px;color:#374151;line-height:1.6;">Je ne souhaite pas que mes documents soient conservés. ${orgNom} procédera à leur destruction à la clôture de la prestation.</span>
         </div>
         <div style="border-top:1px solid #e5e7eb;padding-top:20px;display:flex;justify-content:space-between;align-items:flex-end;">
           <div>
@@ -15785,6 +15690,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           </div>
           <img src="${safeImgSrc(signatureDataUrl)}" style="max-width:210px;max-height:80px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px;padding:4px;" />
         </div>
+        <p style="font-size:7.5px;color:#9ca3af;text-align:center;margin-top:28px;">Document signé électroniquement via SkorUp pour le compte de ${orgNom}.</p>
       `;
       document.body.appendChild(el);
       await new Promise(r => setTimeout(r, 350));
@@ -16258,6 +16164,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           clientNom={currentClient?.nom || ''}
           formateurNom={(formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id))?.nom || ''}
           dateDebut={currentClient?.date_debut ? new Date(currentClient.date_debut).toLocaleDateString('fr-FR') : ''}
+          orgNom={orgSettings?.nom || ''}
         />
       )}
     </div>
@@ -22673,7 +22580,7 @@ export default function App() {
     const ROLE_TABS = {
       admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
-      client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'bilan', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
+      client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
     const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
     const allowed = ROLE_TABS[userRole];
@@ -22872,7 +22779,6 @@ export default function App() {
   const [inviteDefaultRole, setInviteDefaultRole] = useState('client');
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
-  const [clientSkills, setClientSkills] = useState([]);
 
 
 
@@ -23517,14 +23423,6 @@ export default function App() {
       .eq('receiver_id', String(currentUserId))
       .is('read_at', null);
     if (!error) setUnreadMessagesCount(count || 0);
-  };
-
-  const fetchClientSkills = async () => {
-    // Filtre via la relation client → organisation (RLS + filtre explicite)
-    let csQuery = supabase.from('client_skills').select('*, clients!inner(organisation_id)');
-    csQuery = currentOrgId ? csQuery.eq('clients.organisation_id', currentOrgId) : csQuery.limit(0);
-    const { data, error } = await csQuery;
-    if (!error && data) setClientSkills(data);
   };
 
   const fetchOrgSettings = async () => {
@@ -27548,7 +27446,6 @@ export default function App() {
     fetchSessions();
     fetchGroupes();
     fetchPedagogicalResources();
-    fetchClientSkills();
     fetchOrgSettings();
     fetchUnreadMessagesCount();
 
@@ -27897,7 +27794,6 @@ export default function App() {
               <button onClick={() => { setActiveTab('mes_seances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_seances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Séances</button>
               <button onClick={() => { setActiveTab('calendrier'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'calendrier' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><CalendarDays className="w-5 h-5 mr-3" /> Calendrier</button>
               <button onClick={() => { setActiveTab('mes_documents'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'mes_documents' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><FileText className="w-5 h-5 mr-3" /> Mes Documents</button>
-              <button onClick={() => { setActiveTab('bilan'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'bilan' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Target className="w-5 h-5 mr-3" /> Mon bilan</button>
               <button onClick={() => { setActiveTab('exercices'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'exercices' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><ClipboardList className="w-5 h-5 mr-3" /> Exercices</button>
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers</button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}><BookOpen className="w-5 h-5 mr-3" /> Ressources</button>
@@ -28373,8 +28269,6 @@ export default function App() {
             setViewingSession={setViewingSession}
             handleSignDocument={handleSignDocument}
             setViewingDocId={setViewingDocId}
-            clientSkills={clientSkills}
-            fetchClientSkills={fetchClientSkills}
             supabase={supabase}
             fetchDocuments={fetchDocuments}
             handleMoveSessionItem={handleMoveSessionItem}
@@ -28436,7 +28330,6 @@ export default function App() {
           })()}
           {activeTab === 'mes_seances' && <SessionsView sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
           {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
-          {activeTab === 'bilan' && <BilanView handleDownloadPDF={handleDownloadPDF} clientId={currentUserId} clientSkills={clientSkills} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'questionnaires' && userRole === 'admin' && <QuestionnairesView supabase={supabase} currentOrgId={currentOrgId} clients={clients} formateurs={assignableFormateurs} modules={modules} orgName={orgSettings?.nom || ''} />}
           {activeTab === 'gestion_documents' && <DocumentsView
