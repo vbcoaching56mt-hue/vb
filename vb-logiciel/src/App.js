@@ -646,6 +646,32 @@ const chargerSignaturesDocument = async (docId) => {
   } catch (_) { return {}; }
 };
 
+// LOT C (2026-10-22) : dossiers clients archivés (clients.archive_le). Leurs séances et documents restent
+// en base mais ne sont plus affichés dans les écrans courants (seulement dans « Dossiers archivés »).
+// Sans la colonne (SQL non lancé) : aucun dossier archivé, tout fonctionne comme avant.
+let _archives = { org: null, at: 0, promesse: null };
+const idsDossiersArchives = (orgId) => {
+  if (!orgId) return Promise.resolve(new Set());
+  if (_archives.org === orgId && _archives.promesse && Date.now() - _archives.at < 20000) return _archives.promesse;
+  const promesse = (async () => {
+    try {
+      const { data, error } = await supabase.from('clients').select('id').eq('organisation_id', orgId).not('archive_le', 'is', null);
+      if (error || !data) return new Set();
+      return new Set(data.map(r => String(r.id)));
+    } catch (_) { return new Set(); }
+  })();
+  _archives = { org: orgId, at: Date.now(), promesse };
+  return promesse;
+};
+const oublierArchives = () => { _archives = { org: null, at: 0, promesse: null }; };
+const sansArchives = (lignes, ids, cle) => (ids && ids.size ? lignes.filter(l => !ids.has(String(l[cle]))) : lignes);
+// Nombre de dossiers clients actifs (limite de l'offre) : les dossiers archivés ne comptent pas.
+const compterDossiersActifs = async (orgId) => {
+  const r = await supabase.from('clients').select('id', { count: 'exact', head: true }).eq('organisation_id', orgId).is('archive_le', null);
+  if (!r.error) return r;
+  return supabase.from('clients').select('id', { count: 'exact', head: true }).eq('organisation_id', orgId);
+};
+
 const fetchAllRowsWithRetry = async (buildQuery, { label = 'données', pageSize = 1000, retries = 2 } = {}) => {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -2476,7 +2502,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
 
 
 
-const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title = "Confirmation de suppression" }) => {
+const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title = "Confirmation de suppression", message = null }) => {
 
   if (!isOpen) return null;
 
@@ -2489,7 +2515,7 @@ const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, itemName, title =
         <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
         <p className="text-gray-500 mb-8">
           Confirmez-vous la suppression définitive de <span className="font-bold text-gray-900">{itemName}</span> ? 
-          Toutes les données associées seront supprimées et cette action est irréversible.
+          {message || 'Toutes les données associées seront supprimées et cette action est irréversible.'}
         </p>
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Annuler</button>
@@ -5367,6 +5393,7 @@ const ClientDetailView = ({
             }}
             itemName={clientInfo.nomcomplet_client || client.nom || "ce client"}
             title="Supprimer ce client ?"
+            message="Toutes ses données seront supprimées définitivement. S'il a déjà signé un document ou un émargement, son dossier sera archivé à la place : son accès à SkorUp sera fermé, il ne recevra plus d'emails et ses documents signés seront conservés (Clients → Dossiers archivés)."
           />
         </div>
       )}
@@ -6563,8 +6590,110 @@ const SqueletteChargement = ({ texte = 'Chargement…' }) => (
   </div>
 );
 
+// LOT C (2026-10-22) : dossiers archivés (clients qui avaient déjà signé), consultables et restaurables.
+const DossiersArchives = ({ archives = [], onRestaurer = null }) => {
+  const [ouvert, setOuvert] = React.useState(false);
+  const [detail, setDetail] = React.useState({});
+  const [enCours, setEnCours] = React.useState(null);
+  if (!archives.length) return null;
+  const jour = (v) => { try { return new Date(v).toLocaleDateString('fr-FR'); } catch (_) { return ''; } };
+  const voir = async (id) => {
+    if (detail[id] && !detail[id].chargement) { setDetail(d => { const n = { ...d }; delete n[id]; return n; }); return; }
+    setDetail(d => ({ ...d, [id]: { chargement: true } }));
+    const cols = await colonnesLegeres();
+    const [dR, sR] = await Promise.all([
+      supabase.from('documents').select(cols.documents).eq('user_id', id),
+      supabase.from('sessions').select(cols.sessions).eq('client_id', id),
+    ]);
+    setDetail(d => ({ ...d, [id]: {
+      chargement: false,
+      erreur: !!(dR.error || sR.error),
+      docs: (dR.data || []).filter(documentEstSigne),
+      seances: (sR.data || []).filter(elementSeanceEstSigne)
+        .sort((a, b) => (Number(a.numero_seance) || 0) - (Number(b.numero_seance) || 0)),
+    } }));
+  };
+  const restaurer = async (c) => {
+    if (!onRestaurer || enCours) return;
+    setEnCours(c.id);
+    try { await onRestaurer(c); } finally { setEnCours(null); }
+  };
+  return (
+    <div className="mb-4">
+      <button onClick={() => setOuvert(o => !o)} className="text-sm font-bold text-gray-500 hover:text-gray-900 flex items-center gap-2">
+        🗄️ Dossiers archivés ({archives.length}) <span className="text-xs">{ouvert ? '▲' : '▼'}</span>
+      </button>
+      {ouvert && (
+        <div className="mt-3 border border-gray-100 rounded-2xl divide-y divide-gray-100 bg-gray-50/60">
+          <p className="px-4 py-3 text-xs text-gray-500">
+            Clients supprimés alors qu'ils avaient déjà signé : leur accès à SkorUp est fermé et ils ne reçoivent plus d'emails,
+            mais leurs documents signés et émargements sont conservés. Ils ne comptent pas dans la limite de votre offre.
+          </p>
+          {archives.map(c => {
+            const d = detail[c.id];
+            return (
+              <div key={c.id} className="px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-900 text-sm">{c.nom_complet || 'Client sans nom'}</p>
+                    <p className="text-xs text-gray-500 break-all">{c.email_contact || ''}{c.archive_le ? `${c.email_contact ? ' · ' : ''}archivé le ${jour(c.archive_le)}` : ''}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => voir(c.id)} className="text-xs font-bold px-3 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-100">
+                      {d && !d.chargement ? 'Masquer' : 'Documents signés'}
+                    </button>
+                    {onRestaurer && (
+                      <button onClick={() => restaurer(c)} disabled={!!enCours} className="text-xs font-bold px-3 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
+                        {enCours === c.id ? 'Restauration…' : 'Restaurer'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {d && (
+                  <div className="mt-3 bg-white rounded-xl border border-gray-100 p-3 text-sm">
+                    {d.chargement ? <p className="text-gray-400 text-xs">Chargement…</p> : (
+                      <>
+                        {d.erreur && <p className="text-xs text-red-600 mb-2">Une partie des éléments n'a pas pu être chargée. Réessayez.</p>}
+                        {d.docs.length === 0 && d.seances.length === 0 && <p className="text-xs text-gray-500">Aucun élément signé trouvé.</p>}
+                        {d.docs.map(doc => {
+                          const lien = doc.signed_pdf_url || doc.url;
+                          return (
+                            <div key={'d' + doc.id} className="flex items-center justify-between gap-2 py-1.5">
+                              <span className="text-gray-800 min-w-0 break-words">📄 {doc.nom || 'Document'}</span>
+                              {lien && <a href={lien} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-indigo-600 hover:underline shrink-0">Ouvrir</a>}
+                            </div>
+                          );
+                        })}
+                        {d.seances.map(s => {
+                          const lien = lireMetaSeance(s.metadata).file_url_signed || s.signed_pdf_url;
+                          return (
+                            <div key={'s' + s.id} className="flex items-center justify-between gap-2 py-1.5">
+                              <span className="text-gray-800 min-w-0 break-words">✍️ Séance {s.numero_seance ?? '–'}{s.date ? ` (${dateIsoVersFr(s.date)})` : ''} — {s.ressource_titre || s.nom || 'Élément'}</span>
+                              {lien
+                                ? <a href={lien} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-indigo-600 hover:underline shrink-0">Ouvrir</a>
+                                : <span className="text-xs text-emerald-600 font-bold shrink-0">Signé</span>}
+                            </div>
+                          );
+                        })}
+                        {d.seances.length > 0 && (
+                          <p className="text-xs text-gray-400 mt-2">Pour éditer le récapitulatif des émargements en PDF, restaurez le dossier (sans renvoyer d'accès), puis archivez-le de nouveau.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminClientsView = ({
   chargement = false,
+  clientsArchives = [], onRestaurerDossier = null,
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
@@ -6707,6 +6836,7 @@ const AdminClientsView = ({
         </div>
         <BandeauComptesAActiver clientIds={clients.map(c => c.id)} onVoir={() => setFiltreCompte('a_activer')} />
         <FiltresComptes clients={filteredClients} valeur={filtreCompte} onChange={setFiltreCompte} />
+        <DossiersArchives archives={clientsArchives} onRestaurer={onRestaurerDossier} />
         {clientSearchTerm && filteredClients.length === 0 && (
           <p className="text-sm text-gray-500 italic py-4">Aucun client trouvé pour "{clientSearchTerm}".</p>
         )}
@@ -21021,7 +21151,6 @@ const TAB_TO_PATH = {
   questionnaires: '/questionnaires',
   mes_documents: '/mes-documents',
   mes_seances: '/mes-seances',
-  bilan: '/mon-bilan',
   parametres_org: '/parametres',
   relances: '/relances',
   profil: '/profil',
@@ -22822,6 +22951,7 @@ export default function App() {
   // --- Supabase Database (États locaux mis à jour via DB) ---
   const [formateurs, setFormateurs] = useState([]);
   const [clients, setClients] = useState([]);
+  const [clientsArchives, setClientsArchives] = useState([]); // LOT C
   const [documents, setDocuments] = useState([]);
   // Nombre de messages non lus adressés au compte connecté (badge menu "Messagerie") — voir les
   // effets de chargement/rafraîchissement plus bas (montage, retour sur l'onglet, sondage 60s).
@@ -23190,7 +23320,7 @@ export default function App() {
     if (!nbNouveaux) return;
     const limite = getClientLimitForOrg(orgSettings);
     if (!Number.isFinite(limite)) return;
-    const { count, error } = await supabase.from('clients').select('id', { count: 'exact', head: true }).eq('organisation_id', currentOrgId);
+    const { count, error } = await compterDossiersActifs(currentOrgId); // LOT C : archivés non comptés
     if (error) throw new Error('Impossible de vérifier votre nombre de dossiers clients pour le moment');
     if ((count || 0) + nbNouveaux > limite) {
       throw new Error(`votre offre permet ${limite} dossiers clients : il en reste ${Math.max(0, limite - (count || 0))} et ce groupe en ajoute ${nbNouveaux}`);
@@ -23436,12 +23566,14 @@ export default function App() {
   const fetchSessions = async () => {
     if (!currentOrgId) { setSessions([]); return; }
     const isStale = beginLoad('sessions');
+    const pArchives = idsDossiersArchives(currentOrgId); // LOT C
     const colonnes = (await colonnesLegeres()).sessions;
     const { data, error } = await fetchAllRowsWithRetry(() => supabase.from('sessions').select(colonnes)
       .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'séances' });
+    const archives = await pArchives;
     if (isStale()) return;
     marquerCharge('sessions');
-    if (data) setSessions(data);
+    if (data) setSessions(sansArchives(data, archives, 'client_id'));
     if (error) notifyLoadError('les séances');
   };
 
@@ -23462,7 +23594,10 @@ export default function App() {
     if (isStale()) return;
     marquerCharge('utilisateurs');
     const formateursData = fRes.data;
-    const clientsData = cRes.data;
+    // LOT C : dossiers archivés à part (ils ne sont plus dans les listes ni dans la limite de l'offre).
+    const clientsData = cRes.data ? cRes.data.filter(c => !c.archive_le) : cRes.data;
+    if (cRes.data) setClientsArchives(cRes.data.filter(c => c.archive_le)
+      .sort((a, b) => String(b.archive_le).localeCompare(String(a.archive_le))));
     if (fRes.error || cRes.error) notifyLoadError('les clients et formateurs');
 
     if (formateursData) {
@@ -23518,6 +23653,7 @@ export default function App() {
   const fetchDocuments = async () => {
     if (!currentOrgId) { setDocuments([]); setDocumentTemplates({}); return; }
     const isStale = beginLoad('documents');
+    const pArchivesDocs = idsDossiersArchives(currentOrgId); // LOT C
     const colonnesDocs = (await colonnesLegeres()).documents;
     // 1. Documents classiques (contrats générés, preuves, etc.) et 2. modèles maîtres (table unifiée
     // module_step_resources, type='document' uniquement) — en parallèle, voir fetchAllRowsWithRetry.
@@ -23527,10 +23663,11 @@ export default function App() {
       fetchAllRowsWithRetry(() => supabase.from('module_step_resources').select('*').eq('type', 'document')
         .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'modèles de documents' }),
     ]);
+    const archivesDocs = await pArchivesDocs;
     if (isStale()) return;
     marquerCharge('documents');
     const docsData = dRes.data;
-    if (docsData) setDocuments(docsData);
+    if (docsData) setDocuments(sansArchives(docsData, archivesDocs, 'user_id'));
     const modsData = tRes.data;
     const modErr = tRes.error;
     if (dRes.error || tRes.error) notifyLoadError('les documents');
@@ -23679,10 +23816,7 @@ export default function App() {
       if (role === 'client') {
         const clientLimit = getClientLimitForOrg(orgSettings);
         if (Number.isFinite(clientLimit)) {
-          const { count: currentClientCount, error: countError } = await supabase
-            .from('clients')
-            .select('id', { count: 'exact', head: true })
-            .eq('organisation_id', currentOrgId);
+          const { count: currentClientCount, error: countError } = await compterDossiersActifs(currentOrgId); // LOT C
           if (countError) {
             console.error('Erreur vérification du quota de dossiers clients:', countError);
             toast.error("Impossible de vérifier votre quota de dossiers clients pour le moment. Réessayez.");
@@ -23702,11 +23836,12 @@ export default function App() {
       if (sansEmail) {
         // Pas de compte de connexion : on évite seulement un doublon d'email dans l'organisme.
         const emailNet = String(email || '').trim();
-        const { data: dejaLa } = await supabase.from('clients').select('id')
+        const { data: dejaLaTous } = await supabase.from('clients').select('*')
           .eq('organisation_id', currentOrgId)
           .ilike('email_contact', emailNet.replace(/[\\%_]/g, (m) => '\\' + m))
-          .limit(1);
-        if (dejaLa && dejaLa.length > 0) {
+          .limit(20);
+        const dejaLa = (dejaLaTous || []).filter(r => !r.archive_le); // LOT C : un dossier archivé ne bloque pas
+        if (dejaLa.length > 0) {
           toast.error('Un client avec cette adresse email existe déjà dans votre organisme.');
           return;
         }
@@ -23949,8 +24084,12 @@ export default function App() {
 
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
+    // LOT C (2026-10-22) : le serveur (delete-user v2) archive le dossier d'un client qui a déjà signé
+    // (rien n'est effacé) et supprime entièrement les autres. « client_v2 » : l'ancienne version du
+    // serveur refuse cette demande sans rien supprimer (elle aurait effacé les documents signés).
+    const idToast = `suppr-client-${clientId}`;
+    toast.loading('Suppression en cours…', { id: idToast });
     try {
-      // Appel sécurisé via Edge Function (service_role côté serveur uniquement)
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
         method: 'POST',
@@ -23958,17 +24097,23 @@ export default function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ userId: clientId, userType: 'client' })
+        body: JSON.stringify({ userId: clientId, userType: 'client_v2' })
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Erreur suppression');
-
-      toast.success("Client et toutes ses données supprimés avec succès.");
+      let result = {};
+      try { result = await res.json(); } catch (_) { result = {}; }
+      if (!res.ok || result.version !== 2) throw new Error(result.version !== 2 && res.status === 403 ? "le service de suppression n'est pas encore à jour (delete-user)" : (result.error || 'Erreur suppression'));
+      oublierArchives();
       setExpandedClientId(null);
-      await fetchUtilisateurs();
-      await fetchSessions();
-      await fetchDocuments();
+      await Promise.all([fetchUtilisateurs(), fetchSessions(), fetchDocuments()]);
+      if (result.archive) {
+        toast.success("Ce client avait déjà signé des documents : son dossier est archivé. Son accès à SkorUp est fermé et ses documents signés sont conservés (Clients → Dossiers archivés).", { id: idToast, duration: 10000 });
+      } else {
+        toast.success("Client et toutes ses données supprimés.", { id: idToast });
+      }
+      if (result.compteSupprime === false) toast.error("Attention : son compte de connexion n'a pas pu être supprimé. Contactez le support SkorUp.", { duration: 9000 });
+      return;
     } catch (err) {
+      toast.dismiss(idToast);
       console.error("Erreur suppression client:", err);
       // CORRECTIF (2026-08-05) : la fonction Edge "delete-user" supprime d'abord la fiche client
       // (table clients + données liées) PUIS tente de supprimer le compte Auth Supabase correspondant.
@@ -23977,12 +24122,17 @@ export default function App() {
       // l'admin voyait donc une erreur rouge malgré une suppression réellement effectuée. On vérifie ici
       // si la fiche existe encore vraiment avant d'afficher une erreur : si elle a disparu, la suppression
       // a fonctionné malgré le message technique renvoyé par la fonction.
-      const { data: stillExists } = await supabase.from('clients').select('id').eq('id', clientId).maybeSingle();
-      setExpandedClientId(null);
+      const { data: stillExists } = await supabase.from('clients').select('id, archive_le').eq('id', clientId).maybeSingle();
+      oublierArchives();
+      if (!stillExists || stillExists.archive_le) setExpandedClientId(null);
       await fetchUtilisateurs();
       await fetchSessions();
       await fetchDocuments();
-      if (!stillExists) {
+      if (stillExists && !stillExists.archive_le) {
+        toast.error("Le client n'a pas été supprimé : " + err.message + ". Rien n'a été effacé.", { duration: 9000 });
+      } else if (stillExists) {
+        toast.success("Dossier archivé : ses documents signés sont conservés (Clients → Dossiers archivés).", { duration: 8000 });
+      } else if (!stillExists) {
         toast("Client supprimé — son compte de connexion avait déjà été retiré séparément (message technique sans conséquence).", { icon: '⚠️', duration: 6000 });
       } else {
         toast.error("Erreur lors de la suppression : " + err.message);
@@ -24030,16 +24180,10 @@ export default function App() {
         if (e) { await retablir(); toast.error(`Suppression annulée (${e.message}). Rien n'a été modifié.`, { id: idToast }); return; }
         liberes[cle] = ids;
       }
-      const { data: supprimes, error } = await supabase.from('utilisateurs').delete()
-        .eq('id', formateurId).eq('organisation_id', currentOrgId).select('id');
-      if (error || !supprimes || supprimes.length === 0) {
-        await retablir();
-        toast.error(`Le formateur n'a pas pu être supprimé${error ? ' : ' + error.message : ''}. Ses clients et ses groupes ont été remis comme avant.`, { id: idToast, duration: 9000 });
-        await fetchUtilisateurs();
-        return;
-      }
-      // Compte de connexion : seulement maintenant que la fiche est bien supprimée.
-      let compteSupprime = true;
+      // LOT C (2026-10-22) : le serveur (delete-user v2) supprime la fiche PUIS le compte de connexion
+      // (le bon identifiant). On vérifie ensuite nous-mêmes que la fiche a bien disparu.
+      let reponse = {};
+      let okServeur = false;
       try {
         const { data: { session } } = await supabase.auth.getSession();
         const resp = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
@@ -24047,8 +24191,22 @@ export default function App() {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
           body: JSON.stringify({ userId: formateurId, userType: 'formateur' })
         });
-        compteSupprime = resp.ok;
-      } catch (_) { compteSupprime = false; }
+        okServeur = resp.ok;
+        try { reponse = await resp.json(); } catch (_) { reponse = {}; }
+      } catch (e) { reponse = { error: e.message }; }
+      const { data: encore, error: errRelecture } = await supabase.from('utilisateurs').select('id').eq('id', formateurId).maybeSingle();
+      if (errRelecture) {
+        toast.error('Vérification impossible : actualisez la page pour voir si le formateur a bien été supprimé.', { id: idToast, duration: 9000 });
+        await Promise.all([fetchUtilisateurs(), fetchGroupes()]);
+        return;
+      }
+      if (encore) {
+        await retablir();
+        toast.error(`Le formateur n'a pas pu être supprimé${reponse.error ? ' : ' + reponse.error : ''}. Ses clients et ses groupes ont été remis comme avant.`, { id: idToast, duration: 9000 });
+        await fetchUtilisateurs();
+        return;
+      }
+      const compteSupprime = okServeur && reponse.version === 2 && reponse.compteSupprime !== false;
       await Promise.all([fetchUtilisateurs(), fetchGroupes()]);
       const n = liberes.clients.length;
       toast.success(`${fiche.nom || 'Le formateur'} a été supprimé.${n ? ` ${n} client${n > 1 ? 's sont' : ' est'} maintenant sans formateur : pensez à leur en attribuer un.` : ''}`, { id: idToast, duration: 8000 });
@@ -24059,6 +24217,22 @@ export default function App() {
       toast.error('Erreur : ' + err.message, { id: idToast });
       fetchUtilisateurs();
     }
+  };
+
+  // LOT C : restaurer un dossier archivé (il revient dans la liste, sans accès : « Envoyer l'accès au client »).
+  const restaurerDossierClient = async (c) => {
+    const limite = getClientLimitForOrg(orgSettings);
+    if (Number.isFinite(limite)) {
+      const { count, error } = await compterDossiersActifs(currentOrgId);
+      if (error) { toast.error('Impossible de vérifier votre nombre de dossiers clients pour le moment. Réessayez.'); return; }
+      if ((count || 0) >= limite) { toast.error(`Votre offre permet ${limite} dossiers clients actifs : libérez une place avant de restaurer ce dossier.`, { duration: 8000 }); return; }
+    }
+    const { data, error } = await supabase.from('clients').update({ archive_le: null })
+      .eq('id', c.id).eq('organisation_id', currentOrgId).select('id');
+    if (error || !data || data.length === 0) { toast.error('Restauration impossible' + (error ? ' : ' + error.message : '') + '.'); return; }
+    oublierArchives();
+    await Promise.all([fetchUtilisateurs(), fetchSessions(), fetchDocuments()]);
+    toast.success(`Dossier de ${c.nom_complet || 'ce client'} restauré. Il n'a plus d'accès à SkorUp : utilisez « Envoyer l'accès au client » si besoin.`, { duration: 9000 });
   };
 
   // --- Suppression via modale de confirmation ---
@@ -28333,6 +28507,7 @@ export default function App() {
             />
           )}
           {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView chargement={chargementEnCours}
+            clientsArchives={clientsArchives} onRestaurerDossier={restaurerDossierClient}
             handleAddUser={handleAddUser}
             newUserName={newUserName} setNewUserName={setNewUserName}
             newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
