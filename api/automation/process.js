@@ -100,6 +100,9 @@ async function tousLesComptesAuth(supabase) {
   return comptes;
 }
 
+// Guide d'utilisation (même lien que le modèle d'email Supabase « Invite user »).
+const GUIDE_URL = process.env.GUIDE_URL || 'https://egfpyfisgqpxcnmxmdxi.supabase.co/storage/v1/object/public/guides/guide-utilisation-skorup.pdf';
+
 function emailRelanceCompte({ nomClient, nomOrganisme, lien, etape }) {
   const prenom = escapeHtml(String(nomClient || '').split(' ')[0] || '');
   const org = escapeHtml(nomOrganisme || 'votre organisme de formation');
@@ -113,6 +116,8 @@ function emailRelanceCompte({ nomClient, nomOrganisme, lien, etape }) {
         <a href="${lien}" style="display:inline-block;background:#7C3AED;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:13px 30px;border-radius:10px;">Activer mon espace</a>
       </div>
       <p style="color:#6b7280;font-size:12px;line-height:1.6;">Ce lien est personnel et valable pour une durée limitée. S'il a expiré, utilisez « Mot de passe oublié » sur la page de connexion.</p>
+      <p style="font-size:14px;color:#374151;line-height:1.6;">Besoin d'aide pour vos premiers pas sur SkorUp ?<br>
+        <a href="${GUIDE_URL}" style="color:#7C3AED;font-weight:bold;">Télécharger le guide d'utilisation (PDF)</a></p>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
       <p style="color:#9ca3af;font-size:11px;">Envoyé par ${org} via SkorUp.</p>
     </div>
