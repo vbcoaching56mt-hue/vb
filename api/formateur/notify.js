@@ -282,10 +282,12 @@ async function appelantEquipe(authData) {
 // Guide d'utilisation (même lien que le modèle d'email Supabase « Invite user »).
 const GUIDE_URL = process.env.GUIDE_URL || 'https://egfpyfisgqpxcnmxmdxi.supabase.co/storage/v1/object/public/guides/guide-utilisation-skorup.pdf';
 
-function emailAccesClient({ nomClient, nomOrganisme, lien, relance }) {
+function emailAccesClient({ nomClient, nomOrganisme, lien, relance, connexion = false }) {
   const prenom = escapeHtml(String(nomClient || '').split(' ')[0] || '');
   const org = escapeHtml(nomOrganisme || 'votre organisme de formation');
-  const intro = relance
+  const intro = connexion
+    ? `Voici un nouveau lien pour accéder à votre espace de formation chez <strong>${org}</strong>.`
+    : relance
     ? `Votre espace de formation chez <strong>${org}</strong> vous attend, mais vous ne l'avez pas encore activé.`
     : `<strong>${org}</strong> vous a ouvert un espace personnel sur SkorUp pour suivre votre formation : séances, documents à signer, émargements.`;
   return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
@@ -366,6 +368,86 @@ async function handleCompteClient(req, res, authData) {
   return res.status(200).json({ created: true, ...resultat });
 }
 
+// ── type: 'renvoi_lien' (21/10/2026) — bouton « Renvoyer le lien » ─────────────────────────────
+// Remplace l'email Supabase (fonction invite-user, action resend) : envoi direct par Resend, plus
+// rapide, au nom de l'organisme, avec le guide. Mêmes contrôles que compte_client + limite d'envois
+// mémorisée dans app_metadata du compte (non modifiable par l'utilisateur).
+const LIEN_DELAI_MIN_MS = 2 * 60 * 1000;
+const LIEN_MAX_PAR_24H = 5;
+
+async function handleRenvoiLien(req, res, authData) {
+  const appelant = await appelantEquipe(authData);
+  if (!appelant) return res.status(403).json({ error: "Réservé à l'équipe de l'organisme." });
+
+  const { clientId, origin } = req.body || {};
+  if (!clientId) return res.status(400).json({ error: 'clientId est requis.' });
+  const safeOrigin = safeOriginOf(origin);
+
+  const { data: client, error: clientErr } = await supabaseAdmin.from('clients')
+    .select('id, nom_complet, email_contact, organisation_id, formateur_id, formateur_auth_uid')
+    .eq('id', clientId).eq('organisation_id', appelant.organisation_id).maybeSingle();
+  if (clientErr) throw clientErr;
+  if (!client) return res.status(404).json({ error: 'Client introuvable dans votre organisme.' });
+  if (appelant.role === 'formateur'
+    && String(client.formateur_id) !== String(appelant.id)
+    && String(client.formateur_auth_uid || '') !== String(authData.user.id)) {
+    return res.status(403).json({ error: "Ce client n'est pas suivi par vous." });
+  }
+
+  const { data: compteData } = await supabaseAdmin.auth.admin.getUserById(client.id);
+  const compte = compteData && compteData.user;
+  if (!compte) {
+    return res.status(409).json({ error: "Ce client n'a pas encore de compte : utilisez « Envoyer l'accès au client »." });
+  }
+  const email = String(compte.email || client.email_contact || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.status(400).json({ error: "Ce client n'a pas d'adresse email valide." });
+  }
+
+  // Limite : 2 minutes entre deux liens, 5 liens par 24 h et par client.
+  const meta = compte.app_metadata || {};
+  const maintenant = Date.now();
+  const envois = (Array.isArray(meta.skorup_liens) ? meta.skorup_liens : [])
+    .map(Number).filter(t => Number.isFinite(t) && maintenant - t < 24 * 3600 * 1000);
+  const dernier = envois.length ? Math.max(...envois) : 0;
+  if (maintenant - dernier < LIEN_DELAI_MIN_MS) {
+    const reste = Math.max(1, Math.ceil((LIEN_DELAI_MIN_MS - (maintenant - dernier)) / 60000));
+    return res.status(429).json({ error: `Un lien vient d'être envoyé à ce client. Patientez ${reste} minute${reste > 1 ? 's' : ''} avant d'en renvoyer un (pensez à vérifier ses courriers indésirables).` });
+  }
+  if (envois.length >= LIEN_MAX_PAR_24H) {
+    return res.status(429).json({ error: `${LIEN_MAX_PAR_24H} liens ont déjà été envoyés à ce client ces dernières 24 h. Réessayez demain, ou contactez-le directement.` });
+  }
+
+  // Lien : invitation si le compte n'a jamais été activé, sinon lien « choisir un mot de passe ».
+  let lien = null;
+  let methode = 'reset';
+  if (!compte.email_confirmed_at && !compte.last_sign_in_at) {
+    const inv = await supabaseAdmin.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo: safeOrigin } });
+    const l = !inv.error && inv.data && inv.data.properties && inv.data.properties.action_link;
+    if (l) { lien = l; methode = 'invite'; }
+  }
+  if (!lien) {
+    const rec = await supabaseAdmin.auth.admin.generateLink({ type: 'recovery', email, options: { redirectTo: safeOrigin } });
+    if (rec.error) throw rec.error;
+    lien = rec.data && rec.data.properties && rec.data.properties.action_link;
+  }
+  if (!lien) throw new Error('Lien de connexion non généré.');
+
+  // Mémorisé AVANT l'envoi : un double clic ne part pas deux fois.
+  await supabaseAdmin.auth.admin.updateUserById(compte.id, { app_metadata: { ...meta, skorup_liens: [...envois, maintenant] } });
+
+  const { data: org } = await supabaseAdmin.from('organisations').select('nom').eq('id', client.organisation_id).maybeSingle();
+  const dejaActif = !!compte.last_sign_in_at;
+  const resultat = await envoyerEmailFormateur(
+    { email },
+    dejaActif
+      ? `Votre lien de connexion à votre espace de formation${org && org.nom ? ` (${plainText(org.nom, 60)})` : ''}`
+      : `Votre espace de formation ${org && org.nom ? `chez ${plainText(org.nom, 60)} ` : ''}vous attend`,
+    emailAccesClient({ nomClient: client.nom_complet, nomOrganisme: org && org.nom, lien, relance: false, connexion: dejaActif }),
+  );
+  return res.status(200).json({ ...resultat, method: methode, email });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -387,7 +469,8 @@ module.exports = async (req, res) => {
     if (type === 'nouveau_document') return await handleNouveauDocument(req, res, authData);
     if (type === 'depot_client') return await handleDepotClient(req, res, authData);
     if (type === 'compte_client') return await handleCompteClient(req, res, authData);
-    return res.status(400).json({ error: 'type invalide (attendu : "assignation", "nouveau_document", "depot_client" ou "compte_client").' });
+    if (type === 'renvoi_lien') return await handleRenvoiLien(req, res, authData);
+    return res.status(400).json({ error: 'type invalide (attendu : "assignation", "nouveau_document", "depot_client", "compte_client" ou "renvoi_lien").' });
   } catch (err) {
     console.error('[formateur/notify]', err);
     return res.status(500).json({ error: 'Erreur interne.' });

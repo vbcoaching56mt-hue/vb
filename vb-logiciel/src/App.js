@@ -13,17 +13,31 @@ import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClientConfig';
 import SetupOrganisationPage from './pages/SetupOrganisation';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
-import {
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip
-} from 'recharts';
-import Docxtemplater from 'docxtemplater';
-import PizZip from 'pizzip';
 import { DndContext as BaseDndContext, useDraggable, useDroppable, useSensors, useSensor, MouseSensor, TouchSensor, KeyboardSensor } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import romeData from './data/romeData.json';
+// 2026-10-21 : les outils lourds (PDF, Word, graphiques, métiers ROME) sont chargés seulement au moment
+// où on s'en sert (« await import(...) » dans les fonctions concernées) → ouverture de SkorUp plus rapide.
+// Couleurs et polices pdf-lib : mêmes valeurs que pdf-lib (rgb() renvoie { type: 'RGB', red, green, blue }).
+const rgb = (red, green, blue) => ({ type: 'RGB', red, green, blue });
+const StandardFonts = { Helvetica: 'Helvetica', HelveticaBold: 'Helvetica-Bold' };
+// Préchargement discret 4 s après l'ouverture : les outils PDF/Word sont prêts avant le premier clic.
+if (typeof window !== 'undefined') {
+  const prechargerOutils = () => { import('pdf-lib').catch(() => {}); import('jspdf').catch(() => {}); import('html2canvas').catch(() => {}); import('pizzip').catch(() => {}); import('docxtemplater').catch(() => {}); };
+  const planifier = () => setTimeout(() => (window.requestIdleCallback ? window.requestIdleCallback(prechargerOutils, { timeout: 5000 }) : prechargerOutils()), 4000);
+  if (document.readyState === 'complete') planifier(); else window.addEventListener('load', planifier, { once: true });
+  // Après une mise en ligne, un onglet resté ouvert peut ne plus trouver un morceau de l'ancienne version.
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    if (r && (r.name === 'ChunkLoadError' || /Loading (CSS )?chunk/i.test(String(r.message || '')))) {
+      toast.error('Une nouvelle version de SkorUp est en ligne : rechargez la page (F5) pour continuer.', { duration: 10000, id: 'nouvelle-version' });
+    }
+  });
+}
+const GraphiqueAncres = React.lazy(() => import('./GraphiqueAncres'));
+// Référentiel ROME (260 Ko) : chargé à l'ouverture de « Fiches métiers » seulement.
+const ROME_VIDE = { grandsDomaines: [] };
+let _romePromesse = null;
+const chargerRomeData = () => { if (!_romePromesse) _romePromesse = import('./data/romeData.json').then(m => m.default || m); return _romePromesse; };
 
 // AJOUT (2026-10-07, téléphone) : glisser-déposer des séances compatible tactile. Sans réglage, toucher
 // une ligne déclenchait aussitôt un glisser : sur téléphone, faire défiler la page ou toucher un champ
@@ -206,7 +220,7 @@ const lireFichierStockage = async (rawUrl) => {
 // et les textes sont posés aux emplacements prévus (balises signature_/checkbox_/texte_<role>) ; sans
 // emplacement de signature, la signature est ajoutée en bas de la dernière page (client à gauche,
 // formateur à droite), avec le nom et la date. Lève une erreur si quoi que ce soit échoue.
-const construirePdfSigneSeance = async ({ sourceUrl, meta, role, signatureDataUrl, checkedIds, textValues, nomSignataire }) => {
+const construirePdfSigneSeance = async ({ sourceUrl, meta, role, signatureDataUrl, checkedIds, textValues, nomSignataire }) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
   let blob = await lireFichierStockage(sourceUrl);
   if (/\.(docx|doc)$/i.test(String(sourceUrl).split('?')[0])) {
     const docx = new Blob([await blob.arrayBuffer()], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
@@ -1329,7 +1343,7 @@ const convertDocxBlobToPdf = async (docxBlob) => {
  * docx-preview rend le DOCX en HTML, html2canvas capture en images,
  * jsPDF assemble le PDF page par page.
  */
-const convertDocxBlobToPdfLocal = async (docxBlob) => {
+const convertDocxBlobToPdfLocal = async (docxBlob) => { /* 2026-10-21 : chargé à la demande */ const html2canvas = (await import('html2canvas')).default; const { jsPDF } = await import('jspdf');
   const { renderAsync } = await import('docx-preview');
 
   // Conteneur caché — largeur auto pour que docx-preview respecte les marges Word
@@ -1445,7 +1459,7 @@ const convertDocxBlobToPdfLocal = async (docxBlob) => {
  * @param {Object} dataValues — {nomcomplet_client: "...", ...}
  * @returns {Blob} PDF modifié
  */
-const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}, textInputMap = {}) => {
+const overlayFieldsOnPdf = async (pdfBlob, templateFields, dataValues, signaturesMap = {}, checkedMap = {}, textInputMap = {}) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
   // signaturesMap = { signature_client: dataUrl, signature_formateur: dataUrl }
   // checkedMap = { [field.id]: true } — état coché des cases à cocher, par identifiant de champ
   //   (une même balise checkbox_client/checkbox_formateur peut être posée plusieurs fois : on
@@ -1680,8 +1694,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
   const measureFontRef = useRef(null);
   useEffect(() => {
     let cancelled = false;
-    if (mode !== 'sign') return;
-    (async () => {
+    if (mode !== 'sign' || !isOpen) return; // 2026-10-21 : pas au démarrage de l'application
+    (async () => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
       try {
         const measureDoc = await PDFDocument.create();
         const f = await measureDoc.embedFont(StandardFonts.Helvetica);
@@ -1691,7 +1705,7 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
       }
     })();
     return () => { cancelled = true; };
-  }, [mode]);
+  }, [mode, isOpen]);
   // Calcule, pour un champ texte libre donné (sur une page dont on connaît les dimensions RÉELLES
   // en points), si une nouvelle valeur tiendrait dans la case sans être tronquée dans le PDF final —
   // et si oui seulement, met à jour l'état. Une frappe qui ferait déborder la case est ignorée
@@ -4979,28 +4993,7 @@ const ClientDetailView = ({
   ).length;
 
   const handleResendInvite = async () => {
-    const email = client.email || client.email_contact || clientInfo.client_email;
-    if (!email) return toast.error("Aucun email trouvé pour ce client.");
-    try {
-      const { data: { session: authSession } } = await supabase.auth.getSession();
-      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authSession.access_token}`
-        },
-        body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin })
-      });
-      const result = await res.json();
-      if (!res.ok) return toast.error(`Erreur : ${result.error}`);
-      if (result.method === 'reset') {
-        toast.success(`Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`, { duration: 6000 });
-      } else {
-        toast.success(`Email d'invitation envoyé à ${email}.`);
-      }
-    } catch (err) {
-      toast.error(`Erreur : ${err.message}`);
-    }
+    await renvoyerLienAcces({ ...client, email: client.email || client.email_contact || clientInfo.client_email });
   };
 
   // FIX (2026-10-07) : « Erreur lors de la sauvegarde : invalid input syntax for type numeric: "" ».
@@ -8524,25 +8517,7 @@ const FormateurView = ({
                   <BoutonCreerCompte client={client} />
                   <MasquerSiSansCompte clientId={client.id}>
                   <button
-                    onClick={async () => {
-                      const email = client.email || client.email_contact || client.client_email;
-                      if (!email) return toast.error("Aucun email trouvé pour ce client.");
-                      try {
-                        const { data: { session: authSession } } = await supabase.auth.getSession();
-                        const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authSession.access_token}` },
-                          body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin })
-                        });
-                        const result = await res.json();
-                        if (!res.ok) return toast.error(`Erreur : ${result.error}`);
-                        toast.success(result.method === 'reset'
-                          ? `Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`
-                          : `Email d'invitation envoyé à ${email}.`, { duration: 6000 });
-                      } catch (err) {
-                        toast.error(`Erreur : ${err.message}`);
-                      }
-                    }}
+                    onClick={() => renvoyerLienAcces(client)}
                     title="Renvoyer le lien de connexion à ce client"
                     className="px-4 py-2.5 rounded-xl text-sm font-bold transition-all bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5"
                   >
@@ -10914,7 +10889,7 @@ const computeQuestionnaireStats = (questionnaire, responses) => {
 // Export PDF "natif" (jsPDF, texte vectoriel) — volontairement sans capture d'écran html2canvas :
 // rendu net, texte sélectionnable, et aucune dépendance aux couleurs CSS de Tailwind.
 // NB : polices standard PDF → pas d'émojis ni de caractères hors Latin-1 dans les libellés fixes.
-const exportQuestionnaireStatsPdf = ({ titre, stats, filtersLabel, clientName, formateurOfClient, moduleOfClient, orgName }) => {
+const exportQuestionnaireStatsPdf = async ({ titre, stats, filtersLabel, clientName, formateurOfClient, moduleOfClient, orgName }) => { /* 2026-10-21 : chargé à la demande */ const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF('p', 'mm', 'a4');
   const W = 210, H = 297, M = 15, CW = W - 2 * M;
   const VIOLET = [109, 40, 217], GREEN = [5, 150, 105], RED = [220, 38, 38], DARK = [31, 41, 55], GREY = [107, 114, 128], LIGHT = [237, 233, 254];
@@ -11123,9 +11098,9 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
     moduleFilter ? `module : ${moduleNameById(moduleFilter)}` : null,
   ].filter(Boolean).join(' · ') || 'aucun (toutes les réponses)';
 
-  const handleExport = () => {
+  const handleExport = async () => {
     try {
-      exportQuestionnaireStatsPdf({ titre: questionnaire.titre, stats, filtersLabel: filtersLabel.replace(/·/g, '-'), clientName, formateurOfClient, moduleOfClient, orgName });
+      await exportQuestionnaireStatsPdf({ titre: questionnaire.titre, stats, filtersLabel: filtersLabel.replace(/·/g, '-'), clientName, formateurOfClient, moduleOfClient, orgName });
     } catch (e) {
       console.error('[QuestionnaireStatsPanel] export PDF :', e);
       toast.error('Erreur export PDF : ' + e.message);
@@ -14518,14 +14493,9 @@ const BilanView = ({ handleDownloadPDF, clientId, clientSkills }) => {
         <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-100 hover:shadow-md flex flex-col items-center">
           <h2 className="text-xl w-full font-bold text-gray-800 flex items-center mb-2"><span className="w-2 h-6 bg-violet-600 rounded-full mr-3"></span>Mes Ancres de Carrière</h2>
           <div className="w-full h-[250px] relative -ml-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="65%" data={dynamicRadarData}>
-                <PolarGrid stroke="#f3f4f6" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 500 }} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }} />
-                <Radar name="Score" dataKey="A" stroke="#7C3AED" strokeWidth={3} fill="#a78bfa" fillOpacity={0.4} />
-              </RadarChart>
-            </ResponsiveContainer>
+            <React.Suspense fallback={null}>
+              <GraphiqueAncres data={dynamicRadarData} />
+            </React.Suspense>
           </div>
           {topAncres.length > 0 && (
             <div className="w-full mt-2 space-y-2">
@@ -15428,7 +15398,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
   }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings, moduleNomClient, seancesDuClient]);
 
-  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => {
+  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
     if (!signingResource || !currentClient) return;
     const _checkedIdSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
     // Valeurs tapées dans les balises "texte libre" (clé = fieldKey(field) → texte saisi)
@@ -15767,7 +15737,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   };
 
   // ─── Signature spécifique : Autorisation de conservation ────────────────────
-  const handleConservationSign = async ({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut }) => {
+  const handleConservationSign = async ({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut }) => { /* 2026-10-21 : chargé à la demande */ const html2canvas = (await import('html2canvas')).default; const { jsPDF } = await import('jspdf');
     const toastId = 'conservation-sign';
     toast.loading('Génération du document signé…', { id: toastId });
     try {
@@ -16959,25 +16929,29 @@ const RessourcesView = ({ pedagogicalResources, supabase, currentUserId }) => {
     setIsUploading(false);
   };
 
-  const ResourceCard = ({ name, displayName, onDownload, accent = 'emerald' }) => (
+  const ACCENTS_RESSOURCE = {
+    emerald: { icone: 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600', lien: 'hover:text-emerald-600', bouton: 'hover:bg-emerald-600 hover:border-emerald-600' },
+    indigo: { icone: 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600', lien: 'hover:text-indigo-600', bouton: 'hover:bg-indigo-600 hover:border-indigo-600' },
+  };
+  const ResourceCard = ({ name, displayName, onDownload, accent = 'emerald' }) => { const ac = ACCENTS_RESSOURCE[accent] || ACCENTS_RESSOURCE.emerald; return (
     <div className={`bg-white p-6 rounded-3xl border border-gray-100 shadow-sm hover:shadow-md transition-all group`}>
       <div className="flex items-center justify-between mb-4">
-        <div className={`w-12 h-12 bg-${accent}-50 text-${accent}-600 rounded-2xl flex items-center justify-center group-hover:bg-${accent}-600 group-hover:text-white transition-colors`}>
+        <div className={`w-12 h-12 ${ac.icone} rounded-2xl flex items-center justify-center group-hover:text-white transition-colors`}>
           <FileText size={24} />
         </div>
-        <button onClick={onDownload} className={`text-gray-400 hover:text-${accent}-600 transition-colors`}>
+        <button onClick={onDownload} className={`text-gray-400 ${ac.lien} transition-colors`}>
           <Download size={20} />
         </button>
       </div>
       <h3 className="font-bold text-gray-900 text-sm mb-1 truncate" title={displayName}>{displayName}</h3>
       <button
         onClick={onDownload}
-        className={`mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 hover:bg-${accent}-600 hover:text-white hover:border-${accent}-600 transition-all uppercase tracking-wider`}
+        className={`mt-4 w-full py-2 bg-gray-50 text-gray-700 text-xs font-bold rounded-xl border border-gray-100 ${ac.bouton} hover:text-white transition-all uppercase tracking-wider`}
       >
         Télécharger
       </button>
     </div>
-  );
+  ); };
 
   return (
     <div className="space-y-10 animate-fade-in max-w-7xl mx-auto">
@@ -18536,6 +18510,13 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 // ==========================================
 
 const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
+  // 2026-10-21 : référentiel ROME chargé à l'ouverture de l'écran (vide pendant une fraction de seconde).
+  const [romeData, setRomeData] = React.useState(ROME_VIDE);
+  React.useEffect(() => {
+    let actif = true;
+    chargerRomeData().then(d => { if (actif) setRomeData(d); }).catch(e => console.error('[FichesMetiers] référentiel ROME :', e));
+    return () => { actif = false; };
+  }, []);
   // ── États navigation statique ROME 4.0 ────────────────────────────
   const [activeMainTab, setActiveMainTab] = React.useState('explorer');
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -19641,7 +19622,7 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
   // ── PDF des réponses d'un prospect (usage Qualiopi : trace du positionnement préalable) ──
   // Génération 100% côté navigateur avec jsPDF (déjà utilisé ailleurs dans SkorUp pour d'autres
   // PDF) — aucune fonction serveur supplémentaire nécessaire.
-  const handleDownloadResponsesPdf = (envoi) => {
+  const handleDownloadResponsesPdf = async (envoi) => { /* 2026-10-21 : chargé à la demande */ const { jsPDF } = await import('jspdf');
     const template = templates.find(t => t.id === envoi.template_id);
     const questions = template?.questions || [];
     const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -22443,26 +22424,35 @@ const useCompteClient = (clientId) => {
   return { ctx, info, st: statutCompteDe(info, !!ctx?.differes?.has(String(clientId))) };
 };
 
-// Même envoi que le bouton « Renvoyer le lien » de la fiche client (fonction invite-user).
-const renvoyerLienClient = async (client) => {
-  const email = client.email || client.email_contact || client.client_email;
-  if (!email) { toast.error('Aucun email trouvé pour ce client.'); return; }
+// 2026-10-21 : « Renvoyer le lien » envoyé directement par SkorUp (Resend) au lieu de l'email Supabase :
+// plus rapide, au nom de l'organisme, avec le guide d'utilisation. Le serveur vérifie l'organisme et le
+// formateur, et limite les envois (2 minutes entre deux liens, 5 par 24 h et par client).
+const renvoyerLienAcces = async (client) => {
+  const email = client.email || client.email_contact || client.client_email || '';
   try {
-    const { data: { session: authSession } } = await supabase.auth.getSession();
-    const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+    const { data: { session: s } } = await supabase.auth.getSession();
+    const resp = await fetch('/api/formateur/notify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession?.access_token}` },
-      body: JSON.stringify({ email, action: 'resend', redirectTo: window.location.origin }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s?.access_token}` },
+      body: JSON.stringify({ type: 'renvoi_lien', clientId: client.id, origin: window.location.origin }),
     });
-    const result = await res.json().catch(() => ({}));
-    if (!res.ok) { toast.error(`Erreur : ${result.error || 'envoi impossible'}`); return; }
-    toast.success(result.method === 'reset'
-      ? `Email de connexion envoyé à ${email}. Le client peut cliquer sur le lien pour définir son mot de passe.`
-      : `Email d'invitation envoyé à ${email}.`, { duration: 6000 });
+    const r = await resp.json().catch(() => ({}));
+    if (!resp.ok) { toast.error(r.error || "Le lien n'a pas pu être envoyé.", { duration: 8000 }); return false; }
+    if (r.sent === false) { toast.error(r.error || r.message || "L'email n'a pas pu partir. Réessayez dans quelques minutes.", { duration: 8000 }); return false; }
+    const dest = r.email || email || 'le client';
+    toast.success(r.method === 'invite'
+      ? `Email d'invitation envoyé à ${dest}.`
+      : `Email de connexion envoyé à ${dest}. Le client peut cliquer sur le lien pour choisir son mot de passe.`, { duration: 6000 });
+    return true;
   } catch (err) {
     toast.error(`Erreur : ${err.message}`);
+    return false;
   }
 };
+
+// Ancien nom, gardé pour les boutons des listes.
+const renvoyerLienClient = async (client) => renvoyerLienAcces(client);
+
 
 const BadgeCompteClient = ({ clientId, detail = true, align = 'right', fallback = null }) => {
   const { info, st } = useCompteClient(clientId);
@@ -25112,7 +25102,7 @@ export default function App() {
    * Superpose la signature sur le PDF original et sauvegarde le résultat
    */
    // --- Fonctions utilitaires Archivage ---
-  const overlaySignatureOnPdf = async (session, client, role) => {
+  const overlaySignatureOnPdf = async (session, client, role) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
     try {
         
       const originalRelativePath = session.file_url || session.ressource_url || session.file_url_signed || session.metadata?.file_url_signed;
@@ -26264,7 +26254,7 @@ export default function App() {
   };
 
   // extraMeta (lot 3, 2026-10-20) : ex. { moment: 'fin' } pour un document de fin de parcours.
-  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null, extraMeta = null) => {
+  const handleGenerateDocx = async (clientRow, type, isForFormateur = false, formateurId = null, isAutoGenerate = false, mode = 'send', previewWindow = null, extraMeta = null) => { /* 2026-10-21 : chargé à la demande */ const [{ default: PizZip }, { default: Docxtemplater }] = await Promise.all([import('pizzip'), import('docxtemplater')]);
     try {
       const templateInfo = documentTemplates[type];
       if (!templateInfo || !templateInfo.url) {
@@ -27055,7 +27045,7 @@ export default function App() {
     return true;
   };
 
-  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null, documentChoice = null) => {
+  const handleDocumentSignatureSave = async (docId, signatureDataUrl = null, documentChoice = null) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
     const doc = documents.find(d => String(d.id) === String(docId));
     if (!doc) {
       toast.error('Document introuvable (id: ' + docId + ')');
@@ -27251,7 +27241,7 @@ export default function App() {
     setSigningDocId(null);
   };
 
-  const handleDownloadPDF = async (doc, recapType = 'general') => {
+  const handleDownloadPDF = async (doc, recapType = 'general') => { /* 2026-10-21 : chargé à la demande */ const html2canvas = (await import('html2canvas')).default; const { jsPDF } = await import('jspdf'); const { PDFDocument } = await import('pdf-lib');
     if (doc && doc.id) {
       // Détection : Si doc n'a pas d'URL mais a un rôle ou email, c'est un client -> Générer Récapitulatif
       const isClientRecap = (doc.role || doc.email) && !doc.url && !doc.url_signed_pdf;

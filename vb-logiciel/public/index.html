@@ -8,9 +8,9 @@
     <meta name="description" content="SkorUp — Gérez votre organisme de formation en un seul endroit." />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <title>SkorUp</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.5/dist/docx-preview.min.js"></script>
+    <!-- 2026-10-21 : mise en forme compilée avec l'application (plus de cdn.tailwindcss.com) ; jszip et
+         docx-preview sont déjà inclus dans l'application. Connexion anticipée à la base pour gagner du temps. -->
+    <link rel="preconnect" href="%REACT_APP_SUPABASE_URL%" crossorigin />
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
