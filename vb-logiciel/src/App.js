@@ -754,7 +754,7 @@ const GuideDemarrage = ({ orgSettings, modules, documents, formateurs, clients, 
     { titre: 'Complétez les informations de votre organisme', detail: 'Raison sociale, SIRET, n° de déclaration d\'activité : elles apparaissent sur vos documents.', fait: !!(orgSettings?.siret && orgSettings?.nda), onglet: 'parametres_org', bouton: 'Compléter' },
     { titre: 'Créez votre premier module', detail: 'Le parcours type de vos accompagnements (ex. : bilan de compétences en 6 séances).', fait: (modules || []).length > 0, onglet: 'modules', bouton: 'Créer un module' },
     { titre: 'Ajoutez vos modèles de documents', detail: 'Convention, programme, émargement… remplis et signés automatiquement.', fait: (documents || []).some(d => !d.user_id && !d.assigned_formateur_id), onglet: 'gestion_documents', bouton: 'Ajouter' },
-    { titre: 'Invitez vos formateurs', detail: 'Facultatif : seulement si vous travaillez avec des formateurs ou sous-traitants.', fait: (formateurs || []).length > 1, onglet: 'formateurs', bouton: 'Inviter', facultatif: true },
+    { titre: 'Invitez vos formateurs', detail: 'Facultatif : seulement si vous travaillez avec des formateurs ou sous-traitants.', fait: (formateurs || []).filter(f => !f.estAdmin).length >= 1, onglet: 'formateurs', bouton: 'Inviter', facultatif: true },
     { titre: 'Ajoutez votre premier client', detail: 'Il reçoit un email pour accéder à son espace personnel.', fait: (clients || []).length > 0, onglet: 'clients', bouton: 'Ajouter un client' },
   ];
   const nbFaites = etapes.filter(e => e.fait).length;
@@ -830,6 +830,26 @@ const moduleDuClient = (clients, clientId) => {
   const c = (clients || []).find(x => String(x.id) === String(clientId));
   return c ? (c.module_id ?? null) : null;
 };
+// LOT B (2026-10-21) : progression = part des séances du module actuel réellement faites. Une séance
+// est faite quand tout ce que le client doit y signer est signé ; sans signature attendue, quand sa date
+// est passée. (Avant : compteur incrémenté à chaque signature, divisé par 10 par défaut.)
+const progressionParcours = (clientId, sessions, moduleId = null) => {
+  const lignes = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null
+    && Number(s.numero_seance) >= 1 && estDuModuleActuel(s, moduleId));
+  const parSeance = new Map();
+  lignes.forEach(s => { const k = String(s.numero_seance); if (!parSeance.has(k)) parSeance.set(k, { items: [] }); parSeance.get(k).items.push(s); });
+  const total = parSeance.size;
+  if (!total) return { faites: 0, total: 0, pct: 0 };
+  const aujourdHui = jourLocalISO(new Date());
+  let faites = 0;
+  parSeance.forEach(g => {
+    if (seanceAttendSignature(g)) { if (seanceSignee(g)) faites++; return; }
+    const dates = g.items.map(s => (s.date ? String(s.date).slice(0, 10) : null)).filter(Boolean);
+    if (dates.length && dates.every(d => d <= aujourdHui)) faites++;
+  });
+  return { faites, total, pct: Math.min(100, Math.round((faites / total) * 100)) };
+};
+
 const isModuleCompletedForClient = (clientId, sessions, moduleId = null) => {
   const realSessions = (sessions || []).filter(s => String(s.client_id) === String(clientId) && s.numero_seance != null && estDuModuleActuel(s, moduleId));
   if (realSessions.length === 0) return false;
@@ -1188,6 +1208,16 @@ const syncSeanceToCalendar = (clientId, numeroSeance) => {
       body: JSON.stringify({ clientId, numeroSeance }),
     }).catch(() => {});
   }).catch(() => {});
+};
+
+// LOT B (2026-10-21) : une date ou un horaire modifié met à jour Google Agenda. Les modifications
+// rapprochées d'une même séance (date posée sur chaque élément, horaires tapés) partent en un seul envoi.
+const _agendaEnAttente = {};
+const planifierSyncAgenda = (clientId, numeroSeance) => {
+  if (!clientId || numeroSeance === undefined || numeroSeance === null) return;
+  const cle = `${clientId}|${numeroSeance}`;
+  clearTimeout(_agendaEnAttente[cle]);
+  _agendaEnAttente[cle] = setTimeout(() => { delete _agendaEnAttente[cle]; syncSeanceToCalendar(clientId, numeroSeance); }, 1500);
 };
 
 const EmargementModal = ({ isOpen, onClose, onSave, sessionTitle, signerRole = 'formateur' }) => {
@@ -6100,8 +6130,8 @@ const ClientDetailView = ({
                           const zId = g.numero === 0 ? '__admin' : String(g.numero ?? '__null');
                           return zId === over.id;
                         });
-                        const firstItem = targetGroup?.items[0];
-                        handleMoveSessionItem(active.id, targetNum, firstItem?.date, firstItem?.heure_debut, firstItem?.heure_fin);
+                        const planCible = scheduleOf(targetGroup?.items);
+                        handleMoveSessionItem(active.id, targetNum, planCible.date, planCible.debut, planCible.fin);
                       }
                     }
                     setActiveId(null);
@@ -8551,7 +8581,7 @@ const FormateurView = ({
           ).length;
           const isExpanded = expandedClientId === client.id;
           const assignedModule = modules?.find(m => String(m.id) === String(client.module_id));
-          const progress = Math.min(100, Math.round(((client.seances_effectuees || 0) / (client.seances_totales || 10)) * 100));
+          const progress = progressionParcours(client.id, sessions, client.module_id).pct; // LOT B
 
           return (
             <div key={client.id} className={`bg-white rounded-3xl p-6 shadow-sm border ${isExpanded ? 'border-indigo-200' : 'border-gray-100'} transition-all`}>
@@ -11997,9 +12027,10 @@ const DocumentsView = ({
       msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
       const { data: existingMsr } = await msrQuery;
       if (existingMsr && existingMsr.length > 0) {
-        await supabase.from('module_step_resources').update({
+        const { error: eMaj } = await supabase.from('module_step_resources').update({
           file_url: publicUrl, destination: 'client', metadata: JSON.stringify(metadataObj),
         }).eq('id', existingMsr[0].id);
+        if (eMaj) throw eMaj; // LOT B
       } else {
         const { error: msrErr } = await supabase.from('module_step_resources').insert([{
           titre: name, file_url: publicUrl, type: 'document', destination: 'client',
@@ -12012,13 +12043,15 @@ const DocumentsView = ({
       docQuery = currentOrgId ? docQuery.eq('organisation_id', currentOrgId) : docQuery.limit(0);
       const { data: existingDoc } = await docQuery;
       if (existingDoc && existingDoc.length > 0) {
-        await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
+        const { error: eDoc } = await supabase.from('documents').update({ url: publicUrl, metadata: JSON.stringify(metadataObj) }).eq('id', existingDoc[0].id);
+        if (eDoc) throw eDoc; // LOT B
       } else {
-        await supabase.from('documents').insert([{
+        const { error: eDoc } = await supabase.from('documents').insert([{
           nom: name, type_action: 'Modèle Référence', url: publicUrl,
           metadata: JSON.stringify(metadataObj), user_id: null,
           ...(currentOrgId ? { organisation_id: currentOrgId } : {}),
         }]);
+        if (eDoc) throw eDoc; // LOT B
       }
       if (fetchDocuments) await fetchDocuments();
       toast.success(`"${name}" ajouté comme document à signer !`, { id: toastId });
@@ -13442,7 +13475,9 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
 
   const issuedDocs = documents.filter(d => d.user_id || d.assigned_formateur_id);
   const pendingDocs = issuedDocs.filter(d => docAwaitsClientSignature(d) || docAwaitsFormateurSignature(d)); // FIX (2026-10-05), voir docRequiresSignature
-  const signedDocs = issuedDocs.filter(d => d.signe_par_client && d.signe_par_formateur);
+  // LOT B (2026-10-21) : un document signé par le client seul (sans autre signature attendue) compte aussi.
+  const signedDocs = issuedDocs.filter(d => (d.signe_par_client || d.signe_par_formateur || d.signe_par_organisme)
+    && !docAwaitsClientSignature(d) && !docAwaitsFormateurSignature(d));
   const weekSessions = sessions.filter(s => s.date >= weekStartStr && s.date <= weekEndStr);
   const todaySessions = sessions.filter(s => s.date === todayStr);
   // AFFICHAGE (2026-10-20) : on ne compte que les éléments qui attendent une signature du client.
@@ -16571,8 +16606,9 @@ const ProfileView = ({ currentUserId, supabase, fetchUtilisateurs, formateurs, c
     if (error) { toast.error('Erreur upload logo : ' + error.message); setIsUploadingLogo(false); return; }
     const { data } = supabase.storage.from('logos').getPublicUrl(path);
     const newLogoUrl = data.publicUrl;
+    const { error: errLogo } = await supabase.from('organisations').update({ logo_url: newLogoUrl }).eq('id', orgId);
+    if (errLogo) { toast.error("Le logo a été envoyé mais n'a pas pu être enregistré : " + errLogo.message); setIsUploadingLogo(false); return; }
     setLogoUrl(newLogoUrl);
-    await supabase.from('organisations').update({ logo_url: newLogoUrl }).eq('id', orgId);
     if (onOrgSaved) onOrgSaved({ logo_url: newLogoUrl });
     setIsUploadingLogo(false);
     toast.success('Logo mis à jour !');
@@ -22822,7 +22858,7 @@ export default function App() {
   // d'éviter tout risque de suppression accidentelle du compte admin lui-même.
   const assignableFormateurs = React.useMemo(() => {
     if (adminSelfProfile) {
-      return [{ ...adminSelfProfile, role: 'formateur' }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
+      return [{ ...adminSelfProfile, role: 'formateur', estAdmin: true }, ...formateurs.filter(f => f.id !== adminSelfProfile.id)];
     }
     if (clientCoachFallback) {
       return [{ ...clientCoachFallback, role: 'formateur' }, ...formateurs.filter(f => f.id !== clientCoachFallback.id)];
@@ -23968,30 +24004,59 @@ export default function App() {
       toast.error("Organisation introuvable, suppression annulée.");
       return;
     }
+    // LOT B (2026-10-21) : ordre sûr. On vérifie, on libère ses clients et groupes en notant lesquels,
+    // on supprime la fiche en contrôlant qu'elle l'a bien été (sinon tout est remis comme avant), et on ne
+    // supprime le compte de connexion qu'ensuite.
+    const idToast = `suppr-formateur-${formateurId}`;
+    toast.loading('Suppression du formateur…', { id: idToast });
+    let liberes = { clients: [], groupes: [], seances: [] };
+    const retablir = async () => {
+      if (liberes.clients.length) await supabase.from('clients').update({ formateur_id: formateurId }).in('id', liberes.clients);
+      if (liberes.groupes.length) await supabase.from('groupes').update({ formateur_id: formateurId }).in('id', liberes.groupes);
+      if (liberes.seances.length) await supabase.from('groupe_seances').update({ formateur_id: formateurId }).in('id', liberes.seances);
+    };
     try {
-      // 1. Désassigner les clients (uniquement ceux de l'organisation courante)
-      await supabase.from('clients').update({ formateur_id: null }).eq('formateur_id', formateurId).eq('organisation_id', currentOrgId);
-      // 2. Supprimer le formateur (uniquement s'il appartient à l'organisation courante)
-      const { error } = await supabase.from('utilisateurs').delete().eq('id', formateurId).eq('organisation_id', currentOrgId);
-      // 3. Supprimer le compte Auth via Edge Function sécurisée
-      const { data: { session } } = await supabase.auth.getSession();
-      await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ userId: formateurId, userType: 'formateur' })
-      });
-
-      if (!error) {
-        await fetchUtilisateurs();
-        toast.success("Utilisateur supprimé.");
-      } else {
-        toast.error("Erreur lors de la suppression : " + error.message);
+      const { data: fiche, error: errFiche } = await supabase.from('utilisateurs').select('id, nom')
+        .eq('id', formateurId).eq('organisation_id', currentOrgId).maybeSingle();
+      if (errFiche || !fiche) { toast.error("Formateur introuvable dans votre organisme : rien n'a été supprimé.", { id: idToast }); return; }
+      const lire = async (table) => {
+        const { data, error } = await supabase.from(table).select('id').eq('formateur_id', formateurId).eq('organisation_id', currentOrgId);
+        return error ? [] : (data || []).map(r => r.id);
+      };
+      const [cl, gr, gs] = await Promise.all([lire('clients'), lire('groupes'), lire('groupe_seances')]);
+      for (const [table, ids, cle] of [['clients', cl, 'clients'], ['groupes', gr, 'groupes'], ['groupe_seances', gs, 'seances']]) {
+        if (!ids.length) continue;
+        const { error: e } = await supabase.from(table).update({ formateur_id: null }).in('id', ids);
+        if (e) { await retablir(); toast.error(`Suppression annulée (${e.message}). Rien n'a été modifié.`, { id: idToast }); return; }
+        liberes[cle] = ids;
       }
+      const { data: supprimes, error } = await supabase.from('utilisateurs').delete()
+        .eq('id', formateurId).eq('organisation_id', currentOrgId).select('id');
+      if (error || !supprimes || supprimes.length === 0) {
+        await retablir();
+        toast.error(`Le formateur n'a pas pu être supprimé${error ? ' : ' + error.message : ''}. Ses clients et ses groupes ont été remis comme avant.`, { id: idToast, duration: 9000 });
+        await fetchUtilisateurs();
+        return;
+      }
+      // Compte de connexion : seulement maintenant que la fiche est bien supprimée.
+      let compteSupprime = true;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const resp = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/delete-user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+          body: JSON.stringify({ userId: formateurId, userType: 'formateur' })
+        });
+        compteSupprime = resp.ok;
+      } catch (_) { compteSupprime = false; }
+      await Promise.all([fetchUtilisateurs(), fetchGroupes()]);
+      const n = liberes.clients.length;
+      toast.success(`${fiche.nom || 'Le formateur'} a été supprimé.${n ? ` ${n} client${n > 1 ? 's sont' : ' est'} maintenant sans formateur : pensez à leur en attribuer un.` : ''}`, { id: idToast, duration: 8000 });
+      if (!compteSupprime) toast.error("Attention : son compte de connexion n'a pas pu être supprimé. Contactez le support SkorUp.", { duration: 9000 });
     } catch (err) {
       console.error("Erreur suppression formateur:", err);
+      await retablir().catch(() => {});
+      toast.error('Erreur : ' + err.message, { id: idToast });
       fetchUtilisateurs();
     }
   };
@@ -24745,11 +24810,14 @@ export default function App() {
           .eq('ressource_titre', resource.titre);
         if (!fetchErr && matching && matching.length > 0) {
           const toUpdate = matching.filter(s => parseMeta(s.metadata).requiresTrainerSignature !== true);
+          let echecs = 0;
           for (const s of toUpdate) {
             const m = parseMeta(s.metadata);
-            await supabase.from('sessions').update({ metadata: { ...m, requiresTrainerSignature: true } }).eq('id', s.id);
+            const { error: eMaj } = await supabase.from('sessions').update({ metadata: { ...m, requiresTrainerSignature: true } }).eq('id', s.id);
+            if (eMaj) echecs++;
           }
-          propagatedCount = toUpdate.length;
+          propagatedCount = toUpdate.length - echecs; // LOT B : nombre réellement mis à jour
+          if (echecs) toast.error(`${echecs} dossier(s) n'ont pas pu être mis à jour.`);
           if (propagatedCount > 0 && typeof fetchSessions === 'function') await fetchSessions();
         }
       }
@@ -24818,18 +24886,18 @@ export default function App() {
           String(c.module_id) === String(moduleId) &&
           (!currentOrgId || String(c.organisation_id) === String(currentOrgId))
         );
-        if (stepData.type === 'document') {
-          for (const client of assignedClients) {
-            await instantiateDocument(client, newResource, moment);
-          }
-        } else {
-          for (const client of assignedClients) {
-            await instantiateExerciceSession(client, newResource, moment);
-          }
-          if (assignedClients.length > 0 && typeof fetchSessions === 'function') await fetchSessions();
+        let distribues = 0; // LOT B : nombre réel
+        for (const client of assignedClients) {
+          try {
+            if (stepData.type === 'document') await instantiateDocument(client, newResource, moment);
+            else await instantiateExerciceSession(client, newResource, moment);
+            distribues++;
+          } catch (e) { console.error('[distribution]', client.id, e); }
         }
+        if (stepData.type !== 'document' && assignedClients.length > 0 && typeof fetchSessions === 'function') await fetchSessions();
         if (assignedClients.length > 0) {
-          toast.success(`✅ ${stepData.type === 'exercice' ? 'Exercice' : 'Document'} distribué à ${assignedClients.length} client(s) existant(s)`);
+          if (distribues > 0) toast.success(`✅ ${stepData.type === 'exercice' ? 'Exercice' : 'Document'} distribué à ${distribues} client(s) existant(s)`);
+          if (distribues < assignedClients.length) toast.error(`${assignedClients.length - distribues} client(s) n'ont pas pu le recevoir. Réessayez avec « Sync documents clients ».`);
         }
       }
       await fetchModules();
@@ -24848,13 +24916,15 @@ export default function App() {
     if (assignedClients.length === 0) {
       toast('Aucun client assigné à ce module.'); return;
     }
-    toast('Redistribution en cours...');
+    toast.loading('Redistribution en cours…', { id: 'redistribution' });
+    let ok = 0; // LOT B : nombre réel
     for (const client of assignedClients) {
-      await distributeDocumentsForModule(client, moduleId);
+      try { await distributeDocumentsForModule(client, moduleId); ok++; } catch (e) { console.error('[redistribution]', client.id, e); }
     }
     await fetchDocuments();
     if (typeof fetchSessions === 'function') await fetchSessions();
-    toast.success(`✅ Documents et exercices redistribués à ${assignedClients.length} client(s)`);
+    if (ok === assignedClients.length) toast.success(`✅ Documents et exercices redistribués à ${ok} client(s)`, { id: 'redistribution' });
+    else toast.error(`Redistribués à ${ok} client(s) sur ${assignedClients.length}. Réessayez pour les autres.`, { id: 'redistribution' });
   };
 
   const handleDeleteFolder = (folderId) => {
@@ -25092,6 +25162,10 @@ export default function App() {
     setLastModifiedSessionId(sessionId);
     setSessions(prev => prev.map(s => (s.id === sessionId ? { ...s, ...updates } : s)));
     scheduleSessionsRefresh();
+    if (['date', 'heure_debut', 'heure_fin'].some(k => k in updates)) {
+      const s = sessions.find(x => String(x.id) === String(sessionId));
+      if (s) planifierSyncAgenda(s.client_id, s.numero_seance);
+    }
     return true;
   };
 
@@ -25549,6 +25623,14 @@ export default function App() {
 
   const handleMoveSessionItem = async (sessionId, targetNumeroSeance, targetDate, targetDebut, targetFin) => {
     const movedSession = sessions.find(s => s.id === sessionId);
+    // LOT B (2026-10-21) : un élément signé reste dans sa séance (la signature correspond à cette date).
+    const { data: ligneActuelle, error: errLecture } = await supabase.from('sessions').select('*').eq('id', sessionId).maybeSingle();
+    if (errLecture) { toast.error('Vérification impossible, déplacement annulé : ' + errLecture.message); return; }
+    if (elementSeanceEstSigne(ligneActuelle)) {
+      toast.error('Cet élément a déjà été signé : il reste dans sa séance (la signature correspond à cette date).', { duration: 7000 });
+      return;
+    }
+    const ancienNumero = ligneActuelle?.numero_seance ?? movedSession?.numero_seance;
     const targetGroupItems = sessions.filter(s =>
       s.client_id === movedSession?.client_id &&
       s.numero_seance === targetNumeroSeance &&
@@ -25570,6 +25652,9 @@ export default function App() {
     if (!error) {
       await fetchSessions();
       toast.success("Activité déplacée avec succès !");
+      const clientDuDeplacement = ligneActuelle?.client_id || movedSession?.client_id;
+      planifierSyncAgenda(clientDuDeplacement, ancienNumero);
+      planifierSyncAgenda(clientDuDeplacement, targetNumeroSeance);
     } else {
       toast.error("Erreur lors du déplacement : " + error.message);
     }
@@ -26927,14 +27012,8 @@ export default function App() {
 
     const simulatedDoc = { ...doc, ...updateColumn };
 
-    if (signerType === 'client') {
-      const client = clients.find(c => c.id === simulatedDoc.user_id);
-      if (client) {
-        const newSeances = (client.seances_effectuees || 0) + 1;
-        setClients(clients.map(c => c.id === client.id ? { ...c, seances_effectuees: newSeances } : c));
-        await supabase.from('utilisateurs').update({ seances_effectuees: newSeances }).eq('id', client.id);
-      }
-    }
+    // LOT B (2026-10-21) : plus de compteur écrit dans la table des utilisateurs (mauvaise table) ; la
+    // progression est calculée à partir des séances (progressionParcours).
 
     let signedPdfUpdate = {};
 
@@ -28499,9 +28578,10 @@ export default function App() {
             const _client = clients.find(c => c.id === currentUserId);
             const _module = modules.find(m => String(m.id) === String(_client?.module_id));
             const _clientSessions = sessions.filter(s => String(s.client_id) === String(currentUserId));
-            const _signed = _clientSessions.filter(s => s.statut === 'Signé' || s.statut_client === 'Signé').length;
-            const _total = _clientSessions.length;
-            const _progress = _total > 0 ? Math.min(100, Math.round((_signed / _total) * 100)) : 0;
+            const _prog = progressionParcours(currentUserId, sessions, _client?.module_id); // LOT B
+            const _signed = _prog.faites;
+            const _total = _prog.total;
+            const _progress = _prog.pct;
             const _today = jourLocalISO(new Date());
             const _nextSession = _clientSessions.filter(s => s.date >= _today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0] || null;
             const _coach = assignableFormateurs.find(f => f.id === _client?.formateur_id);
