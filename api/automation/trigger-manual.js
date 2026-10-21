@@ -166,6 +166,11 @@ module.exports = async (req, res) => {
       supabaseAdmin.from('modules').select('id, nom').eq('organisation_id', organisationId),
     ]);
 
+    // 2026-10-21 : dossiers créés « sans envoyer d'email » (clients.acces_differe) → aucun email
+    // automatique tant que l'accès n'a pas été envoyé. Si la colonne n'existe pas : liste vide.
+    const { data: _differes, error: _differesErr } = await supabaseAdmin.from('clients').select('id').eq('acces_differe', true).eq('organisation_id', organisationId);
+    const accesDifferes = new Set(_differesErr ? [] : (_differes || []).map(r => String(r.id)));
+
     const todayStr = todayInParisStr();
 
     // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──
@@ -215,6 +220,10 @@ module.exports = async (req, res) => {
       for (const session of targetSessions) {
         const client = (clients || []).find(c => String(c.id) === String(session.client_id));
 
+        if (client && accesDifferes.has(String(client.id))) {
+          debugSessionInfo.push({ sessionId: session.id, settingId: setting.id, clientId: session.client_id, clientFound: true, skippedReason: 'acces_non_envoye' });
+          continue;
+        }
         if (!client?.email_contact) {
           debugSessionInfo.push({
             sessionId: session.id, settingId: setting.id, clientId: session.client_id,

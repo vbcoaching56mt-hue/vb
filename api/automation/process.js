@@ -308,6 +308,11 @@ module.exports = async (req, res) => {
       supabase.from('modules').select('id, nom'),
     ]);
 
+    // 2026-10-21 : dossiers créés « sans envoyer d'email » (clients.acces_differe) → aucun email
+    // automatique tant que l'accès n'a pas été envoyé. Si la colonne n'existe pas : liste vide.
+    const { data: _differes, error: _differesErr } = await supabase.from('clients').select('id').eq('acces_differe', true);
+    const accesDifferes = new Set(_differesErr ? [] : (_differes || []).map(r => String(r.id)));
+
     const todayStr = todayInParisStr();
 
     let sent = 0;
@@ -363,7 +368,7 @@ module.exports = async (req, res) => {
       // ── 4. Envoyer un email pour chaque session concernée ──────────────────
       for (const session of triggerSessions) {
         const client = (clients || []).find(c => String(c.id) === String(session.client_id));
-        if (!client?.email_contact) continue;
+        if (!client?.email_contact || accesDifferes.has(String(client.id))) continue;
 
         // Vérifier qu'on n'a pas déjà envoyé cette relance aujourd'hui
         const { data: existingLog } = await supabase

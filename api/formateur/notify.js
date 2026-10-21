@@ -342,6 +342,8 @@ async function handleCompteClient(req, res, authData) {
     }
     throw createErr;
   }
+  // 2026-10-21 : l'accès est maintenant envoyé → le dossier n'est plus « accès non envoyé ».
+  await supabaseAdmin.from('clients').update({ acces_differe: false }).eq('id', client.id).eq('acces_differe', true);
 
   const { data: lienData, error: lienErr } = await supabaseAdmin.auth.admin.generateLink({
     type: 'recovery', email, options: { redirectTo: safeOrigin },

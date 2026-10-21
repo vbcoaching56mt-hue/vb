@@ -5166,6 +5166,7 @@ const ClientDetailView = ({
           >
             <Download size={16} /> Récapitulatif Général
           </button>
+          <MasquerSiSansCompte clientId={client.id}>
           <button
             onClick={handleResendInvite}
             title="Renvoyer le lien d'invitation par email"
@@ -5173,6 +5174,7 @@ const ClientDetailView = ({
           >
             <Mail size={16} /> Renvoyer le lien
           </button>
+          </MasquerSiSansCompte>
           <BadgeCompteClient clientId={client.id} detail={false} fallback={
             <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider ${client.status === 'Nouveau' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
               {client.status || 'Actif'}
@@ -6516,7 +6518,7 @@ const AdminClientsView = ({
   const clientsFiltresCompte = (!ctxComptes?.dispo || filtreCompte === 'tous')
     ? filteredClients
     : filteredClients.filter(c => {
-        const st = statutCompteDe(ctxComptes.statuts[String(c.id)]);
+        const st = statutCompteDe(ctxComptes.statuts[String(c.id)], !!ctxComptes.differes?.has(String(c.id)));
         return filtreCompte === 'a_activer' ? (st === 'attente' || st === 'aucun') : st === filtreCompte;
       });
 
@@ -17332,6 +17334,8 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
 
 const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole }) => {
   const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
+  // 2026-10-21 : décocher = créer le dossier sans prévenir le client (prospect en étude, financement en attente…).
+  const [envoyerInvitation, setEnvoyerInvitation] = useState(true);
 
   // FIX (2026-09-15) : le formulaire gardait le nom/email/formateur du DERNIER utilisateur créé
   // quand on rouvrait la modale pour en créer un autre — car ce composant reste monté en permanence
@@ -17345,6 +17349,7 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
   React.useEffect(() => {
     if (isOpen) {
       setFormData({ nom: '', email: '', role: defaultRole || 'client', formateur_id: '' });
+      setEnvoyerInvitation(true);
     }
   }, [isOpen, defaultRole]);
 
@@ -17355,9 +17360,11 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
       <div className="bg-white rounded-3xl p-8 shadow-2xl border border-gray-100 w-full max-w-md animate-scale-up relative">
         <button onClick={onClose} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600">✕</button>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Inviter un Utilisateur</h2>
-        <p className="text-gray-500 text-sm mb-8">Un email sera envoyé pour définir le mot de passe.</p>
+        <p className="text-gray-500 text-sm mb-8">{formData.role === 'client' && !envoyerInvitation
+          ? "Le dossier sera créé sans envoyer d'email au client."
+          : 'Un email sera envoyé pour définir le mot de passe.'}</p>
 
-        <form onSubmit={(e) => { e.preventDefault(); onInvite(formData); }} className="space-y-5">
+        <form onSubmit={(e) => { e.preventDefault(); onInvite({ ...formData, envoyerInvitation: formData.role === 'client' ? envoyerInvitation : true }); }} className="space-y-5">
           <div>
             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Nom Complet</label>
             <input
@@ -17408,12 +17415,33 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
             </div>
           )}
 
+          {formData.role === 'client' && (
+            <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 w-4 h-4 accent-violet-600"
+                checked={envoyerInvitation}
+                onChange={e => setEnvoyerInvitation(e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-bold text-gray-800">Envoyer l'invitation par email maintenant</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  {envoyerInvitation
+                    ? 'Le client reçoit tout de suite un email pour créer son mot de passe.'
+                    : "Aucun email n'est envoyé (ni invitation, ni rappel). Vous pourrez suivre le dossier normalement, puis envoyer l'accès depuis sa fiche quand il sera validé."}
+                </span>
+              </span>
+            </label>
+          )}
+
           <button
             type="submit"
             disabled={isAddingUser}
             className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
           >
-            {isAddingUser ? 'Envoi...' : 'Envoyer l\'invitation'}
+            {isAddingUser
+              ? (formData.role === 'client' && !envoyerInvitation ? 'Création...' : 'Envoi...')
+              : (formData.role === 'client' && !envoyerInvitation ? 'Créer le dossier' : 'Envoyer l\'invitation')}
           </button>
         </form>
       </div>
@@ -22373,12 +22401,14 @@ const DepotsClientPanel = ({ client, currentOrgId, userRole, estPro, nomUtilisat
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 const ComptesClientsContext = React.createContext(null);
 
-const statutCompteDe = (info) => (!info ? null : (!info.compte_existe ? 'aucun' : (info.derniere_connexion ? 'active' : 'attente')));
+// 2026-10-21 : 'differe' = dossier créé sans envoyer d'email (clients.acces_differe), pas encore de compte.
+const statutCompteDe = (info, differe = false) => (!info ? null : (!info.compte_existe ? ((differe && !info.email_deja_utilise) ? 'differe' : 'aucun') : (info.derniere_connexion ? 'active' : 'attente')));
 
 const STATUT_COMPTE_UI = {
   active: { label: 'Compte activé', icone: '✓', cls: 'bg-green-100 text-green-700' },
   attente: { label: 'Invitation envoyée', icone: '⏳', cls: 'bg-amber-100 text-amber-700' },
   aucun: { label: 'Aucun compte', icone: '⛔', cls: 'bg-red-100 text-red-700' },
+  differe: { label: 'Accès non envoyé', icone: '✉️', cls: 'bg-slate-100 text-slate-700' },
 };
 
 const depuisQuandCompte = (iso) => {
@@ -22402,6 +22432,7 @@ const dateHeureCompte = (iso) => {
 const sousTexteCompte = (info, st) => {
   if (st === 'active') return `Dernière connexion : ${depuisQuandCompte(info.derniere_connexion)}`;
   if (st === 'attente') return `Invitation ${depuisQuandCompte(info.invite_le)} · jamais connecté`;
+  if (st === 'differe') return "aucun email envoyé au client pour l'instant";
   if (st === 'aucun') return info.email_deja_utilise ? 'email déjà utilisé par un autre compte de votre organisme' : 'la fiche existe, pas le compte';
   return '';
 };
@@ -22409,7 +22440,7 @@ const sousTexteCompte = (info, st) => {
 const useCompteClient = (clientId) => {
   const ctx = React.useContext(ComptesClientsContext);
   const info = ctx?.dispo ? ctx.statuts[String(clientId)] : null;
-  return { ctx, info, st: statutCompteDe(info) };
+  return { ctx, info, st: statutCompteDe(info, !!ctx?.differes?.has(String(clientId))) };
 };
 
 // Même envoi que le bouton « Renvoyer le lien » de la fiche client (fonction invite-user).
@@ -22450,16 +22481,17 @@ const BadgeCompteClient = ({ clientId, detail = true, align = 'right', fallback 
 const BoutonCreerCompte = ({ client, petit = false }) => {
   const { ctx, info, st } = useCompteClient(client.id);
   const [enCours, setEnCours] = React.useState(false);
-  if (st !== 'aucun' || !ctx?.creerCompte) return null;
+  if ((st !== 'aucun' && st !== 'differe') || !ctx?.creerCompte) return null;
+  const differe = st === 'differe';
   return (
     <button
       type="button"
       disabled={enCours}
       onClick={async (e) => { e.stopPropagation(); setEnCours(true); try { await ctx.creerCompte(client); } finally { setEnCours(false); } }}
-      title={info?.email_deja_utilise ? "Cette adresse email est déjà utilisée par un autre compte : changez l'email du client avant." : 'Crée le compte de connexion du client et lui envoie un lien pour choisir son mot de passe'}
-      className={`inline-flex items-center gap-1.5 font-bold rounded-xl border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all disabled:opacity-60 whitespace-nowrap ${petit ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'}`}
+      title={info?.email_deja_utilise ? "Cette adresse email est déjà utilisée par un autre compte : changez l'email du client avant." : (differe ? "Crée l'accès du client et lui envoie un email pour choisir son mot de passe" : 'Crée le compte de connexion du client et lui envoie un lien pour choisir son mot de passe')}
+      className={`inline-flex items-center gap-1.5 font-bold rounded-xl border ${differe ? 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'} transition-all disabled:opacity-60 whitespace-nowrap ${petit ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'}`}
     >
-      <UserPlus size={petit ? 13 : 15} /> {enCours ? 'Création…' : 'Créer le compte et envoyer le lien'}
+      {differe ? <Mail size={petit ? 13 : 15} /> : <UserPlus size={petit ? 13 : 15} />} {enCours ? (differe ? 'Envoi…' : 'Création…') : (differe ? "Envoyer l'accès au client" : 'Créer le compte et envoyer le lien')}
     </button>
   );
 };
@@ -22467,7 +22499,7 @@ const BoutonCreerCompte = ({ client, petit = false }) => {
 // Bouton d'action rapide dans les listes : « Renvoyer le lien » (en attente) ou « Créer le compte ».
 const ActionCompteClient = ({ client }) => {
   const { st } = useCompteClient(client.id);
-  if (st === 'aucun') return <span className="hidden sm:inline-flex"><BoutonCreerCompte client={client} petit /></span>;
+  if (st === 'aucun' || st === 'differe') return <span className="hidden sm:inline-flex"><BoutonCreerCompte client={client} petit /></span>;
   if (st !== 'attente') return null;
   return (
     <button
@@ -22483,13 +22515,13 @@ const ActionCompteClient = ({ client }) => {
 // Masque son contenu pour un client sans compte (ex. « Renvoyer le lien » ne peut pas marcher).
 const MasquerSiSansCompte = ({ clientId, children }) => {
   const { st } = useCompteClient(clientId);
-  return st === 'aucun' ? null : children;
+  return (st === 'aucun' || st === 'differe') ? null : children;
 };
 
 const BandeauComptesAActiver = ({ clientIds = [], onVoir = null }) => {
   const ctx = React.useContext(ComptesClientsContext);
   if (!ctx?.dispo) return null;
-  const sts = clientIds.map(id => statutCompteDe(ctx.statuts[String(id)]));
+  const sts = clientIds.map(id => statutCompteDe(ctx.statuts[String(id)], !!ctx.differes?.has(String(id))));
   const attente = sts.filter(s => s === 'attente').length;
   const aucun = sts.filter(s => s === 'aucun').length;
   const total = attente + aucun;
@@ -22513,13 +22545,14 @@ const BandeauComptesAActiver = ({ clientIds = [], onVoir = null }) => {
 const FiltresComptes = ({ clients = [], valeur, onChange }) => {
   const ctx = React.useContext(ComptesClientsContext);
   if (!ctx?.dispo || clients.length === 0) return null;
-  const compte = (st) => clients.filter(c => statutCompteDe(ctx.statuts[String(c.id)]) === st).length;
+  const compte = (st) => clients.filter(c => statutCompteDe(ctx.statuts[String(c.id)], !!ctx.differes?.has(String(c.id))) === st).length;
   const options = [
     ['tous', `Tous (${clients.length})`],
     ['active', `✅ Activés (${compte('active')})`],
     ['attente', `⏳ En attente (${compte('attente')})`],
     ['aucun', `⛔ Sans compte (${compte('aucun')})`],
   ];
+  if (compte('differe') > 0 || valeur === 'differe') options.push(['differe', `✉️ Accès non envoyé (${compte('differe')})`]);
   if (valeur === 'a_activer') options.push(['a_activer', `À activer (${compte('attente') + compte('aucun')}) ✕`]);
   return (
     <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="Filtrer par statut du compte">
@@ -22565,7 +22598,7 @@ const BlocAccesCompte = ({ client, onRenvoyer }) => {
         <h4 className="font-black text-sm text-gray-800">Accès à SkorUp</h4>
         <BadgeCompteClient clientId={client.id} detail={false} />
       </div>
-      {st !== 'aucun' ? (
+      {st !== 'aucun' && st !== 'differe' ? (
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
           {ligne('Invitation', dateHeureCompte(info.invite_le))}
           {ligne('Compte activé le', st === 'active' ? dateHeureCompte(info.active_le) : '—')}
@@ -22573,7 +22606,9 @@ const BlocAccesCompte = ({ client, onRenvoyer }) => {
         </dl>
       ) : (
         <p className="mt-3 text-sm text-gray-600">
-          {info.email_deja_utilise
+          {st === 'differe'
+            ? "Ce dossier a été créé sans prévenir le client : aucun email ne lui a été envoyé (ni invitation, ni rappel). Quand vous êtes prêt, cliquez sur « Envoyer l'accès au client » : il recevra un email pour choisir son mot de passe."
+            : info.email_deja_utilise
             ? "L'adresse email de ce client est déjà utilisée par un autre compte SkorUp. Corrigez son email ci-dessous, puis créez son compte."
             : "La fiche de ce client existe, mais son compte de connexion n'a jamais été créé (ou a été supprimé) : il ne peut pas se connecter."}
         </p>
@@ -22584,7 +22619,7 @@ const BlocAccesCompte = ({ client, onRenvoyer }) => {
           <Mail size={15} /> Renvoyer le lien
         </button>
       )}
-      {st === 'aucun' && <div className="mt-3"><BoutonCreerCompte client={client} /></div>}
+      {(st === 'aucun' || st === 'differe') && <div className="mt-3"><BoutonCreerCompte client={client} /></div>}
     </div>
   );
 };
@@ -23326,13 +23361,15 @@ export default function App() {
         ? `Compte créé : un lien pour choisir son mot de passe a été envoyé à ${email}.`
         : "Compte créé, mais l'email n'a pas pu partir : utilisez « Renvoyer le lien ».", { duration: 7000 });
       await chargerStatutsComptes();
+      fetchUtilisateurs();
       return true;
     } catch (e) {
       toast.error('Erreur : ' + e.message);
       return false;
     }
   };
-  const comptesCtx = { statuts: statutsComptes, dispo: statutsComptesDispo, estPro, recharger: chargerStatutsComptes, creerCompte: creerCompteClient };
+  const clientsAccesDifferes = React.useMemo(() => new Set((clients || []).filter(c => c.acces_differe).map(c => String(c.id))), [clients]);
+  const comptesCtx = { statuts: statutsComptes, dispo: statutsComptesDispo, estPro, recharger: chargerStatutsComptes, creerCompte: creerCompteClient, differes: clientsAccesDifferes };
 
 
 
@@ -23396,6 +23433,7 @@ export default function App() {
         telephone: c.telephone || '',
         client_email: c.email_contact,
         email_contact: c.email_contact,
+        acces_differe: c.acces_differe === true,
         adresse_session: c.adresse_postale,
         adresse: c.adresse_postale || c.rue || '',
         rue: c.rue || '',
@@ -23573,77 +23611,98 @@ export default function App() {
 
   const handleInviteUser = async (formData) => {
     const { email, nom, role } = formData;
+    // 2026-10-21 : « Envoyer l'invitation par email maintenant » décoché → dossier créé SANS compte de
+    // connexion et SANS aucun email ; l'accès s'envoie plus tard (bouton « Envoyer l'accès au client »,
+    // api/formateur/notify.js type compte_client, qui crée le compte avec le même identifiant).
+    const sansEmail = role === 'client' && formData.envoyerInvitation === false;
     setIsAddingUser(true);
-
-    // 0. Plafond de dossiers clients selon le plan (décision produit du 2026-07-28) —
-    // ne s'applique qu'aux clients (les formateurs/admins ne comptent pas dans ce quota).
-    // On compte à la volée en base plutôt que de se fier à l'état local "clients", pour
-    // éviter tout contournement via une liste côté client pas encore rafraîchie.
-    if (role === 'client') {
-      const clientLimit = getClientLimitForOrg(orgSettings);
-      if (Number.isFinite(clientLimit)) {
-        const { count: currentClientCount, error: countError } = await supabase
-          .from('clients')
-          .select('id', { count: 'exact', head: true })
-          .eq('organisation_id', currentOrgId);
-        if (countError) {
-          console.error('Erreur vérification du quota de dossiers clients:', countError);
-          toast.error("Impossible de vérifier votre quota de dossiers clients pour le moment. Réessayez.");
-          setIsAddingUser(false);
-          return;
-        }
-        if ((currentClientCount || 0) >= clientLimit) {
-          toast.error(
-            `Vous avez atteint la limite de ${clientLimit} dossiers clients de votre plan actuel. Passez à un plan supérieur pour en ajouter davantage.`,
-            { duration: 8000 }
-          );
-          setIsAddingUser(false);
-          return;
+    try {
+      // 0. Plafond de dossiers clients selon le plan (décision produit du 2026-07-28) — les dossiers
+      // créés sans email comptent aussi (décision du 21/10/2026).
+      if (role === 'client') {
+        const clientLimit = getClientLimitForOrg(orgSettings);
+        if (Number.isFinite(clientLimit)) {
+          const { count: currentClientCount, error: countError } = await supabase
+            .from('clients')
+            .select('id', { count: 'exact', head: true })
+            .eq('organisation_id', currentOrgId);
+          if (countError) {
+            console.error('Erreur vérification du quota de dossiers clients:', countError);
+            toast.error("Impossible de vérifier votre quota de dossiers clients pour le moment. Réessayez.");
+            return;
+          }
+          if ((currentClientCount || 0) >= clientLimit) {
+            toast.error(
+              `Vous avez atteint la limite de ${clientLimit} dossiers clients de votre plan actuel. Passez à un plan supérieur pour en ajouter davantage.`,
+              { duration: 8000 }
+            );
+            return;
+          }
         }
       }
-    }
 
-    // 1. Inviter via Edge Function sécurisée (service_role côté serveur)
-    const { data: { session: authSession } } = await supabase.auth.getSession();
-    const inviteRes = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authSession.access_token}`
-      },
-      body: JSON.stringify({ email, nom, role, action: 'invite', redirectTo: window.location.origin })
-    });
-    const inviteResult = await inviteRes.json();
-    const inviteData = inviteResult.userId ? { user: { id: inviteResult.userId } } : null;
-    const inviteError = inviteRes.ok ? null : { message: inviteResult.error };
-
-    if (inviteError) {
-      console.error("Erreur invitation Supabase:", inviteError);
-      toast.error(`L'invitation a échoué : ${inviteError.message}`);
-      setIsAddingUser(false);
-      return;
-    }
-
-    const newUserId = inviteData.user?.id;
-
-    // 3. Créer l'entrée dans la table correspondante
-    if (role === 'client') {
-      // Pour les clients : on utilise la table 'clients' avec l'UUID de l'Auth
-      // CRUCIAL : on utilise supabase pour outrepasser les règles RLS lors de l'insertion initiale
-      const formateurIntId = formData.formateur_id ? Number(formData.formateur_id) : null;
-      const formateurRecord = formateurIntId ? formateurs.find(f => f.id === formateurIntId) : null;
-      const { error: dbError } = await supabase.from('clients').insert([{
-        id: newUserId,
-        nom_complet: nom,
-        email_contact: email,
-        formateur_id: formateurIntId,
-        formateur_auth_uid: formateurRecord?.auth_uid || null,
-        organisation_id: currentOrgId
-      }]);
-      if (dbError) {
-        console.error("Erreur DB clients après invitation:", dbError);
-        toast.error(`Erreur side-effect clients : ${dbError.message}`);
+      let newUserId = null;
+      if (sansEmail) {
+        // Pas de compte de connexion : on évite seulement un doublon d'email dans l'organisme.
+        const emailNet = String(email || '').trim();
+        const { data: dejaLa } = await supabase.from('clients').select('id')
+          .eq('organisation_id', currentOrgId)
+          .ilike('email_contact', emailNet.replace(/[\\%_]/g, (m) => '\\' + m))
+          .limit(1);
+        if (dejaLa && dejaLa.length > 0) {
+          toast.error('Un client avec cette adresse email existe déjà dans votre organisme.');
+          return;
+        }
+        // Identifiant du futur compte (crypto.randomUUID n'existe pas sur certains navigateurs anciens).
+        const c = window.crypto;
+        if (c && typeof c.randomUUID === 'function') newUserId = c.randomUUID();
+        else {
+          const o = new Uint8Array(16); c.getRandomValues(o);
+          o[6] = (o[6] & 0x0f) | 0x40; o[8] = (o[8] & 0x3f) | 0x80;
+          const h = Array.from(o, x => x.toString(16).padStart(2, '0')).join('');
+          newUserId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+        }
       } else {
+        // 1. Inviter via Edge Function sécurisée (service_role côté serveur)
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const inviteRes = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/invite-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authSession.access_token}`
+          },
+          body: JSON.stringify({ email, nom, role, action: 'invite', redirectTo: window.location.origin })
+        });
+        const inviteResult = await inviteRes.json().catch(() => ({}));
+        if (!inviteRes.ok || !inviteResult.userId) {
+          console.error("Erreur invitation Supabase:", inviteResult);
+          toast.error(`L'invitation a échoué : ${inviteResult.error || 'réponse inattendue du serveur'}`);
+          return;
+        }
+        newUserId = inviteResult.userId;
+      }
+
+      // 2. Créer l'entrée dans la table correspondante
+      if (role === 'client') {
+        const formateurIntId = formData.formateur_id ? Number(formData.formateur_id) : null;
+        const formateurRecord = formateurIntId ? formateurs.find(f => f.id === formateurIntId) : null;
+        const { error: dbError } = await supabase.from('clients').insert([{
+          id: newUserId,
+          nom_complet: nom,
+          email_contact: email,
+          formateur_id: formateurIntId,
+          formateur_auth_uid: formateurRecord?.auth_uid || null,
+          organisation_id: currentOrgId,
+          ...(sansEmail ? { acces_differe: true } : {})
+        }]);
+        if (dbError) {
+          console.error("Erreur DB clients:", dbError);
+          toast.error(sansEmail
+            ? `Le dossier n'a pas pu être créé : ${dbError.message}`
+            : `Le compte a été créé mais la fiche client n'a pas pu être enregistrée : ${dbError.message}. Prévenez le support avant de réessayer.`,
+            { duration: 10000 });
+          return;
+        }
         // Initialisation automatique des documents depuis la modélothèque
         const defaultClientDocs = Object.entries(documentTemplates || {})
           .filter(([, tpl]) => (tpl.destination || 'client') === 'client')
@@ -23659,24 +23718,34 @@ export default function App() {
           const { error: docsError } = await supabase.from('client_documents').insert(defaultClientDocs);
           if (docsError) console.error('Erreur init client_documents:', docsError);
         }
+      } else {
+        // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
+        // On stocke aussi l'auth_uid (UUID Supabase Auth) pour les balises de documents
+        const { error: dbError } = await supabase.from('utilisateurs').insert([{
+          nom: nom,
+          email: email,
+          role: role,
+          organisation_id: currentOrgId,
+          auth_uid: newUserId || null
+        }]);
+        if (dbError) {
+          console.error("Erreur DB utilisateurs après invitation:", dbError);
+          toast.error(`Le compte a été créé mais le formateur n'a pas pu être enregistré : ${dbError.message}. Prévenez le support avant de réessayer.`, { duration: 10000 });
+          return;
+        }
       }
-    } else {
-      // Pour les formateurs : on garde la table 'utilisateurs' (ID entier automatique)
-      // On stocke aussi l'auth_uid (UUID Supabase Auth) pour les balises de documents
-      const { error: dbError } = await supabase.from('utilisateurs').insert([{
-        nom: nom,
-        email: email,
-        role: role,
-        organisation_id: currentOrgId,
-        auth_uid: newUserId || null
-      }]);
-      if (dbError) console.error("Erreur DB utilisateurs après invitation:", dbError);
-    }
 
-    toast.success(`✅ Invitation envoyée par email à ${email} !`);
-    setIsAddingUser(false);
-    setIsInviteModalOpen(false);
-    fetchUtilisateurs();
+      toast.success(sansEmail
+        ? `Dossier de ${nom} créé. Aucun email n'a été envoyé : utilisez « Envoyer l'accès au client » dans sa fiche quand vous serez prêt.`
+        : `✅ Invitation envoyée par email à ${email} !`, { duration: sansEmail ? 8000 : 4000 });
+      setIsInviteModalOpen(false);
+      fetchUtilisateurs();
+    } catch (err) {
+      console.error('handleInviteUser:', err);
+      toast.error(`Erreur : ${err.message}`);
+    } finally {
+      setIsAddingUser(false);
+    }
   };
 
   // --- Actions Navigation ---

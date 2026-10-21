@@ -139,6 +139,9 @@ module.exports = async (req, res) => {
       return res.status(403).json({ error: 'Ce client n\'est pas assigné à ce formateur.' });
     }
     if (!client.email_contact) return res.status(200).json({ sent: false, message: 'Ce client n\'a pas d\'adresse email enregistrée.' });
+    // 2026-10-21 : accès pas encore envoyé (dossier créé sans email) → pas de notification.
+    const { data: differe } = await supabaseAdmin.from('clients').select('id').eq('id', client.id).eq('acces_differe', true).maybeSingle();
+    if (differe) return res.status(200).json({ sent: false, message: "L'accès de ce client n'a pas encore été envoyé : aucun email." });
 
     const clientFirstName = escapeHtml((client.nom_complet || '').split(' ')[0] || '');
     const docName = plainText(documentName);
