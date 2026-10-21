@@ -3,6 +3,7 @@
   "outputDirectory": "vb-logiciel/build",
   "installCommand": "npm install && cd vb-logiciel && npm install",
   "framework": null,
+  "regions": ["dub1"],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }

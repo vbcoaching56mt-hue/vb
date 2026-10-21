@@ -617,6 +617,35 @@ const parseAddressString = (addr) => {
 //     message → on lit maintenant la table page par page (buildQuery doit inclure un tri stable, ex. .order('id')).
 // buildQuery est une fonction qui reconstruit la requête à chaque page/tentative (un builder Supabase ne se
 // réutilise pas après avoir été exécuté).
+// 2026-10-21 : colonnes « légères » des documents et des séances (toutes sauf les images de signature),
+// fournies par la base (fonction skorup_colonnes_legeres) : une colonne ajoutée plus tard est prise en
+// compte toute seule. Sans la fonction : chargement complet, comme avant.
+let _colonnesLegeres = null;
+const colonnesLegeres = async () => {
+  if (_colonnesLegeres) return _colonnesLegeres;
+  try {
+    const { data, error } = await supabase.rpc('skorup_colonnes_legeres');
+    if (!error && data && typeof data.documents === 'string' && typeof data.sessions === 'string' && data.documents && data.sessions) {
+      _colonnesLegeres = data;
+      return data;
+    }
+  } catch (_) { /* fonction absente : chargement complet */ }
+  return { documents: '*', sessions: '*' };
+};
+// Images de signature lues à la demande (fabrication des PDF).
+const chargerSignaturesSeances = async (clientId) => {
+  try {
+    const { data } = await supabase.from('sessions').select('id, signature_client, signature_formateur').eq('client_id', clientId);
+    return new Map((data || []).map(r => [String(r.id), r]));
+  } catch (_) { return new Map(); }
+};
+const chargerSignaturesDocument = async (docId) => {
+  try {
+    const { data } = await supabase.from('documents').select('signature_client, signature_formateur').eq('id', docId).maybeSingle();
+    return data || {};
+  } catch (_) { return {}; }
+};
+
 const fetchAllRowsWithRetry = async (buildQuery, { label = 'données', pageSize = 1000, retries = 2 } = {}) => {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -6493,7 +6522,19 @@ const ClientDetailView = ({
   );
 };
 
+const SqueletteChargement = ({ texte = 'Chargement…' }) => (
+  <div className="space-y-3" aria-busy="true">
+    <p className="text-sm font-bold text-gray-500 flex items-center gap-2">
+      <span className="w-4 h-4 border-2 border-gray-200 border-t-violet-600 rounded-full animate-spin"></span> {texte}
+    </p>
+    {[0, 1, 2].map(i => (
+      <div key={i} className="h-20 rounded-3xl bg-gray-100 animate-pulse" />
+    ))}
+  </div>
+);
+
 const AdminClientsView = ({
+  chargement = false,
   handleAddUser, newUserName, setNewUserName,
   newUserEmail, setNewUserEmail,
   newUserRole, setNewUserRole, isAddingUser,
@@ -6642,6 +6683,7 @@ const AdminClientsView = ({
         {filtreCompte !== 'tous' && filteredClients.length > 0 && clientsFiltresCompte.length === 0 && (
           <p className="text-sm text-gray-500 italic py-4">Aucun client dans cette catégorie.</p>
         )}
+        {chargement && clients.length === 0 && <SqueletteChargement texte="Chargement de vos clients…" />}
         <div className="space-y-8">
           {Object.keys(clientsGroupedByFormateur).map(fId => {
             const formateur = formateurs.find(f => String(f.id) === String(fId));
@@ -8036,7 +8078,7 @@ const FormateurView = ({
   handleSignDocument, setViewingDocId,
   clientSkills, fetchClientSkills, supabase, fetchDocuments,
   handleMoveSessionItem, handleSaveCorrection, currentOrgId, handleAddCompletedExercise,
-  depotsNonLus = [], estPro = false, nomUtilisateur = '', onDepotsVus = null, ongletInitial = null, onOngletInitialUtilise = null
+  depotsNonLus = [], estPro = false, nomUtilisateur = '', onDepotsVus = null, ongletInitial = null, onOngletInitialUtilise = null, chargement = false
 }) => {
   const [editedTimes, setEditedTimes] = React.useState({});
   const [savingId, setSavingId] = React.useState(null);
@@ -9387,7 +9429,7 @@ const FormateurView = ({
           );
         }) : (
           <div className="col-span-full py-12 text-center bg-white rounded-3xl border-2 border-dashed border-gray-200">
-            <p className="text-gray-400 font-medium italic">Aucun client ne vous est assigné actuellement.</p>
+            <p className="text-gray-400 font-medium italic">{chargement ? 'Chargement de vos clients…' : 'Aucun client ne vous est assigné actuellement.'}</p>
           </div>
         )}
       </div>
@@ -22366,8 +22408,15 @@ const useCompteClient = (clientId) => {
 // 2026-10-21 : « Renvoyer le lien » envoyé directement par SkorUp (Resend) au lieu de l'email Supabase :
 // plus rapide, au nom de l'organisme, avec le guide d'utilisation. Le serveur vérifie l'organisme et le
 // formateur, et limite les envois (2 minutes entre deux liens, 5 par 24 h et par client).
+const _liensEnCours = new Set();
 const renvoyerLienAcces = async (client) => {
   const email = client.email || client.email_contact || client.client_email || '';
+  // 2026-10-21 : retour immédiat (« Envoi en cours… ») et pas de second envoi pendant le premier.
+  const cle = String(client.id);
+  if (_liensEnCours.has(cle)) return false;
+  _liensEnCours.add(cle);
+  const idToast = `lien-${cle}`;
+  toast.loading(`Envoi du lien à ${email || 'ce client'}…`, { id: idToast });
   try {
     const { data: { session: s } } = await supabase.auth.getSession();
     const resp = await fetch('/api/formateur/notify', {
@@ -22376,16 +22425,18 @@ const renvoyerLienAcces = async (client) => {
       body: JSON.stringify({ type: 'renvoi_lien', clientId: client.id, origin: window.location.origin }),
     });
     const r = await resp.json().catch(() => ({}));
-    if (!resp.ok) { toast.error(r.error || "Le lien n'a pas pu être envoyé.", { duration: 8000 }); return false; }
-    if (r.sent === false) { toast.error(r.error || r.message || "L'email n'a pas pu partir. Réessayez dans quelques minutes.", { duration: 8000 }); return false; }
+    if (!resp.ok) { toast.error(r.error || "Le lien n'a pas pu être envoyé.", { id: idToast, duration: 8000 }); return false; }
+    if (r.sent === false) { toast.error(r.error || r.message || "L'email n'a pas pu partir. Réessayez dans quelques minutes.", { id: idToast, duration: 8000 }); return false; }
     const dest = r.email || email || 'le client';
     toast.success(r.method === 'invite'
       ? `Email d'invitation envoyé à ${dest}.`
-      : `Email de connexion envoyé à ${dest}. Le client peut cliquer sur le lien pour choisir son mot de passe.`, { duration: 6000 });
+      : `Email de connexion envoyé à ${dest}. Le client peut cliquer sur le lien pour choisir son mot de passe.`, { id: idToast, duration: 6000 });
     return true;
   } catch (err) {
-    toast.error(`Erreur : ${err.message}`);
+    toast.error(`Erreur : ${err.message}`, { id: idToast });
     return false;
+  } finally {
+    _liensEnCours.delete(cle);
   }
 };
 
@@ -22666,9 +22717,27 @@ export default function App() {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user?.email) {
+        // 2026-10-21 : ouverture instantanée — profil (rôle, organisme) mémorisé lors de la dernière
+        // ouverture : on affiche l'application tout de suite, puis on vérifie auprès de la base.
+        let profilMemo = null;
+        try { profilMemo = JSON.parse(localStorage.getItem(`skorup_profil_v1_${session.user.id}`) || 'null'); } catch (_) { profilMemo = null; }
+        const memoValide = !!(profilMemo && (profilMemo.role === 'admin' || profilMemo.role === 'formateur') && profilMemo.id && profilMemo.org
+          && profilMemo.le && Date.now() - profilMemo.le < 7 * 86400000);
+        if (memoValide) {
+          handleLogin(profilMemo.role, profilMemo.id, profilMemo.org, true);
+          setIsLoadingSession(false);
+        }
     
         // RLS couvre correctement le profil via auth_org_id() SECURITY DEFINER
         const userData = await findAccountProfile(session.user);
+        if (memoValide) {
+          const identique = userData && userData.role === profilMemo.role && String(userData.id) === String(profilMemo.id)
+            && String(userData.organisation_id) === String(profilMemo.org);
+          if (identique) return;
+          // Le profil a changé (rôle, organisme…) : on oublie la mémoire et on repart des vraies valeurs.
+          try { localStorage.removeItem(`skorup_profil_v1_${session.user.id}`); } catch (_) { /* rien */ }
+          if (!userData || !userData.role) { setUserRole(null); setCurrentUserId(null); setCurrentOrgId(null); }
+        }
         const userDataErr = null;
         if (userDataErr) console.error('[initSession] Erreur lecture profil utilisateur (rôle) :', userDataErr);
         if (userData && userData.role) {
@@ -22828,6 +22897,9 @@ export default function App() {
     const org = currentOrgId;
     return () => loadSeqRef.current[key] !== seq || orgIdRef.current !== org;
   };
+  // 2026-10-21 : suivi du chargement (indicateur « Mise à jour… », pas de liste vide trompeuse).
+  const [chargements, setChargements] = useState({});
+  const marquerCharge = (k) => setChargements(p => (p[k] ? p : { ...p, [k]: true }));
   const notifyLoadError = (what) => toast.error(`Impossible de charger ${what} pour le moment. Vérifiez votre connexion puis rechargez la page.`, { id: `load-error-${what}` });
 
   const fetchModules = async () => {
@@ -22844,6 +22916,7 @@ export default function App() {
         .eq('organisation_id', currentOrgId).order('ordre', { ascending: true }).order('id', { ascending: true }), { label: 'contenus des modules' }),
     ]);
     if (isStale()) return;
+    marquerCharge('modules');
     // AJOUT (2026-09-17) : tri alphabétique à la source, même logique que formateurs/clients ci-dessus.
     if (mRes.data) setModules([...mRes.data].sort((a, b) => (a.nom || '').localeCompare(b.nom || '', 'fr', { sensitivity: 'base' })));
     if (mstRes.data) setModuleSessionTemplates(mstRes.data);
@@ -23260,7 +23333,7 @@ export default function App() {
   };
   React.useEffect(() => {
     fetchDepotsNonLus();
-    const t = setInterval(fetchDepotsNonLus, 120000);
+    const t = setInterval(() => { if (!document.hidden) fetchDepotsNonLus(); }, 120000);
     return () => clearInterval(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrgId, userRole, currentUserId]);
@@ -23292,10 +23365,12 @@ export default function App() {
   }, [currentOrgId, userRole]);
   React.useEffect(() => {
     chargerStatutsComptes();
-    const t = setInterval(chargerStatutsComptes, 300000);
+    const t = setInterval(() => { if (!document.hidden) chargerStatutsComptes(); }, 300000);
     return () => clearInterval(t);
   }, [chargerStatutsComptes, clients.length]);
   const creerCompteClient = async (client) => {
+    const idToast = `acces-${client.id}`;
+    toast.loading(`Envoi de l'accès à ${client.email || client.email_contact || 'ce client'}…`, { id: idToast });
     try {
       const { data: { session: s } } = await supabase.auth.getSession();
       const resp = await fetch('/api/formateur/notify', {
@@ -23304,16 +23379,16 @@ export default function App() {
         body: JSON.stringify({ type: 'compte_client', clientId: client.id, origin: window.location.origin }),
       });
       const r = await resp.json().catch(() => ({}));
-      if (!resp.ok) { toast.error(r.error || "Le compte n'a pas pu être créé.", { duration: 8000 }); return false; }
+      if (!resp.ok) { toast.error(r.error || "Le compte n'a pas pu être créé.", { id: idToast, duration: 8000 }); return false; }
       const email = client.email || client.email_contact || 'ce client';
       toast.success(r.sent
         ? `Compte créé : un lien pour choisir son mot de passe a été envoyé à ${email}.`
-        : "Compte créé, mais l'email n'a pas pu partir : utilisez « Renvoyer le lien ».", { duration: 7000 });
+        : "Compte créé, mais l'email n'a pas pu partir : utilisez « Renvoyer le lien ».", { id: idToast, duration: 7000 });
       await chargerStatutsComptes();
       fetchUtilisateurs();
       return true;
     } catch (e) {
-      toast.error('Erreur : ' + e.message);
+      toast.error('Erreur : ' + e.message, { id: idToast });
       return false;
     }
   };
@@ -23325,9 +23400,11 @@ export default function App() {
   const fetchSessions = async () => {
     if (!currentOrgId) { setSessions([]); return; }
     const isStale = beginLoad('sessions');
-    const { data, error } = await fetchAllRowsWithRetry(() => supabase.from('sessions').select('*')
+    const colonnes = (await colonnesLegeres()).sessions;
+    const { data, error } = await fetchAllRowsWithRetry(() => supabase.from('sessions').select(colonnes)
       .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'séances' });
     if (isStale()) return;
+    marquerCharge('sessions');
     if (data) setSessions(data);
     if (error) notifyLoadError('les séances');
   };
@@ -23347,6 +23424,7 @@ export default function App() {
         .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'clients' }),
     ]);
     if (isStale()) return;
+    marquerCharge('utilisateurs');
     const formateursData = fRes.data;
     const clientsData = cRes.data;
     if (fRes.error || cRes.error) notifyLoadError('les clients et formateurs');
@@ -23404,15 +23482,17 @@ export default function App() {
   const fetchDocuments = async () => {
     if (!currentOrgId) { setDocuments([]); setDocumentTemplates({}); return; }
     const isStale = beginLoad('documents');
+    const colonnesDocs = (await colonnesLegeres()).documents;
     // 1. Documents classiques (contrats générés, preuves, etc.) et 2. modèles maîtres (table unifiée
     // module_step_resources, type='document' uniquement) — en parallèle, voir fetchAllRowsWithRetry.
     const [dRes, tRes] = await Promise.all([
-      fetchAllRowsWithRetry(() => supabase.from('documents').select('*')
+      fetchAllRowsWithRetry(() => supabase.from('documents').select(colonnesDocs)
         .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'documents' }),
       fetchAllRowsWithRetry(() => supabase.from('module_step_resources').select('*').eq('type', 'document')
         .eq('organisation_id', currentOrgId).order('id', { ascending: true }), { label: 'modèles de documents' }),
     ]);
     if (isStale()) return;
+    marquerCharge('documents');
     const docsData = dRes.data;
     if (docsData) setDocuments(docsData);
     const modsData = tRes.data;
@@ -23738,6 +23818,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    // 2026-10-21 : la mémoire de l'ouverture instantanée est effacée à la déconnexion.
+    try { Object.keys(localStorage).filter(k => k.startsWith('skorup_cache_') || k.startsWith('skorup_profil_')).forEach(k => localStorage.removeItem(k)); } catch (_) { /* rien */ }
     await supabase.auth.signOut();
     setUserRole(null);
     setCurrentUserId(null);
@@ -23809,7 +23891,7 @@ export default function App() {
     };
     window.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleVisibility);
-    const interval = setInterval(fetchUnreadMessagesCount, 60000);
+    const interval = setInterval(() => { if (!document.hidden) fetchUnreadMessagesCount(); }, 60000);
     return () => {
       window.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
@@ -27222,7 +27304,8 @@ export default function App() {
           });
 
           // Group sessions by numero_seance
-          const grouped = clientSessions.reduce((acc, s) => {
+          const _signatures = await chargerSignaturesSeances(doc.id); // 2026-10-21 : images lues à la demande
+          const grouped = clientSessions.map(s => ({ ...s, ...(_signatures.get(String(s.id)) || {}) })).reduce((acc, s) => {
             if (!acc[s.numero_seance]) acc[s.numero_seance] = { numero: s.numero_seance, nom: s.nom, date: s.date, debut: s.heure_debut, fin: s.heure_fin, items: [] };
             acc[s.numero_seance].items.push(s);
             fillGroupSchedule(acc[s.numero_seance], s);
@@ -27414,8 +27497,9 @@ export default function App() {
         const dateText = now.toLocaleDateString('fr-FR');
         const timeText = now.toLocaleTimeString('fr-FR');
 
-        const signatureClientUrl = doc.signature_client || doc.signature_client_url || null;
-        const signatureFormateurUrl = doc.signature_formateur || doc.signature_formateur_url || null;
+        const _sigDoc = await chargerSignaturesDocument(doc.id); // 2026-10-21 : images lues à la demande
+        const signatureClientUrl = _sigDoc.signature_client || doc.signature_client || doc.signature_client_url || null;
+        const signatureFormateurUrl = _sigDoc.signature_formateur || doc.signature_formateur || doc.signature_formateur_url || null;
 
         console.log('Signature Client:', signatureClientUrl);
         console.log('Signature Formateur:', signatureFormateurUrl);
@@ -27503,6 +27587,64 @@ export default function App() {
   };
 
 
+
+  // ── 2026-10-21 : ouverture instantanée (comme Linear, GitHub…) ─────────────────────────────────────
+  // Les dernières données connues sont gardées dans le navigateur (par organisme ET par personne, sans
+  // aucune image de signature) et affichées tout de suite à l'ouverture ; les vraies données arrivent
+  // ensuite et les remplacent. Tout est effacé à la déconnexion. Réservé à l'équipe (admin, formateur).
+  // Mémorise le profil réel (rôle en base, pas la vue « Mon espace Formateur ») pour la prochaine ouverture.
+  useEffect(() => {
+    if (!currentOrgId || !currentUserId || !(userRole === 'admin' || userRole === 'formateur')) return;
+    const roleReel = isAdminActingAsFormateur ? 'admin' : userRole;
+    supabase.auth.getSession().then(({ data }) => {
+      const uid = data && data.session && data.session.user && data.session.user.id;
+      if (!uid) return;
+      try { localStorage.setItem(`skorup_profil_v1_${uid}`, JSON.stringify({ role: roleReel, id: currentUserId, org: currentOrgId, le: Date.now() })); } catch (_) { /* rien */ }
+    }).catch(() => {});
+  }, [currentOrgId, currentUserId, userRole, isAdminActingAsFormateur]);
+  const cleMemoire = (currentOrgId && currentUserId && (userRole === 'admin' || userRole === 'formateur'))
+    ? `skorup_cache_v1_${currentOrgId}_${userRole}_${currentUserId}` : null;
+  useEffect(() => {
+    setChargements({});
+    if (!cleMemoire) return;
+    let m = null;
+    try { m = JSON.parse(localStorage.getItem(cleMemoire) || 'null'); } catch (_) { m = null; }
+    if (!m || !m.le || Date.now() - m.le > 7 * 86400000) return;
+    if (Array.isArray(m.clients)) setClients(m.clients);
+    if (Array.isArray(m.formateurs)) setFormateurs(m.formateurs);
+    if (Array.isArray(m.modules)) setModules(m.modules);
+    if (Array.isArray(m.moduleSessionTemplates)) setModuleSessionTemplates(m.moduleSessionTemplates);
+    if (Array.isArray(m.moduleStepResources)) setModuleStepResources(m.moduleStepResources);
+    if (Array.isArray(m.sessions)) setSessions(m.sessions);
+    if (Array.isArray(m.documents)) setDocuments(m.documents);
+    if (m.documentTemplates && typeof m.documentTemplates === 'object') setDocumentTemplates(m.documentTemplates);
+    if (Array.isArray(m.groupes)) setGroupes(m.groupes);
+    if (Array.isArray(m.groupeSeances)) setGroupeSeances(m.groupeSeances);
+    if (m.orgSettings && typeof m.orgSettings === 'object') setOrgSettings(prev => prev || m.orgSettings);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleMemoire]);
+  const chargementEnCours = !!cleMemoire && ['utilisateurs', 'sessions', 'documents', 'modules'].some(k => !chargements[k]);
+  useEffect(() => {
+    if (!cleMemoire || chargementEnCours) return;
+    const t = setTimeout(() => {
+      const sansSignature = (r) => {
+        if (!r || typeof r !== 'object') return r;
+        const { signature_client, signature_formateur, signature_organisme, signature_image, ...reste } = r; // eslint-disable-line no-unused-vars
+        return reste;
+      };
+      try {
+        const texte = JSON.stringify({
+          le: Date.now(), clients, formateurs, modules, moduleSessionTemplates, moduleStepResources,
+          sessions: sessions.map(sansSignature), documents: documents.map(sansSignature), documentTemplates,
+          groupes, groupeSeances, orgSettings,
+        });
+        if (texte.length < 3000000) localStorage.setItem(cleMemoire, texte);
+        else localStorage.removeItem(cleMemoire);
+      } catch (_) { /* navigateur plein ou privé : on s'en passe */ }
+    }, 1500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleMemoire, chargementEnCours, clients, formateurs, modules, moduleSessionTemplates, moduleStepResources, sessions, documents, documentTemplates, groupes, groupeSeances, orgSettings]);
 
   // --- Chargement des données au lancement (Supabase) ---
   useEffect(() => {
@@ -27976,7 +28118,13 @@ export default function App() {
             <h2 className="text-xl font-bold text-gray-800">
               {userRole === 'admin' ? 'Espace Admin' : userRole === 'formateur' ? (brandSettings?.org_name || 'Espace Formateur') : (brandSettings?.org_name || 'Espace Client')}
             </h2>
-            <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
+            {chargementEnCours ? (
+              <span className="bg-amber-50 text-amber-700 text-xs font-bold px-2 py-1 rounded-md border border-amber-200 inline-flex items-center gap-1.5">
+                <span className="w-3 h-3 border-2 border-amber-300 border-t-amber-600 rounded-full animate-spin"></span> Mise à jour…
+              </span>
+            ) : (
+              <span className="bg-green-50 text-green-700 text-xs font-bold px-2 py-1 rounded-md border border-green-200">Connecté en ligne</span>
+            )}
           </div>
 
           <div className="flex items-center space-x-3">
@@ -28105,7 +28253,7 @@ export default function App() {
               onRefresh={fetchOrgSettings}
             />
           )}
-          {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView
+          {activeTab === 'clients' && userRole === 'admin' && <AdminClientsView chargement={chargementEnCours}
             handleAddUser={handleAddUser}
             newUserName={newUserName} setNewUserName={setNewUserName}
             newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail}
@@ -28303,7 +28451,7 @@ export default function App() {
             currentOrgId={currentOrgId}
             handleUpdateStepResourceSignatures={handleUpdateStepResourceSignatures}
           />}
-          {activeTab === 'clients' && userRole === 'formateur' && <FormateurView
+          {activeTab === 'clients' && userRole === 'formateur' && <FormateurView chargement={chargementEnCours}
             clients={clients}
             formateurs={assignableFormateurs}
             currentOrgId={currentOrgId}
