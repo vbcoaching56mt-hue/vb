@@ -15114,6 +15114,152 @@ const QuestionnaireFillerModal = ({ questionnaire, onClose, onSubmit }) => {
   );
 };
 
+// SIGNATURE DE GROUPE (2026-10-23) : les documents d'un groupe à la suite (comme un seul document de
+// plusieurs pages), puis une seule signature posée sur chacun.
+const chargerPdfJs = () => new Promise((resolve, reject) => {
+  if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+  const s = window.document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; resolve(window.pdfjsLib); };
+  s.onerror = () => reject(new Error('PDF.js indisponible'));
+  window.document.head.appendChild(s);
+});
+const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter = 0, onClose, onSigner }) => {
+  const [pages, setPages] = React.useState({}); // index du lot → { images: [], erreur }
+  const [auBout, setAuBout] = React.useState(false);
+  const [coche, setCoche] = React.useState(false);
+  const [aSigne, setASigne] = React.useState(false);
+  const [envoi, setEnvoi] = React.useState(null); // index en cours
+  const zoneRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+  const dessin = React.useRef(false);
+  const n = lots.length;
+
+  React.useEffect(() => {
+    if (!n) return undefined;
+    let annule = false;
+    (async () => {
+      let pdfjs = null;
+      try { pdfjs = await chargerPdfJs(); } catch (_) { pdfjs = null; }
+      for (let i = 0; i < lots.length; i++) {
+        const lot = lots[i];
+        try {
+          if (!pdfjs) throw new Error('lecteur indisponible');
+          let octets;
+          if (lot.blob) octets = await lot.blob.arrayBuffer();
+          else {
+            const url = lot.resource && (lot.resource.file_url || lot.resource.url);
+            if (!url || /\.(docx|doc)$/i.test(String(url).split('?')[0])) throw new Error('aperçu indisponible');
+            const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status);
+            octets = await r.arrayBuffer();
+          }
+          const pdf = await pdfjs.getDocument({ data: new Uint8Array(octets) }).promise;
+          const images = [];
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p);
+            const vp = page.getViewport({ scale: 1.4 });
+            const c = window.document.createElement('canvas');
+            c.width = vp.width; c.height = vp.height;
+            await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+            images.push(c.toDataURL('image/jpeg', 0.85));
+          }
+          if (!annule) setPages(prev => ({ ...prev, [i]: { images } }));
+        } catch (e) {
+          if (!annule) setPages(prev => ({ ...prev, [i]: { images: [], erreur: e.message } }));
+        }
+      }
+    })();
+    return () => { annule = true; };
+  }, [lots, n]);
+
+  const toutCharge = n > 0 && Object.keys(pages).length === n;
+  const verifierBout = () => {
+    const el = zoneRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) setAuBout(true);
+  };
+  React.useEffect(() => { if (toutCharge) setTimeout(verifierBout, 50); }, [toutCharge]);
+
+  const position = (e) => {
+    const c = canvasRef.current; const r = c.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
+  };
+  const debut = (e) => { if (envoi !== null) return; dessin.current = true; const ctx = canvasRef.current.getContext('2d'); const p = position(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+  const trace = (e) => { if (!dessin.current) return; const ctx = canvasRef.current.getContext('2d'); ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#111827'; const p = position(e); ctx.lineTo(p.x, p.y); ctx.stroke(); setASigne(true); e.preventDefault(); };
+  const fin = () => { dessin.current = false; };
+  const effacer = () => { const c = canvasRef.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); setASigne(false); };
+  const signer = async () => {
+    if (!auBout || !coche || !aSigne || envoi !== null) return;
+    setEnvoi(0);
+    try { await onSigner(canvasRef.current.toDataURL('image/png'), (i) => setEnvoi(i)); }
+    finally { setEnvoi(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 z-[150] flex items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-label={`Signer ${titre}`}>
+      <div className="bg-white w-full sm:max-w-3xl h-full sm:h-[94vh] sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3 shrink-0">
+          <div className="min-w-0">
+            <h3 className="font-black text-gray-900 break-words">📁 {titre}</h3>
+            <p className="text-xs text-gray-500">
+              {preparation ? `Préparation des documents… ${preparation.fait}/${preparation.total}` : `${n} document${n > 1 ? 's' : ''} à lire puis à signer une seule fois`}
+              {aCompleter ? ` · ${aCompleter} à compléter séparément` : ''}
+            </p>
+          </div>
+          <button onClick={onClose} disabled={envoi !== null} className="shrink-0 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 disabled:opacity-40" aria-label="Fermer">✕</button>
+        </div>
+        <div ref={zoneRef} onScroll={verifierBout} className="flex-1 overflow-y-auto bg-gray-100 px-3 sm:px-6 py-4 space-y-4">
+          {preparation && <p className="text-center text-sm text-gray-500 py-10">Préparation de vos documents…</p>}
+          {lots.map((lot, i) => (
+            <div key={lot.doc.id} className="space-y-3">
+              <div className="sticky top-0 z-10 bg-violet-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow">
+                Document {i + 1}/{n} — {lot.doc.nom}
+              </div>
+              {!pages[i] && <p className="text-center text-sm text-gray-500 py-8">Chargement…</p>}
+              {pages[i] && pages[i].images.map((src, p) => (
+                <img key={p} src={src} alt={`${lot.doc.nom} — page ${p + 1}`} className="w-full bg-white shadow-sm rounded" />
+              ))}
+              {pages[i] && pages[i].erreur && (
+                <div className="bg-white rounded-xl p-4 text-sm text-gray-600">
+                  Aperçu indisponible pour ce document.{' '}
+                  {(lot.resource && (lot.resource.file_url || lot.resource.url)) && (
+                    <a href={lot.resource.file_url || lot.resource.url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700 underline">Ouvrir le document</a>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+          {toutCharge && <p className="text-center text-xs text-gray-400 pb-2">— Fin des documents —</p>}
+        </div>
+        {!preparation && n > 0 && (
+          <div className="border-t border-gray-100 p-4 space-y-3 shrink-0 bg-white">
+            {!auBout && <p className="text-xs font-bold text-amber-700 bg-amber-50 rounded-lg px-3 py-2">Faites défiler jusqu'à la fin des documents pour pouvoir signer.</p>}
+            {auBout && (<>
+            <label className={`flex items-start gap-3 text-sm ${auBout ? 'text-gray-700' : 'text-gray-400'}`}>
+              <input type="checkbox" checked={coche} disabled={!auBout || envoi !== null} onChange={e => setCoche(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600 shrink-0" />
+              <span>J'ai lu les {n} documents ci-dessus et j'accepte de les signer électroniquement.</span>
+            </label>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-gray-500">Votre signature (une seule fois)</span>
+                <button onClick={effacer} disabled={envoi !== null} className="text-xs font-bold text-gray-400 hover:text-gray-700">Effacer</button>
+              </div>
+              <canvas ref={canvasRef} width={600} height={160}
+                onPointerDown={debut} onPointerMove={trace} onPointerUp={fin} onPointerLeave={fin}
+                className="w-full h-28 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 touch-none" />
+            </div>
+            </>)}
+            <button onClick={signer} disabled={!auBout || !coche || !aSigne || envoi !== null}
+              className="w-full py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed">
+              {envoi !== null ? `Signature ${Math.min(envoi + 1, n)}/${n}…` : `Signer les ${n} documents`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings, sessions, fetchSessions }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -15376,6 +15522,82 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     });
   }, [clientVisibleDocs, extraDebutDocs, extraFinDocs, allKnownTitles]);
 
+  // ─── SIGNATURE DE GROUPE (2026-10-23) ───────────────────────────────────────
+  // Groupe de chaque document du client (fonction SQL skorup_groupes_mes_documents ; absente → rien).
+  const [groupesMesDocs, setGroupesMesDocs] = React.useState({});
+  const nbDocsVisibles = clientVisibleDocs.length;
+  React.useEffect(() => {
+    let annule = false;
+    supabase.rpc('skorup_groupes_mes_documents').then(({ data, error }) => {
+      if (annule || error || !Array.isArray(data)) return;
+      const m = {};
+      data.forEach(r => { if (r && r.document_id != null) m[String(r.document_id)] = { id: String(r.groupe_id), nom: r.groupe_nom || 'Documents' }; });
+      setGroupesMesDocs(m);
+    }).catch(() => {});
+    return () => { annule = true; };
+  }, [supabase, currentUserId, nbDocsVisibles]);
+  const groupesASigner = React.useMemo(() => {
+    const parGroupe = new Map();
+    clientVisibleDocs.forEach(d => {
+      const g = groupesMesDocs[String(d.id)];
+      if (!g) return;
+      if (d.signe_par_client || d.type_document !== 'À signer' || !docRequiresSignature(d)) return;
+      if (String(d.nom || '').toLowerCase().includes('conservation')) return;
+      if (isBlockedBySigningOrder(d, 'client')) return;
+      if (estDocDeFin(d) && !moduleCompleted) return;
+      if (!parGroupe.has(g.id)) parGroupe.set(g.id, { id: g.id, nom: g.nom, docs: [], aCompleter: [] });
+      const meta = (() => { try { return typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { return {}; } })();
+      const champs = (Array.isArray(meta.signature_fields) && meta.signature_fields.length) ? meta.signature_fields
+        : (Array.isArray(meta.template_fields) && meta.template_fields.length) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []);
+      const aRemplir = champs.some(c => isClientCheckboxField(c) || isClientTextField(c));
+      parGroupe.get(g.id)[aRemplir ? 'aCompleter' : 'docs'].push(d);
+    });
+    return Array.from(parGroupe.values()).filter(g => g.docs.length >= 2);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientVisibleDocs, groupesMesDocs, moduleCompleted, estDocDeFin]);
+  const [signatureGroupe, setSignatureGroupe] = React.useState(null); // { groupe, lots, preparation, aCompleter }
+  const ouvrirSignatureGroupe = async (groupe) => {
+    if (signatureGroupe) return;
+    setSignatureGroupe({ groupe, lots: [], preparation: { fait: 0, total: groupe.docs.length }, aCompleter: groupe.aCompleter.length });
+    const lots = [];
+    let aCompleter = groupe.aCompleter.length;
+    for (let i = 0; i < groupe.docs.length; i++) {
+      const d = groupe.docs[i];
+      const docMeta = (() => { try { return typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { return {}; } })();
+      const resource = { id: d.id, titre: d.nom, file_url: d.url || d.file_url, metadata: { ...docMeta, classification: 'a_signer' } };
+      const lot = { doc: d, resource: null, blob: null, cases: [], textes: [], signatureRequise: true };
+      try { await handleOpenSigning(resource, lot); } catch (e) { console.warn('[signature groupe] préparation', d.nom, e); }
+      if (!lot.resource) lot.resource = resource;
+      if ((lot.cases && lot.cases.length) || (lot.textes && lot.textes.length)) aCompleter++;
+      else lots.push(lot);
+      setSignatureGroupe(s => s && ({ ...s, preparation: { fait: i + 1, total: groupe.docs.length } }));
+    }
+    toast.dismiss('prefill-sign');
+    if (lots.length === 0) {
+      setSignatureGroupe(null);
+      toast.error('Ces documents demandent des informations à compléter : signez-les un par un.');
+      return;
+    }
+    setSignatureGroupe(s => s && ({ ...s, lots, preparation: null, aCompleter }));
+  };
+  const signerGroupe = async (signatureDataUrl, onProgression) => {
+    const lots = (signatureGroupe && signatureGroupe.lots) || [];
+    const echecs = [];
+    for (let i = 0; i < lots.length; i++) {
+      onProgression && onProgression(i);
+      const lot = lots[i];
+      let ok = false;
+      try { ok = await handleSignSave(lot.signatureRequise === false ? null : signatureDataUrl, null, [], {}, lot); }
+      catch (e) { console.error('[signature groupe]', lot.doc.nom, e); }
+      if (!ok) echecs.push(lot.doc.nom);
+    }
+    if (fetchDocuments) await fetchDocuments();
+    const n = lots.length - echecs.length;
+    if (n) toast.success(`✅ ${n} document${n > 1 ? 's' : ''} signé${n > 1 ? 's' : ''} en une fois.`, { duration: 6000 });
+    if (echecs.length) toast.error(`Non signé${echecs.length > 1 ? 's' : ''} : ${echecs.join(', ')}. Réessayez avec le bouton « Signer » de ${echecs.length > 1 ? 'ces documents' : 'ce document'}.`, { duration: 10000 });
+    setSignatureGroupe(null);
+  };
+
   // Vérifie si CE client a déjà signé cette ressource (filtre strict sur currentUserId)
   const isSignedByClient = (resource) =>
     (documents || []).some(d => String(d.user_id) === String(currentUserId) && d.nom === resource.titre && d.signe_par_client);
@@ -15427,17 +15649,26 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   // ─── Ouverture de la modal de signature : pré-remplit le PDF avec les données client ──
   // → le client voit ses informations dans le document AVANT de signer
   // La modal ne s'ouvre qu'APRÈS le pré-remplissage (évite la race condition)
-  const handleOpenSigning = React.useCallback(async (resource) => {
+  // SIGNATURE DE GROUPE (2026-10-23) : avec « lot », le document est préparé exactement de la même façon
+  // mais rien ne s'ouvre : le résultat (PDF pré-rempli, champs à compléter) est rangé dans « lot ».
+  const handleOpenSigning = React.useCallback(async (resource, lot = null) => {
+    const _poserUrl = (u) => { if (!lot) { setPrefilledSignUrl(u); return; } if (u) { try { URL.revokeObjectURL(u); } catch (_) {} } };
+    const _poserRefUrl = (u) => { if (!lot) prefilledSignBlobUrlRef.current = u; };
+    const _poserBlob = (b) => { if (lot) lot.blob = b; else prefilledSignBlob.current = b; };
+    const _poserCases = (v) => { if (lot) lot.cases = v; else setSigningCheckboxFields(v); };
+    const _poserTextes = (v) => { if (lot) lot.textes = v; else setSigningTextFields(v); };
+    const _poserSigReq = (v) => { if (lot) lot.signatureRequise = v; else setSigningRequiresSignature(v); };
+    const _ouvrir = (r) => { if (lot) lot.resource = r; else setSigningResource(r); };
     // Nettoyer l'éventuel précédent pré-remplissage
-    if (prefilledSignBlobUrlRef.current) {
+    if (!lot && prefilledSignBlobUrlRef.current) {
       try { URL.revokeObjectURL(prefilledSignBlobUrlRef.current); } catch (_) {}
       prefilledSignBlobUrlRef.current = null;
     }
-    setPrefilledSignUrl(null);
-    prefilledSignBlob.current = null;
-    setSigningCheckboxFields([]);
-    setSigningTextFields([]);
-    setSigningRequiresSignature(true);
+    _poserUrl(null);
+    _poserBlob(null);
+    _poserCases([]);
+    _poserTextes([]);
+    _poserSigReq(true);
 
     const toastId = 'prefill-sign';
 
@@ -15463,18 +15694,18 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           const resp = await fetch(existingPregenDoc.url);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const pdfBlob = new Blob([await resp.arrayBuffer()], { type: 'application/pdf' });
-          prefilledSignBlob.current = pdfBlob;
+          _poserBlob(pdfBlob);
           // URL blob: (pas data:) — un data: URL base64 volumineux peut s'afficher en page blanche
           // silencieuse dans le lecteur PDF intégré de Chrome ; blob: est fiable et déjà utilisé
           // ailleurs dans l'app pour prévisualiser des PDF générés côté client.
           const blobUrl = URL.createObjectURL(pdfBlob);
-          prefilledSignBlobUrlRef.current = blobUrl;
-          setPrefilledSignUrl(blobUrl);
+          _poserRefUrl(blobUrl);
+          _poserUrl(blobUrl);
           toast.dismiss(toastId);
-          setSigningCheckboxFields((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
-          setSigningTextFields((pregenMeta.signature_fields || []).filter(isClientTextField));
-          setSigningRequiresSignature((pregenMeta.signature_fields || []).some(isClientSignatureField));
-          setSigningResource(resource);
+          _poserCases((pregenMeta.signature_fields || []).filter(isClientCheckboxField));
+          _poserTextes((pregenMeta.signature_fields || []).filter(isClientTextField));
+          _poserSigReq((pregenMeta.signature_fields || []).some(isClientSignatureField));
+          _ouvrir(resource);
           return;
         } catch(e) {
           console.warn('[handleOpenSigning] PDF pré-généré inaccessible, chemin fallback :', e.message);
@@ -15495,15 +15726,15 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           if (dataFields.length > 0) {
             pdfBlob = await overlayFieldsOnPdf(pdfBlob, dataFields, pregenMeta.resolved_values, {});
           }
-          prefilledSignBlob.current = pdfBlob;
+          _poserBlob(pdfBlob);
           const blobUrl = URL.createObjectURL(pdfBlob);
-          prefilledSignBlobUrlRef.current = blobUrl;
-          setPrefilledSignUrl(blobUrl);
+          _poserRefUrl(blobUrl);
+          _poserUrl(blobUrl);
           toast.dismiss(toastId);
-          setSigningCheckboxFields((pregenMeta.fields || []).filter(isClientCheckboxField));
-          setSigningTextFields((pregenMeta.fields || []).filter(isClientTextField));
-          setSigningRequiresSignature((pregenMeta.fields || []).some(isClientSignatureField));
-          setSigningResource(resource);
+          _poserCases((pregenMeta.fields || []).filter(isClientCheckboxField));
+          _poserTextes((pregenMeta.fields || []).filter(isClientTextField));
+          _poserSigReq((pregenMeta.fields || []).some(isClientSignatureField));
+          _ouvrir(resource);
           return;
         } catch(e) {
           console.warn('[handleOpenSigning] Overlay métadonnées échoué, chemin overlay standard :', e.message);
@@ -15554,7 +15785,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       if ((!hasVisualFields || !templateId) && !embeddedTplFields) {
         // Pas de champs visuels ni de champs embarqués → ouvrir avec le template brut
         toast.dismiss(toastId);
-        setSigningResource(resource);
+        _ouvrir(resource);
         return;
       }
 
@@ -15653,26 +15884,28 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         }
       }
 
-      prefilledSignBlob.current = pdfBlob;
+      _poserBlob(pdfBlob);
       const blobUrl = URL.createObjectURL(pdfBlob);
-      prefilledSignBlobUrlRef.current = blobUrl;
-      setPrefilledSignUrl(blobUrl);
+      _poserRefUrl(blobUrl);
+      _poserUrl(blobUrl);
       toast.dismiss(toastId);
-      setSigningCheckboxFields((tplFields || []).filter(isClientCheckboxField));
-      setSigningTextFields((tplFields || []).filter(isClientTextField));
-      setSigningRequiresSignature((tplFields || []).some(isClientSignatureField));
+      _poserCases((tplFields || []).filter(isClientCheckboxField));
+      _poserTextes((tplFields || []).filter(isClientTextField));
+      _poserSigReq((tplFields || []).some(isClientSignatureField));
       // Ouvrir la modal — le blob est déjà prêt, le client verra ses données immédiatement
-      setSigningResource(resource);
+      _ouvrir(resource);
     } catch(e) {
       console.warn('[handleOpenSigning] Pré-remplissage échoué (fallback template brut) :', e.message);
       toast.dismiss(toastId);
       // Fallback : ouvrir avec template brut
-      setSigningResource(resource);
+      _ouvrir(resource);
     }
   }, [currentClient, supabase, resolveVisualTemplate, documents, currentUserId, formateurs, orgSettings, moduleNomClient, seancesDuClient]);
 
-  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
-    if (!signingResource || !currentClient) return;
+  const handleSignSave = async (signatureDataUrl, _documentChoice = null, checkedIds = null, textValues = null, lot = null) => { /* 2026-10-21 : chargé à la demande */ const { PDFDocument } = await import('pdf-lib');
+    // SIGNATURE DE GROUPE (2026-10-23) : « lot » = document préparé par handleOpenSigning(resource, lot).
+    const _ressource = lot ? lot.resource : signingResource;
+    if (!_ressource || !currentClient) return false;
     const _checkedIdSet = checkedIds instanceof Set ? checkedIds : new Set(checkedIds || []);
     // Valeurs tapées dans les balises "texte libre" (clé = fieldKey(field) → texte saisi)
     const _textValueMap = {};
@@ -15681,13 +15914,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
     }
 
     const toastId = 'pdf-sign';
-    let signedPdfUrl = signingResource.file_url; // fallback ultime
+    let signedPdfUrl = _ressource.file_url; // fallback ultime
 
     // ── Chercher le document déjà généré pour ce client (non signé) ─────────
     const existingGeneratedDoc = (documents || []).find(d =>
       String(d.user_id) === String(currentUserId) &&
       !isInternalDossierDoc(d) &&
-      d.nom === signingResource.titre &&
+      d.nom === _ressource.titre &&
       d.url &&
       !d.signe_par_client
     );
@@ -15700,19 +15933,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       let signatureEmbeddedByOverlay = false; // true quand overlayFieldsOnPdf gère la signature
 
       // Déterminer la source : doc généré existant (PDF) > template (DOCX)
-      const templateUrl = signingResource.file_url;
+      const templateUrl = _ressource.file_url;
       const isTemplateDocx = /\.(docx|doc)$/i.test((templateUrl || '').split('?')[0]);
 
       const templateIsPdf = /\.pdf$/i.test((templateUrl || '').split('?')[0]);
 
       // ── Résoudre le vrai template_id (priorité : resource.metadata → documents → MSR) ──
       const _parseMeta = (m) => { try { return typeof m === 'string' ? JSON.parse(m) : (m || {}); } catch { return {}; } };
-      const _rMeta = _parseMeta(signingResource.metadata);
+      const _rMeta = _parseMeta(_ressource.metadata);
       let visualTemplateId = _rMeta.visual_template_id || null;
       let hasVisualFields = _rMeta.has_visual_fields === true;
       if (!hasVisualFields || !visualTemplateId) {
         const _refDoc = (documents || []).find(d =>
-          (d.nom === signingResource.titre || d.nom === signingResource.nom) &&
+          (d.nom === _ressource.titre || d.nom === _ressource.nom) &&
           d.type_action === 'Modèle Référence'
         );
         const _refMeta = _parseMeta(_refDoc?.metadata);
@@ -15722,7 +15955,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         }
       }
       if (!hasVisualFields || !visualTemplateId) {
-        const _resolved = await resolveVisualTemplate(signingResource.titre || signingResource.nom);
+        const _resolved = await resolveVisualTemplate(_ressource.titre || _ressource.nom);
         visualTemplateId = _resolved.templateId;
         hasVisualFields = _resolved.hasVisualFields;
       }
@@ -15737,7 +15970,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         // (capturé à l'OUVERTURE du document) serait alors périmé, et l'utiliser tel quel écraserait
         // silencieusement sa contribution déjà enregistrée (bug constaté 2026-07-24 : le texte du
         // formateur disparaissait du document final après que le client signe à son tour).
-        let baseBlob = prefilledSignBlob.current;
+        let baseBlob = lot ? lot.blob : prefilledSignBlob.current;
         try {
           if (existingGeneratedDoc?.id) {
             const { data: freshDoc } = await supabase.from('documents').select('url').eq('id', existingGeneratedDoc.id).maybeSingle();
@@ -15805,7 +16038,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             catch(_) { pdfBlob = await convertDocxBlobToPdfLocal(docxBlob); }
           }
 
-          // ← utiliser visualTemplateId (module_step_resources), pas signingResource.id (documents table)
+          // ← utiliser visualTemplateId (module_step_resources), pas _ressource.id (documents table)
           const { data: templateFields } = await supabase
             .from('template_fields').select('*').eq('template_id', visualTemplateId).order('page', { ascending: true });
 
@@ -15940,7 +16173,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
 
       // ── Étape 3 : Uploader le PDF signé ───────────────────────────────────
       toast.loading('Enregistrement du document signé…', { id: toastId });
-      const safeDocName = (signingResource.titre || 'document').replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
+      const safeDocName = (_ressource.titre || 'document').replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
       const storagePath = `signed-documents/${currentUserId}/${Date.now()}_${safeDocName}.pdf`;
       const { error: uploadError } = await supabase.storage
         .from('documents')
@@ -15960,7 +16193,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       // fallback initial) : le document apparaissait "Signé ✓" côté client/formateur alors qu'aucun
       // PDF signé n'avait réellement été généré/enregistré. On arrête ici pour ne PAS enregistrer une
       // fausse signature — le client peut réessayer.
-      return;
+      return false;
     }
 
     // ── Étape 4 : Enregistrer en base ─────────────────────────────────────
@@ -15995,7 +16228,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const { error } = await supabase.from('documents').insert([{
         user_id: currentUserId,
         organisation_id: currentClient.organisation_id,
-        nom: signingResource.titre,
+        nom: _ressource.titre,
         type_document: 'À signer',
         visible_client: true,
         ...signatureData,
@@ -16003,10 +16236,12 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       dbError = error;
     }
 
-    if (dbError) { toast.error('Erreur lors de la signature : ' + dbError.message); return; }
+    if (dbError) { toast.error('Erreur lors de la signature : ' + dbError.message); return false; }
+    if (lot) { toast.dismiss(toastId); return true; }
     handleCloseSigningModal();
     if (fetchDocuments) await fetchDocuments();
     toast.success('✅ Document signé avec succès !');
+    return true;
   };
 
   // ─── Signature spécifique : Autorisation de conservation ────────────────────
@@ -16429,6 +16664,27 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         <p className="text-gray-500 text-lg mt-1">Documents administratifs de votre parcours d'accompagnement.</p>
       </div>
 
+      {groupesASigner.length > 0 && (
+        <div className="bg-violet-50 rounded-3xl border border-violet-100 p-5 space-y-3">
+          <div>
+            <h2 className="font-bold text-violet-900 text-lg">À signer en une seule fois</h2>
+            <p className="text-sm text-violet-700">Lisez les documents à la suite, comme un seul document, puis signez une seule fois.</p>
+          </div>
+          {groupesASigner.map(g => (
+            <div key={g.id} className="bg-white rounded-2xl border border-violet-100 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-bold text-gray-900 break-words">📁 {g.nom}</p>
+                <p className="text-xs text-gray-500">{g.docs.length} documents à signer{g.aCompleter.length ? ` · ${g.aCompleter.length} à compléter séparément (plus bas)` : ''}</p>
+              </div>
+              <button onClick={() => ouvrirSignatureGroupe(g)} disabled={!!signatureGroupe}
+                className="shrink-0 px-4 py-2.5 bg-violet-600 text-white font-bold rounded-xl text-sm hover:bg-violet-700 disabled:opacity-50">
+                Lire et signer les {g.docs.length} documents
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <MesEnvoisClient currentUserId={currentUserId} client={currentClient} />
 
       {(debutResources.length > 0 || extraDebutDocs.length > 0) && (
@@ -16502,6 +16758,16 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
         </div>
       )}
 
+      {signatureGroupe && (
+        <SignatureGroupeModal
+          titre={signatureGroupe.groupe.nom}
+          lots={signatureGroupe.lots}
+          preparation={signatureGroupe.preparation}
+          aCompleter={signatureGroupe.aCompleter}
+          onClose={() => setSignatureGroupe(null)}
+          onSigner={signerGroupe}
+        />
+      )}
       {signingResource && (
         <DocumentViewerModal
           isOpen={true}
