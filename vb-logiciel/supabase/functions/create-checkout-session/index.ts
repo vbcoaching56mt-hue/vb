@@ -1,5 +1,6 @@
 // ============================================================
-// Edge Function: create-checkout-session
+// Edge Function: create-checkout-session — version 2 (23/10/2026 : acceptation des CGV au paiement)
+// Mise en ligne : Supabase > Edge Functions > create-checkout-session > Code > tout remplacer > Deploy.
 // Crée une Stripe Checkout Session pour un plan donné.
 // Body: { orgId: string, plan: 'essentiel'|'pro'|'illimite', billing: 'monthly'|'annual' }
 // ============================================================
@@ -123,18 +124,37 @@ Deno.serve(async (req: Request) => {
 
     // Créer la Checkout Session directement avec le Price ID
     const origin = origineSure(req)
-    const session = await stripe.checkout.sessions.create({
+    const parametres: any = {
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
       success_url: `${origin}?checkout=success`,
       cancel_url:  `${origin}?checkout=cancel`,
       allow_promotion_codes: true,
-      metadata: { org_id: orgId, plan, billing },
+      metadata: { org_id: orgId, plan, billing, conditions_version: '2026-10-23' },
       subscription_data: {
-        metadata: { org_id: orgId, plan, billing },
+        metadata: { org_id: orgId, plan, billing, conditions_version: '2026-10-23' },
       },
-    })
+    }
+    // 2026-10-23 : case « J'accepte les CGV » sur la page de paiement Stripe (preuve conservée par Stripe).
+    // Nécessite l'adresse des CGV dans Stripe (Paramètres > Détails publics > Conditions d'utilisation).
+    const avecAcceptation = {
+      ...parametres,
+      consent_collection: { terms_of_service: 'required' },
+      custom_text: {
+        terms_of_service_acceptance: {
+          message: "J'accepte les [conditions générales de vente](https://www.skorup.fr/cgv/) et l'[accord de traitement des données](https://www.skorup.fr/accord-traitement-donnees/) de SkorUp.",
+        },
+      },
+    }
+    let session
+    try {
+      session = await stripe.checkout.sessions.create(avecAcceptation)
+    } catch (e: any) {
+      // Adresse des CGV absente dans Stripe (ou option refusée) : on ne bloque jamais le paiement.
+      console.error('[create-checkout-session] acceptation des CGV indisponible, paiement sans la case :', e?.message)
+      session = await stripe.checkout.sessions.create(parametres)
+    }
 
     return new Response(JSON.stringify({ url: session.url }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

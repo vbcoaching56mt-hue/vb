@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClientConfig';
+import { CONDITIONS_VERSION, PAGES_LEGALES, documentsAAccepter } from '../conditions';
 
 export const BENEFICIAIRE_MSG = "Cette adresse email est déjà enregistrée comme bénéficiaire d'un organisme de formation : vous n'avez pas besoin de créer d'espace. Connectez-vous avec le lien reçu par email, ou cliquez sur « Oublié ? » (à côté du mot de passe) sur la page de connexion.";
 
@@ -13,6 +14,7 @@ const SignupPage = () => {
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [estOrganisme, setEstOrganisme] = useState(false);
+  const [accepteConditions, setAccepteConditions] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,6 +29,10 @@ const SignupPage = () => {
     }
     if (!estOrganisme) {
       setError("Cochez la case confirmant que vous créez l'espace d'un organisme de formation. Vous êtes bénéficiaire ? Utilisez « Première connexion » sur la page de connexion.");
+      return;
+    }
+    if (!accepteConditions) {
+      setError("Pour créer votre espace, cochez la case d'acceptation des conditions générales de vente, des conditions d'utilisation et de l'accord de traitement des données.");
       return;
     }
     setIsLoading(true);
@@ -51,7 +57,9 @@ const SignupPage = () => {
           emailRedirectTo: window.location.origin + '/setup-organisation',
           data: {
             org_name: orgName.trim(),
-            admin_name: adminName.trim()
+            admin_name: adminName.trim(),
+            // CONFORMITÉ (2026-10-23) : acceptation donnée à l'inscription, enregistrée à la 1re connexion.
+            conditions_acceptees: { version: CONDITIONS_VERSION, documents: documentsAAccepter('admin'), le: new Date().toISOString() }
           }
         }
       });
@@ -119,8 +127,18 @@ const SignupPage = () => {
             <input type="checkbox" checked={estOrganisme} onChange={e => setEstOrganisme(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600" />
             <span className="text-xs text-gray-700">Je crée l'espace <strong>d'un organisme de formation</strong> (je ne suis pas bénéficiaire d'un accompagnement).</span>
           </label>
+          <label className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200 cursor-pointer">
+            <input type="checkbox" checked={accepteConditions} onChange={e => setAccepteConditions(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600" />
+            <span className="text-xs text-gray-700">
+              J'ai lu et j'accepte les{' '}
+              <a href={PAGES_LEGALES.cgv.url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700 underline">conditions générales de vente</a>, les{' '}
+              <a href={PAGES_LEGALES.cgu.url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700 underline">conditions d'utilisation</a> et l'
+              <a href={PAGES_LEGALES['accord-traitement-donnees'].url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700 underline">accord de traitement des données</a>.
+              {' '}Voir aussi la <a href={PAGES_LEGALES.confidentialite.url} target="_blank" rel="noopener noreferrer" className="underline">politique de confidentialité</a>.
+            </span>
+          </label>
           {error && <p className="text-red-500 text-sm font-medium bg-red-50 p-3 rounded-xl">{error}</p>}
-          <button type="submit" disabled={isLoading || !estOrganisme} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50">
+          <button type="submit" disabled={isLoading || !estOrganisme || !accepteConditions} className="w-full bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50">
             {isLoading ? 'Création en cours...' : "Créer l'espace de mon organisme"}
           </button>
         </form>

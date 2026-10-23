@@ -13,6 +13,7 @@ import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClientConfig';
 import SetupOrganisationPage from './pages/SetupOrganisation';
+import { CONDITIONS_VERSION, PAGES_LEGALES, LIENS_LEGAUX, documentsAAccepter } from './conditions';
 import { DndContext as BaseDndContext, useDraggable, useDroppable, useSensors, useSensor, MouseSensor, TouchSensor, KeyboardSensor } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 // 2026-10-21 : les outils lourds (PDF, Word, graphiques, métiers ROME) sont chargés seulement au moment
@@ -697,6 +698,25 @@ const fetchAllRowsWithRetry = async (buildQuery, { label = 'données', pageSize 
 // AJOUT (2026-10-02) : prévient un client par email qu'un nouvel élément l'attend sur son espace (réutilise
 // api/client/notify-new-document.js, qui revérifie côté serveur que l'appelant est admin/formateur de
 // l'organisme du client). Fire-and-forget : un souci d'email n'annule jamais l'action déjà enregistrée.
+// GROUPE (2026-10-23) : pendant un envoi groupé, les emails « nouveau document » du client sont
+// regroupés en un seul (voir notifyDocumentRecipients et envoyerGroupeDocuments).
+const _envoiGroupe = { actif: false, clientId: null, documents: [] };
+const notifierDocumentsAuClient = (clientId, noms) => {
+  if (!clientId || !noms || !noms.length) return;
+  supabase.auth.getSession().then(({ data: sessionData }) => {
+    const accessToken = sessionData?.session?.access_token;
+    if (!accessToken) return;
+    fetch('/api/client/notify-new-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+      body: JSON.stringify({ clientId, documentName: noms.join(', '), documentNames: noms, origin: window.location.origin }),
+    }).then(async (resp) => {
+      const result = await resp.json().catch(() => ({}));
+      if (!resp.ok || result.sent === false) console.warn('[notifierDocumentsAuClient] email non envoyé :', result.error || result.message || resp.status);
+    }).catch(e => console.warn('[notifierDocumentsAuClient] erreur réseau :', e.message));
+  }).catch(() => {});
+};
+
 const notifyClientByEmail = (clientId, label) => {
   supabase.auth.getSession().then(({ data: sessionData }) => {
     const accessToken = sessionData?.session?.access_token;
@@ -4054,83 +4074,113 @@ const SignupView = ({ supabase, onComplete }) => {
 };
 
 // ──────────────────────────────────────────────────────────────
-// LegalModal — Mentions légales / CGU / Politique / CGV
-// VB Formation SAS — SkorUp — contact@skorup.fr
+// CONFORMITÉ (2026-10-23) : les textes légaux sont publiés sur le site (une seule version, à jour) ;
+// l'application y renvoie. Les anciens textes intégrés (juillet 2026, périmés) ont été retirés.
 // ──────────────────────────────────────────────────────────────
-const LEGAL_CONTENT = {
-  mentions: {
-    title: 'Mentions légales',
-    sections: [
-      { heading: 'Éditeur de la plateforme', text: 'La plateforme SkorUp est éditée par :\n\nVB Formation — Société par Actions Simplifiée (SAS) au capital de 1 000 €\nSiège social : 2 Rue du Général Baron Fabre, 56000 Vannes\nSIRET : 989 885 199 00012 — RCS Vannes\nN° TVA intracommunautaire : FR27989885199\nEmail : contact@skorup.fr\nSite web : www.skorup.fr' },
-      { heading: 'Directeur de la publication', text: 'Le directeur de la publication est le représentant légal de VB Formation SAS.' },
-      { heading: 'Hébergement', text: 'Frontend et déploiement : Vercel Inc., 340 Pine Street, Suite 701, San Francisco, CA 94104, États-Unis.\n\nBase de données et stockage : Supabase Inc., infrastructure Amazon Web Services (AWS), région Europe Ouest (eu-west-3).' },
-      { heading: 'Propriété intellectuelle', text: "L'ensemble des contenus présents sur la plateforme SkorUp (textes, graphismes, logos, icônes, images, logiciels) sont protégés par le droit d'auteur et demeurent la propriété exclusive de VB Formation SAS, sauf mention contraire.\n\nToute reproduction, distribution ou utilisation sans autorisation préalable écrite est strictement interdite." },
-      { heading: 'Contact', text: 'Pour toute question relative à la plateforme :\nEmail : contact@skorup.fr\nAdresse : 2 Rue du Général Baron Fabre, 56000 Vannes' },
-    ]
-  },
-  cgu: {
-    title: "Conditions Générales d'Utilisation",
-    sections: [
-      { heading: 'Objet', text: "Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation de la plateforme SkorUp, éditée par VB Formation SAS. En accédant à la plateforme, l'utilisateur accepte sans réserve les présentes conditions." },
-      { heading: 'Description du service', text: "SkorUp est une plateforme SaaS destinée aux organismes de formation professionnelle et à leurs clients (stagiaires). Elle permet la gestion des bilans de compétences, le suivi des séances, la centralisation des documents et la communication entre OFs, formateurs et stagiaires." },
-      { heading: 'Accès au service', text: "L'accès à SkorUp est réservé aux utilisateurs ayant reçu une invitation de leur organisme de formation. Chaque utilisateur est responsable de la confidentialité de ses identifiants. Tout accès effectué avec ses identifiants est réputé effectué par l'utilisateur lui-même." },
-      { heading: "Obligations de l'utilisateur", text: "L'utilisateur s'engage à :\n— Utiliser la plateforme conformément à sa destination et aux présentes CGU\n— Ne pas partager ses identifiants de connexion\n— Ne pas tenter d'accéder aux données d'autres organismes\n— Respecter la confidentialité des informations auxquelles il a accès\n— Signaler toute anomalie ou faille de sécurité à contact@skorup.fr" },
-      { heading: 'Disponibilité du service', text: "VB Formation SAS s'engage à maintenir la plateforme accessible 24h/24 et 7j/7, hors périodes de maintenance programmée. Des interruptions ponctuelles peuvent survenir pour des opérations de maintenance ou des raisons techniques indépendantes de notre volonté." },
-      { heading: 'Responsabilité', text: "VB Formation SAS ne saurait être tenu responsable des dommages directs ou indirects résultant de l'utilisation ou de l'impossibilité d'utiliser la plateforme, d'une perte de données, ou d'une interruption de service due à un cas de force majeure.\n\nChaque organisme de formation est responsable des données qu'il saisit sur la plateforme et de leur conformité avec la réglementation applicable." },
-      { heading: 'Modification des CGU', text: "VB Formation SAS se réserve le droit de modifier les présentes CGU à tout moment. Les utilisateurs seront informés de toute modification substantielle. L'utilisation continue de la plateforme après notification vaut acceptation des nouvelles conditions." },
-      { heading: 'Droit applicable', text: "Les présentes CGU sont soumises au droit français. En cas de litige, et à défaut de résolution amiable, les tribunaux compétents du ressort de la Cour d'Appel de Rennes seront saisis." },
-    ]
-  },
-  politique: {
-    title: 'Politique de Confidentialité',
-    sections: [
-      { heading: 'Responsable du traitement', text: "VB Formation SAS\n2 Rue du Général Baron Fabre, 56000 Vannes\nEmail : contact@skorup.fr\n\nConformément au Règlement (UE) 2016/679 (RGPD) et à la loi Informatique et Libertés, VB Formation SAS s'engage à protéger les données personnelles de ses utilisateurs." },
-      { heading: 'Données collectées', text: "Dans le cadre de l'utilisation de SkorUp, nous collectons :\n— Données d'identification : nom, prénom, adresse email\n— Données professionnelles : poste occupé, organisme de rattachement\n— Données de connexion : logs d'accès, adresse IP\n— Documents de formation : bilans, émargements, questionnaires\n— Signatures électroniques des documents\n\nCes données sont collectées directement auprès des utilisateurs ou transmises par leur organisme de formation." },
-      { heading: 'Finalités du traitement', text: "Les données sont traitées pour :\n— La gestion des comptes utilisateurs et l'authentification\n— Le suivi des parcours de formation et des bilans de compétences\n— La génération et conservation des documents officiels\n— La communication entre organismes, formateurs et stagiaires\n— La sécurité et la prévention des fraudes\n— L'amélioration de la plateforme" },
-      { heading: 'Durée de conservation', text: "— Données de compte : 3 ans après la fin du contrat\n— Documents de bilan de compétences : au maximum 3 ans après la fin du bilan (selon les préférences de l'organisme)\n— Logs de connexion : 12 mois\n\nAu-delà de ces délais, les données sont supprimées ou anonymisées." },
-      { heading: 'Sous-traitants', text: "VB Formation SAS fait appel aux sous-traitants suivants, offrant des garanties RGPD :\n— Vercel Inc. (hébergement frontend, USA — DPA en place)\n— Supabase Inc. (base de données, AWS Europe — eu-west)\n— Resend Inc. (envoi d'emails transactionnels)" },
-      { heading: 'Vos droits', text: "Conformément au RGPD, vous disposez des droits suivants :\n— Droit d'accès à vos données\n— Droit de rectification\n— Droit à l'effacement (droit à l'oubli)\n— Droit à la limitation du traitement\n— Droit à la portabilité\n— Droit d'opposition\n\nPour exercer ces droits : contact@skorup.fr\n\nVous pouvez également déposer une réclamation auprès de la CNIL (www.cnil.fr)." },
-      { heading: 'Cookies', text: "SkorUp utilise uniquement des cookies strictement nécessaires au fonctionnement (authentification, session). Aucun cookie publicitaire ou de traçage tiers n'est utilisé." },
-      { heading: 'Sécurité', text: "VB Formation SAS met en œuvre des mesures techniques et organisationnelles pour protéger vos données : chiffrement HTTPS/TLS, gestion des droits d'accès par rôles, isolation des données par organisme, et suppression de toute clé d'administration côté navigateur." },
-    ]
-  },
-  cgv: {
-    title: 'Conditions Générales de Vente',
-    sections: [
-      { heading: "Champ d'application", text: "Les présentes CGV s'appliquent à tout abonnement souscrit auprès de VB Formation SAS pour l'accès à la plateforme SkorUp. Elles prévalent sur tout autre document du client." },
-      { heading: 'Parties', text: "Vendeur : VB Formation SAS, SIRET 989 885 199 00012, 2 Rue du Général Baron Fabre, 56000 Vannes.\n\nAcheteur : tout organisme de formation professionnelle ou professionnel souscrivant un abonnement SkorUp." },
-      { heading: 'Description du service', text: "SkorUp est une plateforme SaaS de gestion des organismes de formation permettant la gestion des clients et formateurs, le suivi des séances et modules, la gestion documentaire, la messagerie interne, les questionnaires et la personnalisation du portail client." },
-      { heading: 'Tarifs et paiement', text: "Les tarifs applicables sont ceux communiqués par VB Formation SAS sur www.skorup.fr ou par devis. Tous les prix sont exprimés en euros HT, auxquels s'ajoute la TVA au taux en vigueur.\n\nLes conditions tarifaires font l'objet d'un contrat spécifique." },
-      { heading: 'Durée et résiliation', text: "L'abonnement est souscrit pour la durée indiquée au contrat et est renouvelable tacitement.\n\nChaque partie peut résilier en respectant un préavis de 30 jours avant la date de renouvellement, par email à contact@skorup.fr.\n\nEn cas de résiliation, les données sont conservées 30 jours puis supprimées définitivement." },
-      { heading: 'Limitation de responsabilité', text: "La responsabilité de VB Formation SAS est limitée au montant des sommes versées par le client au cours des 12 derniers mois. VB Formation SAS ne saurait être tenu responsable des préjudices indirects résultant de l'utilisation ou de l'indisponibilité du service." },
-      { heading: 'Droit applicable', text: "Les présentes CGV sont régies par le droit français. En cas de litige non résolu à l'amiable, le tribunal compétent du ressort de la Cour d'Appel de Rennes sera saisi." },
-    ]
+const LiensLegaux = ({ className = '', lienClassName = '' }) => (
+  <div className={className}>
+    {LIENS_LEGAUX.map(k => (
+      <a key={k} href={PAGES_LEGALES[k].url} target="_blank" rel="noopener noreferrer" className={lienClassName}>
+        {PAGES_LEGALES[k].court || PAGES_LEGALES[k].titre}
+      </a>
+    ))}
+  </div>
+);
+
+// Enregistre l'acceptation (une ligne par texte ; déjà enregistrée = déjà acceptée).
+const enregistrerAcceptation = async (documents, { role, organisationId, source }) => {
+  for (const document of documents) {
+    const { error } = await supabase.from('conditions_acceptees')
+      .insert({ document, version: CONDITIONS_VERSION, role: role || null, organisation_id: organisationId ? String(organisationId) : null, source });
+    if (error && error.code !== '23505') { console.error('[conditions] enregistrement impossible', document, error); return false; }
   }
+  return true;
 };
 
-const LegalModal = ({ page, onClose }) => {
-  const doc = LEGAL_CONTENT[page];
-  if (!doc) return null;
+// Fenêtre affichée à la connexion tant que la version en vigueur des conditions n'a pas été acceptée.
+// Sans la table conditions_acceptees (SQL non lancé) ou en cas d'erreur de lecture : rien n'est demandé.
+const PorteConditions = ({ userRole, currentOrgId, onLogout }) => {
+  const [aAccepter, setAAccepter] = useState([]);
+  const [premiereFois, setPremiereFois] = useState(false);
+  const [coche, setCoche] = useState(false);
+  const [envoi, setEnvoi] = useState(false);
+  useEffect(() => {
+    let annule = false;
+    setAAccepter([]); setCoche(false);
+    if (!userRole) return undefined;
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || annule) return;
+        const { data, error } = await supabase.from('conditions_acceptees').select('document, version').eq('user_id', user.id);
+        if (annule || error) return;
+        const faits = new Set((data || []).filter(r => r.version === CONDITIONS_VERSION).map(r => r.document));
+        let manquants = documentsAAccepter(userRole).filter(d => !faits.has(d));
+        // Acceptation donnée à l'inscription (avant la confirmation de l'email) : enregistrée maintenant.
+        const meta = user.user_metadata && user.user_metadata.conditions_acceptees;
+        if (manquants.length && meta && meta.version === CONDITIONS_VERSION && Array.isArray(meta.documents)) {
+          const dejaDonnes = manquants.filter(d => meta.documents.includes(d));
+          if (dejaDonnes.length && await enregistrerAcceptation(dejaDonnes, { role: userRole, organisationId: currentOrgId, source: 'inscription' })) {
+            manquants = manquants.filter(d => !dejaDonnes.includes(d));
+          }
+        }
+        if (annule) return;
+        // « Première fois » : compte créé après la mise en place des conditions ; sinon « Nos conditions évoluent ».
+        setPremiereFois((data || []).length === 0 && String(user.created_at || '') >= CONDITIONS_VERSION);
+        setAAccepter(manquants);
+      } catch (_) { /* on ne bloque jamais l'accès sur une erreur technique */ }
+    })();
+    return () => { annule = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole]);
+
+  if (!aAccepter.length) return null;
+  const accepter = async () => {
+    if (!coche || envoi) return;
+    setEnvoi(true);
+    const ok = await enregistrerAcceptation(aAccepter, { role: userRole, organisationId: currentOrgId, source: 'connexion' });
+    setEnvoi(false);
+    setAAccepter([]);
+    if (ok) toast.success('Merci, votre acceptation est enregistrée.');
+    else toast.error("Votre acceptation n'a pas pu être enregistrée : elle vous sera redemandée à votre prochaine connexion.", { duration: 8000 });
+  };
+  const estAdmin = userRole === 'admin';
+  const noms = aAccepter.map(d => PAGES_LEGALES[d].titre);
+  const liste = noms.length > 1 ? noms.slice(0, -1).join(', ') + ' et ' + noms[noms.length - 1] : noms[0];
   return (
-    <div className="fixed inset-0 bg-black/60 z-[999] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <h2 className="text-lg font-extrabold text-gray-900">{doc.title}</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+    <div className="fixed inset-0 bg-gray-900/70 z-[1000] flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 md:p-8 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="porte-conditions-titre">
+        <h2 id="porte-conditions-titre" className="text-xl font-black text-gray-900 mb-2">
+          {premiereFois ? "Conditions d'utilisation de SkorUp" : 'Nos conditions évoluent'}
+        </h2>
+        <p className="text-sm text-gray-600 mb-4">
+          {estAdmin
+            ? (premiereFois
+              ? "Pour utiliser SkorUp, merci de prendre connaissance des documents ci-dessous et de les accepter."
+              : "Nous avons mis à jour nos documents contractuels, notamment pour préciser nos engagements sur la protection des données de vos bénéficiaires (accord de traitement des données). Merci d'en prendre connaissance et de les accepter pour continuer.")
+            : "SkorUp est le logiciel utilisé par votre organisme de formation. Pour y accéder, merci de prendre connaissance de ses conditions d'utilisation et de les accepter."}
+        </p>
+        <ul className="space-y-2 mb-4">
+          {[...aAccepter, 'confidentialite'].map(d => (
+            <li key={d}>
+              <a href={PAGES_LEGALES[d].url} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-gray-200 hover:border-violet-300 hover:bg-violet-50 text-sm font-bold text-gray-800">
+                <span>{PAGES_LEGALES[d].titre}{d === 'confidentialite' ? ' (pour information)' : ''}</span>
+                <span className="text-violet-600 text-xs shrink-0">Lire ↗</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+        <label className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200 cursor-pointer mb-5">
+          <input type="checkbox" checked={coche} onChange={e => setCoche(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600 shrink-0" />
+          <span className="text-sm text-gray-700">J'ai lu et j'accepte les {liste}.</span>
+        </label>
+        <div className="flex flex-col-reverse sm:flex-row gap-3">
+          <button onClick={onLogout} className="sm:flex-1 px-5 py-3 text-gray-500 font-bold hover:bg-gray-100 rounded-xl">Me déconnecter</button>
+          <button onClick={accepter} disabled={!coche || envoi} className="sm:flex-1 px-5 py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            {envoi ? 'Enregistrement…' : 'Accepter et continuer'}
           </button>
         </div>
-        <div className="overflow-y-auto px-6 py-5 space-y-5">
-          {doc.sections.map((s, i) => (
-            <div key={i}>
-              <h3 className="text-xs font-extrabold text-gray-900 mb-1.5 uppercase tracking-wider">{s.heading}</h3>
-              {s.text.split('\n').map((line, j) => (
-                <p key={j} className="text-sm text-gray-600 leading-relaxed">{line || ' '}</p>
-              ))}
-            </div>
-          ))}
-          <p className="text-xs text-gray-400 pt-3 border-t border-gray-100 text-center">VB Formation SAS — contact@skorup.fr — www.skorup.fr — Dernière mise à jour : juillet 2026</p>
-        </div>
+        <p className="text-xs text-gray-400 mt-4">Version du {CONDITIONS_VERSION.split('-').reverse().join('/')}. La date de votre acceptation est conservée.</p>
       </div>
     </div>
   );
@@ -4202,7 +4252,6 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
     try { return new URLSearchParams(window.location.search).has('premiere-connexion') ? 'first' : 'forgot'; } catch (e) { return 'forgot'; }
   });
   const [resetSent, setResetSent] = useState(false);
-  const [legalPage, setLegalPage] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -4444,12 +4493,8 @@ const LoginView = ({ handleLogin, supabase, successMessage, onNeedsSetup }) => {
         </p>
       </div>
       {/* Pied de page légal */}
-      <div className="mt-5 flex flex-wrap justify-center gap-x-4 gap-y-1.5">
-        {[['mentions','Mentions légales'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
-          <button key={k} onClick={() => setLegalPage(k)} className="text-xs text-gray-400 hover:text-violet-600 transition-colors underline-offset-2 hover:underline">{label}</button>
-        ))}
-      </div>
-      {legalPage && <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />}
+      <LiensLegaux className="mt-5 flex flex-wrap justify-center gap-x-4 gap-y-1.5"
+        lienClassName="text-xs text-gray-400 hover:text-violet-600 transition-colors underline-offset-2 hover:underline" />
     </div>
   );
 };
@@ -4673,6 +4718,9 @@ const ClientDetailView = ({
   const [showSendDocsModal, setShowSendDocsModal] = React.useState(false);
   const [selectedGroupId, setSelectedGroupId] = React.useState(null);
   const [isSendingDocs, setIsSendingDocs] = React.useState(false);
+  const [groupeMode, setGroupeMode] = React.useState('immediate'); // GROUPE (2026-10-23)
+  const [groupeDate, setGroupeDate] = React.useState('');
+  const [groupeProgression, setGroupeProgression] = React.useState(null);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
   // AJOUT (2026-10-02) : envoi d'un questionnaire / quiz directement à ce client, même s'il n'est pas dans
@@ -4838,77 +4886,113 @@ const ClientDetailView = ({
       .then(({ data }) => { if (data) setLocalDocGroups(data); });
   }, [currentOrgId, supabase]);
 
-  const handleSendDocs = async () => {
-    if (!selectedGroupId || !instantiateDocument) return;
+  // GROUPE (2026-10-23) : documents d'un groupe et leur situation pour CE client.
+  const documentsDuGroupe = React.useMemo(() => {
+    if (!selectedGroupId) return [];
+    const gid = String(selectedGroupId);
+    const vus = new Set();
+    const lignes = [];
+    (documents || []).forEach(d => {
+      if (d.user_id || d.assigned_formateur_id || !d.nom) return;
+      const ids = [d.group_id, ...(Array.isArray(d.group_ids) ? d.group_ids : [])].filter(v => v != null).map(String);
+      if (!ids.includes(gid) || vus.has(d.nom)) return;
+      vus.add(d.nom);
+      const titre = d.nom;
+      const dejaEnvoye = (documents || []).some(x => String(x.user_id) === String(client.id) && x.nom && (x.nom === titre || x.nom.startsWith(titre + ' - ')));
+      const ligneAssignee = assignedDocs.find(a => a.template_titre === titre);
+      const dejaProgramme = !!(ligneAssignee && ligneAssignee.send_mode === 'scheduled' && !ligneAssignee.sent_at);
+      const modele = (documentTemplates || {})[titre];
+      lignes.push({ titre, url: (modele && modele.url) || d.url, ligneAssignee, statut: dejaEnvoye ? 'envoye' : (dejaProgramme ? 'programme' : 'a_envoyer') });
+    });
+    return lignes;
+  }, [selectedGroupId, documents, assignedDocs, documentTemplates, client.id]);
+  const nbDocsGroupe = (gid) => {
+    const g = String(gid);
+    return new Set((documents || []).filter(d => !d.user_id && !d.assigned_formateur_id && d.nom
+      && [d.group_id, ...(Array.isArray(d.group_ids) ? d.group_ids : [])].filter(v => v != null).map(String).includes(g)).map(d => d.nom)).size;
+  };
+  const fermerEnvoiGroupe = () => { setShowSendDocsModal(false); setSelectedGroupId(null); setGroupeMode('immediate'); setGroupeDate(''); setGroupeProgression(null); };
+
+  // Une ligne « Ajouts personnalisés » par document (réutilisée si elle existe déjà).
+  const ligneClientDocument = async (doc, champs, ordre = 0) => {
+    if (doc.ligneAssignee) {
+      const { data, error } = await supabase.from('client_documents').update(champs).eq('id', doc.ligneAssignee.id).select().single();
+      if (error) throw error;
+      return data;
+    }
+    const { data, error } = await supabase.from('client_documents').insert([{
+      client_id: client.id, template_titre: doc.titre, template_url: doc.url, destination: 'client',
+      organisation_id: client.organisation_id, ordre, ...champs,
+    }]).select().single();
+    if (error) throw error;
+    return data;
+  };
+
+  const envoyerGroupeDocuments = async () => {
+    const aTraiter = documentsDuGroupe.filter(d => d.statut === 'a_envoyer');
+    if (!aTraiter.length || isSendingDocs) return;
+    if (groupeMode === 'scheduled' && !groupeDate) { toast.error("Choisissez la date d'envoi."); return; }
+    const sansFichier = aTraiter.filter(d => !d.url);
     setIsSendingDocs(true);
-    const toastId = 'send-docs';
-    toast.loading('Préparation des documents…', { id: toastId });
-    try {
-      const { data: fullClient } = await supabase.from('clients').select('*').eq('id', client.id).single();
-      if (!fullClient) throw new Error('Client introuvable');
-      const compatibleClient = { ...fullClient, nom: fullClient.nom_complet || fullClient.nom || fullClient.email || 'Bénéficiaire' };
+    const nomGroupe = (localDocGroups.find(g => String(g.id) === String(selectedGroupId)) || {}).nom || 'groupe';
 
-      // Utiliser le state documents déjà en mémoire (même logique que l'UI admin ligne 6690)
-      // Évite les problèmes de type JSONB avec PostgREST contains()
-      const groupDocs = (documents || []).filter(d =>
-        !d.user_id &&
-        (d.group_id === selectedGroupId || (Array.isArray(d.group_ids) && d.group_ids.includes(selectedGroupId)))
-      );
-
-      if (!groupDocs || groupDocs.length === 0) {
-        toast.error('Aucun document dans ce groupe.', { id: toastId });
-        setIsSendingDocs(false);
-        return;
+    // ── Programmer : tout part automatiquement à la date choisie ──
+    if (groupeMode === 'scheduled') {
+      let ok = 0; const echecs = [];
+      for (const doc of aTraiter) {
+        if (!doc.url) { echecs.push(doc.titre); continue; }
+        try {
+          const ligne = await ligneClientDocument(doc, { send_mode: 'scheduled', scheduled_date: groupeDate, send_error: null }, assignedDocs.length + ok);
+          setAssignedDocs(prev => prev.some(a => a.id === ligne.id) ? prev.map(a => a.id === ligne.id ? ligne : a) : [...prev, ligne]);
+          ok++;
+        } catch (e) { console.error('[envoi groupé] programmation', doc.titre, e); echecs.push(doc.titre); }
       }
-
-      // Chercher les entrées MSR correspondantes (par nom) pour récupérer les métadonnées visuelles (has_visual_fields, visual_template_id, file_url)
-      // Scopé à l'organisme courant (+ lignes historiques sans organisation_id) : sans ce filtre, un modèle
-      // du même nom appartenant à un AUTRE organisme aurait pu être utilisé pour générer ce document.
-      const docNames = groupDocs.map(d => d.nom);
-      let msrQuery = supabase
-        .from('module_step_resources')
-        .select('*')
-        .eq('type', 'document')
-        .in('titre', docNames);
-      msrQuery = currentOrgId ? msrQuery.eq('organisation_id', currentOrgId) : msrQuery.limit(0);
-      const { data: msrEntries } = await msrQuery;
-      const msrByName = {};
-      (msrEntries || []).forEach(m => { msrByName[m.titre] = m; });
-
-      for (const doc of groupDocs) {
-        // Préférer l'entrée MSR (qui a file_url + metadata visuels complets) ; sinon adapter le doc de la table documents
-        const msrEntry = msrByName[doc.nom];
-        const templateResource = msrEntry || {
-          titre: doc.nom,
-          file_url: doc.url,
-          destination: doc.visible_formateur ? 'formateur' : 'client',
-          metadata: (() => { try { return typeof doc.metadata === 'string' ? JSON.parse(doc.metadata) : (doc.metadata || {}); } catch { return {}; } })(),
-        };
-        // Passer 'debut' pour que visible_client = true (sinon le client ne voit pas le document)
-        await instantiateDocument(compatibleClient, templateResource, 'debut');
-      }
-
-      await fetchDocuments();
-      // Vérifier que des documents ont bien été créés pour ce client
-      const { data: createdDocs } = await supabase
-        .from('documents')
-        .select('id, nom')
-        .eq('user_id', compatibleClient.id)
-        .in('nom', groupDocs.map(d => d.nom));
-      const nbCreated = (createdDocs || []).length;
-      if (nbCreated === 0) {
-        toast.error('Aucun document n\'a pu être créé. Vérifiez les droits ou consultez la console.', { id: toastId });
-        setIsSendingDocs(false);
-        return;
-      }
-      toast.success(`${nbCreated} document${nbCreated > 1 ? 's' : ''} envoyé${nbCreated > 1 ? 's' : ''} pour signature !`, { id: toastId });
-      setShowSendDocsModal(false);
-      setSelectedGroupId(null);
-    } catch (e) {
-      console.error('[handleSendDocs]', e);
-      toast.error('Erreur : ' + e.message, { id: toastId });
-    } finally {
       setIsSendingDocs(false);
+      const jour = new Date(groupeDate + 'T00:00:00').toLocaleDateString('fr-FR');
+      if (ok) toast.success(`${ok} document${ok > 1 ? 's' : ''} du groupe « ${nomGroupe} » programmé${ok > 1 ? 's' : ''} pour le ${jour}. Le client recevra un email ce jour-là.`, { duration: 8000 });
+      if (echecs.length) toast.error(`Non programmé${echecs.length > 1 ? 's' : ''} : ${echecs.join(', ')}.`, { duration: 10000 });
+      if (!echecs.length) fermerEnvoiGroupe();
+      return;
+    }
+
+    // ── Maintenant : chaque document est préparé et envoyé, un seul email à la fin ──
+    _envoiGroupe.actif = true; _envoiGroupe.clientId = client.id; _envoiGroupe.documents = [];
+    const echecs = [...sansFichier.map(d => d.titre)];
+    const idToast = 'envoi-groupe';
+    try {
+      const aEnvoyer = aTraiter.filter(d => d.url);
+      for (let i = 0; i < aEnvoyer.length; i++) {
+        const doc = aEnvoyer[i];
+        setGroupeProgression({ fait: i, total: aEnvoyer.length, titre: doc.titre });
+        toast.loading(`Envoi ${i + 1}/${aEnvoyer.length} : ${doc.titre}…`, { id: idToast });
+        let ligne = null;
+        try {
+          ligne = await ligneClientDocument(doc, { send_mode: 'immediate', scheduled_date: null, send_error: null }, assignedDocs.length + i);
+          setAssignedDocs(prev => prev.some(a => a.id === ligne.id) ? prev.map(a => a.id === ligne.id ? ligne : a) : [...prev, ligne]);
+        } catch (e) { console.error('[envoi groupé] ajout', doc.titre, e); }
+        const avant = _envoiGroupe.documents.length;
+        try { await handleGenerateDocx(client, doc.titre, false, null, true); } catch (e) { console.error('[envoi groupé] génération', doc.titre, e); }
+        if (_envoiGroupe.documents.length > avant) {
+          if (ligne) {
+            const { data: maj } = await supabase.from('client_documents').update({ sent_at: new Date().toISOString() }).eq('id', ligne.id).select().single();
+            if (maj) setAssignedDocs(prev => prev.map(a => a.id === maj.id ? maj : a));
+          }
+        } else {
+          echecs.push(doc.titre);
+        }
+      }
+    } finally {
+      const reussis = _envoiGroupe.documents.slice();
+      _envoiGroupe.actif = false; _envoiGroupe.clientId = null; _envoiGroupe.documents = [];
+      const aPrevenir = reussis.filter(r => r.prevenir).map(r => r.nom);
+      notifierDocumentsAuClient(client.id, aPrevenir);
+      setIsSendingDocs(false);
+      setGroupeProgression(null);
+      const n = reussis.length;
+      if (n) toast.success(`${n} document${n > 1 ? 's' : ''} du groupe « ${nomGroupe} » envoyé${n > 1 ? 's' : ''}.${aPrevenir.length ? ' Le client a reçu un seul email récapitulatif.' : ''}`, { id: idToast, duration: 8000 });
+      else toast.dismiss(idToast);
+      if (echecs.length) toast.error(`Non envoyé${echecs.length > 1 ? 's' : ''} : ${echecs.join(', ')}. Vérifiez ${echecs.length > 1 ? 'ces modèles' : 'ce modèle'} dans Documents, puis utilisez « Envoyer » sur la ligne.`, { duration: 12000 });
+      if (!echecs.length) fermerEnvoiGroupe();
     }
   };
 
@@ -5692,12 +5776,19 @@ const ClientDetailView = ({
               <h3 className="text-lg font-bold text-gray-800">Documents de ce client</h3>
               <p className="text-xs text-gray-400 mt-0.5">Documents issus du module + ajouts personnalisés.</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {/* "Régénérer PDF" et "Envoyer pour signature" retirés du 02/09/2026 : ces deux
                   boutons ne concernaient pas les "Ajouts personnalisés" (le premier régénère les
                   documents visuels du module, le second ouvre un envoi par groupe de documents
                   distinct) et créaient une confusion de doublon avec les boutons Envoyer/Consulter
                   disponibles sur chaque ligne d'"Ajouts personnalisés" ci-dessous. */}
+              <button
+                onClick={() => { setSelectedGroupId(null); setGroupeMode('immediate'); setGroupeDate(''); setShowSendDocsModal(true); }}
+                className="bg-white hover:bg-indigo-50 text-indigo-700 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all border border-indigo-200"
+                title="Envoyer tous les documents d'un groupe en une fois"
+              >
+                📁 Envoyer un groupe
+              </button>
               <button
                 onClick={() => { setAddDocSendMode('immediate'); setAddDocScheduledDate(''); setShowAddDocModal(true); }}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-sm"
@@ -5950,44 +6041,88 @@ const ClientDetailView = ({
             </div>
           )}
 
-          {showSendDocsModal && (
+          {showSendDocsModal && (() => {
+            const aEnvoyer = documentsDuGroupe.filter(d => d.statut === 'a_envoyer');
+            const auj = jourLocalISO(new Date());
+            return (
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl">
-                <h4 className="text-base font-black text-gray-900 mb-1">Envoyer pour signature</h4>
-                <p className="text-xs text-gray-400 mb-4">Choisissez le groupe de documents à envoyer à ce client. Tous les documents du groupe seront pré-remplis et mis en attente de signature.</p>
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 mb-4">
-                  {localDocGroups.length === 0 ? (
-                    <p className="text-gray-400 text-sm italic text-center py-6">Aucun groupe de documents disponible.</p>
-                  ) : localDocGroups.map(grp => (
-                    <button
-                      key={grp.id}
-                      onClick={() => setSelectedGroupId(grp.id)}
-                      className={`w-full flex items-center gap-3 text-left font-bold text-sm px-4 py-3 rounded-xl border transition-all ${selectedGroupId === grp.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-gray-50 hover:bg-violet-50 text-gray-700 border-gray-100 hover:border-violet-200'}`}
-                    >
-                      <span className="text-base">📁</span>
-                      {grp.nom}
-                    </button>
-                  ))}
-                </div>
+              <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
+                <h4 className="text-base font-black text-gray-900 mb-1">Envoyer un groupe de documents</h4>
+                <p className="text-xs text-gray-400 mb-4">Tous les documents du groupe sont envoyés en une fois à ce client. Ceux qu'il a déjà reçus sont ignorés.</p>
+                {!selectedGroupId ? (
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1 mb-4">
+                    {localDocGroups.length === 0 ? (
+                      <p className="text-gray-400 text-sm italic text-center py-6">Aucun groupe de documents. Créez-en un dans Documents › Groupes de documents.</p>
+                    ) : localDocGroups.map(grp => {
+                      const n = nbDocsGroupe(grp.id);
+                      return (
+                        <button key={grp.id} onClick={() => setSelectedGroupId(grp.id)} disabled={n === 0}
+                          className="w-full flex items-center justify-between gap-3 text-left font-bold text-sm px-4 py-3 rounded-xl border bg-gray-50 hover:bg-indigo-50 text-gray-700 border-gray-100 hover:border-indigo-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                          <span className="flex items-center gap-2 min-w-0"><span className="text-base">📁</span><span className="truncate">{grp.nom}</span></span>
+                          <span className="text-xs font-bold text-gray-400 shrink-0">{n} document{n > 1 ? 's' : ''}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <>
+                    <button onClick={() => setSelectedGroupId(null)} disabled={isSendingDocs} className="text-xs font-bold text-indigo-600 hover:underline mb-2">← Changer de groupe</button>
+                    <p className="text-sm font-black text-gray-800 mb-2">📁 {(localDocGroups.find(g => String(g.id) === String(selectedGroupId)) || {}).nom}</p>
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1 mb-4">
+                      {documentsDuGroupe.map(d => (
+                        <div key={d.titre} className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-sm ${d.statut === 'a_envoyer' ? 'bg-white border-gray-100 text-gray-800' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>
+                          <span className="flex items-center gap-2 min-w-0"><FileText className="w-4 h-4 shrink-0 text-indigo-300" /><span className="truncate">{d.titre}</span></span>
+                          <span className="text-[11px] font-bold shrink-0">
+                            {d.statut === 'envoye' ? 'déjà envoyé' : d.statut === 'programme' ? 'déjà programmé' : (groupeProgression && groupeProgression.titre === d.titre ? 'envoi…' : '')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {aEnvoyer.length > 0 ? (
+                      <div className="bg-gray-50 rounded-xl border border-gray-100 p-3 mb-4 space-y-2">
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setGroupeMode('immediate')} disabled={isSendingDocs}
+                            className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${groupeMode === 'immediate' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}>Maintenant</button>
+                          <button type="button" onClick={() => setGroupeMode('scheduled')} disabled={isSendingDocs}
+                            className={`flex-1 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${groupeMode === 'scheduled' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}>📅 Programmer</button>
+                        </div>
+                        {groupeMode === 'scheduled' && (
+                          <input type="date" min={auj} value={groupeDate} onChange={e => setGroupeDate(e.target.value)} aria-label="Date d'envoi"
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+                        )}
+                        <p className="text-xs text-gray-400">
+                          {groupeMode === 'scheduled'
+                            ? "Les documents seront générés et envoyés automatiquement ce jour-là, le matin. Le client recevra un seul email."
+                            : 'Le client recevra un seul email listant les documents.'}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-3 mb-4">Ce client a déjà reçu (ou va recevoir) tous les documents de ce groupe.</p>
+                    )}
+                    {groupeProgression && (
+                      <div className="mb-4">
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-600 transition-all" style={{ width: `${Math.round(groupeProgression.fait / Math.max(1, groupeProgression.total) * 100)}%` }} /></div>
+                        <p className="text-xs text-gray-500 mt-1">Envoi {groupeProgression.fait + 1}/{groupeProgression.total}…</p>
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => { setShowSendDocsModal(false); setSelectedGroupId(null); }}
-                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all"
-                    disabled={isSendingDocs}
-                  >
-                    Annuler
+                  <button onClick={fermerEnvoiGroupe} disabled={isSendingDocs}
+                    className="flex-1 text-gray-500 hover:text-gray-800 font-bold text-sm py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-40">
+                    {isSendingDocs ? 'Patientez…' : 'Fermer'}
                   </button>
-                  <button
-                    onClick={handleSendDocs}
-                    disabled={!selectedGroupId || isSendingDocs}
-                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold text-sm py-2.5 rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                  >
-                    {isSendingDocs ? 'Envoi…' : 'Envoyer ✉️'}
-                  </button>
+                  {selectedGroupId && aEnvoyer.length > 0 && (
+                    <button onClick={envoyerGroupeDocuments} disabled={isSendingDocs || (groupeMode === 'scheduled' && !groupeDate)}
+                      className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-2.5 rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                      {isSendingDocs ? 'Envoi…' : `${groupeMode === 'scheduled' ? 'Programmer' : 'Envoyer'} ${aEnvoyer.length} document${aEnvoyer.length > 1 ? 's' : ''}`}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -22868,7 +23003,6 @@ export default function App() {
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
   const [brandSettings, setBrandSettings] = useState(MARQUE_PAR_DEFAUT);
-  const [sidebarLegalPage, setSidebarLegalPage] = useState(null);
 
   // --- Modale de confirmation suppression globale ---
   const [appConfirmState, setAppConfirmState] = useState({ open: false, title: '', message: '', onConfirm: null });
@@ -26550,7 +26684,11 @@ export default function App() {
   // `documents`, avec l'objet tel qu'inséré (docToInsert) qui porte déjà metadata + les colonnes
   // signe_par_* à false.
   const notifyDocumentRecipients = (insertedDoc, documentName) => {
-    if (insertedDoc.visible_client && insertedDoc.user_id && !isBlockedBySigningOrder(insertedDoc, 'client')) {
+    // GROUPE (2026-10-23) : envoi groupé en cours pour ce client → on note le document (succès) et
+    // un seul email récapitulatif part à la fin.
+    if (_envoiGroupe.actif && insertedDoc.user_id && String(insertedDoc.user_id) === String(_envoiGroupe.clientId)) {
+      _envoiGroupe.documents.push({ nom: documentName, prevenir: !!(insertedDoc.visible_client && !isBlockedBySigningOrder(insertedDoc, 'client')) });
+    } else if (insertedDoc.visible_client && insertedDoc.user_id && !isBlockedBySigningOrder(insertedDoc, 'client')) {
       notifyClientNewDocument(insertedDoc.user_id, documentName);
     }
     if (insertedDoc.visible_formateur && insertedDoc.assigned_formateur_id && !isBlockedBySigningOrder(insertedDoc, 'formateur')) {
@@ -28280,14 +28418,8 @@ export default function App() {
             <TrialBanner orgSettings={orgSettings} onUpgrade={() => { setActiveTab('parametres_org'); setMobileMenuOpen(false); }} />
           )}
           {/* Liens légaux */}
-          <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2">
-            {[['mentions','Mentions'],['cgu','CGU'],['politique','Confidentialité'],['cgv','CGV']].map(([k,label]) => (
-              <button key={k} onClick={() => setSidebarLegalPage(k)}
-                className="text-xs text-violet-400/60 hover:text-violet-300 transition-colors">
-                {label}
-              </button>
-            ))}
-          </div>
+          <LiensLegaux className="flex flex-wrap justify-center gap-x-3 gap-y-1 mb-3 px-2"
+            lienClassName="text-xs text-violet-400/60 hover:text-violet-300 transition-colors" />
           {isAdminActingAsFormateur && (
             <button
               onClick={() => { window.location.href = window.location.origin + window.location.pathname; }}
@@ -28301,9 +28433,10 @@ export default function App() {
             <LogOut className="w-5 h-5 mr-3" /> Déconnexion
           </button>
         </div>
-        {sidebarLegalPage && <LegalModal page={sidebarLegalPage} onClose={() => setSidebarLegalPage(null)} />}
       </div>
 
+      {/* CONFORMITÉ (2026-10-23) : acceptation des conditions en vigueur */}
+      <PorteConditions userRole={userRole} currentOrgId={currentOrgId} onLogout={handleLogout} />
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
         {userRole === 'client' && (() => {
