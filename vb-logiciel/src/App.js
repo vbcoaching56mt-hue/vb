@@ -6632,6 +6632,7 @@ const ClientDetailView = ({
       {activeTab === 'finances' && (
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Euro size={20} className="text-emerald-600" /> Finances</h3>
+          <BlocFinancements client={client} currentOrgId={currentOrgId} montantPrestation={clientInfo.montant_prestation} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -6873,6 +6874,326 @@ const DossiersArchives = ({ archives = [], onRestaurer = null }) => {
   );
 };
 
+// ─── FINANCEMENT DES DOSSIERS (2026-10-23) ─────────────────────────────────────────────────────────
+// Table « financements » (SQL financements) : une ligne par financeur d'un dossier client. Types alignés
+// sur les lignes du BPF pour pouvoir le calculer plus tard. Sans la table : rien ne s'affiche.
+const TYPES_FINANCEMENT = [
+  ['personnel', 'Personnel (le client paie lui-même)'],
+  ['cpf', 'CPF (Mon Compte Formation)'],
+  ['opco', 'OPCO'],
+  ['entreprise', 'Entreprise / employeur'],
+  ['france_travail', 'France Travail'],
+  ['region', 'Région'],
+  ['public', 'Autre financement public (État, collectivité…)'],
+  ['organisme_formation', 'Autre organisme de formation (sous-traitance)'],
+  ['autre', 'Autre'],
+];
+const LIBELLES_COURTS_FINANCEMENT = { personnel: 'Personnel', cpf: 'CPF', opco: 'OPCO', entreprise: 'Entreprise', france_travail: 'France Travail', region: 'Région', public: 'Financement public', organisme_formation: 'Organisme de formation', autre: 'Autre' };
+const STATUTS_FINANCEMENT = [['', '—'], ['a_demander', 'À demander'], ['demande_envoyee', 'Demande envoyée'], ['accord_recu', 'Accord reçu'], ['refuse', 'Refusé'], ['paye', 'Payé']];
+const libelleFinancement = (t) => LIBELLES_COURTS_FINANCEMENT[t] || 'Autre';
+const libelleStatutFinancement = (s) => (STATUTS_FINANCEMENT.find(([v]) => v === s) || [null, ''])[1];
+// Espaces fines insécables remplacées par des espaces simples : la police des PDF ne les connaît pas.
+const nombreFr = (n) => { const x = Math.round((Number(n) || 0) * 100) / 100; return x.toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(x) ? 0 : 2, maximumFractionDigits: 2 }).replace(/[\u202f\u00a0]/g, ' '); };
+const montantRenseigne = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
+
+// Valeurs des balises de documents à partir des lignes de financement d'un dossier.
+const valeursBalisesFinancement = (lignes, montantPrestation) => {
+  const L = (lignes || []).filter(Boolean);
+  const vide = { financement_type: '', financeur_nom: '', montant_financeur: '', reste_a_charge: '', numero_prise_en_charge: '' };
+  if (!L.length) return vide;
+  const tiers = L.filter(l => l.type !== 'personnel');
+  const perso = L.filter(l => l.type === 'personnel');
+  const somme = (arr) => arr.reduce((s, l) => s + (montantRenseigne(l.montant) ? Number(l.montant) : 0), 0);
+  const aMontant = (arr) => arr.some(l => montantRenseigne(l.montant));
+  const types = [];
+  L.forEach(l => { const x = libelleFinancement(l.type); if (!types.includes(x)) types.push(x); });
+  const noms = [];
+  tiers.forEach(l => { const x = String(l.financeur_nom || '').trim() || libelleFinancement(l.type); if (!noms.includes(x)) noms.push(x); });
+  const total = Number(montantPrestation) || 0;
+  let reste = '';
+  if (perso.length && aMontant(perso)) reste = nombreFr(somme(perso));
+  else if (total > 0 && tiers.length && aMontant(tiers)) reste = nombreFr(Math.max(0, total - somme(tiers)));
+  return {
+    financement_type: types.join(' + '),
+    financeur_nom: noms.length ? noms.join(' / ') : 'Financement personnel',
+    montant_financeur: tiers.length && aMontant(tiers) ? nombreFr(somme(tiers)) : '',
+    reste_a_charge: reste,
+    numero_prise_en_charge: L.map(l => String(l.numero_prise_en_charge || '').trim()).filter(Boolean).join(' / '),
+  };
+};
+// Lecture du financement d'un dossier : table directe (administrateur), sinon fonction limitée
+// (formateur : type + financeur ; client : son propre financement). Jamais bloquant.
+const chargerFinancementsDossier = async (clientId) => {
+  if (!clientId) return [];
+  try {
+    const { data, error } = await supabase.from('financements').select('*').eq('client_id', clientId)
+      .order('position', { ascending: true }).order('created_at', { ascending: true });
+    if (!error && Array.isArray(data) && data.length) return data;
+    const r = await supabase.rpc('skorup_financements_dossier', { p_client: String(clientId) });
+    return (!r.error && Array.isArray(r.data)) ? r.data : [];
+  } catch (_) { return []; }
+};
+const valeursFinancement = async (clientId, montantPrestation) => valeursBalisesFinancement(await chargerFinancementsDossier(clientId), montantPrestation);
+
+// Financements de tout l'organisme (liste des clients, administrateur).
+const useFinancementsOrg = (orgId, rafraichir) => {
+  const [etat, setEtat] = React.useState({ dispo: false, parClient: {} });
+  React.useEffect(() => {
+    if (!orgId) return undefined;
+    let annule = false;
+    fetchAllRowsWithRetry(() => supabase.from('financements').select('client_id, type, financeur_nom').eq('organisation_id', orgId).order('position', { ascending: true }), { label: 'financements', retries: 0 })
+      .then(({ data, error }) => {
+        if (annule) return;
+        if (error || !Array.isArray(data)) { setEtat({ dispo: false, parClient: {} }); return; }
+        const m = {};
+        data.forEach(f => { const k = String(f.client_id); (m[k] = m[k] || []).push(f); });
+        setEtat({ dispo: true, parClient: m });
+      })
+      .catch(() => {});
+    return () => { annule = true; };
+  }, [orgId, rafraichir]);
+  return etat;
+};
+const typesFinancementDe = (lignes) => {
+  const t = [];
+  (lignes || []).forEach(f => { const x = libelleFinancement(f.type); if (!t.includes(x)) t.push(x); });
+  return t;
+};
+const FiltreFinancement = ({ clients = [], parClient = {}, valeur, onChange }) => {
+  if (!clients.length) return null;
+  const typesDe = (c) => (parClient[String(c.id)] || []).map(f => f.type);
+  const compte = (t) => clients.filter(c => (t === 'aucun' ? typesDe(c).length === 0 : typesDe(c).includes(t))).length;
+  const options = [['tous', `Tous les financements (${clients.length})`]];
+  TYPES_FINANCEMENT.forEach(([t]) => { const n = compte(t); if (n > 0 || valeur === t) options.push([t, `${libelleFinancement(t)} (${n})`]); });
+  options.push(['aucun', `Non renseigné (${compte('aucun')})`]);
+  return (
+    <div className="mb-5 flex flex-wrap items-center gap-2">
+      <label htmlFor="filtre-financement" className="text-xs font-bold text-gray-500">💶 Financement</label>
+      <select id="filtre-financement" value={valeur} onChange={e => onChange(e.target.value)}
+        className={`text-xs font-bold px-3 py-1.5 rounded-full border outline-none ${valeur !== 'tous' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-600 border-gray-200'}`}>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+  );
+};
+
+// Bloc « Financement » de la fiche client (administrateur).
+const FINANCEMENT_VIDE = { type: 'opco', financeur_nom: '', montant: '', numero_prise_en_charge: '', statut: '', contact_nom: '', contact_email: '', contact_telephone: '' };
+const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
+  const [lignes, setLignes] = React.useState([]);
+  const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
+  const [edition, setEdition] = React.useState(null); // { id | null, ...champs }
+  const [enCours, setEnCours] = React.useState(false);
+  const [aSupprimer, setASupprimer] = React.useState(null);
+  const clientId = client && client.id;
+  const charger = React.useCallback(async () => {
+    if (!clientId) return;
+    const { data, error } = await supabase.from('financements').select('*').eq('client_id', clientId)
+      .order('position', { ascending: true }).order('created_at', { ascending: true });
+    if (error) {
+      const absente = error.code === '42P01' || error.code === 'PGRST205' || /(does not exist|schema cache|could not find)/i.test(error.message || '');
+      setEtat(absente ? 'absent' : 'erreur'); setLignes([]); return;
+    }
+    setLignes(data || []); setEtat('ok');
+  }, [clientId]);
+  React.useEffect(() => { setEdition(null); setEtat('chargement'); charger(); }, [charger]);
+
+  if (etat === 'absent' || etat === 'chargement') return null;
+  if (etat === 'erreur') {
+    return (
+      <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-sm text-amber-800 flex items-center justify-between gap-3">
+        <span>Le financement de ce dossier n'a pas pu être chargé.</span>
+        <button type="button" onClick={charger} className="font-bold underline">Réessayer</button>
+      </div>
+    );
+  }
+
+  const fmt = (n) => (Number(n) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+  const total = lignes.reduce((s, l) => s + (montantRenseigne(l.montant) ? Number(l.montant) : 0), 0);
+  const prestation = Number(montantPrestation) || 0;
+  const ecart = prestation > 0 && lignes.some(l => montantRenseigne(l.montant)) ? Math.round((total - prestation) * 100) / 100 : null;
+  const champ = (k, v) => setEdition(prev => {
+    const suite = { ...prev, [k]: v };
+    if (k === 'type' && !String(prev.financeur_nom || '').trim()) {
+      if (v === 'cpf') suite.financeur_nom = 'Mon Compte Formation';
+      if (v === 'france_travail') suite.financeur_nom = 'France Travail';
+    }
+    return suite;
+  });
+  const enregistrer = async () => {
+    if (!edition || enCours) return;
+    const montantTxt = String(edition.montant ?? '').replace(/\s/g, '').replace(',', '.');
+    if (montantTxt !== '' && (Number.isNaN(Number(montantTxt)) || Number(montantTxt) < 0)) { toast.error('Le montant doit être un nombre positif.'); return; }
+    const email = String(edition.contact_email || '').trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast.error("L'email du contact n'est pas valide."); return; }
+    const perso = edition.type === 'personnel';
+    const ligne = {
+      type: edition.type,
+      financeur_nom: perso ? null : (String(edition.financeur_nom || '').trim() || null),
+      montant: montantTxt === '' ? null : Math.round(Number(montantTxt) * 100) / 100,
+      numero_prise_en_charge: perso ? null : (String(edition.numero_prise_en_charge || '').trim() || null),
+      statut: edition.statut || null,
+      contact_nom: perso ? null : (String(edition.contact_nom || '').trim() || null),
+      contact_email: perso ? null : (email || null),
+      contact_telephone: perso ? null : (String(edition.contact_telephone || '').trim() || null),
+      updated_at: new Date().toISOString(),
+    };
+    setEnCours(true);
+    try {
+      const { error } = edition.id
+        ? await supabase.from('financements').update(ligne).eq('id', edition.id)
+        : await supabase.from('financements').insert([{ ...ligne, client_id: clientId, organisation_id: currentOrgId || client.organisation_id, position: lignes.length }]);
+      if (error) throw error;
+      toast.success('Financement enregistré.');
+      setEdition(null);
+      await charger();
+    } catch (e) {
+      toast.error("Le financement n'a pas pu être enregistré : " + (e?.message || 'erreur inconnue'));
+    } finally { setEnCours(false); }
+  };
+  const supprimer = async () => {
+    const l = aSupprimer; setASupprimer(null);
+    if (!l) return;
+    const { error } = await supabase.from('financements').delete().eq('id', l.id);
+    if (error) { toast.error('Suppression impossible : ' + error.message); return; }
+    toast.success('Financement supprimé.');
+    await charger();
+  };
+  const cls = 'w-full p-3 text-sm border bg-gray-50 border-gray-200 focus:border-emerald-500 rounded-xl outline-none transition-colors';
+  const placeholderNom = { opco: 'ex. OPCO Atlas, AKTO, Constructys…', entreprise: "Nom de l'entreprise", region: 'ex. Région Bretagne', public: "ex. État, Département…", organisme_formation: "Nom de l'organisme donneur d'ordre", autre: 'Nom du financeur' };
+
+  return (
+    <div className="border border-emerald-100 bg-emerald-50/40 rounded-2xl p-4 md:p-5 space-y-4" data-bloc="financement">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h4 className="text-sm font-black text-gray-800">💶 Financement du dossier</h4>
+          <p className="text-xs text-gray-500">Qui paie la prestation (une ligne par financeur, ex. CPF + reste à charge du client).</p>
+        </div>
+        {!edition && (
+          <button type="button" onClick={() => setEdition({ ...FINANCEMENT_VIDE, type: lignes.length ? 'personnel' : 'opco', id: null })}
+            className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm">
+            + Ajouter un financeur
+          </button>
+        )}
+      </div>
+
+      {lignes.length === 0 && !edition && <p className="text-sm text-gray-400 italic">Aucun financement renseigné pour ce dossier.</p>}
+
+      {lignes.length > 0 && (
+        <div className="space-y-2">
+          {lignes.map(l => (
+            <div key={l.id} className="bg-white rounded-xl border border-gray-100 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 break-words">
+                  <span className="text-xs font-black uppercase tracking-wider text-emerald-700 mr-2">{libelleFinancement(l.type)}</span>
+                  {l.type !== 'personnel' && (l.financeur_nom || '')}
+                  {montantRenseigne(l.montant) && <span className="ml-2 text-gray-700">{fmt(l.montant)}</span>}
+                </p>
+                <p className="text-xs text-gray-500 break-words">
+                  {[l.statut ? libelleStatutFinancement(l.statut) : '', l.numero_prise_en_charge ? `N° ${l.numero_prise_en_charge}` : '', [l.contact_nom, l.contact_email, l.contact_telephone].filter(Boolean).join(' · ')].filter(Boolean).join(' — ')}
+                </p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <button type="button" onClick={() => setEdition({ ...FINANCEMENT_VIDE, ...l, montant: montantRenseigne(l.montant) ? String(l.montant) : '', statut: l.statut || '' })} disabled={!!edition}
+                  className="p-2 text-gray-400 hover:text-emerald-700 rounded-lg disabled:opacity-40" title="Modifier" aria-label={`Modifier le financement ${libelleFinancement(l.type)}`}><Pencil size={16} /></button>
+                <button type="button" onClick={() => setASupprimer(l)} disabled={!!edition}
+                  className="p-2 text-gray-300 hover:text-red-500 rounded-lg disabled:opacity-40" title="Supprimer" aria-label={`Supprimer le financement ${libelleFinancement(l.type)}`}><Trash2 size={16} /></button>
+              </div>
+            </div>
+          ))}
+          {ecart !== null && (
+            ecart === 0
+              ? <p className="text-xs font-bold text-emerald-700">✓ Total des financements : {fmt(total)} — correspond au montant de la prestation.</p>
+              : <p className="text-xs font-bold text-amber-800 bg-amber-50 rounded-lg px-3 py-2">⚠️ Total des financements : {fmt(total)} — différent du montant de la prestation ({fmt(prestation)}).</p>
+          )}
+        </div>
+      )}
+
+      {edition && (
+        <div className="bg-white rounded-2xl border border-emerald-200 p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1" htmlFor="fin-type">Type de financement</label>
+              <select id="fin-type" className={cls} value={edition.type} onChange={e => champ('type', e.target.value)}>
+                {TYPES_FINANCEMENT.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            {edition.type !== 'personnel' && (
+              <div>
+                <label className="block text-xs font-bold text-gray-400 mb-1" htmlFor="fin-nom">Nom du financeur</label>
+                <input id="fin-nom" className={cls} value={edition.financeur_nom || ''} onChange={e => champ('financeur_nom', e.target.value)} placeholder={placeholderNom[edition.type] || ''} maxLength={150} />
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1" htmlFor="fin-montant">Montant (€)</label>
+              <input id="fin-montant" type="text" inputMode="decimal" className={cls} value={edition.montant ?? ''} onChange={e => champ('montant', e.target.value)} placeholder="ex. 1500" />
+            </div>
+            {edition.type !== 'personnel' && (
+              <div>
+                <label className="block text-xs font-bold text-gray-400 mb-1" htmlFor="fin-numero">N° de dossier / prise en charge</label>
+                <input id="fin-numero" className={cls} value={edition.numero_prise_en_charge || ''} onChange={e => champ('numero_prise_en_charge', e.target.value)} maxLength={100} />
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-1" htmlFor="fin-statut">Statut</label>
+              <select id="fin-statut" className={cls} value={edition.statut || ''} onChange={e => champ('statut', e.target.value)}>
+                {STATUTS_FINANCEMENT.map(([v, l]) => <option key={v || 'aucun'} value={v}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+          {edition.type !== 'personnel' && (
+            <div>
+              <p className="text-xs font-bold text-gray-500 mb-2">Contact chez le financeur (facultatif)</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input aria-label="Nom du contact" className={cls} value={edition.contact_nom || ''} onChange={e => champ('contact_nom', e.target.value)} placeholder="Nom du contact" maxLength={150} />
+                <input aria-label="Email du contact" type="email" className={cls} value={edition.contact_email || ''} onChange={e => champ('contact_email', e.target.value)} placeholder="Email" maxLength={200} />
+                <input aria-label="Téléphone du contact" type="tel" className={cls} value={edition.contact_telephone || ''} onChange={e => champ('contact_telephone', e.target.value)} placeholder="Téléphone" maxLength={40} />
+              </div>
+            </div>
+          )}
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-2">
+            <button type="button" onClick={() => setEdition(null)} disabled={enCours} className="px-4 py-2.5 text-sm font-bold text-gray-500 hover:text-gray-800 rounded-xl">Annuler</button>
+            <button type="button" onClick={enregistrer} disabled={enCours} className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl shadow-sm disabled:opacity-50">
+              {enCours ? 'Enregistrement…' : 'Enregistrer le financement'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-400">
+        Dans vos modèles de documents : {'{financement_type}'}, {'{financeur_nom}'}, {'{montant_financeur}'}, {'{reste_a_charge}'}, {'{numero_prise_en_charge}'}.
+      </p>
+      <ConfirmModal
+        isOpen={!!aSupprimer}
+        title="Supprimer ce financement ?"
+        message={aSupprimer ? `${libelleFinancement(aSupprimer.type)}${aSupprimer.financeur_nom ? ' — ' + aSupprimer.financeur_nom : ''} sera retiré de ce dossier. Les documents déjà envoyés ne changent pas.` : ''}
+        onConfirm={supprimer}
+        onCancel={() => setASupprimer(null)}
+      />
+    </div>
+  );
+};
+
+// Formateur : rappel du financement de son client (type + financeur seulement).
+const FinancementResume = ({ clientId }) => {
+  const [lignes, setLignes] = React.useState([]);
+  React.useEffect(() => {
+    if (!clientId) return undefined;
+    let annule = false;
+    supabase.rpc('skorup_financements_dossier', { p_client: String(clientId) })
+      .then(({ data, error }) => { if (!annule) setLignes(!error && Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { annule = true; };
+  }, [clientId]);
+  if (!lignes.length) return null;
+  return (
+    <p className="mb-5 text-sm text-gray-700 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-2.5 break-words" data-bloc="financement-formateur">
+      <span className="font-bold text-emerald-800">💶 Financement : </span>
+      {lignes.map(l => (l.type !== 'personnel' && l.financeur_nom ? `${libelleFinancement(l.type)} (${l.financeur_nom})` : libelleFinancement(l.type))).join(' + ')}
+    </p>
+  );
+};
+
 const AdminClientsView = ({
   chargement = false,
   clientsArchives = [], onRestaurerDossier = null,
@@ -6917,7 +7238,17 @@ const AdminClientsView = ({
         return filtreCompte === 'a_activer' ? (st === 'attente' || st === 'aucun') : st === filtreCompte;
       });
 
-  const clientsGroupedByFormateur = clientsFiltresCompte.reduce((acc, client) => {
+  // 2026-10-23 : filtre par financement (table « financements » ; absente → pas de filtre).
+  const financementsOrg = useFinancementsOrg(currentOrgId, expandedClientId);
+  const [filtreFinancement, setFiltreFinancement] = React.useState('tous');
+  const clientsFiltres = (!financementsOrg.dispo || filtreFinancement === 'tous')
+    ? clientsFiltresCompte
+    : clientsFiltresCompte.filter(c => {
+        const t = (financementsOrg.parClient[String(c.id)] || []).map(f => f.type);
+        return filtreFinancement === 'aucun' ? t.length === 0 : t.includes(filtreFinancement);
+      });
+
+  const clientsGroupedByFormateur = clientsFiltres.reduce((acc, client) => {
     const fId = client.formateur_id || 'unassigned';
     if (!acc[fId]) acc[fId] = [];
     acc[fId].push(client);
@@ -7018,9 +7349,13 @@ const AdminClientsView = ({
         </div>
         <BandeauComptesAActiver clientIds={clients.map(c => c.id)} onVoir={() => setFiltreCompte('a_activer')} />
         <FiltresComptes clients={filteredClients} valeur={filtreCompte} onChange={setFiltreCompte} />
+        {financementsOrg.dispo && <FiltreFinancement clients={clientsFiltresCompte} parClient={financementsOrg.parClient} valeur={filtreFinancement} onChange={setFiltreFinancement} />}
         <DossiersArchives archives={clientsArchives} onRestaurer={onRestaurerDossier} />
         {clientSearchTerm && filteredClients.length === 0 && (
           <p className="text-sm text-gray-500 italic py-4">Aucun client trouvé pour "{clientSearchTerm}".</p>
+        )}
+        {filtreFinancement !== 'tous' && clientsFiltresCompte.length > 0 && clientsFiltres.length === 0 && (
+          <p className="text-sm text-gray-500 italic py-4">Aucun client avec ce financement.</p>
         )}
         {filtreCompte !== 'tous' && filteredClients.length > 0 && clientsFiltresCompte.length === 0 && (
           <p className="text-sm text-gray-500 italic py-4">Aucun client dans cette catégorie.</p>
@@ -7045,6 +7380,9 @@ const AdminClientsView = ({
                         <div className="flex flex-col">
                           <span className="font-bold text-gray-900 leading-tight">{client.nom || client.nomcomplet_client || 'Sans Nom'}</span>
                           <span className="text-xs text-gray-500">{client.email || 'Email non renseigné'}</span>
+                          {typesFinancementDe(financementsOrg.parClient[String(client.id)]).length > 0 && (
+                            <span className="text-[11px] font-bold text-emerald-700">💶 {typesFinancementDe(financementsOrg.parClient[String(client.id)]).join(' + ')}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 md:gap-4">
@@ -8947,6 +9285,7 @@ const FormateurView = ({
 
               {isExpanded && (
                 <div className="mt-8 pt-8 border-t border-gray-100 animate-slide-up">
+                  <FinancementResume clientId={client.id} />
                   <div className="tabs-scroll flex gap-4 border-b border-gray-200 mb-6 font-sans">
                     <button onClick={() => setFormateurClientTab('seances')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'seances' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Planning des Séances</button>
                     <button onClick={() => setFormateurClientTab('administratif')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'administratif' ? 'border-violet-700 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Administratif</button>
@@ -9882,6 +10221,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature', 'initiales_client'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur', 'initiales_formateur'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme', 'initiales_organisme'],
+    'Financement': ['financement_type', 'financeur_nom', 'montant_financeur', 'reste_a_charge', 'numero_prise_en_charge'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
@@ -10378,6 +10718,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         rue_client: '12 rue de la Paix', code_postal_client: '56000',
         adresse_client: '12 rue de la Paix, 56000 Vannes',
         adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
+        financement_type: 'CPF + Personnel', financeur_nom: 'Mon Compte Formation', montant_financeur: '1 300', reste_a_charge: '200', numero_prise_en_charge: 'CPF-2026-0001',
         formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
         date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
         initiales_client: computeInitials('Jean DUPONT'),
@@ -16066,6 +16407,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           region_client:      currentClient?.region || '',
           adresse_session:    currentClient?.adresse || currentClient?.rue || '',
           prix_prestation:    currentClient?.prix_prestation || currentClient?.montant_prestation || '',
+          ...(await valeursFinancement(currentClient?.id, currentClient?.prix_prestation || currentClient?.montant_prestation)),
           formation_nom:      '',
           modalite_formation: currentClient?.modalite_formation || '',
           date_debut:         '',
@@ -16297,6 +16639,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
               region_client:      currentClient.region || '',
               adresse_session:    currentClient.adresse || currentClient.rue || '',
               prix_prestation:    currentClient.prix_prestation || currentClient.montant_prestation || '',
+              ...(await valeursFinancement(currentClient.id, currentClient.prix_prestation || currentClient.montant_prestation)),
               formation_nom:      '',
               modalite_formation: currentClient.modalite_formation || '',
               date_debut:         '',
@@ -25038,6 +25381,7 @@ export default function App() {
           region_client:       client.region || '',
           adresse_session:     client.adresse || client.adresse_postale || client.rue || '',
           prix_prestation:     client.prix_prestation || client.montant_prestation || '',
+          ...(await valeursFinancement(client.id, client.prix_prestation || client.montant_prestation)),
           modalite_formation:  client.modalite_formation || '',
           formation_nom:       '',
           date_debut:          '',
@@ -27308,6 +27652,7 @@ export default function App() {
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
           prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+          ...(await valeursFinancement(finalClient.id, finalClient.montant_prestation || module?.prix_prestation)),
           rue_client: finalClient.rue || '',
           code_postal_client: finalClient.code_postal || '',
           ville_client: finalClient.ville || '',
