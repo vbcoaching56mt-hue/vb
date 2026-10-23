@@ -158,8 +158,10 @@ async function handleNouveauDocument(req, res, authData) {
     return res.status(403).json({ error: 'Compte non reconnu pour un organisme.' });
   }
 
-  const { formateurId, documentName, origin } = req.body || {};
-  if (!formateurId || !documentName) {
+  const { formateurId, documentName, documentNames, origin } = req.body || {};
+  // 2026-10-23 : plusieurs documents → un seul email.
+  const listeNoms = Array.isArray(documentNames) ? documentNames.map(n => plainText(n)).filter(Boolean).slice(0, 30) : [];
+  if (!formateurId || (!documentName && !listeNoms.length)) {
     return res.status(400).json({ error: 'formateurId et documentName sont requis.' });
   }
   const safeOrigin = safeOriginOf(origin);
@@ -175,14 +177,18 @@ async function handleNouveauDocument(req, res, authData) {
 
   const formateurFirstName = escapeHtml((formateur.nom || '').split(' ')[0] || '');
   const link = `${safeOrigin}/?view=formateur`;
-  const docName = plainText(documentName);
+  const docName = plainText(documentName || listeNoms.join(', '));
+  const plusieurs = listeNoms.length > 1;
 
-  const subject = `Nouveau document à signer : ${docName}`;
+  const subject = plusieurs ? `${listeNoms.length} nouveaux documents à signer` : `Nouveau document à signer : ${listeNoms[0] || docName}`;
+  const phraseDocuments = plusieurs
+    ? `De nouveaux documents sont en attente de votre signature sur SkorUp :</p><ul style="color:#111827;font-size:14px;line-height:1.7;margin:0 0 12px 0;padding-left:20px;">${listeNoms.map(n => `<li><strong>${escapeHtml(n)}</strong></li>`).join('')}</ul><p style="color:#111827;font-size:14px;line-height:1.7;">`
+    : `Un nouveau document est en attente de votre signature sur SkorUp : <strong>${escapeHtml(listeNoms[0] || docName)}</strong>.`;
   const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
     <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
     <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
       <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${formateurFirstName},</p>
-      <p style="color:#111827;font-size:14px;line-height:1.7;">Un nouveau document est en attente de votre signature sur SkorUp : <strong>${escapeHtml(docName)}</strong>.</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;">${phraseDocuments}</p>
       <p style="text-align:center;margin:28px 0;">
         <a href="${link}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir mes documents</a>
       </p>

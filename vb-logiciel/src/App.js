@@ -717,6 +717,53 @@ const notifierDocumentsAuClient = (clientId, noms) => {
   }).catch(() => {});
 };
 
+// REGROUPEMENT DES EMAILS (2026-10-23) : les documents destinés à une même personne dans un court laps
+// de temps partent dans UN seul email (15 s sans nouveau document, 60 s au plus). Si la page est fermée
+// ou masquée avant, l'email part tout de suite (keepalive : la requête survit à la fermeture).
+const _fileEmails = new Map();
+const _envoyerFileEmail = (cle) => {
+  const f = _fileEmails.get(cle);
+  if (!f) return;
+  _fileEmails.delete(cle);
+  clearTimeout(f.minuteur);
+  const noms = Array.from(new Set(f.noms)).filter(Boolean);
+  if (!noms.length || !f.jeton) return;
+  const origine = window.location.origin;
+  const requete = f.type === 'client'
+    ? { url: '/api/client/notify-new-document', corps: { clientId: f.id, documentName: noms.join(', '), documentNames: noms, origin: origine } }
+    : { url: '/api/formateur/notify', corps: { type: 'nouveau_document', formateurId: f.id, documentName: noms.join(', '), documentNames: noms, origin: origine } };
+  try {
+    fetch(requete.url, {
+      method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${f.jeton}` },
+      body: JSON.stringify(requete.corps),
+    }).then(async (resp) => {
+      const r = await resp.json().catch(() => ({}));
+      if (!resp.ok || r.sent === false) console.warn('[emails regroupés] non envoyé :', r.error || r.message || resp.status);
+    }).catch(e => console.warn('[emails regroupés] erreur réseau :', e.message));
+  } catch (e) { console.warn('[emails regroupés]', e.message); }
+};
+const viderFileEmails = () => { Array.from(_fileEmails.keys()).forEach(_envoyerFileEmail); };
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', viderFileEmails);
+  window.document.addEventListener('visibilitychange', () => { if (window.document.visibilityState === 'hidden') viderFileEmails(); });
+}
+const programmerEmailDocument = (type, id, nomDocument) => {
+  if (!id || !nomDocument) return;
+  supabase.auth.getSession().then(({ data }) => {
+    const jeton = data?.session?.access_token;
+    if (!jeton) return;
+    const cle = `${type}:${id}`;
+    let f = _fileEmails.get(cle);
+    if (!f) { f = { type, id, noms: [], debut: Date.now(), jeton }; _fileEmails.set(cle, f); }
+    f.jeton = jeton;
+    f.noms.push(nomDocument);
+    clearTimeout(f.minuteur);
+    const reste = Math.max(0, 60000 - (Date.now() - f.debut));
+    f.minuteur = setTimeout(() => _envoyerFileEmail(cle), Math.min(15000, reste));
+  }).catch(() => {});
+};
+
 const notifyClientByEmail = (clientId, label) => {
   supabase.auth.getSession().then(({ data: sessionData }) => {
     const accessToken = sessionData?.session?.access_token;
@@ -8430,6 +8477,7 @@ const FormateurView = ({
     [documents, currentUserId]
   );
   const pendingDocsCount = myAdminDocs.filter(d => !d.signe_par_formateur).length;
+  const nomsGroupesDocs = useNomsGroupes(currentOrgId); // signature en lot (2026-10-23)
 
   React.useEffect(() => {
     setFormateurClientTab(ongletInitial || 'seances');
@@ -8817,6 +8865,13 @@ const FormateurView = ({
                       {allSigned ? '✓ Tout signé' : `${pendingCount} à signer`}
                     </span>
                   </div>
+                  {/* Signature en une fois (2026-10-23) */}
+                  {client && (
+                    <div className="px-4 pt-4 empty:hidden">
+                      <PanneauSignatureEnLot docs={docs} role="formateur" tousDocuments={documents} nomsGroupes={nomsGroupesDocs}
+                        handleSignDocument={handleSignDocument} fetchDocuments={fetchDocuments} />
+                    </div>
+                  )}
                   {/* Liste des docs */}
                   <div className="p-4 space-y-2">
                     {docs.map(renderDocRow)}
@@ -12240,6 +12295,7 @@ const DocumentsView = ({
   const isAdmin = userRole === 'admin';
   const isClient = userRole === 'client';
   const isFormateur = userRole === 'formateur';
+  const nomsGroupesDocs = useNomsGroupes(currentOrgId); // signature en lot (2026-10-23)
 
   // Renommer un modèle inline
   const [editingName, setEditingName] = React.useState(null); // nom actuel en cours d'édition
@@ -13334,6 +13390,12 @@ const DocumentsView = ({
                   </button>
                 ))}
               </div>
+            )}
+
+            {docAudienceTab === 'a_signer' && isAdmin && (
+              <PanneauSignatureEnLot docs={organismeToSignDocs} role="organisme" tousDocuments={documents} nomsGroupes={nomsGroupesDocs}
+                libelleClient={(id) => ((clients || []).find(c => String(c.id) === String(id)) || {}).nom || ''}
+                handleSignDocument={handleSignDocument} fetchDocuments={fetchDocuments} />
             )}
 
             {/* ── Grille de cartes ───────────────────────────────────────── */}
@@ -15257,6 +15319,102 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
         )}
       </div>
     </div>
+  );
+};
+
+// SIGNATURE EN LOT — ÉQUIPE (2026-10-23) : formateur et organisme signent un groupe de documents d'un
+// même client en une seule fois (le groupe est retrouvé grâce au modèle de la bibliothèque).
+const groupeDuDocumentEnvoye = (doc, tousDocuments) => {
+  const nom = String((doc && doc.nom) || '');
+  let meilleur = null;
+  (tousDocuments || []).forEach(l => {
+    if (l.user_id || l.assigned_formateur_id || !l.nom) return;
+    if (!(nom === l.nom || nom.startsWith(l.nom + ' - '))) return;
+    const gid = l.group_id != null ? l.group_id : (Array.isArray(l.group_ids) && l.group_ids.length ? l.group_ids[0] : null);
+    if (gid == null) return;
+    if (!meilleur || l.nom.length > meilleur.long) meilleur = { gid: String(gid), long: l.nom.length };
+  });
+  return meilleur ? meilleur.gid : null;
+};
+const champsARemplirPour = (doc, role) => {
+  const meta = parseDocMetadata(doc);
+  const champs = (Array.isArray(meta.signature_fields) && meta.signature_fields.length) ? meta.signature_fields
+    : (Array.isArray(meta.template_fields) && meta.template_fields.length) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []);
+  return champs.some(c => c && (c.tag === `checkbox_${role}` || c.tag === `texte_${role}`));
+};
+const docEnAttenteDe = (d, role) => {
+  if (role === 'formateur') return docAwaitsFormateurSignature(d);
+  if (role === 'organisme') return (parseDocMetadata(d).destination_roles || []).includes('organisme') && !d.signe_par_organisme && docRequiresSignature(d);
+  return false;
+};
+const useNomsGroupes = (orgId) => {
+  const [noms, setNoms] = React.useState({});
+  React.useEffect(() => {
+    if (!orgId) return undefined;
+    let annule = false;
+    supabase.from('document_groups').select('id, nom').eq('organisation_id', orgId)
+      .then(({ data }) => { if (!annule && Array.isArray(data)) setNoms(Object.fromEntries(data.map(g => [String(g.id), g.nom]))); })
+      .catch(() => {});
+    return () => { annule = true; };
+  }, [orgId]);
+  return noms;
+};
+const PanneauSignatureEnLot = ({ docs = [], role, tousDocuments = [], nomsGroupes = {}, libelleClient = null, handleSignDocument, fetchDocuments }) => {
+  const [actif, setActif] = React.useState(null);
+  const groupes = React.useMemo(() => {
+    const m = new Map();
+    (docs || []).forEach(d => {
+      if (!d.user_id || !docEnAttenteDe(d, role) || isBlockedBySigningOrder(d, role) || champsARemplirPour(d, role)) return;
+      const gid = groupeDuDocumentEnvoye(d, tousDocuments);
+      if (!gid) return;
+      const cle = `${d.user_id || ''}|${gid}`;
+      if (!m.has(cle)) m.set(cle, { cle, gid, clientId: d.user_id, docs: [] });
+      m.get(cle).docs.push(d);
+    });
+    return Array.from(m.values()).filter(g => g.docs.length >= 2);
+  }, [docs, role, tousDocuments]);
+  if (!groupes.length && !actif) return null;
+  const titreDe = (g) => {
+    const nom = nomsGroupes[g.gid] || 'Groupe de documents';
+    const c = libelleClient ? libelleClient(g.clientId) : '';
+    return c ? `${nom} — ${c}` : nom;
+  };
+  const ouvrir = (g) => setActif({ titre: titreDe(g), docs: g.docs, lots: g.docs.map(d => ({ doc: d, resource: { file_url: d.signed_pdf_url || d.url }, blob: null })) });
+  const signer = async (signature, progression) => {
+    const lot = actif;
+    if (!lot) return;
+    const echecs = [];
+    for (let i = 0; i < lot.docs.length; i++) {
+      if (progression) progression(i);
+      const d = lot.docs[i];
+      let ok = false;
+      try { ok = await handleSignDocument(d.id, role, signature, [], {}); } catch (e) { console.error('[signature en lot]', d.nom, e); }
+      if (!ok) echecs.push(d.nom);
+    }
+    if (fetchDocuments) await fetchDocuments();
+    const n = lot.docs.length - echecs.length;
+    if (n) toast.success(`✅ ${n} document${n > 1 ? 's' : ''} signé${n > 1 ? 's' : ''} en une fois.`, { duration: 6000 });
+    if (echecs.length) toast.error(`Non signé${echecs.length > 1 ? 's' : ''} : ${echecs.join(', ')}. Réessayez avec le bouton « Signer » de ${echecs.length > 1 ? 'ces documents' : 'ce document'}.`, { duration: 10000 });
+    setActif(null);
+  };
+  return (
+    <>
+      {groupes.length > 0 && (
+        <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4 space-y-2">
+          <p className="text-sm font-black text-violet-900">Signer en une seule fois</p>
+          {groupes.map(g => (
+            <div key={g.cle} className="bg-white rounded-xl border border-violet-100 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-sm font-bold text-gray-800 min-w-0 break-words">📁 {titreDe(g)} <span className="text-xs font-medium text-gray-400">· {g.docs.length} documents</span></span>
+              <button onClick={() => ouvrir(g)} disabled={!!actif}
+                className="shrink-0 px-3 py-2 bg-violet-700 hover:bg-violet-800 text-white text-xs font-black rounded-xl flex items-center justify-center gap-1.5 disabled:opacity-50">
+                <PenTool size={13} /> Lire et signer les {g.docs.length} documents
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {actif && <SignatureGroupeModal titre={actif.titre} lots={actif.lots} onClose={() => setActif(null)} onSigner={signer} />}
+    </>
   );
 };
 
@@ -26899,22 +27057,8 @@ export default function App() {
   // (voir assignFormateur) : un souci d'envoi n'annule jamais l'envoi du document lui-même, qui a
   // déjà réussi en base à ce stade — juste logué en console pour diagnostic.
   const notifyClientNewDocument = (clientId, documentName) => {
-    supabase.auth.getSession().then(({ data: sessionData }) => {
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) return;
-      fetch('/api/client/notify-new-document', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-        body: JSON.stringify({ clientId, documentName, origin: window.location.origin }),
-      }).then(async (resp) => {
-        const result = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          console.warn('[notifyClientNewDocument] Notification client non envoyée :', result.error || resp.status);
-        } else if (result.simulated) {
-          console.warn('[notifyClientNewDocument] Notification client simulée (RESEND_API_KEY non configurée côté serveur).');
-        }
-      }).catch(e => console.warn('[notifyClientNewDocument] Erreur réseau notification client :', e.message));
-    }).catch(e => console.warn('[notifyClientNewDocument] Erreur session notification client :', e.message));
+    // 2026-10-23 : regroupé avec les autres documents envoyés au même client (un seul email).
+    programmerEmailDocument('client', clientId, documentName);
   };
 
   // FIX (nouvelle fonctionnalité, 2026-09-11) : symétrique de notifyClientNewDocument ci-dessus,
@@ -26922,22 +27066,8 @@ export default function App() {
   // séquentiel où le formateur est premier dans l'ordre) et par handleSignDocument (document
   // séquentiel où une signature précédente vient de débloquer le tour du formateur).
   const notifyFormateurNewDocument = (formateurId, documentName) => {
-    supabase.auth.getSession().then(({ data: sessionData }) => {
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) return;
-      fetch('/api/formateur/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-        body: JSON.stringify({ type: 'nouveau_document', formateurId, documentName, origin: window.location.origin }),
-      }).then(async (resp) => {
-        const result = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          console.warn('[notifyFormateurNewDocument] Notification formateur non envoyée :', result.error || resp.status);
-        } else if (result.simulated) {
-          console.warn('[notifyFormateurNewDocument] Notification formateur simulée (RESEND_API_KEY non configurée côté serveur).');
-        }
-      }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur réseau notification formateur :', e.message));
-    }).catch(e => console.warn('[notifyFormateurNewDocument] Erreur session notification formateur :', e.message));
+    // 2026-10-23 : regroupé avec les autres documents à signer par le même formateur (un seul email).
+    programmerEmailDocument('formateur', formateurId, documentName);
   };
 
   // FIX (nouvelle fonctionnalité, 2026-09-11) : décide QUI notifier juste après qu'un document
