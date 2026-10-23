@@ -52,7 +52,10 @@ function isAuthorizedCron(req) {
 // Le cron tourne 2x/jour (garde-fou horaire Paris ci-dessous) donc, même un jour où beaucoup de
 // documents tombent à échéance le même jour, le reliquat est repris automatiquement au passage
 // suivant — au pire quelques heures de retard, jamais un envoi perdu.
-const MAX_PER_RUN = 5;
+const MAX_PER_RUN = 40; // 2026-10-23 : plafond de sécurité ; la vraie limite est le temps (TEMPS_MAX_MS)
+// On ne commence plus de nouveau document au-delà de ce temps (maxDuration = 280 s dans vercel.json,
+// une conversion PDF peut prendre jusqu'à ~60 s) : le reste repart au passage suivant.
+const TEMPS_MAX_MS = 170 * 1000;
 
 function todayInParisStr() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
@@ -89,6 +92,7 @@ module.exports = async (req, res) => {
 
   try {
     const todayStr = todayInParisStr();
+    const debut = Date.now();
 
     const { data: dueRows, error: dueErr } = await supabase
       .from('client_documents')
@@ -96,7 +100,9 @@ module.exports = async (req, res) => {
       .eq('send_mode', 'scheduled')
       .is('sent_at', null)
       .lte('scheduled_date', todayStr)
-      .order('scheduled_date', { ascending: true });
+      .order('scheduled_date', { ascending: true })
+      .order('client_id', { ascending: true })
+      .order('ordre', { ascending: true });
 
     if (dueErr) throw new Error('Erreur lecture client_documents : ' + dueErr.message);
     if (!dueRows || dueRows.length === 0) {
@@ -104,10 +110,10 @@ module.exports = async (req, res) => {
     }
 
     const rowsToProcess = dueRows.slice(0, MAX_PER_RUN);
-    const remaining = dueRows.length - rowsToProcess.length;
 
     const results = [];
     for (const row of rowsToProcess) {
+      if (results.length > 0 && Date.now() - debut > TEMPS_MAX_MS) break;
       try {
         await generateAndSendOne(supabase, row);
         await supabase.from('client_documents').update({ sent_at: new Date().toISOString(), send_error: null }).eq('id', row.id);
@@ -119,11 +125,26 @@ module.exports = async (req, res) => {
       }
     }
 
+    const remaining = dueRows.length - results.length;
+
+    // 2026-10-23 : un seul email par client, listant les documents envoyés ce matin.
+    const parClient = new Map();
+    results.filter(r => r.ok).forEach(r => {
+      if (!parClient.has(r.client_id)) parClient.set(r.client_id, []);
+      parClient.get(r.client_id).push(r.template);
+    });
+    let emails = 0;
+    for (const [clientId, noms] of parClient) {
+      try { if (await prevenirClient(supabase, clientId, noms)) emails++; }
+      catch (e) { console.error('[process-scheduled-documents] email client', clientId, e.message); }
+    }
+
     // SÉCURITÉ (2026-10-12) : réponse limitée à des compteurs (le détail reste dans les logs
     // Vercel et sur chaque ligne client_documents : sent_at / send_error).
     return res.json({
       processed: results.length,
       sent: results.filter(r => r.ok).length,
+      emails,
       remaining_for_next_run: remaining,
       timestamp: new Date().toISOString(),
     });
@@ -132,6 +153,59 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Erreur interne.' });
   }
 };
+
+// ── Email au client (2026-10-23) — même présentation que api/client/notify-new-document.js ──
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const FROM_EMAIL_PSD = process.env.FROM_EMAIL || 'SkorUp <noreply@skorup.fr>';
+const ADRESSE_EXPEDITEUR_PSD = ((FROM_EMAIL_PSD.match(/<([^>]+)>/) || [])[1] || FROM_EMAIL_PSD).trim();
+const APP_URL_PSD = (process.env.APP_URL || 'https://app.skorup.fr').replace(/\/+$/, '');
+function htmlSur(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function texteSur(v, max = 200) { return String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max); }
+async function prevenirClient(supabase, clientId, noms) {
+  if (!RESEND_API_KEY || !noms || !noms.length) return false;
+  const { data: client } = await supabase.from('clients').select('*').eq('id', clientId).maybeSingle();
+  if (!client || !client.email_contact || client.acces_differe === true || client.archive_le) return false;
+  const [orgRes, adminRes] = await Promise.all([
+    supabase.from('organisations').select('nom, subscription_status, subscribed_plan').eq('id', client.organisation_id).maybeSingle(),
+    supabase.from('utilisateurs').select('email').eq('organisation_id', client.organisation_id).eq('role', 'admin').order('id', { ascending: true }).limit(1),
+  ]);
+  const org = (orgRes && orgRes.data) || {};
+  const offre = String(org.subscribed_plan || '').split('_')[0];
+  const estPro = org.subscription_status !== 'trialing' && (offre === 'pro' || offre === 'illimite');
+  const nomOrgBrut = estPro ? String(org.nom || '').replace(/[\r\n"<>\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+  const adminEmail = adminRes && adminRes.data && adminRes.data[0] && adminRes.data[0].email;
+  const replyTo = adminEmail && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(adminEmail).trim()) ? String(adminEmail).trim() : null;
+  const nomOrg = htmlSur(nomOrgBrut || 'SkorUp');
+  const liste = noms.map(n => texteSur(n)).filter(Boolean).slice(0, 30);
+  const prenom = htmlSur((client.nom_complet || '').split(' ')[0] || '');
+  const plusieurs = liste.length > 1;
+  const subject = plusieurs ? `${liste.length} nouveaux documents disponibles` : `Nouveau document disponible : ${liste[0]}`;
+  const phrase = plusieurs
+    ? `De nouveaux documents sont disponibles sur votre espace SkorUp :</p><ul style="color:#111827;font-size:14px;line-height:1.7;margin:0 0 12px 0;padding-left:20px;">${liste.map(n => `<li><strong>${htmlSur(n)}</strong></li>`).join('')}</ul><p style="color:#111827;font-size:14px;line-height:1.7;">`
+    : `Un nouveau document est disponible sur votre espace SkorUp : <strong>${htmlSur(liste[0])}</strong>.`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+      <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">${nomOrg}</div>
+      <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+        <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${prenom},</p>
+        <p style="color:#111827;font-size:14px;line-height:1.7;">${phrase}</p>
+        <p style="text-align:center;margin:28px 0;">
+          <a href="${APP_URL_PSD}/?tab=mes_documents" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir mes documents</a>
+        </p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+        <p style="color:#9ca3af;font-size:11px;">Envoyé par ${nomOrg} via SkorUp.${replyTo ? ' Vous pouvez répondre directement à cet email.' : ''}</p>
+      </div>
+    </div>`;
+  const from = nomOrgBrut ? `"${nomOrgBrut} via SkorUp" <${ADRESSE_EXPEDITEUR_PSD}>` : FROM_EMAIL_PSD;
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to: [client.email_contact], subject, html, ...(replyTo ? { reply_to: replyTo } : {}) }),
+  });
+  if (!resp.ok) { console.error('[process-scheduled-documents] Resend', resp.status); return false; }
+  return true;
+}
 
 async function generateAndSendOne(supabase, row) {
   // 1. Client

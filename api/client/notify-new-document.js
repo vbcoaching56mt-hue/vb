@@ -118,8 +118,12 @@ module.exports = async (req, res) => {
     const organisationId = callerRow.organisation_id;
 
     // ── 3. Lire clientId / documentName / origin envoyés ──
-    const { clientId, documentName, origin } = req.body || {};
-    if (!clientId || !documentName) {
+    const { clientId, documentName, documentNames, origin } = req.body || {};
+    // 2026-10-23 : envoi groupé → une liste de documents, un seul email.
+    const listeNoms = Array.isArray(documentNames)
+      ? documentNames.map(n => plainText(n)).filter(Boolean).slice(0, 30)
+      : [];
+    if (!clientId || (!documentName && !listeNoms.length)) {
       return res.status(400).json({ error: 'clientId et documentName sont requis.' });
     }
     const safeOrigin = safeOriginOf(origin);
@@ -144,19 +148,23 @@ module.exports = async (req, res) => {
     if (differe) return res.status(200).json({ sent: false, message: "L'accès de ce client n'a pas encore été envoyé : aucun email." });
 
     const clientFirstName = escapeHtml((client.nom_complet || '').split(' ')[0] || '');
-    const docName = plainText(documentName);
+    const docName = plainText(documentName || listeNoms.join(', '));
+    const plusieurs = listeNoms.length > 1;
     // ?tab=mes_documents : lu par handleLogin (App.js), ouvre directement l'onglet "Mes Documents"
     // du client après connexion, plutôt que sa page d'accueil habituelle.
     const link = `${safeOrigin}/?tab=mes_documents`;
 
     const organisme = await infosOrganisme(supabaseAdmin, organisationId);
     const nomOrg = htmlEchappe(organisme.nom || 'SkorUp');
-    const subject = `Nouveau document disponible : ${docName}`;
+    const subject = plusieurs ? `${listeNoms.length} nouveaux documents disponibles` : `Nouveau document disponible : ${listeNoms[0] || docName}`;
+    const phraseDocuments = plusieurs
+      ? `De nouveaux documents sont disponibles sur votre espace SkorUp :</p><ul style="color:#111827;font-size:14px;line-height:1.7;margin:0 0 12px 0;padding-left:20px;">${listeNoms.map(n => `<li><strong>${escapeHtml(n)}</strong></li>`).join('')}</ul><p style="color:#111827;font-size:14px;line-height:1.7;">`
+      : `Un nouveau document est disponible sur votre espace SkorUp : <strong>${escapeHtml(listeNoms[0] || docName)}</strong>.`;
     const bodyHtml = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
       <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">${nomOrg}</div>
       <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
         <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour ${clientFirstName},</p>
-        <p style="color:#111827;font-size:14px;line-height:1.7;">Un nouveau document est disponible sur votre espace SkorUp : <strong>${escapeHtml(docName)}</strong>.</p>
+        <p style="color:#111827;font-size:14px;line-height:1.7;">${phraseDocuments}</p>
         <p style="text-align:center;margin:28px 0;">
           <a href="${link}" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir mes documents</a>
         </p>
