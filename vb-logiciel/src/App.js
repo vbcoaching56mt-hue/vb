@@ -15186,8 +15186,10 @@ const chargerPdfJs = () => new Promise((resolve, reject) => {
   s.onerror = () => reject(new Error('PDF.js indisponible'));
   window.document.head.appendChild(s);
 });
-const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter = 0, onClose, onSigner }) => {
+const SignatureGroupeModal = ({ titre, lots = [], preparation = null, onClose, onSigner }) => {
+  // lots[i] = { doc, resource, blob, champs: { cases: [], textes: [] }, conservation: bool }
   const [pages, setPages] = React.useState({}); // index du lot → { images: [], erreur }
+  const [saisies, setSaisies] = React.useState({}); // index du lot → { coches: [], textes: {}, choix }
   const [auBout, setAuBout] = React.useState(false);
   const [coche, setCoche] = React.useState(false);
   const [aSigne, setASigne] = React.useState(false);
@@ -15234,6 +15236,18 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
     return () => { annule = true; };
   }, [lots, n]);
 
+  const saisie = (i) => saisies[i] || { coches: [], textes: {}, choix: null };
+  const majSaisie = (i, change) => setSaisies(prev => ({ ...prev, [i]: { ...(prev[i] || { coches: [], textes: {}, choix: null }), ...change(prev[i] || { coches: [], textes: {}, choix: null }) } }));
+  const basculerCase = (i, k) => majSaisie(i, s => ({ coches: s.coches.includes(k) ? s.coches.filter(x => x !== k) : [...s.coches, k] }));
+  // Ce qui manque avant de pouvoir signer : une case cochée par document qui en a, le choix de conservation.
+  const manquants = lots.map((lot, i) => {
+    const s = saisie(i);
+    if (lot.conservation && !s.choix) return `${lot.doc.nom} : choisissez si vos documents peuvent être conservés`;
+    const cases = (lot.champs && lot.champs.cases) || [];
+    if (cases.length && !s.coches.length) return `${lot.doc.nom} : cochez au moins une case`;
+    return null;
+  }).filter(Boolean);
+
   const toutCharge = n > 0 && Object.keys(pages).length === n;
   const verifierBout = () => {
     const el = zoneRef.current;
@@ -15251,9 +15265,13 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
   const fin = () => { dessin.current = false; };
   const effacer = () => { const c = canvasRef.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); setASigne(false); };
   const signer = async () => {
-    if (!auBout || !coche || !aSigne || envoi !== null) return;
+    if (!auBout || !coche || !aSigne || manquants.length || envoi !== null) return;
     setEnvoi(0);
-    try { await onSigner(canvasRef.current.toDataURL('image/png'), (i) => setEnvoi(i)); }
+    const valeurs = lots.map((_, i) => {
+      const s = saisie(i);
+      return { coches: new Set(s.coches), textes: { ...s.textes }, choix: s.choix };
+    });
+    try { await onSigner(canvasRef.current.toDataURL('image/png'), (i) => setEnvoi(i), valeurs); }
     finally { setEnvoi(null); }
   };
 
@@ -15265,21 +15283,46 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
             <h3 className="font-black text-gray-900 break-words">📁 {titre}</h3>
             <p className="text-xs text-gray-500">
               {preparation ? `Préparation des documents… ${preparation.fait}/${preparation.total}` : `${n} document${n > 1 ? 's' : ''} à lire puis à signer une seule fois`}
-              {aCompleter ? ` · ${aCompleter} à compléter séparément` : ''}
             </p>
           </div>
           <button onClick={onClose} disabled={envoi !== null} className="shrink-0 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 disabled:opacity-40" aria-label="Fermer">✕</button>
         </div>
         <div ref={zoneRef} onScroll={verifierBout} className="flex-1 overflow-y-auto bg-gray-100 px-3 sm:px-6 py-4 space-y-4">
           {preparation && <p className="text-center text-sm text-gray-500 py-10">Préparation de vos documents…</p>}
-          {lots.map((lot, i) => (
+          {lots.map((lot, i) => {
+            const s = saisie(i);
+            const cases = (lot.champs && lot.champs.cases) || [];
+            const textes = (lot.champs && lot.champs.textes) || [];
+            return (
             <div key={lot.doc.id} className="space-y-3">
               <div className="sticky top-0 z-10 bg-violet-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow">
                 Document {i + 1}/{n} — {lot.doc.nom}
+                {(cases.length > 0 || textes.length > 0) && <span className="font-medium opacity-90"> · à compléter sur le document</span>}
               </div>
               {!pages[i] && <p className="text-center text-sm text-gray-500 py-8">Chargement…</p>}
-              {pages[i] && pages[i].images.map((src, p) => (
-                <img key={p} src={src} alt={`${lot.doc.nom} — page ${p + 1}`} className="w-full bg-white shadow-sm rounded" />
+              {pages[i] && pages[i].images.map((srcImg, p) => (
+                <div key={p} className="relative bg-white shadow-sm rounded overflow-hidden">
+                  <img src={srcImg} alt={`${lot.doc.nom} — page ${p + 1}`} className="w-full block" />
+                  {cases.filter(f => (f.page || 1) === p + 1).map((f, fi) => {
+                    const k = fieldKey(f); const ok = s.coches.includes(k);
+                    return (
+                      <button key={k || fi} type="button" disabled={envoi !== null} onClick={() => basculerCase(i, k)} aria-label="Case à cocher" aria-pressed={ok}
+                        style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(-50%, -50%)', width: 22, height: 22 }}
+                        className={`rounded-sm border-2 shadow-lg flex items-center justify-center ${ok ? 'bg-violet-600 border-violet-700' : 'bg-white/80 border-violet-500'}`}>
+                        {ok && <span className="text-white text-[11px] font-black leading-none">✓</span>}
+                      </button>
+                    );
+                  })}
+                  {textes.filter(f => (f.page || 1) === p + 1).map((f, fi) => {
+                    const k = fieldKey(f);
+                    return (
+                      <textarea key={k || `t${fi}`} rows={1} disabled={envoi !== null} placeholder="Écrire ici…" aria-label="Champ à remplir"
+                        value={s.textes[k] || ''} onChange={e => { const v = e.target.value; majSaisie(i, prev => ({ textes: { ...prev.textes, [k]: v } })); }}
+                        style={{ position: 'absolute', left: `${f.x_percent}%`, top: `${f.y_percent}%`, transform: 'translate(0%, -50%)', width: `${f.width_percent || 30}%`, height: `${Math.max(2.2, f.height_percent || 3)}%`, resize: 'none', overflow: 'hidden', fontSize: 12, lineHeight: 1.2 }}
+                        className="bg-yellow-50/90 border border-gray-400 rounded px-1 text-gray-900 outline-none focus:border-violet-600" />
+                    );
+                  })}
+                </div>
               ))}
               {pages[i] && pages[i].erreur && (
                 <div className="bg-white rounded-xl p-4 text-sm text-gray-600">
@@ -15287,18 +15330,38 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
                   {(lot.resource && (lot.resource.file_url || lot.resource.url)) && (
                     <a href={lot.resource.file_url || lot.resource.url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700 underline">Ouvrir le document</a>
                   )}
+                  {(cases.length > 0 || textes.length > 0) && <p className="text-xs text-amber-700 mt-2">Ce document contient des champs à remplir : signez-le plutôt seul, avec le bouton « Signer » de la liste.</p>}
+                </div>
+              )}
+              {lot.conservation && (
+                <div className="bg-white rounded-xl border-2 border-violet-200 p-4 space-y-2">
+                  <p className="text-sm font-bold text-gray-900">Votre choix pour la conservation de vos documents</p>
+                  {[['conserve', "J'autorise la conservation de mes documents pendant une durée maximale de 3 ans à compter de la fin de la prestation."],
+                    ['detruire', 'Je ne souhaite pas que mes documents soient conservés : ils seront détruits à la clôture de la prestation.']].map(([v, texte]) => (
+                    <label key={v} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${s.choix === v ? 'border-violet-400 bg-violet-50' : 'border-gray-100'}`}>
+                      <input type="radio" name={`conservation-${i}`} checked={s.choix === v} disabled={envoi !== null} onChange={() => majSaisie(i, () => ({ choix: v }))} className="mt-0.5 accent-violet-600 shrink-0" />
+                      <span className="text-sm text-gray-700">{texte}</span>
+                    </label>
+                  ))}
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
           {toutCharge && <p className="text-center text-xs text-gray-400 pb-2">— Fin des documents —</p>}
         </div>
         {!preparation && n > 0 && (
           <div className="border-t border-gray-100 p-4 space-y-3 shrink-0 bg-white">
             {!auBout && <p className="text-xs font-bold text-amber-700 bg-amber-50 rounded-lg px-3 py-2">Faites défiler jusqu'à la fin des documents pour pouvoir signer.</p>}
+            {auBout && manquants.length > 0 && (
+              <div className="text-xs font-bold text-amber-800 bg-amber-50 rounded-lg px-3 py-2 space-y-0.5">
+                <p>Avant de signer :</p>
+                {manquants.map(m => <p key={m} className="font-medium">• {m}</p>)}
+              </div>
+            )}
             {auBout && (<>
-            <label className={`flex items-start gap-3 text-sm ${auBout ? 'text-gray-700' : 'text-gray-400'}`}>
-              <input type="checkbox" checked={coche} disabled={!auBout || envoi !== null} onChange={e => setCoche(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600 shrink-0" />
+            <label className="flex items-start gap-3 text-sm text-gray-700">
+              <input type="checkbox" checked={coche} disabled={envoi !== null} onChange={e => setCoche(e.target.checked)} className="mt-0.5 w-4 h-4 accent-violet-600 shrink-0" />
               <span>J'ai lu les {n} documents ci-dessus et j'accepte de les signer électroniquement.</span>
             </label>
             <div>
@@ -15311,7 +15374,7 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
                 className="w-full h-28 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 touch-none" />
             </div>
             </>)}
-            <button onClick={signer} disabled={!auBout || !coche || !aSigne || envoi !== null}
+            <button onClick={signer} disabled={!auBout || !coche || !aSigne || manquants.length > 0 || envoi !== null}
               className="w-full py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed">
               {envoi !== null ? `Signature ${Math.min(envoi + 1, n)}/${n}…` : `Signer les ${n} documents`}
             </button>
@@ -15323,24 +15386,29 @@ const SignatureGroupeModal = ({ titre, lots = [], preparation = null, aCompleter
 };
 
 // SIGNATURE EN LOT — ÉQUIPE (2026-10-23) : formateur et organisme signent un groupe de documents d'un
-// même client en une seule fois (le groupe est retrouvé grâce au modèle de la bibliothèque).
-const groupeDuDocumentEnvoye = (doc, tousDocuments) => {
+// même client en une seule fois (groupes retrouvés grâce au modèle de la bibliothèque ; un document
+// rangé dans plusieurs groupes apparaît dans chacun).
+const groupesDuDocumentEnvoye = (doc, tousDocuments) => {
   const nom = String((doc && doc.nom) || '');
   let meilleur = null;
   (tousDocuments || []).forEach(l => {
     if (l.user_id || l.assigned_formateur_id || !l.nom) return;
     if (!(nom === l.nom || nom.startsWith(l.nom + ' - '))) return;
-    const gid = l.group_id != null ? l.group_id : (Array.isArray(l.group_ids) && l.group_ids.length ? l.group_ids[0] : null);
-    if (gid == null) return;
-    if (!meilleur || l.nom.length > meilleur.long) meilleur = { gid: String(gid), long: l.nom.length };
+    const ids = [l.group_id, ...(Array.isArray(l.group_ids) ? l.group_ids : [])].filter(v => v != null).map(String);
+    if (!ids.length) return;
+    if (!meilleur || l.nom.length > meilleur.long) meilleur = { ids: Array.from(new Set(ids)), long: l.nom.length };
   });
-  return meilleur ? meilleur.gid : null;
+  return meilleur ? meilleur.ids : [];
 };
-const champsARemplirPour = (doc, role) => {
+const champsDuRole = (doc, role) => {
   const meta = parseDocMetadata(doc);
   const champs = (Array.isArray(meta.signature_fields) && meta.signature_fields.length) ? meta.signature_fields
     : (Array.isArray(meta.template_fields) && meta.template_fields.length) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []);
-  return champs.some(c => c && (c.tag === `checkbox_${role}` || c.tag === `texte_${role}`));
+  const tag = (c) => String((c && c.tag) || '');
+  return {
+    cases: champs.filter(c => tag(c) === `checkbox_${role}` || (c && c.field_type === 'checkbox' && tag(c).includes(role))),
+    textes: champs.filter(c => tag(c) === `texte_${role}` || (c && c.field_type === 'text_input' && tag(c).includes(role))),
+  };
 };
 const docEnAttenteDe = (d, role) => {
   if (role === 'formateur') return docAwaitsFormateurSignature(d);
@@ -15364,12 +15432,12 @@ const PanneauSignatureEnLot = ({ docs = [], role, tousDocuments = [], nomsGroupe
   const groupes = React.useMemo(() => {
     const m = new Map();
     (docs || []).forEach(d => {
-      if (!d.user_id || !docEnAttenteDe(d, role) || isBlockedBySigningOrder(d, role) || champsARemplirPour(d, role)) return;
-      const gid = groupeDuDocumentEnvoye(d, tousDocuments);
-      if (!gid) return;
-      const cle = `${d.user_id || ''}|${gid}`;
-      if (!m.has(cle)) m.set(cle, { cle, gid, clientId: d.user_id, docs: [] });
-      m.get(cle).docs.push(d);
+      if (!d.user_id || !docEnAttenteDe(d, role) || isBlockedBySigningOrder(d, role)) return;
+      groupesDuDocumentEnvoye(d, tousDocuments).forEach(gid => {
+        const cle = `${d.user_id}|${gid}`;
+        if (!m.has(cle)) m.set(cle, { cle, gid, clientId: d.user_id, docs: [] });
+        m.get(cle).docs.push(d);
+      });
     });
     return Array.from(m.values()).filter(g => g.docs.length >= 2);
   }, [docs, role, tousDocuments]);
@@ -15379,16 +15447,17 @@ const PanneauSignatureEnLot = ({ docs = [], role, tousDocuments = [], nomsGroupe
     const c = libelleClient ? libelleClient(g.clientId) : '';
     return c ? `${nom} — ${c}` : nom;
   };
-  const ouvrir = (g) => setActif({ titre: titreDe(g), docs: g.docs, lots: g.docs.map(d => ({ doc: d, resource: { file_url: d.signed_pdf_url || d.url }, blob: null })) });
-  const signer = async (signature, progression) => {
+  const ouvrir = (g) => setActif({ titre: titreDe(g), docs: g.docs, lots: g.docs.map(d => ({ doc: d, resource: { file_url: d.signed_pdf_url || d.url }, blob: null, champs: champsDuRole(d, role) })) });
+  const signer = async (signature, progression, valeurs = []) => {
     const lot = actif;
     if (!lot) return;
     const echecs = [];
     for (let i = 0; i < lot.docs.length; i++) {
       if (progression) progression(i);
       const d = lot.docs[i];
+      const v = valeurs[i] || { coches: new Set(), textes: {} };
       let ok = false;
-      try { ok = await handleSignDocument(d.id, role, signature, [], {}); } catch (e) { console.error('[signature en lot]', d.nom, e); }
+      try { ok = await handleSignDocument(d.id, role, signature, v.coches, v.textes); } catch (e) { console.error('[signature en lot]', d.nom, e); }
       if (!ok) echecs.push(d.nom);
     }
     if (fetchDocuments) await fetchDocuments();
@@ -15681,72 +15750,86 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   }, [clientVisibleDocs, extraDebutDocs, extraFinDocs, allKnownTitles]);
 
   // ─── SIGNATURE DE GROUPE (2026-10-23) ───────────────────────────────────────
-  // Groupe de chaque document du client (fonction SQL skorup_groupes_mes_documents ; absente → rien).
-  const [groupesMesDocs, setGroupesMesDocs] = React.useState({});
+  // Groupe(s) de chaque document du client (fonction SQL skorup_groupes_mes_documents ; absente → rien).
+  const [groupesMesDocs, setGroupesMesDocs] = React.useState({}); // id document → [{ id, nom }]
   const nbDocsVisibles = clientVisibleDocs.length;
   React.useEffect(() => {
     let annule = false;
     supabase.rpc('skorup_groupes_mes_documents').then(({ data, error }) => {
       if (annule || error || !Array.isArray(data)) return;
       const m = {};
-      data.forEach(r => { if (r && r.document_id != null) m[String(r.document_id)] = { id: String(r.groupe_id), nom: r.groupe_nom || 'Documents' }; });
+      data.forEach(r => {
+        if (!r || r.document_id == null) return;
+        const k = String(r.document_id);
+        if (!m[k]) m[k] = [];
+        if (!m[k].some(g => g.id === String(r.groupe_id))) m[k].push({ id: String(r.groupe_id), nom: r.groupe_nom || 'Documents' });
+      });
       setGroupesMesDocs(m);
     }).catch(() => {});
     return () => { annule = true; };
   }, [supabase, currentUserId, nbDocsVisibles]);
+  const estConservation = (d) => String((d && d.nom) || '').toLowerCase().includes('conservation');
   const groupesASigner = React.useMemo(() => {
     const parGroupe = new Map();
     clientVisibleDocs.forEach(d => {
-      const g = groupesMesDocs[String(d.id)];
-      if (!g) return;
-      if (d.signe_par_client || d.type_document !== 'À signer' || !docRequiresSignature(d)) return;
-      if (String(d.nom || '').toLowerCase().includes('conservation')) return;
+      const gs = groupesMesDocs[String(d.id)];
+      if (!gs || !gs.length || d.signe_par_client) return;
       if (isBlockedBySigningOrder(d, 'client')) return;
       if (estDocDeFin(d) && !moduleCompleted) return;
-      if (!parGroupe.has(g.id)) parGroupe.set(g.id, { id: g.id, nom: g.nom, docs: [], aCompleter: [] });
-      const meta = (() => { try { return typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { return {}; } })();
-      const champs = (Array.isArray(meta.signature_fields) && meta.signature_fields.length) ? meta.signature_fields
-        : (Array.isArray(meta.template_fields) && meta.template_fields.length) ? meta.template_fields : (Array.isArray(meta.fields) ? meta.fields : []);
-      const aRemplir = champs.some(c => isClientCheckboxField(c) || isClientTextField(c));
-      parGroupe.get(g.id)[aRemplir ? 'aCompleter' : 'docs'].push(d);
+      if (!estConservation(d) && !docAwaitsClientSignature(d)) return;
+      gs.forEach(g => {
+        if (!parGroupe.has(g.id)) parGroupe.set(g.id, { id: g.id, nom: g.nom, docs: [] });
+        parGroupe.get(g.id).docs.push(d);
+      });
     });
     return Array.from(parGroupe.values()).filter(g => g.docs.length >= 2);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientVisibleDocs, groupesMesDocs, moduleCompleted, estDocDeFin]);
-  const [signatureGroupe, setSignatureGroupe] = React.useState(null); // { groupe, lots, preparation, aCompleter }
+  const [signatureGroupe, setSignatureGroupe] = React.useState(null); // { groupe, lots, preparation }
   const ouvrirSignatureGroupe = async (groupe) => {
     if (signatureGroupe) return;
-    setSignatureGroupe({ groupe, lots: [], preparation: { fait: 0, total: groupe.docs.length }, aCompleter: groupe.aCompleter.length });
+    setSignatureGroupe({ groupe, lots: [], preparation: { fait: 0, total: groupe.docs.length } });
     const lots = [];
-    let aCompleter = groupe.aCompleter.length;
     for (let i = 0; i < groupe.docs.length; i++) {
       const d = groupe.docs[i];
-      const docMeta = (() => { try { return typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { return {}; } })();
-      const resource = { id: d.id, titre: d.nom, file_url: d.url || d.file_url, metadata: { ...docMeta, classification: 'a_signer' } };
-      const lot = { doc: d, resource: null, blob: null, cases: [], textes: [], signatureRequise: true };
-      try { await handleOpenSigning(resource, lot); } catch (e) { console.warn('[signature groupe] préparation', d.nom, e); }
-      if (!lot.resource) lot.resource = resource;
-      if ((lot.cases && lot.cases.length) || (lot.textes && lot.textes.length)) aCompleter++;
-      else lots.push(lot);
+      if (estConservation(d)) {
+        lots.push({ doc: d, resource: { file_url: d.signed_pdf_url || d.url }, blob: null, champs: { cases: [], textes: [] }, conservation: true });
+      } else {
+        const docMeta = (() => { try { return typeof d.metadata === 'string' ? JSON.parse(d.metadata) : (d.metadata || {}); } catch { return {}; } })();
+        const resource = { id: d.id, titre: d.nom, file_url: d.url || d.file_url, metadata: { ...docMeta, classification: 'a_signer' } };
+        const lot = { doc: d, resource: null, blob: null, cases: [], textes: [], signatureRequise: true };
+        try { await handleOpenSigning(resource, lot); } catch (e) { console.warn('[signature groupe] préparation', d.nom, e); }
+        if (!lot.resource) lot.resource = resource;
+        lot.champs = { cases: lot.cases || [], textes: lot.textes || [] };
+        lots.push(lot);
+      }
       setSignatureGroupe(s => s && ({ ...s, preparation: { fait: i + 1, total: groupe.docs.length } }));
     }
     toast.dismiss('prefill-sign');
-    if (lots.length === 0) {
-      setSignatureGroupe(null);
-      toast.error('Ces documents demandent des informations à compléter : signez-les un par un.');
-      return;
-    }
-    setSignatureGroupe(s => s && ({ ...s, lots, preparation: null, aCompleter }));
+    setSignatureGroupe(s => s && ({ ...s, lots, preparation: null }));
   };
-  const signerGroupe = async (signatureDataUrl, onProgression) => {
+  const signerGroupe = async (signatureDataUrl, onProgression, valeurs = []) => {
     const lots = (signatureGroupe && signatureGroupe.lots) || [];
     const echecs = [];
+    const formateurNomClient = (formateurs || []).find(f => String(f.id) === String(currentClient?.formateur_id))?.nom || '';
     for (let i = 0; i < lots.length; i++) {
-      onProgression && onProgression(i);
+      if (onProgression) onProgression(i);
       const lot = lots[i];
+      const v = valeurs[i] || { coches: new Set(), textes: {}, choix: null };
       let ok = false;
-      try { ok = await handleSignSave(lot.signatureRequise === false ? null : signatureDataUrl, null, [], {}, lot); }
-      catch (e) { console.error('[signature groupe]', lot.doc.nom, e); }
+      try {
+        if (lot.conservation) {
+          await handleConservationSign({
+            choice: v.choix, signatureDataUrl,
+            clientFullName: currentClient?.nom_complet || [currentClient?.prenom, currentClient?.nom].filter(Boolean).join(' ') || '—',
+            formateurNom: formateurNomClient,
+            dateDebut: currentClient?.date_debut ? new Date(currentClient.date_debut).toLocaleDateString('fr-FR') : '',
+          }, { id: lot.doc.id, titre: lot.doc.nom });
+          ok = true;
+        } else {
+          ok = await handleSignSave(lot.signatureRequise === false ? null : signatureDataUrl, null, v.coches, v.textes, lot);
+        }
+      } catch (e) { console.error('[signature groupe]', lot.doc.nom, e); }
       if (!ok) echecs.push(lot.doc.nom);
     }
     if (fetchDocuments) await fetchDocuments();
@@ -16403,7 +16486,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
   };
 
   // ─── Signature spécifique : Autorisation de conservation ────────────────────
-  const handleConservationSign = async ({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut }) => { /* 2026-10-21 : chargé à la demande */ const html2canvas = (await import('html2canvas')).default; const { jsPDF } = await import('jspdf');
+  const handleConservationSign = async ({ choice, signatureDataUrl, clientFullName, formateurNom, dateDebut }, cible = null) => { /* 2026-10-21 : chargé à la demande */ const html2canvas = (await import('html2canvas')).default; const { jsPDF } = await import('jspdf');
     const toastId = 'conservation-sign';
     toast.loading('Génération du document signé…', { id: toastId });
     try {
@@ -16477,13 +16560,13 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath);
 
       // ── Mise à jour ou insertion en base ──────────────────────────────────
-      if (conservationTargetDoc?.id) {
-        await supabase.from('documents').update({ signe_par_client: true, url: publicUrl, signature_client: signatureDataUrl }).eq('id', conservationTargetDoc.id);
+      if ((cible || conservationTargetDoc)?.id) {
+        await supabase.from('documents').update({ signe_par_client: true, url: publicUrl, signature_client: signatureDataUrl }).eq('id', (cible || conservationTargetDoc).id);
       } else {
         await supabase.from('documents').insert([{
           user_id: currentUserId,
           organisation_id: currentClient?.organisation_id,
-          nom: conservationTargetDoc?.titre || 'Autorisation de conservation des documents',
+          nom: (cible || conservationTargetDoc)?.titre || 'Autorisation de conservation des documents',
           url: publicUrl,
           type_document: 'À signer',
           visible_client: true,
@@ -16832,7 +16915,7 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
             <div key={g.id} className="bg-white rounded-2xl border border-violet-100 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-bold text-gray-900 break-words">📁 {g.nom}</p>
-                <p className="text-xs text-gray-500">{g.docs.length} documents à signer{g.aCompleter.length ? ` · ${g.aCompleter.length} à compléter séparément (plus bas)` : ''}</p>
+                <p className="text-xs text-gray-500">{g.docs.length} documents à signer</p>
               </div>
               <button onClick={() => ouvrirSignatureGroupe(g)} disabled={!!signatureGroupe}
                 className="shrink-0 px-4 py-2.5 bg-violet-600 text-white font-bold rounded-xl text-sm hover:bg-violet-700 disabled:opacity-50">
@@ -16921,7 +17004,6 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
           titre={signatureGroupe.groupe.nom}
           lots={signatureGroupe.lots}
           preparation={signatureGroupe.preparation}
-          aCompleter={signatureGroupe.aCompleter}
           onClose={() => setSignatureGroupe(null)}
           onSigner={signerGroupe}
         />
