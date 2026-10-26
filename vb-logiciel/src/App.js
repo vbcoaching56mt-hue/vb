@@ -6977,6 +6977,209 @@ const FiltreFinancement = ({ clients = [], parClient = {}, valeur, onChange }) =
   );
 };
 
+// ─── QUESTIONNAIRE AU FINANCEUR (2026-10-26) ───────────────────────────────────────────────────────
+// Envoi par email d'un questionnaire de l'organisme au contact d'un financeur, qui répond sans compte
+// (même page publique que les prospects, via api/prospects.js). Table financeur_questionnaire_envois.
+const TITRE_MODELE_FINANCEUR = 'Satisfaction du financeur';
+const QUESTIONS_MODELE_FINANCEUR = () => {
+  const n = Date.now();
+  const satis = ['Très satisfait', 'Satisfait', 'Peu satisfait', 'Pas satisfait'];
+  return [
+    { id: `${n}-1`, text: 'Globalement, êtes-vous satisfait(e) de la prestation que vous avez financée ?', type: 'single', options: satis, obligatoire: true },
+    { id: `${n}-2`, text: 'La prestation a-t-elle répondu aux objectifs fixés ?', type: 'single', options: ['Oui, totalement', 'En partie', 'Non'], obligatoire: true },
+    { id: `${n}-3`, text: 'Comment jugez-vous nos échanges (réactivité, disponibilité, clarté des informations) ?', type: 'single', options: satis, obligatoire: true },
+    { id: `${n}-4`, text: 'Les documents administratifs (convention, feuilles d\'émargement, attestations…) vous ont-ils été transmis dans les délais ?', type: 'single', options: ['Oui', 'Non', 'Je ne sais pas'], obligatoire: true },
+    { id: `${n}-5`, text: 'Quels sont, selon vous, les points forts de la prestation ?', type: 'multiple', options: ['Qualité de l\'accompagnement', 'Suivi administratif', 'Respect des délais', 'Communication', 'Résultats obtenus'], obligatoire: false },
+    { id: `${n}-6`, text: 'Recommanderiez-vous notre organisme ?', type: 'single', options: ['Oui', 'Peut-être', 'Non'], obligatoire: true },
+    { id: `${n}-7`, text: 'Avez-vous des remarques ou des suggestions d\'amélioration ?', type: 'text', obligatoire: false },
+  ];
+};
+// Crée le modèle dans les questionnaires de l'organisme (ou retrouve celui qui existe déjà).
+const creerModeleSatisfactionFinanceur = async (orgId) => {
+  if (!orgId) throw new Error('Organisme introuvable.');
+  const { data: existants } = await supabase.from('module_step_resources').select('id, titre, module_id')
+    .eq('type', 'questionnaire').eq('organisation_id', orgId).eq('titre', TITRE_MODELE_FINANCEUR);
+  const deja = (existants || []).find(r => r.module_id === null || r.module_id === undefined);
+  if (deja) return { id: deja.id, existait: true };
+  const { data, error } = await supabase.from('module_step_resources').insert([{
+    titre: TITRE_MODELE_FINANCEUR,
+    type: 'questionnaire',
+    metadata: JSON.stringify({ questions: QUESTIONS_MODELE_FINANCEUR(), isQuiz: false, description: 'Questionnaire envoyé au financeur (OPCO, entreprise…) pour recueillir son appréciation — Qualiopi, indicateur 30.' }),
+    module_id: null,
+    organisation_id: orgId,
+  }]).select('id').single();
+  if (error) throw error;
+  return { id: data.id, existait: false };
+};
+const appelQuestionnaireFinanceur = async (action, corps) => {
+  const { data: s } = await supabase.auth.getSession();
+  const jeton = s?.session?.access_token;
+  if (!jeton) throw new Error('Session expirée, reconnectez-vous.');
+  const resp = await fetch(`/api/prospects?action=${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jeton}` },
+    body: JSON.stringify({ ...corps, origin: window.location.origin }),
+  });
+  const r = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(r.error || 'Erreur lors de l\'envoi.');
+  return r;
+};
+const texteReponse = (q, rep) => {
+  if (Array.isArray(rep)) return rep.length ? rep.join(', ') : 'Sans réponse';
+  return (rep !== undefined && rep !== null && String(rep).trim()) ? String(rep) : 'Sans réponse';
+};
+const dateFr = (d) => (d ? new Date(d).toLocaleDateString('fr-FR') : '—');
+const telechargerReponsesFinanceurPdf = async (envoi, nomClient) => {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+  const mx = 50, largeur = 595.28 - 100, bas = 841.89 - 50, lh = 15;
+  let y = 60;
+  const place = (h) => { if (y + h > bas) { pdf.addPage(); y = 60; } };
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.setTextColor(20);
+  const t = pdf.splitTextToSize(envoi.titre || 'Questionnaire', largeur); pdf.text(t, mx, y); y += t.length * 20 + 6;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(100);
+  [
+    `Financeur : ${envoi.financeur_nom || '—'}${envoi.destinataire_nom ? ' — ' + envoi.destinataire_nom : ''} (${envoi.destinataire_email || ''})`,
+    `Dossier : ${nomClient || '—'}`,
+    `Envoyé le ${dateFr(envoi.created_at)} — répondu le ${dateFr(envoi.rempli_at)}`,
+  ].forEach(l => { const x = pdf.splitTextToSize(l, largeur); pdf.text(x, mx, y); y += x.length * 14; });
+  y += 6; pdf.setDrawColor(220); pdf.line(mx, y, mx + largeur, y); y += 24;
+  (envoi.questions || []).forEach((q, i) => {
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11); pdf.setTextColor(20);
+    const ql = pdf.splitTextToSize(`${i + 1}. ${q.text || ''}`, largeur); place(ql.length * lh + 20); pdf.text(ql, mx, y); y += ql.length * lh + 4;
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(80);
+    const al = pdf.splitTextToSize(texteReponse(q, envoi.reponses && envoi.reponses[q.id]), largeur); place(al.length * lh + 20); pdf.text(al, mx, y); y += al.length * lh + 18;
+  });
+  const nom = nomTelechargement(`${envoi.titre || 'Questionnaire'} - ${envoi.financeur_nom || 'financeur'}`, nomClient || '');
+  pdf.save(`${nom}.pdf`);
+};
+const FenetreReponsesFinanceur = ({ envoi, nomClient, onClose }) => (
+  <div className="fixed inset-0 bg-gray-900/60 z-[150] flex items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-label="Réponses du financeur">
+    <div className="bg-white w-full sm:max-w-2xl h-full sm:h-auto sm:max-h-[90vh] sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-black text-gray-900 break-words">📝 {envoi.titre}</h3>
+          <p className="text-xs text-gray-500 break-words">{[envoi.financeur_nom, envoi.destinataire_nom, envoi.destinataire_email].filter(Boolean).join(' · ')} — répondu le {dateFr(envoi.rempli_at)}</p>
+        </div>
+        <button type="button" onClick={onClose} className="shrink-0 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500" aria-label="Fermer">✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        {(envoi.questions || []).map((q, i) => (
+          <div key={q.id || i}>
+            <p className="text-sm font-bold text-gray-900">{i + 1}. {q.text}</p>
+            <p className="text-sm text-gray-700 mt-1 whitespace-pre-wrap break-words bg-gray-50 rounded-xl px-3 py-2">{texteReponse(q, envoi.reponses && envoi.reponses[q.id])}</p>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-gray-100 p-4 flex justify-end gap-2">
+        <button type="button" onClick={() => telechargerReponsesFinanceurPdf(envoi, nomClient)} className="px-4 py-2.5 text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white">Télécharger en PDF</button>
+        <button type="button" onClick={onClose} className="px-4 py-2.5 text-sm font-bold rounded-xl text-gray-600 hover:bg-gray-100">Fermer</button>
+      </div>
+    </div>
+  </div>
+);
+// Sous une ligne de financeur : envoi d'un questionnaire et suivi des envois.
+const QuestionnairesFinanceur = ({ ligne, envois = [], orgId, nomClient, onChange, verrouille = false }) => {
+  const [ouvert, setOuvert] = React.useState(false);
+  const [liste, setListe] = React.useState(null); // questionnaires de l'organisme
+  const [choix, setChoix] = React.useState('');
+  const [enCours, setEnCours] = React.useState(false);
+  const [vu, setVu] = React.useState(null);
+  const email = String(ligne.contact_email || '').trim();
+  const chargerListe = async (selection = null) => {
+    const { data } = await supabase.from('module_step_resources').select('id, titre, module_id')
+      .eq('type', 'questionnaire').eq('organisation_id', orgId).order('titre', { ascending: true });
+    const l = (data || []).filter(r => r.module_id === null || r.module_id === undefined);
+    setListe(l);
+    const modele = l.find(r => r.titre === TITRE_MODELE_FINANCEUR);
+    setChoix(String(selection ?? (modele ? modele.id : (l[0] ? l[0].id : ''))));
+  };
+  const ouvrir = () => { setOuvert(true); if (!liste) chargerListe(); };
+  const creerModele = async () => {
+    setEnCours(true);
+    try {
+      const r = await creerModeleSatisfactionFinanceur(orgId);
+      toast.success(r.existait ? 'Le modèle « Satisfaction du financeur » existe déjà : il est sélectionné.' : 'Modèle « Satisfaction du financeur » créé (modifiable dans Questionnaires).');
+      await chargerListe(r.id);
+    } catch (e) { toast.error('Création impossible : ' + (e?.message || 'erreur inconnue')); }
+    finally { setEnCours(false); }
+  };
+  const envoyer = async () => {
+    if (!choix || enCours) return;
+    setEnCours(true);
+    try {
+      const r = await appelQuestionnaireFinanceur('envoyer_financeur', { financementId: ligne.id, questionnaireId: choix });
+      if (r.simulated) toast('Questionnaire enregistré, mais l\'envoi d\'emails n\'est pas configuré sur le serveur.', { icon: '⚠️' });
+      else toast.success(`Questionnaire envoyé à ${email}.`);
+      setOuvert(false);
+      if (onChange) await onChange();
+    } catch (e) { toast.error(e.message); }
+    finally { setEnCours(false); }
+  };
+  const relancer = async (envoi) => {
+    setEnCours(true);
+    try {
+      await appelQuestionnaireFinanceur('relancer_financeur', { envoiId: envoi.id });
+      toast.success(`Rappel envoyé à ${envoi.destinataire_email}.`);
+      if (onChange) await onChange();
+    } catch (e) { toast.error(e.message); }
+    finally { setEnCours(false); }
+  };
+  if (ligne.type === 'personnel' && !envois.length) return null;
+  const aModele = (liste || []).some(r => r.titre === TITRE_MODELE_FINANCEUR);
+  return (
+    <div className="border-t border-gray-100 px-3 py-2.5 space-y-2" data-bloc="questionnaire-financeur">
+      {envois.map(e => (
+        <div key={e.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <p className="text-gray-700 break-words min-w-0">
+            <span className="font-bold">📝 {e.titre}</span>{' — '}
+            {e.statut === 'rempli'
+              ? <span className="font-bold text-emerald-700">✅ Répondu le {dateFr(e.rempli_at)}</span>
+              : <span className="text-amber-700">⏳ Envoyé le {dateFr(e.created_at)}{e.nb_relances ? ` · relancé ${e.nb_relances} fois` : ''}</span>}
+          </p>
+          <div className="flex gap-2 shrink-0">
+            {e.statut === 'rempli' ? (<>
+              <button type="button" onClick={() => setVu(e)} className="font-bold text-emerald-700 hover:underline">Voir les réponses</button>
+              <button type="button" onClick={() => telechargerReponsesFinanceurPdf(e, nomClient)} className="font-bold text-gray-500 hover:underline">PDF</button>
+            </>) : (
+              <button type="button" onClick={() => relancer(e)} disabled={enCours || verrouille} className="font-bold text-amber-700 hover:underline disabled:opacity-40">Relancer</button>
+            )}
+          </div>
+        </div>
+      ))}
+      {ligne.type !== 'personnel' && !ouvert && (
+        email
+          ? <button type="button" onClick={ouvrir} disabled={verrouille} className="text-xs font-bold text-violet-700 hover:underline disabled:opacity-40">📝 Envoyer un questionnaire au financeur</button>
+          : <p className="text-[11px] text-gray-400">Ajoutez l'email du contact (crayon ✏️) pour lui envoyer un questionnaire.</p>
+      )}
+      {ouvert && (
+        <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 space-y-2">
+          <p className="text-xs text-gray-600">Le contact reçoit un email avec un lien personnel (valable 30 jours, sans compte) : <strong className="break-all">{email}</strong></p>
+          {liste === null ? <p className="text-xs text-gray-400">Chargement des questionnaires…</p> : (
+            <>
+              {liste.length > 0 && (
+                <select aria-label="Questionnaire à envoyer" value={choix} onChange={e => setChoix(e.target.value)} className="w-full p-2.5 text-sm border bg-white border-gray-200 rounded-xl outline-none focus:border-violet-500">
+                  {liste.map(r => <option key={r.id} value={String(r.id)}>{r.titre}</option>)}
+                </select>
+              )}
+              {!aModele && (
+                <button type="button" onClick={creerModele} disabled={enCours} className="text-xs font-bold text-violet-700 hover:underline disabled:opacity-40">✨ Créer le modèle « {TITRE_MODELE_FINANCEUR} »</button>
+              )}
+            </>
+          )}
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-2">
+            <button type="button" onClick={() => setOuvert(false)} disabled={enCours} className="px-3 py-2 text-xs font-bold text-gray-500 hover:text-gray-800 rounded-xl">Annuler</button>
+            <button type="button" onClick={envoyer} disabled={enCours || !choix} className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl disabled:opacity-50">
+              {enCours ? 'Envoi…' : 'Envoyer le questionnaire'}
+            </button>
+          </div>
+        </div>
+      )}
+      {vu && <FenetreReponsesFinanceur envoi={vu} nomClient={nomClient} onClose={() => setVu(null)} />}
+    </div>
+  );
+};
+
 // Bloc « Financement » de la fiche client (administrateur).
 const FINANCEMENT_VIDE = { type: 'opco', financeur_nom: '', montant: '', numero_prise_en_charge: '', statut: '', contact_nom: '', contact_email: '', contact_telephone: '' };
 const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
@@ -6985,6 +7188,7 @@ const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
   const [edition, setEdition] = React.useState(null); // { id | null, ...champs }
   const [enCours, setEnCours] = React.useState(false);
   const [aSupprimer, setASupprimer] = React.useState(null);
+  const [envois, setEnvois] = React.useState(null); // 2026-10-26 : questionnaires aux financeurs (null = fonction pas encore activée)
   const clientId = client && client.id;
   const charger = React.useCallback(async () => {
     if (!clientId) return;
@@ -6995,8 +7199,13 @@ const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
       setEtat(absente ? 'absent' : 'erreur'); setLignes([]); return;
     }
     setLignes(data || []); setEtat('ok');
+    // 2026-10-26 : questionnaires envoyés aux financeurs (table absente → rien).
+    const env = await supabase.from('financeur_questionnaire_envois').select('*').eq('client_id', clientId).order('created_at', { ascending: true });
+    setEnvois(!env.error && Array.isArray(env.data) ? env.data : null);
   }, [clientId]);
   React.useEffect(() => { setEdition(null); setEtat('chargement'); charger(); }, [charger]);
+  const nomClient = (client && (client.nom_complet || client.nomcomplet_client || client.nom)) || '';
+  const envoisOrphelins = (envois || []).filter(e => !e.financement_id || !lignes.some(l => String(l.id) === String(e.financement_id)));
 
   if (etat === 'absent' || etat === 'chargement') return null;
   if (etat === 'erreur') {
@@ -7082,7 +7291,8 @@ const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
       {lignes.length > 0 && (
         <div className="space-y-2">
           {lignes.map(l => (
-            <div key={l.id} className="bg-white rounded-xl border border-gray-100 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div key={l.id} className="bg-white rounded-xl border border-gray-100">
+            <div className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-sm font-bold text-gray-900 break-words">
                   <span className="text-xs font-black uppercase tracking-wider text-emerald-700 mr-2">{libelleFinancement(l.type)}</span>
@@ -7100,7 +7310,18 @@ const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
                   className="p-2 text-gray-300 hover:text-red-500 rounded-lg disabled:opacity-40" title="Supprimer" aria-label={`Supprimer le financement ${libelleFinancement(l.type)}`}><Trash2 size={16} /></button>
               </div>
             </div>
+            {envois !== null && (
+              <QuestionnairesFinanceur ligne={l} envois={envois.filter(e => String(e.financement_id) === String(l.id))} orgId={currentOrgId || client.organisation_id}
+                nomClient={nomClient} onChange={charger} verrouille={!!edition} />
+            )}
+            </div>
           ))}
+          {envoisOrphelins.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100">
+              <p className="px-3 pt-2.5 text-xs font-bold text-gray-500">Questionnaires d'anciens financeurs</p>
+              <QuestionnairesFinanceur ligne={{ id: null, type: 'personnel' }} envois={envoisOrphelins} orgId={currentOrgId || client.organisation_id} nomClient={nomClient} onChange={charger} verrouille />
+            </div>
+          )}
           {ecart !== null && (
             ecart === 0
               ? <p className="text-xs font-bold text-emerald-700">✓ Total des financements : {fmt(total)} — correspond au montant de la prestation.</p>
@@ -7166,7 +7387,7 @@ const BlocFinancements = ({ client, currentOrgId, montantPrestation }) => {
       <ConfirmModal
         isOpen={!!aSupprimer}
         title="Supprimer ce financement ?"
-        message={aSupprimer ? `${libelleFinancement(aSupprimer.type)}${aSupprimer.financeur_nom ? ' — ' + aSupprimer.financeur_nom : ''} sera retiré de ce dossier. Les documents déjà envoyés ne changent pas.` : ''}
+        message={aSupprimer ? `${libelleFinancement(aSupprimer.type)}${aSupprimer.financeur_nom ? ' — ' + aSupprimer.financeur_nom : ''} sera retiré de ce dossier. Les documents déjà envoyés ne changent pas et les réponses aux questionnaires sont conservées.` : ''}
         onConfirm={supprimer}
         onCancel={() => setASupprimer(null)}
       />
@@ -12358,12 +12579,25 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
           <div className="p-5 bg-violet-50 rounded-2xl border border-violet-100">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">📝 Questionnaires & Quiz</h3>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+              {!questionnaireTemplates.some(t => t.titre === TITRE_MODELE_FINANCEUR) && (
+                <button type="button"
+                  onClick={async () => {
+                    try { const r = await creerModeleSatisfactionFinanceur(currentOrgId); toast.success(r.existait ? 'Ce modèle existe déjà.' : 'Modèle « Satisfaction du financeur » créé : vous pouvez le modifier.'); await fetchQTemplates(); }
+                    catch (e) { toast.error('Création impossible : ' + (e?.message || 'erreur inconnue')); }
+                  }}
+                  className="flex items-center gap-1.5 bg-white border border-violet-200 text-violet-700 text-xs font-bold px-3 py-2 rounded-xl hover:bg-violet-100 transition-all"
+                  title="Questionnaire type à envoyer aux financeurs (Qualiopi, indicateur 30)">
+                  ✨ Modèle « Satisfaction du financeur »
+                </button>
+              )}
               <button
                 onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
                 className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
               >
                 <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
               </button>
+              </div>
             </div>
 
             {showQBuilder && (
