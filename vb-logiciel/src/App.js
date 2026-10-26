@@ -6977,6 +6977,811 @@ const FiltreFinancement = ({ clients = [], parClient = {}, valeur, onChange }) =
   );
 };
 
+// ─── BPF : BILAN PÉDAGOGIQUE ET FINANCIER (2026-10-26) ───────────────────────────────────────────────
+// Calcule les cadres du cerfa 10443 à partir des dossiers : financements (cadre C), séances datées
+// de l'exercice (heures, cadres E et F), réglages bpf_reglages (objectif et spécialité des modules,
+// formateurs internes / externes, situation des stagiaires, dispositif OPCO). Montants comptés au
+// prorata des heures faites dans l'exercice (produits constatés « au fur et à mesure de l'exécution »).
+// Saisies de l'organisme par exercice : bpf_exercices. Tables : SQL « bpf ».
+const BPF_LIGNES_C = [
+  ['c1', '1', 'Entreprises pour la formation de leurs salariés'],
+  ['c2', '2', 'Organismes gestionnaires des fonds de la formation (total a à h)'],
+  ['c2a', '2 a', "Contrats d'apprentissage"],
+  ['c2b', '2 b', 'Contrats de professionnalisation'],
+  ['c2c', '2 c', 'Promotion ou reconversion par alternance'],
+  ['c2d', '2 d', 'Projets de transition professionnelle'],
+  ['c2e', '2 e', 'Compte personnel de formation'],
+  ['c2f', '2 f', "Dispositifs pour les personnes en recherche d'emploi"],
+  ['c2g', '2 g', 'Dispositifs pour les travailleurs non-salariés'],
+  ['c2h', '2 h', 'Plan de développement des compétences ou autres dispositifs'],
+  ['c3', '3', 'Pouvoirs publics pour la formation de leurs agents'],
+  ['c4', '4', 'Instances européennes'],
+  ['c5', '5', 'État'],
+  ['c6', '6', 'Conseils régionaux'],
+  ['c7', '7', 'France Travail'],
+  ['c8', '8', 'Autres ressources publiques'],
+  ['c9', '9', 'Personnes à titre individuel et à leurs frais'],
+  ['c10', '10', "Contrats avec d'autres organismes de formation (y compris CFA)"],
+  ['c11', '11', 'Autres produits au titre de la formation professionnelle'],
+];
+const BPF_DISPOSITIFS_OPCO = [
+  ['c2h', 'Plan de développement des compétences ou autre'],
+  ['c2b', 'Contrat de professionnalisation'],
+  ['c2c', 'Promotion ou reconversion par alternance (Pro-A)'],
+  ['c2d', 'Projet de transition professionnelle'],
+  ['c2a', "Contrat d'apprentissage"],
+  ['c2f', "Dispositif pour personnes en recherche d'emploi"],
+  ['c2g', 'Dispositif pour travailleurs non-salariés'],
+];
+const BPF_LIGNES_PUBLIQUES = [['c8', 'Autres ressources publiques'], ['c5', 'État'], ['c3', 'Pouvoirs publics pour leurs agents'], ['c4', 'Instances européennes']];
+const BPF_SITUATIONS = [
+  ['a', "Salarié(e) d'un employeur privé"],
+  ['b', 'Apprenti(e)'],
+  ['c', "Personne en recherche d'emploi"],
+  ['d', 'Particulier à ses propres frais'],
+  ['e', 'Autre (agent public, indépendant, bénévole…)'],
+];
+const BPF_OBJECTIFS = [
+  ['e', 'Bilan de compétences'],
+  ['f', 'Accompagnement à la VAE'],
+  ['a', 'Diplôme ou titre RNCP (ou CQP enregistré au RNCP)'],
+  ['b', 'Certification ou habilitation au répertoire spécifique (RS)'],
+  ['c', 'CQP non enregistré au RNCP ni au RS'],
+  ['d', 'Autre formation professionnelle'],
+];
+const BPF_NIVEAUX_RNCP = [['6_8', 'Niveau 6 à 8'], ['5', 'Niveau 5'], ['4', 'Niveau 4'], ['3', 'Niveau 3'], ['2', 'Niveau 2'], ['cqp', 'CQP sans niveau']];
+const BPF_NSF = [
+  ['415', "Développement des capacités d'orientation, d'insertion ou de réinsertion sociales et professionnelles"],
+  ['413', 'Développement des capacités comportementales et relationnelles'],
+  ['414', "Développement des capacités individuelles d'organisation"],
+  ['410', 'Spécialités concernant plusieurs capacités'],
+  ['333', 'Enseignement, formation'],
+  ['315', "Ressources humaines, gestion du personnel, gestion de l'emploi"],
+  ['310', 'Spécialités plurivalentes des échanges et de la gestion'],
+  ['312', 'Commerce, vente'],
+  ['314', 'Comptabilité, gestion'],
+  ['320', 'Spécialités plurivalentes de la communication'],
+  ['326', "Informatique, traitement de l'information, réseaux de transmission des données"],
+  ['330', 'Spécialités plurivalentes sanitaires et sociales'],
+  ['331', 'Santé'],
+  ['332', 'Travail social'],
+  ['334', 'Accueil, hôtellerie, tourisme'],
+  ['336', 'Coiffure, esthétique et autres spécialités des services aux personnes'],
+  ['136', 'Langues vivantes, civilisations étrangères et régionales'],
+  ['100', 'Formations générales'],
+];
+const libelleNsf = (code) => (BPF_NSF.find(([c]) => c === String(code || '').trim()) || [null, ''])[1];
+const libelleDe = (liste, v) => (liste.find(([k]) => k === v) || [null, ''])[1];
+
+const minutesHeure = (s) => { const x = /^(\d{1,2})\s*[:hH]\s*(\d{2})/.exec(String(s || '').trim()); return x ? Number(x[1]) * 60 + Number(x[2]) : null; };
+const heuresEntre = (debut, fin) => { const a = minutesHeure(debut), b = minutesHeure(fin); return (a !== null && b !== null && b > a) ? (b - a) / 60 : 0; };
+const arrondiH = (h) => Math.round((Number(h) || 0) * 100) / 100;
+const fmtH = (h) => `${nombreFr(Math.round(Number(h) || 0))} h`;
+const fmtEur = (n) => `${nombreFr(Math.round(Number(n) || 0))} €`;
+
+const ligneCDeFinancement = (f, reglage = {}) => {
+  switch (f && f.type) {
+    case 'personnel': return 'c9';
+    case 'cpf': return 'c2e';
+    case 'opco': return BPF_DISPOSITIFS_OPCO.some(([k]) => k === reglage.dispositif) ? reglage.dispositif : 'c2h';
+    case 'entreprise': return 'c1';
+    case 'france_travail': return 'c7';
+    case 'region': return 'c6';
+    case 'public': return BPF_LIGNES_PUBLIQUES.some(([k]) => k === reglage.ligne) ? reglage.ligne : 'c8';
+    case 'organisme_formation': return 'c10';
+    default: return 'c11';
+  }
+};
+const suggestionObjectif = (module) => {
+  const n = String((module && module.nom) || '').toLowerCase();
+  if (/bilan/.test(n)) return 'e';
+  if (/\bvae\b|validation des acquis/.test(n)) return 'f';
+  return null;
+};
+const suggestionSituation = (fins) => {
+  const t = (fins || []).map(f => f.type);
+  if (t.includes('france_travail') || t.includes('region')) return 'c';
+  if (t.includes('entreprise') || t.includes('opco')) return 'a';
+  if (t.length && t.every(x => x === 'personnel')) return 'd';
+  return null;
+};
+const suggestionStatutFormateur = (u) => {
+  if (!u) return 'interne';
+  if (u.role === 'admin') return 'interne';
+  return String(u.formateur_nda || u.nda || '').trim() ? 'externe' : 'interne';
+};
+
+// Calcul pur (testable) : renvoie les cadres, le détail par dossier et les points à vérifier.
+const calculerBpf = ({ debut, fin, clients = [], sessions = [], groupes = [], groupeSeances = [], financements = [], modules = [], utilisateurs = [], reglages = {} }) => {
+  const reg = (cible, id) => reglages[`${cible}|${id}`] || {};
+  const dans = (d) => !!d && d >= debut && d <= fin;
+  // Séances par dossier : une séance = un numéro ; date la plus tôt, durée la plus longue de ses éléments.
+  const parClient = new Map();
+  sessions.forEach(s => {
+    const n = Number(s.numero_seance);
+    if (!s.client_id || !(n >= 1)) return;
+    const k = String(s.client_id);
+    if (!parClient.has(k)) parClient.set(k, new Map());
+    const m = parClient.get(k);
+    const e = m.get(n) || { numero: n, date: null, h: 0, heure_debut: null };
+    const d = s.date ? String(s.date).slice(0, 10) : null;
+    if (d && (!e.date || d < e.date)) e.date = d;
+    const h = heuresEntre(s.heure_debut, s.heure_fin);
+    if (h > e.h) { e.h = h; e.heure_debut = s.heure_debut; }
+    m.set(n, e);
+  });
+  const userParId = new Map(utilisateurs.map(u => [String(u.id), u]));
+  const statutFormateur = (id) => {
+    if (id === null || id === undefined || id === '') return { statut: 'interne', confirme: true, inconnu: true };
+    const r = reg('formateur', id);
+    return r.statut ? { statut: r.statut, confirme: true } : { statut: suggestionStatutFormateur(userParId.get(String(id))), confirme: false };
+  };
+  const groupeParId = new Map(groupes.map(g => [String(g.id), g]));
+  const verifs = [];
+  const heuresFormateurs = new Map(); // clé de séance → { formateurId, h }
+  const formateursUtilises = new Set();
+  const modulesUtilises = new Map();
+
+  const dossiers = clients.map(c => {
+    const seances = Array.from((parClient.get(String(c.id)) || new Map()).values()).filter(e => e.date);
+    const hTot = arrondiH(seances.reduce((s, e) => s + e.h, 0));
+    const ex = seances.filter(e => dans(e.date));
+    const hEx = arrondiH(ex.reduce((s, e) => s + e.h, 0));
+    const sansHoraire = ex.filter(e => !e.h).length;
+    const fins = financements.filter(f => String(f.client_id) === String(c.id));
+    const prorata = hTot > 0 ? hEx / hTot : 0;
+    const produits = fins.map(f => ({
+      id: f.id, type: f.type, financeur: f.financeur_nom || '', ligne: ligneCDeFinancement(f, reg('financement', f.id)),
+      montantTotal: montantRenseigne(f.montant) ? Number(f.montant) : null,
+      montant: montantRenseigne(f.montant) ? Math.round(Number(f.montant) * prorata * 100) / 100 : 0,
+    }));
+    const produitsTotal = produits.reduce((s, p) => s + p.montant, 0);
+    const module = modules.find(m => String(m.id) === String(c.module_id)) || null;
+    const rm = module ? reg('module', module.id) : {};
+    const objectif = rm.objectif || suggestionObjectif(module);
+    const nsf = String(rm.nsf || (objectif === 'e' ? '415' : '') || '').trim();
+    const groupe = c.groupe_id ? groupeParId.get(String(c.groupe_id)) : null;
+    const formateurId = (groupe && groupe.formateur_id) || c.formateur_id || null;
+    const rc = reg('client', c.id);
+    const situation = rc.situation || suggestionSituation(fins);
+    const g = fins.some(f => f.type === 'organisme_formation');
+    return {
+      id: c.id, nom: c.nom_complet || c.nom || 'Sans nom', archive: !!c.archive_le, modalite: c.modalite_formation || '',
+      pourcentageFormateur: Number(c.pourcentage_formateur) || 0,
+      hTot, hEx, sansHoraire, nbSeancesEx: ex.length, seancesEx: ex, groupe,
+      fins, produits, produitsTotal,
+      module, moduleNom: module ? module.nom : '', objectif, objectifConfirme: !!rm.objectif, niveau: rm.niveau || null, nsf, nsfConfirme: !!rm.nsf,
+      formateurId, formateur: statutFormateur(formateurId),
+      situation, situationConfirmee: !!rc.situation, g,
+    };
+  }).filter(d => d.hEx > 0 || d.nbSeancesEx > 0 || d.produitsTotal > 0 || (d.fins.length && d.hTot === 0 && d.fins.some(f => {
+    const cree = String(f.created_at || '').slice(0, 10); return dans(cree);
+  })));
+
+  // Heures des formateurs (cadre E) : une séance de groupe ne compte qu'une fois.
+  dossiers.forEach(d => {
+    d.seancesEx.forEach(e => {
+      if (!e.h) return;
+      let cle, fId;
+      if (d.groupe) {
+        const gs = groupeSeances.find(x => String(x.groupe_id) === String(d.groupe.id) && String(x.date || '').slice(0, 10) === e.date);
+        fId = (gs && gs.formateur_id) || d.groupe.formateur_id || d.formateurId;
+        cle = `g|${d.groupe.id}|${e.date}|${e.heure_debut || ''}`;
+      } else {
+        fId = d.formateurId;
+        cle = `c|${d.id}|${e.numero}`;
+      }
+      if (!heuresFormateurs.has(cle)) heuresFormateurs.set(cle, { formateurId: fId, h: e.h });
+    });
+  });
+
+  const C = Object.fromEntries(BPF_LIGNES_C.map(([k]) => [k, { montant: 0, dossiers: [] }]));
+  const E = { interne: { ids: new Set(), h: 0 }, externe: { ids: new Set(), h: 0 } };
+  const F1 = Object.fromEntries(BPF_SITUATIONS.map(([k]) => [k, { n: 0, h: 0, dossiers: [] }]));
+  const F2 = { n: 0, h: 0, dossiers: [] };
+  const F3 = Object.fromEntries(BPF_OBJECTIFS.map(([k]) => [k, { n: 0, h: 0, dossiers: [] }]));
+  const F3a = Object.fromEntries(BPF_NIVEAUX_RNCP.map(([k]) => [k, { n: 0, h: 0 }]));
+  const nsfMap = new Map();
+  const G = { n: 0, h: 0, dossiers: [] };
+  let distance = false;
+  let repereHonoraires = 0;
+
+  dossiers.forEach(d => {
+    d.produits.forEach(p => {
+      if (!p.montant) return;
+      C[p.ligne].montant += p.montant;
+      if (!C[p.ligne].dossiers.includes(d)) C[p.ligne].dossiers.push(d);
+    });
+    if (/distan|mixte/i.test(d.modalite)) distance = true;
+    if (d.formateur.statut === 'externe') repereHonoraires += d.produitsTotal * d.pourcentageFormateur / 100;
+    if (d.hEx <= 0) return;
+    if (d.formateurId !== null && d.formateurId !== undefined) formateursUtilises.add(String(d.formateurId));
+    if (d.g) { G.n += 1; G.h += d.hEx; G.dossiers.push(d); return; }
+    const sit = BPF_SITUATIONS.some(([k]) => k === d.situation) ? d.situation : 'e';
+    F1[sit].n += 1; F1[sit].h += d.hEx; F1[sit].dossiers.push(d);
+    if (d.formateur.statut === 'externe') { F2.n += 1; F2.h += d.hEx; F2.dossiers.push(d); }
+    const obj = BPF_OBJECTIFS.some(([k]) => k === d.objectif) ? d.objectif : 'd';
+    F3[obj].n += 1; F3[obj].h += d.hEx; F3[obj].dossiers.push(d);
+    if (obj === 'a') { const nv = BPF_NIVEAUX_RNCP.some(([k]) => k === d.niveau) ? d.niveau : null; if (nv) { F3a[nv].n += 1; F3a[nv].h += d.hEx; } }
+    const code = d.nsf || '';
+    if (!nsfMap.has(code)) nsfMap.set(code, { code, n: 0, h: 0, dossiers: [] });
+    const x = nsfMap.get(code); x.n += 1; x.h += d.hEx; x.dossiers.push(d);
+    if (d.module) modulesUtilises.set(String(d.module.id), d.module);
+  });
+  BPF_DISPOSITIFS_OPCO.forEach(([k]) => { C.c2.montant += C[k].montant; C[k].dossiers.forEach(d => { if (!C.c2.dossiers.includes(d)) C.c2.dossiers.push(d); }); });
+  C.c2.montant += C.c2e.montant; C.c2e.dossiers.forEach(d => { if (!C.c2.dossiers.includes(d)) C.c2.dossiers.push(d); });
+  const totalC = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c11'].reduce((s, k) => s + C[k].montant, 0);
+
+  heuresFormateurs.forEach(({ formateurId, h }) => {
+    const st = statutFormateur(formateurId).statut === 'externe' ? 'externe' : 'interne';
+    E[st].ids.add(String(formateurId ?? 'sans')); E[st].h += h;
+  });
+  const codes = Array.from(nsfMap.values()).sort((a, b) => b.h - a.h || b.n - a.n);
+  const avecCode = codes.filter(x => x.code);
+  const F4 = avecCode.slice(0, 5);
+  const autres = { code: '', n: 0, h: 0, dossiers: [] };
+  [...avecCode.slice(5), ...codes.filter(x => !x.code)].forEach(x => { autres.n += x.n; autres.h += x.h; autres.dossiers.push(...x.dossiers); });
+
+  // Points à vérifier.
+  const sansFin = dossiers.filter(d => d.hEx > 0 && !d.fins.length);
+  if (sansFin.length) verifs.push({ cle: 'sans_financement', niveau: 'alerte', titre: `${sansFin.length} dossier${sansFin.length > 1 ? 's' : ''} sans financement`, aide: 'Leurs heures comptent, mais pas de montant au cadre C.', dossiers: sansFin, action: 'client' });
+  const sansMontant = dossiers.filter(d => d.fins.some(f => !montantRenseigne(f.montant)));
+  if (sansMontant.length) verifs.push({ cle: 'sans_montant', niveau: 'alerte', titre: `${sansMontant.length} financement${sansMontant.length > 1 ? 's' : ''} sans montant`, aide: 'Ajoutez le montant dans le bloc Financement du dossier.', dossiers: sansMontant, action: 'client' });
+  const sansSeance = dossiers.filter(d => d.fins.length && d.hTot === 0);
+  if (sansSeance.length) verifs.push({ cle: 'sans_seance', niveau: 'alerte', titre: `${sansSeance.length} dossier${sansSeance.length > 1 ? 's' : ''} financé${sansSeance.length > 1 ? 's' : ''} sans séance datée`, aide: 'Sans séance datée, le montant ne peut pas être réparti : il n\'est pas compté.', dossiers: sansSeance, action: 'client' });
+  const sansModule = dossiers.filter(d => d.hEx > 0 && !d.g && !d.module);
+  if (sansModule.length) verifs.push({ cle: 'sans_module', niveau: 'alerte', titre: `${sansModule.length} dossier${sansModule.length > 1 ? 's' : ''} sans module`, aide: 'Comptés en « autre formation » et sans spécialité.', dossiers: sansModule, action: 'client' });
+  const modulesARegler = Array.from(modulesUtilises.values()).filter(m => { const r = reg('module', m.id); return !(r.objectif || suggestionObjectif(m)) || !String(r.nsf || ((r.objectif || suggestionObjectif(m)) === 'e' ? '415' : '')).trim(); });
+  if (modulesARegler.length) verifs.push({ cle: 'modules', niveau: 'alerte', titre: `${modulesARegler.length} module${modulesARegler.length > 1 ? 's' : ''} sans objectif ou spécialité`, aide: modulesARegler.map(m => m.nom).join(', '), action: 'reglages' });
+  const sansSituation = dossiers.filter(d => d.hEx > 0 && !d.g && !BPF_SITUATIONS.some(([k]) => k === d.situation));
+  if (sansSituation.length) verifs.push({ cle: 'situation', niveau: 'alerte', titre: `${sansSituation.length} stagiaire${sansSituation.length > 1 ? 's' : ''} sans situation`, aide: 'Comptés en « autres stagiaires » tant que ce n\'est pas choisi.', dossiers: sansSituation, action: 'reglages' });
+  const aConfirmer = dossiers.filter(d => d.hEx > 0 && !d.g && BPF_SITUATIONS.some(([k]) => k === d.situation) && !d.situationConfirmee).length
+    + Array.from(formateursUtilises).filter(id => !reg('formateur', id).statut).length
+    + Array.from(modulesUtilises.values()).filter(m => !reg('module', m.id).objectif).length;
+  if (aConfirmer) verifs.push({ cle: 'a_confirmer', niveau: 'info', titre: `${aConfirmer} valeur${aConfirmer > 1 ? 's' : ''} proposée${aConfirmer > 1 ? 's' : ''} par SkorUp à confirmer`, aide: 'Situation des stagiaires, formateurs internes / externes, objectif des modules.', action: 'reglages' });
+  const nbSansHoraire = dossiers.reduce((s, d) => s + d.sansHoraire, 0);
+  if (nbSansHoraire) verifs.push({ cle: 'sans_horaire', niveau: 'info', titre: `${nbSansHoraire} séance${nbSansHoraire > 1 ? 's' : ''} datée${nbSansHoraire > 1 ? 's' : ''} sans horaires`, aide: 'Comptées 0 h : ajoutez l\'heure de début et de fin dans le planning du dossier.', dossiers: dossiers.filter(d => d.sansHoraire), action: 'client' });
+
+  const totF1 = BPF_SITUATIONS.reduce((s, [k]) => ({ n: s.n + F1[k].n, h: s.h + F1[k].h }), { n: 0, h: 0 });
+  const totF3 = BPF_OBJECTIFS.reduce((s, [k]) => ({ n: s.n + F3[k].n, h: s.h + F3[k].h }), { n: 0, h: 0 });
+  const totF4 = [...F4, autres].reduce((s, x) => ({ n: s.n + x.n, h: s.h + x.h }), { n: 0, h: 0 });
+  const coherent = totF1.n === totF3.n && totF1.n === totF4.n && Math.abs(totF1.h - totF3.h) < 0.01 && Math.abs(totF1.h - totF4.h) < 0.01;
+  return {
+    dossiers, verifs, C, totalC, distance, repereHonoraires: Math.round(repereHonoraires * 100) / 100,
+    E: { interne: { n: E.interne.ids.size, h: E.interne.h }, externe: { n: E.externe.ids.size, h: E.externe.h } },
+    F1, totF1, F2, F3, F3a, totF3, F4, F4autres: autres, totF4, G, coherent,
+    formateursUtilises: Array.from(formateursUtilises), modulesUtilises: Array.from(modulesUtilises.values()),
+  };
+};
+
+const exercicesProposes = () => {
+  const a = new Date().getFullYear();
+  return [a - 1, a, a - 2, a - 3].map(y => ({ debut: `${y}-01-01`, fin: `${y}-12-31`, libelle: `${y} · du 01/01/${y} au 31/12/${y}` }));
+};
+const dateFrCourte = (iso) => { const [y, m, d] = String(iso || '').split('-'); return y && m && d ? `${d}/${m}/${y}` : ''; };
+const lireParMorceaux = async (table, colonnes, colonneFiltre, ids) => {
+  const sortie = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const morceau = ids.slice(i, i + 100);
+    const { data, error } = await fetchAllRowsWithRetry(() => supabase.from(table).select(colonnes).in(colonneFiltre, morceau), { label: table, retries: 1 });
+    if (error) throw error;
+    sortie.push(...(data || []));
+  }
+  return sortie;
+};
+
+const BpfView = ({ currentOrgId, orgSettings, onOuvrirClient }) => {
+  const exos = React.useMemo(() => exercicesProposes(), []);
+  const [exo, setExo] = React.useState(exos[0]);
+  const [perso, setPerso] = React.useState(false);
+  const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
+  const [donnees, setDonnees] = React.useState(null);
+  const [reglages, setReglages] = React.useState({});
+  const [saisies, setSaisies] = React.useState({}); // clé "debut|fin" → valeurs
+  const [brouillon, setBrouillon] = React.useState({});
+  const [modifie, setModifie] = React.useState(false);
+  const [onglet, setOnglet] = React.useState('bilan');
+  const [detail, setDetail] = React.useState(null); // { titre, dossiers, montants }
+  const [enregistrement, setEnregistrement] = React.useState(false);
+
+  const charger = React.useCallback(async () => {
+    if (!currentOrgId) return;
+    setEtat('chargement');
+    try {
+      const [rg, ex] = await Promise.all([
+        fetchAllRowsWithRetry(() => supabase.from('bpf_reglages').select('cible, cible_id, valeurs').eq('organisation_id', currentOrgId), { label: 'réglages BPF', retries: 0 }),
+        supabase.from('bpf_exercices').select('*').eq('organisation_id', currentOrgId),
+      ]);
+      if (rg.error || ex.error) {
+        const err = rg.error || ex.error;
+        setEtat(err.code === '42P01' || err.code === 'PGRST205' || /(does not exist|schema cache|could not find)/i.test(err.message || '') ? 'absent' : 'erreur');
+        return;
+      }
+      const map = {};
+      (rg.data || []).forEach(r => { map[`${r.cible}|${r.cible_id}`] = r.valeurs || {}; });
+      const sx = {};
+      (ex.data || []).forEach(r => { sx[`${r.debut}|${r.fin}`] = { ...(r.valeurs || {}), _maj: r.updated_at }; });
+      const cl = await fetchAllRowsWithRetry(() => supabase.from('clients').select('*').eq('organisation_id', currentOrgId), { label: 'clients (BPF)' });
+      if (cl.error) throw cl.error;
+      const ids = (cl.data || []).map(c => c.id);
+      const [se, gr, gs, fi, ut, mo] = await Promise.all([
+        lireParMorceaux('sessions', 'client_id, numero_seance, date, heure_debut, heure_fin', 'client_id', ids),
+        supabase.from('groupes').select('*').eq('organisation_id', currentOrgId),
+        supabase.from('groupe_seances').select('*').eq('organisation_id', currentOrgId),
+        fetchAllRowsWithRetry(() => supabase.from('financements').select('*').eq('organisation_id', currentOrgId), { label: 'financements (BPF)', retries: 0 }),
+        supabase.from('utilisateurs').select('*').eq('organisation_id', currentOrgId),
+        supabase.from('modules').select('id, nom').eq('organisation_id', currentOrgId),
+      ]);
+      setReglages(map);
+      setSaisies(sx);
+      setDonnees({
+        clients: cl.data || [], sessions: se, groupes: gr.error ? [] : (gr.data || []), groupeSeances: gs.error ? [] : (gs.data || []),
+        financements: fi.error ? [] : (fi.data || []), utilisateurs: ut.data || [], modules: mo.data || [],
+      });
+      setEtat('ok');
+    } catch (e) {
+      console.error('[BPF]', e);
+      setEtat('erreur');
+    }
+  }, [currentOrgId]);
+  React.useEffect(() => { charger(); }, [charger]);
+
+  // Saisies de l'exercice : celles enregistrées, sinon les plus récentes (forme juridique, NAF, dirigeant).
+  React.useEffect(() => {
+    const cle = `${exo.debut}|${exo.fin}`;
+    const propre = saisies[cle];
+    if (propre) { setBrouillon(propre); setModifie(false); return; }
+    const derniere = Object.values(saisies).sort((a, b) => String(b._maj || '').localeCompare(String(a._maj || '')))[0] || {};
+    setBrouillon({ forme_juridique: derniere.forme_juridique || '', naf: derniere.naf || '', dirigeant_nom: derniere.dirigeant_nom || '', dirigeant_qualite: derniere.dirigeant_qualite || '', part_ca: derniere.part_ca ?? '' });
+    setModifie(false);
+  }, [exo, saisies]);
+
+  const bpf = React.useMemo(() => (donnees ? calculerBpf({ ...donnees, debut: exo.debut, fin: exo.fin, reglages }) : null), [donnees, exo, reglages]);
+
+  const enregistrerReglage = async (cible, cibleId, valeurs) => {
+    const cle = `${cible}|${cibleId}`;
+    const avant = reglages[cle];
+    const nouveau = { ...(avant || {}), ...valeurs };
+    setReglages(prev => ({ ...prev, [cle]: nouveau }));
+    const { error } = await supabase.from('bpf_reglages').upsert([{ organisation_id: currentOrgId, cible, cible_id: String(cibleId), valeurs: nouveau, updated_at: new Date().toISOString() }], { onConflict: 'organisation_id,cible,cible_id' });
+    if (error) {
+      setReglages(prev => { const s = { ...prev }; if (avant) s[cle] = avant; else delete s[cle]; return s; });
+      toast.error("Réglage non enregistré : " + error.message);
+    }
+  };
+  const champ = (k, v) => { setBrouillon(prev => ({ ...prev, [k]: v })); setModifie(true); };
+  const enregistrerSaisies = async () => {
+    setEnregistrement(true);
+    const { _maj, ...valeurs } = brouillon;
+    const { error } = await supabase.from('bpf_exercices').upsert([{ organisation_id: currentOrgId, debut: exo.debut, fin: exo.fin, valeurs, updated_at: new Date().toISOString() }], { onConflict: 'organisation_id,debut,fin' });
+    setEnregistrement(false);
+    if (error) { toast.error('Enregistrement impossible : ' + error.message); return; }
+    setSaisies(prev => ({ ...prev, [`${exo.debut}|${exo.fin}`]: { ...valeurs, _maj: new Date().toISOString() } }));
+    setModifie(false);
+    toast.success('Saisies du BPF enregistrées.');
+  };
+
+  const nomFormateur = (id) => { const u = donnees && donnees.utilisateurs.find(x => String(x.id) === String(id)); return u ? (u.nom || u.email || `Formateur ${id}`) : 'Sans formateur'; };
+  const ouvrirDetail = (titre, dossiers, avecMontants = null) => setDetail({ titre, dossiers, avecMontants });
+
+  const exporterCsv = () => {
+    if (!bpf) return;
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const nb = (n) => String(Math.round((Number(n) || 0) * 100) / 100).replace('.', ',');
+    const lignes = [['Dossier', 'Archivé', 'Module', 'Objectif (F-3)', 'Spécialité (F-4)', 'Formateur', 'Interne / externe', 'Situation (F-1)', "Heures dans l'exercice", 'Heures au total', 'Confié par un autre OF (G)', 'Financements (montant total)', "Montant compté dans l'exercice"].map(q).join(';')];
+    bpf.dossiers.forEach(d => {
+      lignes.push([
+        d.nom, d.archive ? 'oui' : '', d.moduleNom, libelleDe(BPF_OBJECTIFS, d.objectif), d.nsf ? `${d.nsf} ${libelleNsf(d.nsf)}`.trim() : '',
+        d.formateurId ? nomFormateur(d.formateurId) : '', d.formateur.statut, libelleDe(BPF_SITUATIONS, d.situation),
+        nb(d.hEx), nb(d.hTot), d.g ? 'oui' : '',
+        d.produits.map(p => `${libelleFinancement(p.type)}${p.financeur ? ' ' + p.financeur : ''} (${p.montantTotal === null ? 'sans montant' : nb(p.montantTotal)}) → ligne ${(BPF_LIGNES_C.find(([k]) => k === p.ligne) || [])[1]}`).join(' | '),
+        nb(d.produitsTotal),
+      ].map(q).join(';'));
+    });
+    const blob = new Blob(['﻿' + lignes.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `BPF ${exo.debut.slice(0, 4)} - détail par dossier.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  const exporterPdf = async () => {
+    if (!bpf) return;
+    const { jsPDF } = await import('jspdf');
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    const mx = 46, larg = 595.28 - 92, bas = 841.89 - 46;
+    let y = 54;
+    const place = (h) => { if (y + h > bas) { pdf.addPage(); y = 54; } };
+    const titre = (t) => { place(40); y += 10; pdf.setFont('helvetica', 'bold'); pdf.setFontSize(12); pdf.setTextColor(76, 29, 149); pdf.text(t, mx, y); y += 16; pdf.setTextColor(30); };
+    const ligne = (g, d1 = '', d2 = '', gras = false) => {
+      pdf.setFont('helvetica', gras ? 'bold' : 'normal'); pdf.setFontSize(9.5);
+      const l = pdf.splitTextToSize(String(g), larg - 170); place(l.length * 12 + 4);
+      pdf.text(l, mx, y); if (d1 !== '') pdf.text(String(d1), mx + larg - 90, y, { align: 'right' }); if (d2 !== '') pdf.text(String(d2), mx + larg, y, { align: 'right' });
+      y += l.length * 12 + 3;
+    };
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16); pdf.text('Bilan pédagogique et financier', mx, y); y += 20;
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(90);
+    pdf.text(`${orgSettings?.nom || ''} — exercice du ${dateFrCourte(exo.debut)} au ${dateFrCourte(exo.fin)} — préparé avec SkorUp le ${new Date().toLocaleDateString('fr-FR')}`, mx, y); y += 12;
+    pdf.text('Document d\'aide : à vérifier puis à recopier sur Mon Activité Formation.', mx, y); y += 6; pdf.setTextColor(30);
+    titre('A. Identification');
+    ligne('N° de déclaration', '', orgSettings?.nda || '—'); ligne('SIRET', '', orgSettings?.siret || '—'); ligne('Forme juridique', '', brouillon.forme_juridique || '—'); ligne('Code NAF', '', brouillon.naf || '—');
+    titre('B. Informations générales');
+    ligne('Exercice comptable', '', `du ${dateFrCourte(exo.debut)} au ${dateFrCourte(exo.fin)}`); ligne('Formation en tout ou partie à distance', '', bpf.distance ? 'Oui' : 'Non');
+    titre('C. Origine des produits (HT)');
+    BPF_LIGNES_C.forEach(([k, n, l]) => ligne(`${n}  ${l}`, '', fmtEur(bpf.C[k].montant), !/^c2./.test(k)));
+    ligne('Total des produits réalisés au titre de la formation professionnelle', '', fmtEur(bpf.totalC), true);
+    ligne('Part du chiffre d\'affaires global (%)', '', brouillon.part_ca !== '' && brouillon.part_ca !== undefined ? `${brouillon.part_ca} %` : '—');
+    titre('D. Charges (HT)');
+    ligne('Total des charges liées à la formation', '', brouillon.charges_total ? fmtEur(brouillon.charges_total) : '—');
+    ligne('dont salaires des formateurs', '', brouillon.charges_salaires ? fmtEur(brouillon.charges_salaires) : '—');
+    ligne('dont achats de prestations et honoraires de formation', '', brouillon.charges_achats ? fmtEur(brouillon.charges_achats) : '—');
+    titre('E. Personnes dispensant des heures de formation'); ligne('', 'Nombre', 'Heures', true);
+    ligne('Personnes de votre organisme', bpf.E.interne.n, fmtH(bpf.E.interne.h)); ligne('Personnes extérieures (sous-traitance)', bpf.E.externe.n, fmtH(bpf.E.externe.h));
+    titre('F-1. Type de stagiaires'); ligne('', 'Stagiaires', 'Heures', true);
+    BPF_SITUATIONS.forEach(([k, l]) => ligne(`${k}. ${l}`, bpf.F1[k].n, fmtH(bpf.F1[k].h))); ligne('Total (1)', bpf.totF1.n, fmtH(bpf.totF1.h), true);
+    titre('F-2. Dont activité sous-traitée'); ligne('Confiés par votre organisme à un autre organisme', bpf.F2.n, fmtH(bpf.F2.h));
+    titre('F-3. Objectif général des prestations'); ligne('', 'Stagiaires', 'Heures', true);
+    [['a'], ['b'], ['c'], ['d'], ['e'], ['f']].forEach(([k]) => {
+      ligne(`${k}. ${libelleDe(BPF_OBJECTIFS, k)}`, bpf.F3[k].n, fmtH(bpf.F3[k].h));
+      if (k === 'a') BPF_NIVEAUX_RNCP.forEach(([nv, l]) => ligne(`      dont ${l}`, bpf.F3a[nv].n, fmtH(bpf.F3a[nv].h)));
+    });
+    ligne('Total (3)', bpf.totF3.n, fmtH(bpf.totF3.h), true);
+    titre('F-4. Spécialités de formation'); ligne('', 'Stagiaires', 'Heures', true);
+    bpf.F4.forEach(x => ligne(`${x.code} ${libelleNsf(x.code)}`, x.n, fmtH(x.h))); ligne('Autres spécialités', bpf.F4autres.n, fmtH(bpf.F4autres.h)); ligne('Total (4)', bpf.totF4.n, fmtH(bpf.totF4.h), true);
+    titre('G. Formations confiées par un autre organisme'); ligne('Stagiaires et heures', bpf.G.n, fmtH(bpf.G.h));
+    titre('H. Dirigeant'); ligne('Nom et prénom', '', brouillon.dirigeant_nom || '—'); ligne('Qualité', '', brouillon.dirigeant_qualite || '—');
+    if (bpf.verifs.length) { titre('Points à vérifier'); bpf.verifs.forEach(v => ligne(`• ${v.titre}${v.aide ? ' — ' + v.aide : ''}`)); }
+    pdf.save(`BPF ${exo.debut.slice(0, 4)} - ${nettoyerNomFichier(orgSettings?.nom || 'organisme')}.pdf`);
+  };
+
+  const carte = 'bg-white border border-gray-100 rounded-3xl p-5 md:p-6 shadow-sm space-y-3 min-w-0';
+  const h2 = 'text-base font-black text-gray-900';
+  const lien = 'text-xs font-bold text-violet-700 hover:underline';
+  const inputCls = 'w-full p-2.5 text-sm border bg-gray-50 border-gray-200 focus:border-violet-500 rounded-xl outline-none';
+  const LigneNH = ({ libelle, n, h, onVoir, gris = false, gras = false }) => (
+    <div className={`grid grid-cols-[minmax(0,1fr)_70px_80px] gap-2 items-center text-sm py-1.5 border-b border-gray-50 ${gris ? 'text-gray-400' : ''} ${gras ? 'font-black' : ''}`}>
+      <span className="min-w-0 break-words">{libelle}{onVoir && n > 0 && <> <button type="button" onClick={onVoir} className={lien}>voir</button></>}</span>
+      <span className="text-right font-bold">{n}</span>
+      <span className="text-right font-bold">{fmtH(h)}</span>
+    </div>
+  );
+  const EnteteNH = ({ a = 'Stagiaires' }) => (
+    <div className="grid grid-cols-[minmax(0,1fr)_70px_80px] gap-2 text-[11px] font-bold text-gray-500"><span></span><span className="text-right">{a}</span><span className="text-right">Heures</span></div>
+  );
+
+  const entete = (
+    <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+      <div className="min-w-0">
+        <h2 className="text-2xl font-black text-gray-900">Bilan pédagogique et financier</h2>
+        <p className="text-sm text-gray-500 mt-1">Préparé automatiquement à partir de vos dossiers. À vérifier puis à recopier sur Mon Activité Formation (avant le 30 avril).</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="bpf-exercice" className="text-xs font-bold text-gray-500">Exercice</label>
+        <select id="bpf-exercice" value={perso ? 'perso' : `${exo.debut}|${exo.fin}`}
+          onChange={e => { if (e.target.value === 'perso') { setPerso(true); return; } setPerso(false); const [d, f] = e.target.value.split('|'); setExo({ debut: d, fin: f }); }}
+          className="text-sm font-bold p-2.5 rounded-xl border border-gray-200 bg-white">
+          {exos.map(x => <option key={x.debut} value={`${x.debut}|${x.fin}`}>{x.libelle}</option>)}
+          <option value="perso">Autres dates…</option>
+        </select>
+        {perso && (
+          <span className="flex items-center gap-1">
+            <input type="date" aria-label="Début de l'exercice" value={exo.debut} onChange={e => e.target.value && setExo(prev => ({ ...prev, debut: e.target.value }))} className="text-sm p-2 rounded-xl border border-gray-200" />
+            <input type="date" aria-label="Fin de l'exercice" value={exo.fin} onChange={e => e.target.value && setExo(prev => ({ ...prev, fin: e.target.value }))} className="text-sm p-2 rounded-xl border border-gray-200" />
+          </span>
+        )}
+        <button type="button" onClick={exporterCsv} disabled={!bpf} className="text-sm font-bold px-4 py-2.5 rounded-xl border border-violet-200 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">Export Excel (détail)</button>
+        <button type="button" onClick={exporterPdf} disabled={!bpf} className="text-sm font-bold px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-40">Télécharger le PDF</button>
+      </div>
+    </div>
+  );
+
+  if (etat === 'chargement') return <div className="max-w-7xl mx-auto space-y-6">{entete}<SqueletteChargement texte="Préparation de votre BPF…" /></div>;
+  if (etat === 'absent') return (
+    <div className="max-w-3xl mx-auto bg-white p-8 rounded-3xl border border-gray-100 text-center space-y-2">
+      <h2 className="text-lg font-black text-gray-900">BPF pas encore activé</h2>
+      <p className="text-sm text-gray-500">Lancez le SQL « bpf » dans Supabase (SQL Editor), puis rechargez la page.</p>
+    </div>
+  );
+  if (etat === 'erreur' || !bpf) return (
+    <div className="max-w-3xl mx-auto bg-amber-50 p-6 rounded-3xl border border-amber-100 text-center space-y-3">
+      <p className="text-sm font-bold text-amber-800">Le BPF n'a pas pu être préparé.</p>
+      <button type="button" onClick={charger} className="text-sm font-bold underline text-amber-800">Réessayer</button>
+    </div>
+  );
+
+  const alertes = bpf.verifs.filter(v => v.niveau === 'alerte');
+  const infos = bpf.verifs.filter(v => v.niveau === 'info');
+  const nbAConfirmer = (bpf.verifs.find(v => v.cle === 'a_confirmer') || {}).titre;
+  const dossiersF = bpf.dossiers.filter(d => d.hEx > 0 && !d.g);
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6" data-vue="bpf">
+      {entete}
+      <div className="flex gap-2 border-b border-gray-200" role="tablist">
+        {[['bilan', 'Bilan'], ['reglages', `Réglages${nbAConfirmer ? ' (à confirmer)' : ''}`]].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={onglet === k} onClick={() => setOnglet(k)}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 -mb-px ${onglet === k ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>{l}</button>
+        ))}
+      </div>
+
+      {onglet === 'bilan' && (<>
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-4">
+          <div className={`rounded-2xl p-4 border ${alertes.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`} data-bloc="bpf-verifs">
+            <p className={`text-sm font-black ${alertes.length ? 'text-amber-900' : 'text-emerald-800'}`}>
+              {alertes.length ? `${alertes.length} point${alertes.length > 1 ? 's' : ''} à vérifier avant de déclarer` : 'Aucun point bloquant'}
+            </p>
+            <div className="mt-2 space-y-2">
+              {[...alertes, ...infos].map(v => (
+                <div key={v.cle} className="text-sm">
+                  <p className={`font-bold ${v.niveau === 'alerte' ? 'text-amber-900' : 'text-gray-700'}`}>{v.niveau === 'alerte' ? '• ' : 'À noter : '}{v.titre}</p>
+                  {v.aide && <p className="text-xs text-gray-600 break-words">{v.aide}</p>}
+                  {v.dossiers && v.dossiers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {v.dossiers.slice(0, 12).map(d => (
+                        <button key={d.id} type="button" onClick={() => (v.action === 'reglages' ? setOnglet('reglages') : onOuvrirClient && onOuvrirClient(d.id))}
+                          className="text-xs font-bold bg-white border border-amber-200 text-amber-900 px-2 py-1 rounded-full hover:bg-amber-100">{d.nom}</button>
+                      ))}
+                      {v.dossiers.length > 12 && <span className="text-xs text-gray-500">+ {v.dossiers.length - 12}</span>}
+                    </div>
+                  )}
+                  {v.action === 'reglages' && (!v.dossiers || !v.dossiers.length) && <button type="button" onClick={() => setOnglet('reglages')} className={lien}>Ouvrir les réglages</button>}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className={`rounded-2xl p-4 border ${bpf.coherent ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+            <p className={`text-sm font-black ${bpf.coherent ? 'text-emerald-800' : 'text-red-800'}`}>{bpf.coherent ? 'Totaux cohérents' : 'Totaux à revoir'}</p>
+            <p className={`text-xs mt-1 ${bpf.coherent ? 'text-emerald-800' : 'text-red-800'}`}>F-1 = F-3 = F-4 : {bpf.totF1.n} stagiaire{bpf.totF1.n > 1 ? 's' : ''} · {fmtH(bpf.totF1.h)}</p>
+            <p className="text-xs text-gray-500 mt-2">{bpf.dossiers.length} dossier{bpf.dossiers.length > 1 ? 's' : ''} concerné{bpf.dossiers.length > 1 ? 's' : ''} par l'exercice (archivés compris).</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">A · B</span> Identification et informations générales</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div><p className="text-xs text-gray-500">N° de déclaration</p><p className="font-bold break-words">{orgSettings?.nda || <span className="text-amber-700">À compléter dans Paramètres</span>}</p></div>
+              <div><p className="text-xs text-gray-500">SIRET</p><p className="font-bold break-words">{orgSettings?.siret || <span className="text-amber-700">À compléter dans Paramètres</span>}</p></div>
+              <div><label htmlFor="bpf-fj" className="text-xs text-gray-500">Forme juridique</label><input id="bpf-fj" className={inputCls} value={brouillon.forme_juridique || ''} onChange={e => champ('forme_juridique', e.target.value)} placeholder="ex. Entreprise individuelle, SAS…" maxLength={80} /></div>
+              <div><label htmlFor="bpf-naf" className="text-xs text-gray-500">Code NAF</label><input id="bpf-naf" className={inputCls} value={brouillon.naf || ''} onChange={e => champ('naf', e.target.value)} placeholder="ex. 8559A" maxLength={10} /></div>
+              <div><p className="text-xs text-gray-500">Exercice comptable</p><p className="font-bold">{dateFrCourte(exo.debut)} → {dateFrCourte(exo.fin)}</p></div>
+              <div><p className="text-xs text-gray-500">Formation en tout ou partie à distance</p><p className="font-bold">{bpf.distance ? 'Oui' : 'Non'}</p></div>
+            </div>
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">D</span> Charges (HT) — depuis votre comptabilité</h3>
+            {[['charges_total', 'Total des charges liées à la formation'], ['charges_salaires', 'dont salaires des formateurs'], ['charges_achats', 'dont achats de prestations et honoraires']].map(([k, l]) => (
+              <div key={k} className="flex items-center justify-between gap-3 text-sm">
+                <label htmlFor={`bpf-${k}`} className="min-w-0">{l}</label>
+                <input id={`bpf-${k}`} inputMode="decimal" className="w-36 p-2 text-sm text-right border bg-gray-50 border-gray-200 rounded-xl outline-none focus:border-violet-500" value={brouillon[k] ?? ''} onChange={e => champ(k, e.target.value.replace(/[^\d.,]/g, '').replace(',', '.'))} placeholder="€" />
+              </div>
+            ))}
+            {bpf.repereHonoraires > 0 && (
+              <p className="text-xs text-violet-800 bg-violet-50 rounded-xl px-3 py-2">Repère SkorUp : part reversée aux formateurs externes ≈ {fmtEur(bpf.repereHonoraires)}{' '}
+                <button type="button" className={lien} onClick={() => champ('charges_achats', String(Math.round(bpf.repereHonoraires)))}>Reprendre ce montant</button></p>
+            )}
+          </section>
+
+          <section className={`${carte} lg:row-span-2`}>
+            <h3 className={h2}><span className="text-violet-600">C</span> Origine des produits (HT)</h3>
+            <p className="text-xs text-gray-500">Depuis le bloc « Financement » des dossiers. Une formation sur deux exercices est comptée au prorata de ses heures faites dans l'exercice.</p>
+            <div className="text-sm">
+              {BPF_LIGNES_C.map(([k, n, l]) => {
+                const sous = k.length > 3; const v = bpf.C[k];
+                return (
+                  <div key={k} className={`flex justify-between gap-3 py-1.5 border-b border-gray-50 ${sous ? 'pl-5 text-gray-700' : ''} ${!v.montant ? 'text-gray-400' : ''}`}>
+                    <span className="min-w-0 break-words"><b>{n}</b> {l}</span>
+                    <span className="shrink-0 text-right"><b>{fmtEur(v.montant)}</b>{v.dossiers.length > 0 && <> <button type="button" className={lien} onClick={() => ouvrirDetail(`C · ${n} — ${l}`, v.dossiers, k)}>{v.dossiers.length} dossier{v.dossiers.length > 1 ? 's' : ''}</button></>}</span>
+                  </div>
+                );
+              })}
+              <div className="flex justify-between gap-3 pt-3 text-base font-black"><span>Total des produits de la formation</span><span className="text-emerald-700">{fmtEur(bpf.totalC)}</span></div>
+              <div className="flex justify-between items-center gap-3 pt-2">
+                <label htmlFor="bpf-partca" className="text-xs text-gray-600">Part du chiffre d'affaires global réalisée en formation (%)</label>
+                <input id="bpf-partca" inputMode="decimal" className="w-24 p-2 text-sm text-right border bg-gray-50 border-gray-200 rounded-xl outline-none focus:border-violet-500" value={brouillon.part_ca ?? ''} onChange={e => champ('part_ca', e.target.value.replace(/[^\d.,]/g, '').replace(',', '.'))} placeholder="%" />
+              </div>
+            </div>
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">E</span> Personnes dispensant la formation</h3>
+            <EnteteNH a="Nombre" />
+            <LigneNH libelle="Personnes de votre organisme" n={bpf.E.interne.n} h={bpf.E.interne.h} />
+            <LigneNH libelle="Personnes extérieures (sous-traitance)" n={bpf.E.externe.n} h={bpf.E.externe.h} />
+            <p className="text-xs text-gray-500">Heures des séances datées de l'exercice ; une séance de groupe compte une seule fois.</p>
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">F-2 · G</span> Sous-traitance</h3>
+            <EnteteNH />
+            <LigneNH libelle="F-2 · confiés par vous à un autre organisme" n={bpf.F2.n} h={bpf.F2.h} onVoir={() => ouvrirDetail('F-2 — Activité sous-traitée', bpf.F2.dossiers)} />
+            <LigneNH libelle="G · confiés à vous par un autre organisme" n={bpf.G.n} h={bpf.G.h} onVoir={() => ouvrirDetail('G — Formations confiées par un autre organisme', bpf.G.dossiers)} />
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">F-1</span> Type de stagiaires</h3>
+            <EnteteNH />
+            {BPF_SITUATIONS.map(([k, l]) => <LigneNH key={k} libelle={`${k} · ${l}`} n={bpf.F1[k].n} h={bpf.F1[k].h} gris={!bpf.F1[k].n} onVoir={() => ouvrirDetail(`F-1 ${k} — ${l}`, bpf.F1[k].dossiers)} />)}
+            <LigneNH libelle="Total" n={bpf.totF1.n} h={bpf.totF1.h} gras />
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">F-3</span> Objectif des prestations</h3>
+            <EnteteNH />
+            {['a', 'b', 'c', 'd', 'e', 'f'].map(k => (
+              <React.Fragment key={k}>
+                <LigneNH libelle={`${k} · ${libelleDe(BPF_OBJECTIFS, k)}`} n={bpf.F3[k].n} h={bpf.F3[k].h} gris={!bpf.F3[k].n} onVoir={() => ouvrirDetail(`F-3 ${k} — ${libelleDe(BPF_OBJECTIFS, k)}`, bpf.F3[k].dossiers)} />
+                {k === 'a' && bpf.F3.a.n > 0 && BPF_NIVEAUX_RNCP.map(([nv, l]) => <LigneNH key={nv} libelle={`      dont ${l}`} n={bpf.F3a[nv].n} h={bpf.F3a[nv].h} gris={!bpf.F3a[nv].n} />)}
+              </React.Fragment>
+            ))}
+            <LigneNH libelle="Total" n={bpf.totF3.n} h={bpf.totF3.h} gras />
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">F-4</span> Spécialités de formation</h3>
+            <EnteteNH />
+            {bpf.F4.map(x => <LigneNH key={x.code} libelle={`${x.code} · ${libelleNsf(x.code) || 'Spécialité'}`} n={x.n} h={x.h} onVoir={() => ouvrirDetail(`F-4 — ${x.code} ${libelleNsf(x.code)}`, x.dossiers)} />)}
+            <LigneNH libelle="Autres spécialités (ou non renseignées)" n={bpf.F4autres.n} h={bpf.F4autres.h} gris={!bpf.F4autres.n} onVoir={() => ouvrirDetail('F-4 — Autres spécialités', bpf.F4autres.dossiers)} />
+            <LigneNH libelle="Total" n={bpf.totF4.n} h={bpf.totF4.h} gras />
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}><span className="text-violet-600">H</span> Dirigeant</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div><label htmlFor="bpf-dn" className="text-xs text-gray-500">Nom et prénom</label><input id="bpf-dn" className={inputCls} value={brouillon.dirigeant_nom || ''} onChange={e => champ('dirigeant_nom', e.target.value)} maxLength={120} /></div>
+              <div><label htmlFor="bpf-dq" className="text-xs text-gray-500">Qualité</label><input id="bpf-dq" className={inputCls} value={brouillon.dirigeant_qualite || ''} onChange={e => champ('dirigeant_qualite', e.target.value)} placeholder="Gérant(e), Président(e)…" maxLength={80} /></div>
+            </div>
+          </section>
+        </div>
+
+        <div className={`${modifie ? 'sticky bottom-3 z-10 bg-violet-50 border-violet-200 shadow-lg' : 'bg-white border-gray-100'} flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl p-4 border`}>
+          <p className="text-xs text-gray-600">Les chiffres se recalculent à chaque ouverture. Vos saisies (forme juridique, NAF, charges, part du CA, dirigeant) sont gardées pour cet exercice.</p>
+          <button type="button" onClick={enregistrerSaisies} disabled={!modifie || enregistrement} className="shrink-0 text-sm font-bold px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-40">{enregistrement ? 'Enregistrement…' : 'Enregistrer mes saisies'}</button>
+        </div>
+      </>)}
+
+      {onglet === 'reglages' && (
+        <div className="space-y-5" data-bloc="bpf-reglages">
+          <p className="text-sm text-gray-600">SkorUp propose une valeur (marquée « proposé ») ; choisissez-la pour la confirmer. Chaque choix est enregistré tout de suite.</p>
+
+          <section className={carte}>
+            <h3 className={h2}>Modules — objectif (F-3) et spécialité (F-4)</h3>
+            {(donnees.modules || []).length === 0 && <p className="text-sm text-gray-400">Aucun module.</p>}
+            <div className="divide-y divide-gray-100">
+              {(donnees.modules || []).map(m => {
+                const r = reglages[`module|${m.id}`] || {};
+                const sObj = suggestionObjectif(m);
+                const obj = r.objectif || '';
+                const objEff = obj || sObj;
+                const nsfProp = objEff === 'e' ? '415' : '';
+                return (
+                  <div key={m.id} className="py-3 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)] gap-3 items-start" data-module={m.id}>
+                    <p className="text-sm font-bold text-gray-900 break-words">{m.nom}{bpf.modulesUtilises.some(x => String(x.id) === String(m.id)) && <span className="ml-2 text-[11px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded">dans l'exercice</span>}</p>
+                    <div>
+                      <select aria-label={`Objectif du module ${m.nom}`} className={inputCls} value={obj} onChange={e => enregistrerReglage('module', m.id, { objectif: e.target.value || null })}>
+                        <option value="">{sObj ? `Proposé : ${libelleDe(BPF_OBJECTIFS, sObj)}` : '— Choisir l\'objectif —'}</option>
+                        {BPF_OBJECTIFS.map(([k, l]) => <option key={k} value={k}>{k} · {l}</option>)}
+                      </select>
+                      {objEff === 'a' && (
+                        <select aria-label={`Niveau RNCP du module ${m.nom}`} className={`${inputCls} mt-2`} value={r.niveau || ''} onChange={e => enregistrerReglage('module', m.id, { niveau: e.target.value || null })}>
+                          <option value="">— Niveau du diplôme —</option>
+                          {BPF_NIVEAUX_RNCP.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <input aria-label={`Code de spécialité du module ${m.nom}`} list="bpf-nsf" className={inputCls} defaultValue={r.nsf || ''} key={`${m.id}-${r.nsf || ''}`}
+                        placeholder={nsfProp ? `Proposé : ${nsfProp}` : 'Code (ex. 415)'}
+                        onBlur={e => { const v = e.target.value.trim().slice(0, 12); if (v !== (r.nsf || '')) enregistrerReglage('module', m.id, { nsf: v || null }); }} />
+                      <p className="text-[11px] text-gray-500 mt-1 break-words">{libelleNsf(r.nsf || nsfProp) || 'Choisissez dans la liste ou saisissez le code officiel.'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <datalist id="bpf-nsf">{BPF_NSF.map(([c, l]) => <option key={c} value={c}>{l}</option>)}</datalist>
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}>Formateurs — internes ou externes (E, F-2)</h3>
+            <div className="divide-y divide-gray-100">
+              {(donnees.utilisateurs || []).filter(u => u.role === 'formateur' || u.role === 'admin' || bpf.formateursUtilises.includes(String(u.id))).map(u => {
+                const r = reglages[`formateur|${u.id}`] || {};
+                const prop = suggestionStatutFormateur(u);
+                return (
+                  <div key={u.id} className="py-3 flex flex-col md:flex-row md:items-center justify-between gap-2" data-formateur={u.id}>
+                    <p className="text-sm font-bold text-gray-900 break-words">{u.nom || u.email}{u.role === 'admin' && <span className="ml-2 text-[11px] text-gray-500">(administrateur)</span>}{bpf.formateursUtilises.includes(String(u.id)) && <span className="ml-2 text-[11px] font-bold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded">dans l'exercice</span>}</p>
+                    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={`Statut de ${u.nom || u.email}`}>
+                      {[['interne', 'Interne (salarié, dirigeant, vous-même)'], ['externe', 'Externe — sous-traitant (son propre n° de déclaration)']].map(([k, l]) => (
+                        <label key={k} className={`text-xs font-bold px-3 py-2 rounded-xl border cursor-pointer ${(r.statut || '') === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-200'}`}>
+                          <input type="radio" className="sr-only" name={`statut-${u.id}`} checked={(r.statut || '') === k} onChange={() => enregistrerReglage('formateur', u.id, { statut: k })} />
+                          {l}{!r.statut && prop === k ? ' · proposé' : ''}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className={carte}>
+            <h3 className={h2}>Stagiaires de l'exercice — situation (F-1) et dispositif OPCO (C 2)</h3>
+            {dossiersF.length === 0 && <p className="text-sm text-gray-400">Aucun stagiaire avec des heures dans cet exercice.</p>}
+            <div className="divide-y divide-gray-100">
+              {dossiersF.map(d => {
+                const r = reglages[`client|${d.id}`] || {};
+                const prop = suggestionSituation(d.fins);
+                const opcos = d.fins.filter(f => f.type === 'opco' || f.type === 'public');
+                return (
+                  <div key={d.id} className="py-3 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)] gap-3 items-start" data-stagiaire={d.id}>
+                    <div className="min-w-0">
+                      <button type="button" onClick={() => onOuvrirClient && onOuvrirClient(d.id)} className="text-sm font-bold text-gray-900 hover:text-violet-700 hover:underline text-left break-words">{d.nom}</button>
+                      <p className="text-[11px] text-gray-500 break-words">{d.fins.length ? typesFinancementDe(d.fins).join(' + ') : 'Sans financement'} · {fmtH(d.hEx)}</p>
+                    </div>
+                    <select aria-label={`Situation de ${d.nom}`} className={inputCls} value={r.situation || ''} onChange={e => enregistrerReglage('client', d.id, { situation: e.target.value || null })}>
+                      <option value="">{prop ? `Proposé : ${libelleDe(BPF_SITUATIONS, prop)}` : '— Choisir la situation —'}</option>
+                      {BPF_SITUATIONS.map(([k, l]) => <option key={k} value={k}>{k} · {l}</option>)}
+                    </select>
+                    <div className="space-y-2">
+                      {opcos.map(f => {
+                        const rf = reglages[`financement|${f.id}`] || {};
+                        return f.type === 'opco' ? (
+                          <select key={f.id} aria-label={`Dispositif OPCO de ${d.nom}`} className={inputCls} value={rf.dispositif || 'c2h'} onChange={e => enregistrerReglage('financement', f.id, { dispositif: e.target.value })}>
+                            {BPF_DISPOSITIFS_OPCO.map(([k, l]) => <option key={k} value={k}>OPCO {f.financeur_nom ? `(${f.financeur_nom}) ` : ''}· {l}</option>)}
+                          </select>
+                        ) : (
+                          <select key={f.id} aria-label={`Financeur public de ${d.nom}`} className={inputCls} value={rf.ligne || 'c8'} onChange={e => enregistrerReglage('financement', f.id, { ligne: e.target.value })}>
+                            {BPF_LIGNES_PUBLIQUES.map(([k, l]) => <option key={k} value={k}>Public {f.financeur_nom ? `(${f.financeur_nom}) ` : ''}· {l}</option>)}
+                          </select>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {detail && (
+        <div className="fixed inset-0 bg-gray-900/60 z-[150] flex items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-label={detail.titre}>
+          <div className="bg-white w-full sm:max-w-4xl h-full sm:h-auto sm:max-h-[90vh] sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+              <h3 className="font-black text-gray-900 break-words min-w-0">{detail.titre}</h3>
+              <button type="button" onClick={() => setDetail(null)} className="shrink-0 w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500" aria-label="Fermer">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <table className="w-full text-sm min-w-[560px]">
+                <thead><tr className="text-left text-xs text-gray-500">
+                  <th className="py-2 pr-3">Dossier</th><th className="py-2 pr-3">Module</th><th className="py-2 pr-3 text-right">Heures (exercice / total)</th>
+                  {detail.avecMontants && <><th className="py-2 pr-3 text-right">Financé</th><th className="py-2 text-right">Compté</th></>}
+                </tr></thead>
+                <tbody>
+                  {detail.dossiers.map(d => {
+                    const p = detail.avecMontants ? d.produits.filter(x => x.ligne === detail.avecMontants || (detail.avecMontants === 'c2' && /^c2/.test(x.ligne))) : [];
+                    const partiel = d.hTot > 0 && d.hEx < d.hTot;
+                    return (
+                      <tr key={d.id} className="border-t border-gray-100">
+                        <td className="py-2 pr-3"><button type="button" onClick={() => { setDetail(null); if (onOuvrirClient) onOuvrirClient(d.id); }} className="font-bold text-violet-700 hover:underline text-left">{d.nom}</button>{d.archive && <span className="ml-1 text-[11px] text-gray-400">(archivé)</span>}</td>
+                        <td className="py-2 pr-3 text-gray-600">{d.moduleNom || '—'}</td>
+                        <td className={`py-2 pr-3 text-right ${partiel ? 'text-amber-700 font-bold' : ''}`}>{fmtH(d.hEx)} / {fmtH(d.hTot)}</td>
+                        {detail.avecMontants && <><td className="py-2 pr-3 text-right">{fmtEur(p.reduce((s, x) => s + (x.montantTotal || 0), 0))}</td><td className="py-2 text-right font-bold">{fmtEur(p.reduce((s, x) => s + x.montant, 0))}</td></>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {detail.avecMontants && <p className="text-xs text-gray-500 mt-3">Heures en orange : formation sur deux exercices, montant compté au prorata des heures faites dans celui-ci.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── QUESTIONNAIRE AU FINANCEUR (2026-10-26) ───────────────────────────────────────────────────────
 // Envoi par email d'un questionnaire de l'organisme au contact d'un financeur, qui répond sans compte
 // (même page publique que les prospects, via api/prospects.js). Table financeur_questionnaire_envois.
@@ -22374,6 +23179,7 @@ const TAB_TO_PATH = {
   profil: '/profil',
   exercices: '/exercices',
   prospects: '/prospects',
+  bpf: '/bpf',
 };
 // Réciproque URL → onglet — 1:1, sans collision (chaque chemin ci-dessus n'a qu'un seul propriétaire).
 const PATH_TO_TAB = {};
@@ -24044,7 +24850,7 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'bpf', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
@@ -29384,6 +30190,10 @@ export default function App() {
               <button onClick={() => { setActiveTab('finances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'finances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Wallet className="w-5 h-5 mr-3" /> Finances
               </button>
+              <button onClick={() => { setActiveTab('bpf'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'bpf' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <FileCheck className="w-5 h-5 mr-3" /> BPF
+                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[11px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
+              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -29827,6 +30637,24 @@ export default function App() {
             currentOrgId={currentOrgId}
             clients={clients}
           />}
+          {activeTab === 'bpf' && userRole === 'admin' && !hasFeatureAccess(orgSettings, 'pro') && (
+            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
+              <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
+                <Lock className="w-7 h-7 text-violet-600" />
+              </div>
+              <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
+                Le bilan pédagogique et financier (BPF) préparé automatiquement à partir de vos dossiers est disponible à partir du plan Pro.
+              </p>
+              <button onClick={() => setActiveTab('parametres_org')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
+                Voir les plans →
+              </button>
+            </div>
+          )}
+          {activeTab === 'bpf' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && (
+            <BpfView currentOrgId={currentOrgId} orgSettings={orgSettings}
+              onOuvrirClient={(id) => { setOngletFicheDemande('finances'); setExpandedClientId(id); setActiveTab('clients'); }} />
+          )}
           {activeTab === 'processus' && (
             <SharedProcessesView
               supabase={supabase}
