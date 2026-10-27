@@ -24892,6 +24892,10 @@ export default function App() {
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
   const [brandSettings, setBrandSettings] = useState(MARQUE_PAR_DEFAUT);
+  // Contexte joint aux erreurs enregistrées (voir erreurs.js) : rôle, organisation, onglet.
+  useEffect(() => {
+    window.__skorupContexte = { role: userRole, organisation: currentOrgId, onglet: activeTab };
+  }, [userRole, currentOrgId, activeTab]);
 
   // --- Modale de confirmation suppression globale ---
   const [appConfirmState, setAppConfirmState] = useState({ open: false, title: '', message: '', onConfirm: null });

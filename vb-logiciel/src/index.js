@@ -5,6 +5,9 @@ import App from './App';
 import SignupPage from './pages/Signup';
 import SetupOrganisationPage from './pages/SetupOrganisation';
 import reportWebVitals from './reportWebVitals';
+import { FiletDeSecurite, ecouterErreursGlobales } from './erreurs';
+
+ecouterErreursGlobales();
 
 const path = window.location.pathname;
 
@@ -15,7 +18,9 @@ if (path === '/setup-organisation') PageComponent = SetupOrganisationPage;
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <PageComponent />
+    <FiletDeSecurite>
+      <PageComponent />
+    </FiletDeSecurite>
   </React.StrictMode>
 );
 
