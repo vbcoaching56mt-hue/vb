@@ -26108,8 +26108,9 @@ export default function App() {
   // --- Suppression Sécurisée (Cascade & Auth) ---
   const handleDeleteClient = async (clientId) => {
     // LOT C (2026-10-22) : le serveur (delete-user v2) archive le dossier d'un client qui a déjà signé
-    // (rien n'est effacé) et supprime entièrement les autres. « client_v2 » : l'ancienne version du
-    // serveur refuse cette demande sans rien supprimer (elle aurait effacé les documents signés).
+    // (rien n'est effacé) et supprime entièrement les autres. 27/10/2026 : userType « client » (celui
+    // qu'attend delete-user v2, en ligne) ; « client_v2 » partait dans la branche formateur et échouait.
+    // La réponse doit porter version 2, sinon on le signale.
     const idToast = `suppr-client-${clientId}`;
     toast.loading('Suppression en cours…', { id: idToast });
     try {
@@ -26120,7 +26121,7 @@ export default function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ userId: clientId, userType: 'client_v2' })
+        body: JSON.stringify({ userId: clientId, userType: 'client' })
       });
       let result = {};
       try { result = await res.json(); } catch (_) { result = {}; }
