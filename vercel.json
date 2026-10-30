@@ -9,6 +9,9 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
+    "api/prospects.js": {
+      "maxDuration": 30
+    },
     "api/automation/process-scheduled-documents.js": {
       "maxDuration": 280
     }

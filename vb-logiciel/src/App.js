@@ -6633,6 +6633,7 @@ const ClientDetailView = ({
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Euro size={20} className="text-emerald-600" /> Finances</h3>
           <BlocFinancements client={client} currentOrgId={currentOrgId} montantPrestation={clientInfo.montant_prestation} />
+          <div className="border-t border-gray-100 pt-5"><BlocConventionsEntreprise client={client} /></div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -7110,6 +7111,19 @@ const calculerBpf = ({ debut, fin, clients = [], sessions = [], groupes = [], gr
     if (h > e.h) { e.h = h; e.heure_debut = s.heure_debut; }
     m.set(n, e);
   });
+  // 30/10/2026 : feuille d'émargement papier d'un groupe — absent = 0 h, présent en partie = heures saisies.
+  groupeSeances.forEach(gs => {
+    const pr = gs && gs.presences_papier;
+    if (!pr || typeof pr !== 'object') return;
+    Object.entries(pr).forEach(([cid, v]) => {
+      const m = parClient.get(String(cid));
+      const e = m && m.get(Number(gs.numero));
+      if (!e || !v) return;
+      if (e.hPrevu === undefined) e.hPrevu = e.h; // durée de la séance (heures du formateur)
+      if (v.presence === 'absent') e.h = 0;
+      else if (v.presence === 'partiel' && Number(v.heures) >= 0) e.h = Math.min(e.h || Infinity, Number(v.heures));
+    });
+  });
   const userParId = new Map(utilisateurs.map(u => [String(u.id), u]));
   const statutFormateur = (id) => {
     if (id === null || id === undefined || id === '') return { statut: 'interne', confirme: true, inconnu: true };
@@ -7161,7 +7175,8 @@ const calculerBpf = ({ debut, fin, clients = [], sessions = [], groupes = [], gr
   // Heures des formateurs (cadre E) : une séance de groupe ne compte qu'une fois.
   dossiers.forEach(d => {
     d.seancesEx.forEach(e => {
-      if (!e.h) return;
+      const hSeance = e.hPrevu !== undefined ? e.hPrevu : e.h; // 30/10/2026 : un stagiaire absent ne change pas les heures du formateur
+      if (!hSeance) return;
       let cle, fId;
       if (d.groupe) {
         const gs = groupeSeances.find(x => String(x.groupe_id) === String(d.groupe.id) && String(x.date || '').slice(0, 10) === e.date);
@@ -7171,7 +7186,7 @@ const calculerBpf = ({ debut, fin, clients = [], sessions = [], groupes = [], gr
         fId = d.formateurId;
         cle = `c|${d.id}|${e.numero}`;
       }
-      if (!heuresFormateurs.has(cle)) heuresFormateurs.set(cle, { formateurId: fId, h: e.h });
+      if (!heuresFormateurs.has(cle)) heuresFormateurs.set(cle, { formateurId: fId, h: hSeance });
     });
   });
 
@@ -11248,6 +11263,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur', 'initiales_formateur'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme', 'initiales_organisme'],
     'Financement': ['financement_type', 'financeur_nom', 'montant_financeur', 'reste_a_charge', 'numero_prise_en_charge'],
+    'Groupe / entreprise': ['entreprise_nom', 'entreprise_adresse', 'entreprise_signataire', 'entreprise_signataire_fonction', 'groupe_nom', 'liste_stagiaires', 'nombre_stagiaires', 'duree_heures', 'lieu_formation'],
     'Divers': ['date_du_jour'],
   };
   const SIGNATURE_TAGS = [
@@ -15292,6 +15308,8 @@ const DashboardAdminView = ({ clients, sessions, documents, formateurs, setActiv
 
 // ─── Calendrier des séances ────────────────────────────────────────────────────
 const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId, fetchSessions, groupes = [], groupeSeances = [], onOpenGroupe = null }) => {
+  const ctxConv = React.useContext(ConventionsContext) || {};
+  const [papierCal, setPapierCal] = React.useState(null);
   const [currentMonth, setCurrentMonth] = React.useState(new Date());
   const [selectedDay, setSelectedDay] = React.useState(null);
   const [editingSeanceSession, setEditingSeanceSession] = React.useState(null);
@@ -15472,9 +15490,19 @@ const CalendrierView = ({ sessions, clients, formateurs, userRole, currentUserId
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {aSigner && <span className={`text-xs font-black px-2 py-1 rounded-lg ${nbSignes === g.membres.length ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{nbSignes}/{g.membres.length} signés</span>}
+                        {gs && userRole !== 'client' && (
+                          <button type="button" onClick={() => setPapierCal(g.cle)} className={`px-3 py-1.5 rounded-lg border text-xs font-bold ${gs.feuille_papier_url ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-700 hover:border-violet-300'}`}>{gs.feuille_papier_url ? '✓ ' : ''}Feuille papier</button>
+                        )}
                         {onOpenGroupe && <button onClick={() => onOpenGroupe(g.groupe_id)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300">Ouvrir le groupe</button>}
                       </div>
                     </div>
+                    {papierCal === g.cle && gs && (
+                      <EmargementPapierModal groupe={grp} seance={gs} sessions={sessions}
+                        participants={(clients || []).filter(c => String(c.groupe_id) === String(g.groupe_id)).sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr'))}
+                        formateurNom={fNom || ''} orgNom={ctxConv.orgSettings?.nom || ''} nomUtilisateur={ctxConv.nomUtilisateur}
+                        onClose={() => setPapierCal(null)}
+                        onEnregistre={() => { fetchSessions && fetchSessions(); ctxConv.rafraichirGroupes && ctxConv.rafraichirGroupes(); }} />
+                    )}
                     {lien && (
                       <a href={lien} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">🎥 Rejoindre la visio</a>
                     )}
@@ -23228,11 +23256,24 @@ const nomDepuisEmail = (email) => String(email || '').split('@')[0].split(/[._-]
   .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 // Lit une liste collée (Excel, e-mail, une personne par ligne) : nom, e-mail, et un éventuel
 // n° de dossier (le premier morceau qui contient un chiffre).
-const analyserListeParticipants = (texte) => {
+const analyserListeParticipants = (texte, { emailFacultatif = false } = {}) => {
   const vus = new Set();
   return String(texte || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map((ligne) => {
     const m = ligne.match(RE_EMAIL_GROUPE);
-    if (!m) return { ligne, erreur: "Pas d'adresse e-mail sur cette ligne" };
+    if (!m) {
+      // 30/10/2026 : groupe sans compte → une ligne peut ne contenir que le nom (et un n° de dossier).
+      if (!emailFacultatif) return { ligne, erreur: "Pas d'adresse e-mail sur cette ligne" };
+      const parts = ligne.split(/[;\t|,]+/).map(x => x.trim().replace(/^["'<(]+|[">)']+$/g, '').trim()).filter(Boolean);
+      const noms = [];
+      let dos = '';
+      parts.forEach(p => { if (/\d/.test(p)) { if (!dos) dos = p; } else noms.push(p); });
+      const nomSeul = noms.join(' ').replace(/\s+/g, ' ').trim();
+      if (!nomSeul) return { ligne, erreur: 'Nom manquant sur cette ligne' };
+      const cle = `nom:${nomSeul.toLowerCase()}`;
+      if (vus.has(cle)) return { ligne, email: '', nom: nomSeul, erreur: 'En double dans la liste' };
+      vus.add(cle);
+      return { ligne, email: '', nom: nomSeul, numero_dossier: dos };
+    }
     const email = m[0].toLowerCase();
     const reste = `${ligne.slice(0, m.index)}\t${ligne.slice(m.index + m[0].length)}`;
     const morceaux = reste.split(/[;\t|,]+/).map(x => x.trim().replace(/^["'<(]+|[">)']+$/g, '').trim()).filter(Boolean);
@@ -23270,7 +23311,7 @@ const statsEmargementSeance = (seance, participants, sessions) => {
   return { signes, attendus };
 };
 // Analyse les participants saisis (liste collée + clients existants choisis) avant création.
-const analyserParticipantsGroupe = ({ texte, choisis, clients, groupes, moduleId, groupeId }) => {
+const analyserParticipantsGroupe = ({ texte, choisis, clients, groupes, moduleId, groupeId, sansCompte = false }) => {
   const res = [];
   const emailsVus = new Set();
   const verifierExistant = (c) => {
@@ -23282,10 +23323,10 @@ const analyserParticipantsGroupe = ({ texte, choisis, clients, groupes, moduleId
     if (moduleId && c.module_id && String(c.module_id) !== String(moduleId)) return 'Suit déjà un autre module : changez-le dans sa fiche avant de l\'ajouter';
     return null;
   };
-  analyserListeParticipants(texte).forEach(l => {
+  analyserListeParticipants(texte, { emailFacultatif: sansCompte }).forEach(l => {
     if (l.erreur) { res.push({ type: 'erreur', nom: l.nom || l.ligne, email: l.email || '', erreur: l.erreur }); return; }
-    emailsVus.add(l.email);
-    const existant = (clients || []).find(c => (c.email_contact || c.email || '').toLowerCase() === l.email);
+    if (l.email) emailsVus.add(l.email);
+    const existant = l.email ? (clients || []).find(c => (c.email_contact || c.email || '').toLowerCase() === l.email) : null;
     if (existant) {
       const err = verifierExistant(existant);
       res.push({ type: err ? 'erreur' : 'existant', clientId: existant.id, nom: existant.nom_complet || existant.nom, email: l.email, numero_dossier: l.numero_dossier, erreur: err });
@@ -23309,7 +23350,7 @@ const champGroupe = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-whi
 const libelleGroupe = 'block text-xs font-black text-gray-500 uppercase tracking-wider mb-1.5';
 
 // Saisie des participants : liste collée + choix parmi les clients existants + aperçu.
-const SaisieParticipantsGroupe = ({ texte, setTexte, choisis, setChoisis, clients, analyse, groupeId }) => {
+const SaisieParticipantsGroupe = ({ texte, setTexte, choisis, setChoisis, clients, analyse, groupeId, sansCompte = false }) => {
   const [aAjouter, setAAjouter] = React.useState('');
   const disponibles = (clients || [])
     .filter(c => !c.groupe_id && !(choisis || []).some(id => String(id) === String(c.id)))
@@ -23320,9 +23361,9 @@ const SaisieParticipantsGroupe = ({ texte, setTexte, choisis, setChoisis, client
       <div className="space-y-3 min-w-0">
         <label htmlFor="grp-liste" className={libelleGroupe}>Collez votre liste (une personne par ligne)</label>
         <textarea id="grp-liste" value={texte} onChange={e => setTexte(e.target.value)} rows={9}
-          placeholder={'Sophie Laurent ; sophie.laurent@mail.fr\nKarim Benali ; k.benali@mail.fr ; 061/2026/1183\n…'}
+          placeholder={sansCompte ? 'Sophie Laurent\nKarim Benali ; 061/2026/1183\nÉlodie Caradec ; e.caradec@mail.fr\n…' : 'Sophie Laurent ; sophie.laurent@mail.fr\nKarim Benali ; k.benali@mail.fr ; 061/2026/1183\n…'}
           className={`${champGroupe} font-mono text-[13px] leading-6 resize-y`} />
-        <p className="text-xs text-gray-500">Nom et e-mail, séparés par un point-virgule, une virgule ou une tabulation (copie depuis Excel). Vous pouvez ajouter le n° de dossier à la suite.</p>
+        <p className="text-xs text-gray-500">{sansCompte ? 'Un nom par ligne ; l\'e-mail et le n° de dossier sont facultatifs (séparés par un point-virgule, une virgule ou une tabulation).' : 'Nom et e-mail, séparés par un point-virgule, une virgule ou une tabulation (copie depuis Excel). Vous pouvez ajouter le n° de dossier à la suite.'}</p>
         <div>
           <label htmlFor="grp-existant" className={libelleGroupe}>Ou ajoutez un client qui a déjà un dossier</label>
           <div className="flex gap-2">
@@ -23348,7 +23389,7 @@ const SaisieParticipantsGroupe = ({ texte, setTexte, choisis, setChoisis, client
               <li key={i} className="px-3 py-2.5 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-bold text-sm text-gray-900 truncate">{a.nom}</p>
-                  <p className="text-xs text-gray-500 truncate">{a.email}{a.numero_dossier ? ` · Dossier ${a.numero_dossier}` : ''}</p>
+                  <p className="text-xs text-gray-500 truncate">{a.email || (a.type === 'nouveau' ? 'Sans e-mail' : '')}{a.numero_dossier ? ` · Dossier ${a.numero_dossier}` : ''}</p>
                   {a.erreur && <p className="text-xs text-red-600 mt-0.5">{a.erreur}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -23385,6 +23426,7 @@ const RapportGroupe = ({ progression, rapport, onFermer, libelleFermer = 'Contin
         <p className="text-lg font-black text-gray-900">{rapport.titre}</p>
         <ul className="text-sm text-gray-700 space-y-1">
           {rapport.invites > 0 && <li>✓ {rapport.invites} invitation{rapport.invites > 1 ? 's' : ''} envoyée{rapport.invites > 1 ? 's' : ''} par e-mail</li>}
+          {rapport.sansCompte > 0 && <li>✓ {rapport.sansCompte} dossier{rapport.sansCompte > 1 ? 's' : ''} créé{rapport.sansCompte > 1 ? 's' : ''} sans compte (aucun e-mail envoyé)</li>}
           {rapport.ajoutes > 0 && <li>✓ {rapport.ajoutes} client{rapport.ajoutes > 1 ? 's' : ''} existant{rapport.ajoutes > 1 ? 's' : ''} ajouté{rapport.ajoutes > 1 ? 's' : ''} au groupe</li>}
           {rapport.seances > 0 && <li>✓ Dates et horaires reportés sur {rapport.seances} séance{rapport.seances > 1 ? 's' : ''} de chaque participant</li>}
         </ul>
@@ -23412,6 +23454,7 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
   const [heuresTous, setHeuresTous] = React.useState({ debut: '', fin: '' });
   const [texte, setTexte] = React.useState('');
   const [choisis, setChoisis] = React.useState([]);
+  const [sansCompte, setSansCompte] = React.useState(false);
   const [progression, setProgression] = React.useState('');
   const [rapport, setRapport] = React.useState(null);
   const [enCours, setEnCours] = React.useState(false);
@@ -23438,7 +23481,7 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
     return [...prev, { numero: n, titre: `Séance ${n}`, date: '', heure_debut: '', heure_fin: '', formateur_id: '', ajoutee: true, emargement: true }];
   });
 
-  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: infos.module_id }), [texte, choisis, clients, groupes, infos.module_id]);
+  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: infos.module_id, sansCompte }), [texte, choisis, clients, groupes, infos.module_id, sansCompte]);
   const valides = analyse.filter(a => a.type === 'nouveau' || a.type === 'existant');
   const nbNouveaux = analyse.filter(a => a.type === 'nouveau').length;
   const limite = getClientLimitForOrg(orgSettings);
@@ -23450,7 +23493,7 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
     setEnCours(true);
     setRapport(null);
     try {
-      const res = await actions.creerGroupe({ infos, seances, participants: valides }, setProgression);
+      const res = await actions.creerGroupe({ infos, seances, participants: valides, sansCompte }, setProgression);
       setGroupeCreeId(res.groupeId);
       setRapport({ ...res.rapport, titre: `Le groupe « ${infos.nom.trim()} » est créé.` });
     } catch (e) {
@@ -23568,12 +23611,13 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
 
         {etape === 3 && (
           <div className="space-y-4">
-            <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} />
+            <ChoixAccesParticipants sansCompte={sansCompte} setSansCompte={setSansCompte} nom="acces-creation" />
+            <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} sansCompte={sansCompte} />
             <div className={`rounded-2xl p-4 text-sm ${depasse ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}`}>
               {nbNouveaux} nouveau{nbNouveaux > 1 ? 'x' : ''} dossier{nbNouveaux > 1 ? 's' : ''} à créer
               {Number.isFinite(restant) ? ` · il vous en reste ${Math.max(0, restant)} sur ${limite} dans votre offre.` : '.'}
               {depasse && ' Retirez des participants ou passez à une offre supérieure.'}
-              {nbNouveaux > 0 && !depasse && ' Chaque nouveau participant reçoit un e-mail d\'invitation pour créer son mot de passe.'}
+              {nbNouveaux > 0 && !depasse && (sansCompte ? ' Aucun e-mail ne sera envoyé : vous pourrez envoyer l\'accès plus tard depuis la fiche d\'un participant.' : ' Chaque nouveau participant reçoit un e-mail d\'invitation pour créer son mot de passe.')}
             </div>
           </div>
         )}
@@ -23597,7 +23641,7 @@ const GroupeCreation = ({ clients, groupes, formateurs, modules, moduleSessionTe
 };
 
 // ─── Ligne de séance modifiable dans la fiche du groupe ───────────────────────────────────────────
-const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujourdhui, estPassee }) => {
+const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujourdhui, estPassee, onPapier = null }) => {
   const initial = React.useMemo(() => ({
     date: seance.date || '', heure_debut: heureCourte(seance.heure_debut), heure_fin: heureCourte(seance.heure_fin),
     formateur_id: seance.formateur_id ? String(seance.formateur_id) : '', lien_visio: seance.lien_visio || '', lieu: seance.lieu || '',
@@ -23648,6 +23692,11 @@ const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujo
           {estPassee && stats.attendus > stats.signes && (
             <span className="text-xs font-black px-2 py-1 rounded-lg bg-amber-50 text-amber-700">{stats.attendus - stats.signes} en attente</span>
           )}
+          {onPapier && (
+            <button type="button" onClick={onPapier} className={`px-3 py-2 rounded-lg border text-xs font-bold inline-flex items-center gap-1.5 ${seance.feuille_papier_url ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-600 hover:border-violet-300'}`}>
+              {seance.feuille_papier_url ? <Check size={14} /> : <FileText size={14} />} Feuille papier
+            </button>
+          )}
           <button type="button" onClick={() => setPlus(!plus)} className="px-3 py-2 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 hover:border-violet-300 inline-flex items-center gap-1.5"><Video size={14} /> Lieu / visio</button>
           {seance.ajoutee && (
             <button type="button" title="Supprimer cette séance" onClick={() => actions.demanderSuppressionSeance(seance)} className="w-9 h-9 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200"><Trash2 size={15} /></button>
@@ -23668,6 +23717,806 @@ const LigneSeanceGroupe = ({ seance, groupe, formateurs, stats, actions, estAujo
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// SIGNATURE PAR L'ENTREPRISE, GROUPES SANS COMPTE, ÉMARGEMENT PAPIER (30/10/2026)
+// Formations courtes / en présentiel : les participants peuvent être des dossiers sans compte, la
+// convention est signée par l'entreprise via un lien (serveur : api/prospects.js, table
+// conventions_entreprise) et la présence se prend sur une feuille papier déposée ensuite.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const ConventionsContext = React.createContext(null);
+const STATUTS_CONVENTION = {
+  envoye: ['En attente de l\'entreprise', 'bg-amber-50 text-amber-700'],
+  signe_entreprise: ['À signer par l\'organisme', 'bg-violet-50 text-violet-700'],
+  termine: ['Signée', 'bg-emerald-50 text-emerald-700'],
+  annule: ['Annulée', 'bg-gray-100 text-gray-500'],
+};
+const LIMITE_ESSENTIEL_CONVENTIONS = 3;
+const erreurTableAbsente = (err) => !!err && (err.code === '42P01' || err.code === 'PGRST205' || /(does not exist|schema cache|could not find)/i.test(err.message || ''));
+const nouvelUuid = () => {
+  const c = window.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  const o = new Uint8Array(16); c.getRandomValues(o);
+  o[6] = (o[6] & 0x0f) | 0x40; o[8] = (o[8] & 0x3f) | 0x80;
+  const h = Array.from(o, x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+};
+const urlDocumentStockage = (chemin) => (chemin ? supabase.storage.from('documents').getPublicUrl(chemin).data.publicUrl : null);
+const appelSignatureApi = async (action, body) => {
+  const { data: { session } } = await supabase.auth.getSession();
+  const r = await fetch(`/api/prospects?action=${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+    body: JSON.stringify({ ...body, origin: window.location.origin }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(d.error || `Erreur ${r.status}`); e.limite = !!d.limite; throw e; }
+  return d;
+};
+// dateHeureFr : déjà définie plus bas dans le fichier (même format).
+
+// ─── Zone de signature (doigt ou souris) ─────────────────────────────────────────────────────────
+const PadSignature = ({ onChange, label = 'Signature', hauteur = 160, id = 'pad-signature' }) => {
+  const ref = React.useRef(null);
+  const dessin = React.useRef(false);
+  const [vide, setVide] = React.useState(true);
+  React.useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const ratio = window.devicePixelRatio || 1;
+    c.width = Math.max(1, c.offsetWidth) * ratio;
+    c.height = hauteur * ratio;
+    const ctx = c.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
+  }, [hauteur]);
+  const point = (e) => { const r = ref.current.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  // Image envoyée : 600 px de large au plus (fond transparent).
+  const exporter = () => {
+    const c = ref.current;
+    const k = Math.min(1, 600 / c.width);
+    const o = document.createElement('canvas');
+    o.width = Math.round(c.width * k); o.height = Math.round(c.height * k);
+    o.getContext('2d').drawImage(c, 0, 0, o.width, o.height);
+    onChange(o.toDataURL('image/png'));
+  };
+  const debut = (e) => { e.preventDefault(); try { ref.current.setPointerCapture(e.pointerId); } catch (_) { /* rien */ } dessin.current = true; const p = point(e); const ctx = ref.current.getContext('2d'); ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y + 0.1); ctx.stroke(); };
+  const bouge = (e) => { if (!dessin.current) return; e.preventDefault(); const p = point(e); const ctx = ref.current.getContext('2d'); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const fin = () => { if (!dessin.current) return; dessin.current = false; setVide(false); exporter(); };
+  const effacer = () => { const c = ref.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); setVide(true); onChange(null); };
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <label htmlFor={id} className="text-sm font-bold text-gray-800">{label}</label>
+        <button type="button" onClick={effacer} disabled={vide} className="text-xs font-bold text-violet-700 underline disabled:opacity-40 disabled:no-underline">Effacer</button>
+      </div>
+      <canvas id={id} ref={ref} role="img" aria-label="Zone de signature : signez avec le doigt ou la souris"
+        onPointerDown={debut} onPointerMove={bouge} onPointerUp={fin} onPointerLeave={fin} onPointerCancel={fin}
+        className="w-full rounded-xl border-2 border-dashed border-gray-300 bg-white touch-none cursor-crosshair" style={{ height: hauteur }} />
+      {vide && <p className="text-xs text-gray-500 mt-1">Signez dans le cadre avec le doigt ou la souris.</p>}
+    </div>
+  );
+};
+
+// ─── Valeurs des balises d'une convention (groupe ou dossier seul) ───────────────────────────────
+// Les balises « client » du modèle reçoivent les informations de l'ENTREPRISE (c'est elle qui signe).
+const valeursConventionEntreprise = ({ participants = [], seances = [], groupe = null, module = null, formateur = null, orgSettings = null, entreprise = {}, financements = [], pourPdfVisuel = false }) => {
+  const noms = participants.map(p => `${p.nom_complet || p.nom || 'Participant'}${p.numero_dossier ? ` (dossier ${p.numero_dossier})` : ''}`);
+  const heures = seances.reduce((s, x) => s + heuresEntre(heureCourte(x.heure_debut), heureCourte(x.heure_fin)), 0);
+  const prixParticipants = participants.reduce((s, p) => s + (Number(p.montant_prestation) || 0), 0);
+  const prix = prixParticipants || ((Number(module?.prix_prestation) || 0) * participants.length);
+  const base = valeursFormationOrganisme({ moduleNom: module?.nom || groupe?.nom || 'Formation', seances: seances.map(x => ({ numero_seance: x.numero || x.numero_seance || 1, date: x.date })), orgSettings });
+  const adrF = parseAddressString(formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '');
+  return {
+    ...base,
+    // Entreprise (balises dédiées + balises « client » des modèles existants)
+    entreprise_nom: entreprise.nom || '', entreprise_adresse: entreprise.adresse || '',
+    entreprise_signataire: entreprise.signataireNom || '', entreprise_signataire_fonction: entreprise.signataireFonction || '',
+    nomcomplet_client: entreprise.nom || '', adresse_client: entreprise.adresse || '', client_email: entreprise.signataireEmail || '',
+    numero_dossier_client: '', client_phone: '', rue_client: '', code_postal_client: '', ville_client: '', region_client: '',
+    initiales_client: computeInitials(entreprise.signataireNom || entreprise.nom || ''),
+    // Groupe / stagiaires
+    groupe_nom: groupe?.nom || '',
+    nombre_stagiaires: String(participants.length),
+    liste_stagiaires: pourPdfVisuel ? noms.join(', ') : noms.join('\n'),
+    duree_heures: heures ? nombreFr(Math.round(heures * 100) / 100) : '',
+    lieu_formation: groupe?.lieu || '', adresse_session: groupe?.lieu || '',
+    modalite_formation: groupe?.lien_visio && !groupe?.lieu ? 'À distance' : 'Présentiel',
+    prix_prestation: prix ? nombreFr(prix) : '',
+    ...valeursBalisesFinancement(financements, prix),
+    // Formateur
+    nom: formateur?.nom || '', nom_formateur: formateur?.nom || '', formateur_nom_complet: formateur?.nom || '', raison_sociale: formateur?.nom || '',
+    email_formateur: formateur?.email || '', tel_formateur: formateur?.telephone || '',
+    formateur_nda: formateur?.formateur_nda || formateur?.nda || '', formateur_siret: formateur?.formateur_siret || formateur?.siret || '',
+    adresse_formateur: formateur?.adresse_formateur || formateur?.adresse_pro || formateur?.adresse || '',
+    rue_formateur: adrF.rue, code_postal_formateur: adrF.codePostal, ville_formateur: adrF.ville, region_formateur: formateur?.region || '',
+    initiales_formateur: computeInitials(formateur?.nom || ''), initiales_organisme: computeInitials(orgSettings?.nom || ''),
+    date_du_jour: new Date().toLocaleDateString('fr-FR'),
+    date_signature: '', date_signature_formateur: '', date_signature_organisme: '',
+  };
+};
+
+// PDF de la convention à partir d'un modèle de la bibliothèque (Word, PDF ou modèle à balises posées).
+const genererPdfConventionDepuisModele = async (templateInfo, valeursPour) => {
+  if (!templateInfo?.url) throw new Error('Ce modèle n\'a pas de fichier.');
+  const resp = await fetch(templateInfo.url);
+  if (!resp.ok) throw new Error('Impossible de récupérer le modèle.');
+  const ab = await resp.arrayBuffer();
+  const tete = new Uint8Array(ab.slice(0, 4));
+  const estPdf = tete[0] === 0x25 && tete[1] === 0x50 && tete[2] === 0x44 && tete[3] === 0x46;
+  const estZip = tete[0] === 0x50 && tete[1] === 0x4B;
+  const versPdf = async (docxBlob) => { try { return await convertDocxBlobToPdf(docxBlob); } catch (_) { return convertDocxBlobToPdfLocal(docxBlob); } };
+  if (templateInfo.metadata?.has_visual_fields === true && templateInfo.id) {
+    let champs = [];
+    const { data, error } = await supabase.from('template_fields').select('*').eq('template_id', templateInfo.id).order('page', { ascending: true });
+    if (!error && Array.isArray(data) && data.length) champs = data;
+    else if (Array.isArray(templateInfo.metadata?.template_fields)) champs = templateInfo.metadata.template_fields;
+    const donnees = champs.filter(f => {
+      const t = f.tag || '';
+      const interactif = f.field_type === 'signature' || f.field_type === 'checkbox' || f.field_type === 'text_input' || t.startsWith('signature_') || t.startsWith('checkbox_') || t.startsWith('texte_');
+      return !interactif && !estDateSignature(f);
+    });
+    const basePdf = estPdf ? new Blob([ab], { type: 'application/pdf' }) : await versPdf(new Blob([ab]));
+    return overlayFieldsOnPdf(basePdf, donnees, valeursPour(true));
+  }
+  if (estPdf) return new Blob([ab], { type: 'application/pdf' });
+  if (estZip) {
+    const [{ default: PizZip }, { default: Docxtemplater }] = await Promise.all([import('pizzip'), import('docxtemplater')]);
+    const zip = new PizZip(ab);
+    if (!zip.file('word/document.xml')) throw new Error('Ce modèle n\'est ni un document Word ni un PDF.');
+    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => '' });
+    doc.render(valeursPour(false));
+    return versPdf(doc.getZip().generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+  }
+  throw new Error('Ce modèle n\'est ni un document Word ni un PDF.');
+};
+
+// ─── Fenêtre « Faire signer par l'entreprise » ─────────────────────────────────────────────────
+const ConventionEntrepriseModal = ({ cible, onClose, onEnvoye }) => {
+  const ctx = React.useContext(ConventionsContext) || {};
+  const { orgSettings, documentTemplates = {}, estPro, nomUtilisateur, modules = [], formateurs = [] } = ctx;
+  const { groupe, client, participants = [], seances = [] } = cible;
+  const module = (modules || []).find(m => String(m.id) === String(groupe?.module_id || client?.module_id));
+  const fId = groupe?.formateur_id || client?.formateur_id;
+  const formateur = (formateurs || []).find(f => String(f.id) === String(fId)) || null;
+  const [f, setF] = React.useState({
+    titre: `Convention de formation — ${groupe?.nom || client?.nom_complet || client?.nom || ''}`.trim(),
+    source: 'modele', modele: '', fichier: null,
+    entrepriseNom: '', entrepriseAdresse: '', signataireNom: '', signataireFonction: '', signataireEmail: '',
+    ordre: 'entreprise_dabord', organismeSignataire: nomUtilisateur || '', signatureOrganisme: null,
+    codeRequis: !!estPro, message: '',
+  });
+  const [financements, setFinancements] = React.useState([]);
+  const [enCours, setEnCours] = React.useState('');
+  const maj = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const modeles = Object.keys(documentTemplates || {}).filter(t => documentTemplates[t]?.url);
+
+  // Pré-remplissage depuis les financements des participants (entreprise ou OPCO avec un contact).
+  React.useEffect(() => {
+    let annule = false;
+    (async () => {
+      const lignes = [];
+      for (const p of participants.slice(0, 40)) lignes.push(...(await chargerFinancementsDossier(p.id)));
+      if (annule) return;
+      setFinancements(lignes);
+      const l = lignes.find(x => x.type === 'entreprise' && (x.contact_email || x.financeur_nom)) || lignes.find(x => x.type === 'opco' && x.contact_email);
+      if (l) setF(p => ({
+        ...p,
+        entrepriseNom: p.entrepriseNom || l.financeur_nom || '',
+        signataireNom: p.signataireNom || l.contact_nom || '',
+        signataireEmail: p.signataireEmail || l.contact_email || '',
+      }));
+    })();
+    return () => { annule = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const valeursPour = (pourPdfVisuel) => valeursConventionEntreprise({
+    participants, seances, groupe, module, formateur, orgSettings, financements, pourPdfVisuel,
+    entreprise: { nom: f.entrepriseNom.trim(), adresse: f.entrepriseAdresse.trim(), signataireNom: f.signataireNom.trim(), signataireFonction: f.signataireFonction.trim(), signataireEmail: f.signataireEmail.trim() },
+  });
+  const fabriquerPdf = async () => {
+    if (f.source === 'fichier') {
+      if (!f.fichier) throw new Error('Choisissez le PDF de la convention.');
+      const tete = new Uint8Array(await f.fichier.slice(0, 4).arrayBuffer());
+      if (!(tete[0] === 0x25 && tete[1] === 0x50 && tete[2] === 0x44 && tete[3] === 0x46)) throw new Error('Ce fichier n\'est pas un PDF.');
+      return f.fichier;
+    }
+    if (!f.modele) throw new Error('Choisissez un modèle.');
+    return genererPdfConventionDepuisModele(documentTemplates[f.modele], valeursPour);
+  };
+  const apercu = async () => {
+    const fenetre = window.open('', '_blank');
+    setEnCours('Préparation de l\'aperçu…');
+    try {
+      const pdf = await fabriquerPdf();
+      const url = URL.createObjectURL(pdf);
+      if (fenetre && !fenetre.closed) fenetre.location.href = url; else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+    } catch (e) {
+      if (fenetre && !fenetre.closed) fenetre.close();
+      toast.error(e.message || String(e));
+    }
+    setEnCours('');
+  };
+  const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.signataireEmail.trim());
+  const pret = f.titre.trim() && f.signataireNom.trim() && emailOk && (f.source === 'fichier' ? !!f.fichier : !!f.modele)
+    && (f.ordre === 'entreprise_dabord' || (f.signatureOrganisme && f.organismeSignataire.trim()));
+  const envoyer = async () => {
+    setEnCours('Préparation du PDF…');
+    let chemin = null;
+    try {
+      const pdf = await fabriquerPdf();
+      if (pdf.size > 15 * 1024 * 1024) throw new Error('PDF trop lourd (15 Mo maximum).');
+      chemin = `convention_entreprise_${nouvelUuid()}.pdf`;
+      setEnCours('Enregistrement du document…');
+      const { error: up } = await supabase.storage.from('documents').upload(chemin, pdf, { contentType: 'application/pdf' });
+      if (up) throw new Error('Le PDF n\'a pas pu être enregistré : ' + up.message);
+      setEnCours('Envoi du lien à l\'entreprise…');
+      const r = await appelSignatureApi('envoyer_signature', {
+        groupeId: groupe?.id || null, clientId: groupe ? null : client?.id,
+        titre: f.titre.trim(), pdfPath: chemin,
+        entrepriseNom: f.entrepriseNom.trim(), entrepriseAdresse: f.entrepriseAdresse.trim(),
+        signataireNom: f.signataireNom.trim(), signataireFonction: f.signataireFonction.trim(), signataireEmail: f.signataireEmail.trim(),
+        ordre: f.ordre, codeRequis: f.codeRequis, message: f.message.trim(),
+        ...(f.ordre === 'organisme_dabord' ? { signatureOrganisme: f.signatureOrganisme, organismeSignataire: f.organismeSignataire.trim() } : {}),
+      });
+      toast.success(r.simulated ? 'Demande enregistrée (envoi d\'email non configuré sur ce serveur).' : `Lien de signature envoyé à ${f.signataireEmail.trim()}`, { duration: 6000 });
+      onEnvoye && onEnvoye();
+      onClose();
+    } catch (e) {
+      if (chemin) { try { await supabase.storage.from('documents').remove([chemin]); } catch (_) { /* rien */ } }
+      toast.error(e.message || String(e), { duration: e.limite ? 10000 : 6000 });
+      setEnCours('');
+    }
+  };
+  const champ = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500';
+  const lib = 'block text-xs font-bold text-gray-600 mb-1';
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-3 sm:p-4" onClick={() => !enCours && onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="conv-titre-fenetre" className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-5 sm:p-6 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="conv-titre-fenetre" className="text-lg font-black text-gray-900">Faire signer par l'entreprise</h2>
+            <p className="text-sm text-gray-500 mt-0.5">L'entreprise reçoit un lien, lit le document et le signe en ligne, sans créer de compte.</p>
+          </div>
+          <button type="button" aria-label="Fermer" onClick={onClose} disabled={!!enCours} className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 shrink-0"><X size={18} /></button>
+        </div>
+        <div className="p-5 sm:p-6 space-y-5">
+          <div><label htmlFor="conv-titre" className={lib}>Titre du document</label><input id="conv-titre" value={f.titre} onChange={e => maj('titre', e.target.value)} className={champ} /></div>
+
+          <fieldset className="space-y-2">
+            <legend className={lib}>Document à signer</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className={`flex items-start gap-2 p-3 rounded-xl border cursor-pointer ${f.source === 'modele' ? 'border-violet-500 bg-violet-50/60' : 'border-gray-200'}`}>
+                <input type="radio" name="conv-source" checked={f.source === 'modele'} onChange={() => maj('source', 'modele')} className="mt-1" />
+                <span className="text-sm"><b>Créer depuis un modèle</b><span className="block text-xs text-gray-500">Rempli avec l'entreprise, les stagiaires, les dates et les heures.</span></span>
+              </label>
+              <label className={`flex items-start gap-2 p-3 rounded-xl border cursor-pointer ${f.source === 'fichier' ? 'border-violet-500 bg-violet-50/60' : 'border-gray-200'}`}>
+                <input type="radio" name="conv-source" checked={f.source === 'fichier'} onChange={() => maj('source', 'fichier')} className="mt-1" />
+                <span className="text-sm"><b>Déposer un PDF</b><span className="block text-xs text-gray-500">Une convention déjà prête.</span></span>
+              </label>
+            </div>
+            {f.source === 'modele' ? (
+              <div>
+                <label htmlFor="conv-modele" className="sr-only">Modèle</label>
+                <select id="conv-modele" value={f.modele} onChange={e => maj('modele', e.target.value)} className={champ}>
+                  <option value="">Choisir un modèle de la bibliothèque…</option>
+                  {modeles.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Balises utiles : {'{entreprise_nom}'}, {'{liste_stagiaires}'}, {'{nombre_stagiaires}'}, {'{duree_heures}'}, {'{date_debut}'}, {'{prix_prestation}'}. Les balises du client reçoivent les informations de l'entreprise.</p>
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="conv-fichier" className="sr-only">Fichier PDF</label>
+                <input id="conv-fichier" type="file" accept="application/pdf,.pdf" onChange={e => maj('fichier', e.target.files?.[0] || null)} className="block w-full text-sm text-gray-700 file:mr-3 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-violet-50 file:text-violet-700 file:font-bold" />
+              </div>
+            )}
+          </fieldset>
+
+          <fieldset className="grid gap-3 sm:grid-cols-2">
+            <legend className={`${lib} sm:col-span-2`}>Entreprise et signataire</legend>
+            <div><label htmlFor="conv-ent" className={lib}>Entreprise</label><input id="conv-ent" value={f.entrepriseNom} onChange={e => maj('entrepriseNom', e.target.value)} className={champ} /></div>
+            <div><label htmlFor="conv-adr" className={lib}>Adresse de l'entreprise</label><input id="conv-adr" value={f.entrepriseAdresse} onChange={e => maj('entrepriseAdresse', e.target.value)} className={champ} /></div>
+            <div><label htmlFor="conv-sn" className={lib}>Nom du signataire *</label><input id="conv-sn" value={f.signataireNom} onChange={e => maj('signataireNom', e.target.value)} className={champ} /></div>
+            <div><label htmlFor="conv-sf" className={lib}>Fonction</label><input id="conv-sf" value={f.signataireFonction} onChange={e => maj('signataireFonction', e.target.value)} placeholder="Ex : Responsable RH" className={champ} /></div>
+            <div className="sm:col-span-2"><label htmlFor="conv-se" className={lib}>Email du signataire *</label><input id="conv-se" type="email" value={f.signataireEmail} onChange={e => maj('signataireEmail', e.target.value)} className={champ} />
+              {f.signataireEmail && !emailOk && <p className="text-xs text-red-600 mt-1">Adresse email incomplète.</p>}</div>
+          </fieldset>
+
+          <fieldset className="space-y-2">
+            <legend className={lib}>Ordre des signatures</legend>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="conv-ordre" checked={f.ordre === 'entreprise_dabord'} onChange={() => maj('ordre', 'entreprise_dabord')} /> L'entreprise d'abord, puis vous</label>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="conv-ordre" checked={f.ordre === 'organisme_dabord'} onChange={() => maj('ordre', 'organisme_dabord')} /> Vous d'abord (vous signez maintenant pour l'organisme)</label>
+            {f.ordre === 'organisme_dabord' && (
+              <div className="rounded-2xl bg-gray-50 p-3 space-y-3">
+                <div><label htmlFor="conv-os" className={lib}>Nom de la personne qui signe pour l'organisme</label><input id="conv-os" value={f.organismeSignataire} onChange={e => maj('organismeSignataire', e.target.value)} className={champ} /></div>
+                <PadSignature id="conv-pad-org" label="Signature de l'organisme" onChange={v => maj('signatureOrganisme', v)} hauteur={140} />
+              </div>
+            )}
+          </fieldset>
+
+          <label className={`flex items-start gap-2 text-sm ${estPro ? '' : 'opacity-70'}`}>
+            <input type="checkbox" disabled={!estPro} checked={!!estPro && f.codeRequis} onChange={e => maj('codeRequis', e.target.checked)} className="mt-0.5" />
+            <span>Demander un code reçu par email avant de signer <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-violet-600 text-white align-middle">PRO</span>
+              {!estPro && <span className="block text-xs text-gray-500">Disponible avec l'offre Pro. L'offre Essentiel permet {LIMITE_ESSENTIEL_CONVENTIONS} signatures par lien par mois.</span>}</span>
+          </label>
+
+          <div><label htmlFor="conv-msg" className={lib}>Message (facultatif)</label><textarea id="conv-msg" rows={2} value={f.message} onChange={e => maj('message', e.target.value)} className={`${champ} resize-y`} /></div>
+        </div>
+        <div className="p-5 sm:p-6 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-gray-500 min-h-[1rem]" aria-live="polite">{enCours}</p>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button type="button" onClick={apercu} disabled={!!enCours || (f.source === 'fichier' ? !f.fichier : !f.modele)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 disabled:opacity-40 inline-flex items-center gap-2"><Eye size={15} /> Aperçu</button>
+            <button type="button" onClick={envoyer} disabled={!pret || !!enCours} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 inline-flex items-center gap-2"><Send size={15} /> Envoyer le lien de signature</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Contresignature par l'organisme ─────────────────────────────────────────────────────────────
+const ContresignatureModal = ({ convention, onClose, onSigne }) => {
+  const ctx = React.useContext(ConventionsContext) || {};
+  const [nom, setNom] = React.useState(ctx.nomUtilisateur || '');
+  const [sig, setSig] = React.useState(null);
+  const [enCours, setEnCours] = React.useState(false);
+  const signer = async () => {
+    setEnCours(true);
+    try {
+      await appelSignatureApi('signer_organisme', { conventionId: convention.id, signature: sig, nom: nom.trim() });
+      toast.success('Document signé : le PDF final a été envoyé à l\'entreprise.', { duration: 6000 });
+      onSigne && onSigne();
+      onClose();
+    } catch (e) { toast.error(e.message || String(e)); setEnCours(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[210] p-3 sm:p-4" onClick={() => !enCours && onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="contresig-titre" className="bg-white rounded-3xl w-full max-w-lg shadow-2xl p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h2 id="contresig-titre" className="text-lg font-black text-gray-900">Signer pour l'organisme</h2>
+        <p className="text-sm text-gray-600">{convention.titre} — signé par {convention.signataire_nom}{convention.entreprise_nom ? ` (${convention.entreprise_nom})` : ''} le {dateHeureFr(convention.signe_entreprise_at)}.</p>
+        <a href={urlDocumentStockage(convention.pdf_signe_path || convention.pdf_path)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-bold text-violet-700 underline"><ExternalLink size={14} /> Relire le document</a>
+        <div><label htmlFor="contresig-nom" className="block text-xs font-bold text-gray-600 mb-1">Votre nom</label><input id="contresig-nom" value={nom} onChange={e => setNom(e.target.value)} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" /></div>
+        <PadSignature id="contresig-pad" label="Votre signature" onChange={setSig} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={enCours} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+          <button type="button" onClick={signer} disabled={!sig || !nom.trim() || enCours} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">{enCours ? 'Signature…' : 'Signer et envoyer le PDF final'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Liste des conventions (onglet du groupe, ou fiche client › Finances) ─────────────────────────
+const BlocConventionsEntreprise = ({ groupe = null, client = null, participants = [], seances = [] }) => {
+  const ctx = React.useContext(ConventionsContext) || {};
+  const { currentOrgId, estPro, groupes = [], clients = [], sessions = [] } = ctx;
+  const groupeDuClient = !groupe && client?.groupe_id ? (groupes || []).find(g => String(g.id) === String(client.groupe_id)) : null;
+  const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
+  const [liste, setListe] = React.useState([]);
+  const [duMois, setDuMois] = React.useState(0);
+  const [fenetre, setFenetre] = React.useState(false);
+  const [contresig, setContresig] = React.useState(null);
+  const [confirm, setConfirm] = React.useState(null);
+  const charger = React.useCallback(async () => {
+    if (!currentOrgId || (!groupe && !client)) return;
+    let req = supabase.from('conventions_entreprise').select('*').eq('organisation_id', currentOrgId);
+    if (groupe) req = req.eq('groupe_id', groupe.id);
+    else if (groupeDuClient) req = req.or(`client_id.eq.${client.id},groupe_id.eq.${groupeDuClient.id}`);
+    else req = req.eq('client_id', client.id);
+    const { data, error } = await req.order('created_at', { ascending: false });
+    if (error) { setEtat(erreurTableAbsente(error) ? 'absent' : 'erreur'); return; }
+    setListe(data || []);
+    setEtat('ok');
+    if (!estPro) {
+      const d = new Date();
+      const debut = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString();
+      const { count } = await supabase.from('conventions_entreprise').select('id', { count: 'exact', head: true }).eq('organisation_id', currentOrgId).gte('created_at', debut);
+      setDuMois(count || 0);
+    }
+  }, [currentOrgId, groupe, client, groupeDuClient, estPro]);
+  React.useEffect(() => { charger(); }, [charger]);
+
+  const action = async (nom, conv, succes) => {
+    try { await appelSignatureApi(nom, { conventionId: conv.id }); toast.success(succes); charger(); }
+    catch (e) { toast.error(e.message || String(e)); }
+  };
+  if (etat === 'absent') {
+    return <p className="text-xs text-gray-500 bg-gray-50 rounded-xl p-3">Signature par l'entreprise : lancez le SQL « signature_entreprise » dans Supabase pour l'activer.</p>;
+  }
+  // Données pour remplir la convention : un groupe (tous ses participants) ou un dossier seul.
+  const cible = groupe
+    ? { groupe, participants, seances }
+    : (() => {
+      const lignes = (sessions || []).filter(s => String(s.client_id) === String(client?.id) && Number(s.numero_seance) >= 1 && s.date);
+      const parNumero = new Map();
+      lignes.forEach(s => { const n = Number(s.numero_seance); const e = parNumero.get(n); if (!e || heuresEntre(heureCourte(s.heure_debut), heureCourte(s.heure_fin)) > heuresEntre(heureCourte(e.heure_debut), heureCourte(e.heure_fin))) parNumero.set(n, { numero: n, date: s.date, heure_debut: s.heure_debut, heure_fin: s.heure_fin }); });
+      const c = (clients || []).find(x => String(x.id) === String(client?.id)) || client;
+      return { client: c, participants: c ? [c] : [], seances: Array.from(parNumero.values()) };
+    })();
+  const limiteAtteinte = !estPro && duMois >= LIMITE_ESSENTIEL_CONVENTIONS;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-bold text-gray-900 flex items-center gap-2"><Briefcase size={17} className="text-violet-600" /> Convention signée par l'entreprise</p>
+          <p className="text-xs text-gray-500 mt-0.5">L'entreprise signe en ligne par un lien, sans compte.{!estPro ? ` Offre Essentiel : ${Math.min(duMois, LIMITE_ESSENTIEL_CONVENTIONS)}/${LIMITE_ESSENTIEL_CONVENTIONS} ce mois-ci.` : ''}</p>
+        </div>
+        <button type="button" onClick={() => setFenetre(true)} disabled={etat !== 'ok' || limiteAtteinte}
+          title={limiteAtteinte ? 'Limite de l\'offre Essentiel atteinte ce mois-ci : passez à l\'offre Pro' : undefined}
+          className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 inline-flex items-center gap-2"><Send size={15} /> Faire signer par l'entreprise</button>
+      </div>
+      {limiteAtteinte && <p className="text-xs text-amber-700 bg-amber-50 rounded-xl p-3">Vous avez utilisé les {LIMITE_ESSENTIEL_CONVENTIONS} signatures par lien de l'offre Essentiel ce mois-ci. L'offre Pro les rend illimitées.</p>}
+      {etat === 'erreur' && <p className="text-sm text-red-600">Les conventions n'ont pas pu être chargées.</p>}
+      {etat === 'ok' && liste.length === 0 && <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">Aucune convention envoyée pour l'instant.</p>}
+      {liste.length > 0 && (
+        <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl bg-white">
+          {liste.map(c => {
+            const [libelle, ton] = STATUTS_CONVENTION[c.statut] || ['—', 'bg-gray-100 text-gray-500'];
+            const duGroupe = !groupe && c.groupe_id;
+            return (
+              <li key={c.id} className="p-4 space-y-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-gray-900 break-words">{c.titre}</p>
+                    <p className="text-xs text-gray-500 break-words">{c.signataire_nom}{c.signataire_fonction ? `, ${c.signataire_fonction}` : ''}{c.entreprise_nom ? ` · ${c.entreprise_nom}` : ''} · {c.signataire_email}{duGroupe && groupeDuClient ? ` · groupe « ${groupeDuClient.nom} »` : ''}</p>
+                  </div>
+                  <span className={`text-xs font-black px-2 py-1 rounded-lg shrink-0 ${ton}`}>{libelle}</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Envoyée le {dateHeureFr(c.created_at)}
+                  {c.ouvert_at ? ` · ouverte le ${dateHeureFr(c.ouvert_at)}` : c.statut === 'envoye' ? ' · pas encore ouverte' : ''}
+                  {c.signe_entreprise_at ? ` · signée par l'entreprise le ${dateHeureFr(c.signe_entreprise_at)}` : ''}
+                  {c.signe_organisme_at ? ` · signée par l'organisme le ${dateHeureFr(c.signe_organisme_at)}` : ''}
+                  {c.nb_relances ? ` · ${c.nb_relances} rappel${c.nb_relances > 1 ? 's' : ''}` : ''}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {c.pdf_signe_path
+                    ? <a href={urlDocumentStockage(c.pdf_signe_path)} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300 inline-flex items-center gap-1.5"><FileCheck size={14} /> PDF signé</a>
+                    : <a href={urlDocumentStockage(c.pdf_path)} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300 inline-flex items-center gap-1.5"><FileText size={14} /> Document</a>}
+                  {c.statut === 'signe_entreprise' && <button type="button" onClick={() => setContresig(c)} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold inline-flex items-center gap-1.5"><PenTool size={14} /> Signer pour l'organisme</button>}
+                  {c.statut === 'envoye' && <button type="button" onClick={() => action('relancer_signature', c, 'Rappel envoyé à l\'entreprise')} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-violet-300 inline-flex items-center gap-1.5"><Mail size={14} /> Relancer</button>}
+                  {(c.statut === 'envoye' || c.statut === 'signe_entreprise') && (
+                    <button type="button" onClick={() => setConfirm(c)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-500 hover:text-red-600 hover:border-red-200">Annuler l'envoi</button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {fenetre && <ConventionEntrepriseModal cible={cible} onClose={() => setFenetre(false)} onEnvoye={charger} />}
+      {contresig && <ContresignatureModal convention={contresig} onClose={() => setContresig(null)} onSigne={charger} />}
+      <ConfirmModal isOpen={!!confirm} title="Annuler l'envoi ?" message="Le lien envoyé à l'entreprise ne fonctionnera plus. Le document et son historique restent dans la liste." confirmLabel="Annuler l'envoi"
+        onCancel={() => setConfirm(null)} onConfirm={async () => { const c = confirm; setConfirm(null); await action('annuler_signature', c, 'Envoi annulé'); }} />
+    </div>
+  );
+};
+
+// ─── Page publique /signer?t=… : l'entreprise lit et signe, sans compte ─────────────────────────
+const SignatureEntreprisePage = () => {
+  const token = React.useMemo(() => new URLSearchParams(window.location.search).get('t') || '', []);
+  const [etat, setEtat] = React.useState('chargement'); // chargement | a_signer | signe | termine | annule | expire | erreur | fini
+  const [infos, setInfos] = React.useState({});
+  const [erreur, setErreur] = React.useState('');
+  const [lu, setLu] = React.useState(false);
+  const [accepte, setAccepte] = React.useState(false);
+  const [siret, setSiret] = React.useState('');
+  const [adresse, setAdresse] = React.useState('');
+  const [signature, setSignature] = React.useState(null);
+  const [code, setCode] = React.useState('');
+  const [codeEnvoye, setCodeEnvoye] = React.useState('');
+  const [enCours, setEnCours] = React.useState(false);
+  const [resultat, setResultat] = React.useState(null);
+  React.useEffect(() => {
+    if (!token) { setEtat('erreur'); setErreur('Ce lien est incomplet.'); return; }
+    fetch(`/api/prospects?action=lire_signature&t=${encodeURIComponent(token)}`)
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { setEtat('erreur'); setErreur(d.error || 'Ce lien est invalide.'); return; }
+        setInfos(d); setAdresse(d.entrepriseAdresse || ''); setEtat(d.etat);
+      })
+      .catch(() => { setEtat('erreur'); setErreur('Impossible de charger le document pour le moment.'); });
+  }, [token]);
+  const post = async (action, body) => {
+    const r = await fetch(`/api/prospects?action=${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token, ...body }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Erreur, réessayez dans un instant.');
+    return d;
+  };
+  const demanderCode = async () => {
+    setEnCours(true); setErreur('');
+    try { const d = await post('code_signature', {}); setCodeEnvoye(d.email || 'votre adresse'); }
+    catch (e) { setErreur(e.message); }
+    setEnCours(false);
+  };
+  const signer = async () => {
+    setEnCours(true); setErreur('');
+    try {
+      const d = await post('signer_entreprise', { signature, accepte, code, champs: { siret, adresse } });
+      setResultat(d); setEtat('fini');
+    } catch (e) { setErreur(e.message); }
+    setEnCours(false);
+  };
+  const entete = (
+    <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3">
+      <span aria-hidden="true" className="w-9 h-9 rounded-xl bg-violet-600 text-white font-black text-sm flex items-center justify-center shrink-0">{computeInitials(infos.organisme || 'S') || 'S'}</span>
+      <span className="min-w-0"><b className="block text-sm text-gray-900 truncate">{infos.organisme || 'SkorUp'}</b><span className="block text-xs text-gray-500">Signature en ligne</span></span>
+    </header>
+  );
+  const cadre = (contenu) => (
+    <div className="min-h-dvh bg-gray-50">{entete}<main className="max-w-xl mx-auto p-4 space-y-4">{contenu}</main></div>
+  );
+  if (etat === 'chargement') return cadre(<p className="text-center text-sm text-gray-500 py-16">Chargement du document…</p>);
+  const message = (titre, texte, lien) => cadre(
+    <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center space-y-3 mt-6">
+      <h1 className="text-xl font-black text-gray-900">{titre}</h1>
+      <p className="text-sm text-gray-600 leading-relaxed">{texte}</p>
+      {lien && <a href={lien} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-violet-600 text-white text-sm font-bold"><Download size={16} /> Télécharger le document signé</a>}
+    </div>
+  );
+  if (etat === 'erreur') return message('Lien invalide', erreur || 'Ce lien ne fonctionne pas.');
+  if (etat === 'annule') return message('Demande annulée', `${infos.organisme || 'L\'organisme'} a annulé cette demande de signature. Contactez-le si besoin.`);
+  if (etat === 'expire') return message('Lien expiré', `Ce lien n'est plus valable. Demandez à ${infos.organisme || 'l\'organisme de formation'} de vous le renvoyer.`);
+  if (etat === 'signe') return message('Document déjà signé', `Merci, votre signature est enregistrée. ${infos.organisme || 'L\'organisme'} va signer à son tour ; vous recevrez le PDF final par email.`);
+  if (etat === 'termine') return message('Document signé', 'Ce document est signé par tout le monde.', infos.pdfUrl);
+  if (etat === 'fini') return resultat?.etat === 'termine'
+    ? message('Merci, c\'est signé', 'Le document est maintenant signé par tout le monde. Le PDF final vous a été envoyé par email.', resultat.pdfUrl)
+    : message('Merci, c\'est signé', `Votre signature est enregistrée. ${infos.organisme || 'L\'organisme'} va signer à son tour ; vous recevrez le PDF final par email.`);
+  const codeOk = !infos.codeRequis || /^\d{6}$/.test(code.trim());
+  const pret = lu && accepte && signature && codeOk && !enCours;
+  return cadre(
+    <>
+      <div className="space-y-1.5 pt-2">
+        <h1 className="text-2xl font-black text-gray-900 leading-tight break-words">{infos.titre}</h1>
+        <p className="text-sm text-gray-600">Signataire : <b>{infos.signataireNom}</b>{infos.signataireFonction ? `, ${infos.signataireFonction}` : ''}{infos.entrepriseNom ? `, ${infos.entrepriseNom}` : ''}</p>
+        {infos.organismeASigne && <p className="text-xs text-emerald-700">Déjà signé par {infos.organisme}.</p>}
+      </div>
+      {infos.message && <p className="text-sm text-gray-700 bg-white border border-gray-100 rounded-2xl p-4 whitespace-pre-line break-words">{infos.message}</p>}
+      <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+        <p className="font-bold text-gray-900">1. Lire le document</p>
+        <a href={infos.pdfUrl} target="_blank" rel="noopener noreferrer" onClick={() => setLu(true)} className="flex items-center justify-center gap-2 min-h-[48px] rounded-xl border border-violet-200 bg-violet-50 text-violet-800 text-sm font-bold"><FileText size={17} /> Ouvrir le document (PDF)</a>
+        {!lu && <p className="text-xs text-gray-500">Ouvrez le document avant de signer.</p>}
+      </section>
+      <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+        <p className="font-bold text-gray-900">2. Compléter (facultatif)</p>
+        <div><label htmlFor="sig-siret" className="block text-xs font-bold text-gray-600 mb-1">N° SIRET de l'entreprise</label><input id="sig-siret" inputMode="numeric" value={siret} onChange={e => setSiret(e.target.value)} className="w-full min-h-[44px] px-3 rounded-xl border border-gray-200 text-base" /></div>
+        <div><label htmlFor="sig-adr" className="block text-xs font-bold text-gray-600 mb-1">Adresse de l'entreprise</label><input id="sig-adr" value={adresse} onChange={e => setAdresse(e.target.value)} className="w-full min-h-[44px] px-3 rounded-xl border border-gray-200 text-base" /></div>
+      </section>
+      <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
+        <p className="font-bold text-gray-900">3. Signer</p>
+        <label className="flex items-start gap-3 text-sm text-gray-800"><input type="checkbox" checked={accepte} onChange={e => setAccepte(e.target.checked)} className="w-5 h-5 mt-0.5 shrink-0" /> J'ai lu le document et je l'accepte (« lu et approuvé »).</label>
+        <PadSignature id="sig-pad" label="Votre signature" onChange={setSignature} hauteur={170} />
+        {infos.codeRequis && (
+          <div className="rounded-xl bg-violet-50/60 border border-violet-100 p-3 space-y-2">
+            <p className="text-sm text-gray-800">Pour confirmer votre identité, un code à 6 chiffres est envoyé à {infos.email}.</p>
+            <button type="button" onClick={demanderCode} disabled={enCours} className="min-h-[44px] px-4 rounded-xl border border-violet-200 bg-white text-sm font-bold text-violet-800 disabled:opacity-50">{codeEnvoye ? 'Renvoyer le code' : 'Recevoir le code par email'}</button>
+            {codeEnvoye && <p className="text-xs text-emerald-700">Code envoyé à {codeEnvoye} (valable 15 minutes).</p>}
+            <div><label htmlFor="sig-code" className="block text-xs font-bold text-gray-600 mb-1">Code reçu</label><input id="sig-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} className="w-full min-h-[44px] px-3 rounded-xl border border-gray-200 text-base tracking-[0.3em]" /></div>
+          </div>
+        )}
+        {erreur && <p role="alert" className="text-sm text-red-600">{erreur}</p>}
+        <button type="button" onClick={signer} disabled={!pret} className="w-full min-h-[52px] rounded-xl bg-violet-600 text-white text-base font-black disabled:opacity-40">{enCours ? 'Signature en cours…' : 'Signer le document'}</button>
+        <p className="text-xs text-gray-500 text-center">Aucun compte n'est créé. La date, l'heure et l'adresse IP de la signature sont conservées avec le document.</p>
+      </section>
+    </>
+  );
+};
+
+// ─── Feuille d'émargement papier ─────────────────────────────────────────────────────────────────
+const coupeDejeuner = (debut, fin) => { const a = minutesHeure(heureCourte(debut)), b = minutesHeure(heureCourte(fin)); return a !== null && b !== null && a < 12 * 60 + 30 && b > 13 * 60 + 30; };
+const genererFeuillePapierPdf = async ({ groupe, seance, participants, orgNom, formateurNom }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const gras = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const sur = (t, f = font) => Array.from(String(t ?? '').replace(/[  \t\r\n]/g, ' ')).map(ch => { try { f.encodeText(ch); return ch; } catch (_) { return '?'; } }).join('');
+  const coupe = (t, f, taille, max) => { let s = sur(t, f); while (s && f.widthOfTextAtSize(s, taille) > max) s = s.slice(0, -1); return s; };
+  const W = 595.28, H = 841.89, M = 40;
+  const deux = coupeDejeuner(seance.heure_debut, seance.heure_fin);
+  const colonnes = deux ? [['N°', 28], ['Nom du stagiaire', 211], ['Signature matin', 118], ['Signature après-midi', 118]] : [['N°', 28], ['Nom du stagiaire', 251], ['Signature', 236]];
+  const dateLongue = seance.date ? new Date(`${seance.date}T00:00:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '____ / ____ / ________';
+  let page, y;
+  const nouvellePage = (suite) => {
+    page = pdf.addPage([W, H]); y = H - M;
+    page.drawText(coupe(orgNom || '', gras, 10, W - 2 * M), { x: M, y, size: 10, font: gras, color: rgb(0.43, 0.16, 0.85) }); y -= 22;
+    page.drawText(sur(`Feuille d'émargement${suite ? ' (suite)' : ''}`, gras), { x: M, y, size: 18, font: gras }); y -= 20;
+    [`Formation : ${groupe?.nom || ''}${seance.titre && !/^Séance \d+$/.test(seance.titre) ? ` · ${seance.titre}` : ''} (séance ${seance.numero})`,
+      `Date : ${dateLongue} · Horaires : ${heureCourte(seance.heure_debut) || '__:__'} – ${heureCourte(seance.heure_fin) || '__:__'}`,
+      `Lieu : ${seance.lieu || groupe?.lieu || '________________'} · Formateur : ${formateurNom || '________________'}`]
+      .forEach(l => { page.drawText(coupe(l, font, 10, W - 2 * M), { x: M, y, size: 10, font }); y -= 14; });
+    y -= 8;
+    let x = M;
+    colonnes.forEach(([t, w]) => { page.drawRectangle({ x, y: y - 20, width: w, height: 20, color: rgb(0.95, 0.93, 0.99), borderColor: rgb(0.6, 0.6, 0.65), borderWidth: 0.7 }); page.drawText(sur(t, gras), { x: x + 5, y: y - 14, size: 9, font: gras }); x += w; });
+    y -= 20;
+  };
+  nouvellePage(false);
+  const lignes = participants.length ? participants : [];
+  const total = Math.max(lignes.length, 1) + 2; // deux lignes vides pour un participant de dernière minute
+  for (let i = 0; i < total; i++) {
+    if (y - 34 < M + 120) nouvellePage(true);
+    let x = M;
+    const p = lignes[i];
+    colonnes.forEach(([, w], j) => {
+      page.drawRectangle({ x, y: y - 34, width: w, height: 34, borderColor: rgb(0.6, 0.6, 0.65), borderWidth: 0.7 });
+      if (j === 0) page.drawText(String(i + 1), { x: x + 8, y: y - 21, size: 10, font });
+      if (j === 1 && p) page.drawText(coupe(p.nom_complet || p.nom || '', font, 10, w - 10), { x: x + 5, y: y - 21, size: 10, font });
+      x += w;
+    });
+    y -= 34;
+  }
+  y -= 24;
+  page.drawText(sur('Signature du formateur', gras), { x: M, y, size: 10, font: gras });
+  page.drawText(sur('Nombre de présents : ______', font), { x: W / 2 + 20, y, size: 10, font });
+  page.drawRectangle({ x: M, y: y - 70, width: 230, height: 60, borderColor: rgb(0.6, 0.6, 0.65), borderWidth: 0.7 });
+  page.drawText(sur('Après la séance : prenez la feuille en photo et déposez-la dans SkorUp (Feuille papier).', font), { x: M, y: M - 10, size: 8, font, color: rgb(0.4, 0.4, 0.45) });
+  return new Blob([await pdf.save()], { type: 'application/pdf' });
+};
+
+const EmargementPapierModal = ({ groupe, seance, participants, sessions, formateurNom, orgNom, nomUtilisateur, onClose, onEnregistre }) => {
+  const lignesDe = (p) => (sessions || []).filter(s => String(s.client_id) === String(p.id) && Number(s.numero_seance) === Number(seance.numero)
+    && s.type_activite === 'signature' && lireMeta(s.metadata).requiresClientSignature !== false);
+  const signeEnLigne = (p) => { const l = lignesDe(p); return l.length > 0 && l.every(s => s.statut_client === 'Signé' && !lireMeta(s.metadata).emargement_papier); };
+  const initiales = React.useMemo(() => {
+    const pr = (seance.presences_papier && typeof seance.presences_papier === 'object') ? seance.presences_papier : {};
+    return Object.fromEntries(participants.map(p => [p.id, pr[p.id] ? { presence: pr[p.id].presence || 'present', heures: pr[p.id].heures ?? '' } : { presence: 'present', heures: '' }]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seance.id]);
+  const [presences, setPresences] = React.useState(initiales);
+  const [feuilleUrl, setFeuilleUrl] = React.useState(seance.feuille_papier_url || '');
+  const [enCours, setEnCours] = React.useState('');
+  const dureeSeance = heuresEntre(heureCourte(seance.heure_debut), heureCourte(seance.heure_fin));
+  const majP = (id, k, v) => setPresences(p => ({ ...p, [id]: { ...p[id], [k]: v } }));
+
+  const telecharger = async () => {
+    setEnCours('Préparation de la feuille…');
+    try {
+      const blob = await genererFeuillePapierPdf({ groupe, seance, participants, orgNom, formateurNom });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Feuille_emargement_${(groupe?.nom || 'groupe').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '_')}_seance_${seance.numero}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error('La feuille n\'a pas pu être préparée : ' + (e.message || e)); }
+    setEnCours('');
+  };
+  const deposer = async (fichier) => {
+    if (!fichier) return;
+    if (fichier.size > 15 * 1024 * 1024) { toast.error('Fichier trop lourd (15 Mo maximum).'); return; }
+    const ext = (/\.(pdf|jpe?g|png|heic|webp)$/i.exec(fichier.name || '') || [null, fichier.type === 'application/pdf' ? 'pdf' : 'jpg'])[1].toLowerCase();
+    setEnCours('Envoi de la feuille…');
+    const chemin = `feuille_emargement_${nouvelUuid()}.${ext}`;
+    const { error } = await supabase.storage.from('documents').upload(chemin, fichier, { contentType: fichier.type || undefined });
+    if (error) toast.error('La feuille n\'a pas pu être envoyée : ' + error.message);
+    else setFeuilleUrl(urlDocumentStockage(chemin));
+    setEnCours('');
+  };
+  const valider = async () => {
+    setEnCours('Enregistrement…');
+    const maintenant = new Date().toISOString();
+    const pr = {};
+    participants.forEach(p => {
+      const v = presences[p.id] || { presence: 'present' };
+      pr[p.id] = v.presence === 'partiel' ? { presence: 'partiel', heures: Math.max(0, Number(String(v.heures).replace(',', '.')) || 0) } : { presence: v.presence };
+    });
+    const { error } = await supabase.from('groupe_seances').update({ feuille_papier_url: feuilleUrl, feuille_papier_le: maintenant, feuille_papier_par: nomUtilisateur || null, presences_papier: pr }).eq('id', seance.id);
+    if (error) {
+      toast.error(erreurTableAbsente(error) || /feuille_papier|presences_papier/.test(error.message || '') ? 'Lancez d\'abord le SQL « signature_entreprise » dans Supabase.' : 'Enregistrement impossible : ' + error.message, { duration: 8000 });
+      setEnCours(''); return;
+    }
+    // Report dans le dossier de chaque participant (les émargements déjà signés en ligne ne bougent pas).
+    let erreurs = 0;
+    for (const p of participants) {
+      if (signeEnLigne(p)) continue;
+      const v = pr[p.id];
+      for (const s of lignesDe(p)) {
+        const meta = lireMeta(s.metadata);
+        const papier = { feuille_url: feuilleUrl, presence: v.presence, ...(v.presence === 'partiel' ? { heures: v.heures } : {}), valide_le: maintenant, valide_par: nomUtilisateur || null };
+        const majS = { metadata: { ...meta, emargement_papier: papier } };
+        if (v.presence !== 'absent') {
+          majS.statut_client = 'Signé'; majS.date_signature_client = s.date_signature_client || maintenant;
+          if (meta.requiresTrainerSignature === true) { majS.statut_formateur = 'Signé'; majS.date_signature_formateur = s.date_signature_formateur || maintenant; }
+          majS.statut = 'Signé';
+        } else if (meta.emargement_papier && !s.signature_client && s.statut_client === 'Signé') {
+          // Présent par erreur sur une feuille précédente : redevient « à venir ».
+          majS.statut_client = 'À venir'; majS.date_signature_client = null; majS.statut = 'À venir';
+          if (!s.signature_formateur) { majS.statut_formateur = 'À venir'; majS.date_signature_formateur = null; }
+        }
+        const { error: e2 } = await supabase.from('sessions').update(majS).eq('id', s.id);
+        if (e2) erreurs++;
+      }
+    }
+    setEnCours('');
+    if (erreurs) toast.error(`${erreurs} dossier${erreurs > 1 ? 's n\'ont' : ' n\'a'} pas pu être mis à jour : réessayez.`, { duration: 8000 });
+    else toast.success('Feuille d\'émargement enregistrée');
+    onEnregistre && onEnregistre();
+    if (!erreurs) onClose();
+  };
+  const nbPresents = participants.filter(p => signeEnLigne(p) || (presences[p.id]?.presence || 'present') !== 'absent').length;
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-3 sm:p-4" onClick={() => !enCours && onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="papier-titre" className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-5 sm:p-6 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="papier-titre" className="text-lg font-black text-gray-900">Feuille d'émargement papier</h2>
+            <p className="text-sm text-gray-500 mt-0.5 break-words">{groupe?.nom} · séance {seance.numero}{seance.date ? ` · ${dateCourte(seance.date)}` : ''}{seance.heure_debut ? ` · ${heureCourte(seance.heure_debut)}–${heureCourte(seance.heure_fin)}` : ''}</p>
+          </div>
+          <button type="button" aria-label="Fermer" onClick={onClose} disabled={!!enCours} className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 shrink-0"><X size={18} /></button>
+        </div>
+        <div className="p-5 sm:p-6 space-y-5">
+          <section className="space-y-2">
+            <p className="text-sm font-black text-gray-900">1. Avant la séance</p>
+            <button type="button" onClick={telecharger} disabled={!!enCours} className="px-4 py-2.5 rounded-xl bg-violet-50 text-violet-800 text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50"><Download size={16} /> Télécharger la feuille à imprimer</button>
+            <p className="text-xs text-gray-500">Noms des participants, date, horaires et formateur déjà remplis.</p>
+          </section>
+          <section className="space-y-2">
+            <p className="text-sm font-black text-gray-900">2. Après la séance : déposer la feuille signée</p>
+            <label className="flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-gray-200 cursor-pointer hover:border-violet-300">
+              <Upload size={18} className="text-violet-600 shrink-0" />
+              <span className="text-sm text-gray-700">{feuilleUrl ? 'Remplacer la photo ou le scan' : 'Photo (téléphone) ou scan PDF de la feuille signée'}</span>
+              <input type="file" accept="image/*,application/pdf" className="sr-only" onChange={e => deposer(e.target.files?.[0])} />
+            </label>
+            {feuilleUrl && <a href={feuilleUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-bold text-emerald-700"><Check size={15} /> Feuille déposée : la voir</a>}
+          </section>
+          <section className="space-y-2">
+            <p className="text-sm font-black text-gray-900">3. Qui était présent ?</p>
+            <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl">
+              {participants.map(p => {
+                const v = presences[p.id] || { presence: 'present' };
+                const enLigne = signeEnLigne(p);
+                return (
+                  <li key={p.id} className="p-3 flex flex-wrap items-center gap-2 justify-between">
+                    <span className="text-sm font-bold text-gray-900 min-w-0 break-words">{p.nom_complet || p.nom}</span>
+                    {enLigne ? <span className="text-xs font-black px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700">Signé en ligne</span> : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="sr-only" htmlFor={`pres-${p.id}`}>Présence de {p.nom_complet || p.nom}</label>
+                        <select id={`pres-${p.id}`} value={v.presence} onChange={e => majP(p.id, 'presence', e.target.value)} className="px-2 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+                          <option value="present">Présent</option>
+                          <option value="absent">Absent</option>
+                          <option value="partiel">Présent en partie</option>
+                        </select>
+                        {v.presence === 'partiel' && (
+                          <span className="inline-flex items-center gap-1 text-sm"><label htmlFor={`h-${p.id}`} className="sr-only">Heures de présence</label>
+                            <input id={`h-${p.id}`} inputMode="decimal" value={v.heures} onChange={e => majP(p.id, 'heures', e.target.value)} placeholder={dureeSeance ? String(dureeSeance / 2).replace('.', ',') : '2'} className="w-16 px-2 py-2 rounded-lg border border-gray-200 text-sm" /> h</span>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-xs text-gray-500">{nbPresents} présent{nbPresents > 1 ? 's' : ''} sur {participants.length}. Les absences et les heures partielles sont reprises dans le BPF.</p>
+          </section>
+        </div>
+        <div className="p-5 sm:p-6 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-gray-500" aria-live="polite">{enCours || (!feuilleUrl ? 'Déposez la feuille signée pour valider.' : '')}</p>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} disabled={!!enCours} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Fermer</button>
+            <button type="button" onClick={valider} disabled={!feuilleUrl || !!enCours || participants.length === 0} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">Valider la séance</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Choix à l'ajout de participants : avec un espace SkorUp, ou sans compte.
+const ChoixAccesParticipants = ({ sansCompte, setSansCompte, nom = 'acces-participants' }) => (
+  <fieldset>
+    <legend className={libelleGroupe}>Comment les participants suivent-ils la formation ?</legend>
+    <div className="grid gap-2 sm:grid-cols-2">
+      <label className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer ${!sansCompte ? 'border-violet-500 bg-violet-50/60' : 'border-gray-200'}`}>
+        <input type="radio" name={nom} checked={!sansCompte} onChange={() => setSansCompte(false)} className="mt-1" />
+        <span className="text-sm"><b className="text-gray-900">Avec un espace SkorUp</b><span className="block text-xs text-gray-500 mt-0.5">Chacun reçoit un e-mail, signe ses documents et ses émargements en ligne.</span></span>
+      </label>
+      <label className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer ${sansCompte ? 'border-violet-500 bg-violet-50/60' : 'border-gray-200'}`}>
+        <input type="radio" name={nom} checked={sansCompte} onChange={() => setSansCompte(true)} className="mt-1" />
+        <span className="text-sm"><b className="text-gray-900">Sans compte (présentiel, formation courte)</b><span className="block text-xs text-gray-500 mt-0.5">Aucun e-mail aux participants, émargement sur papier. L'e-mail devient facultatif.</span></span>
+      </label>
+    </div>
+  </fieldset>
+);
+
 // ─── Fiche d'un groupe ────────────────────────────────────────────────────────────────────────────
 const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, formateurs, modules, orgSettings, actions, onRetour, ouvrirFicheClient }) => {
   const [onglet, setOnglet] = React.useState('planning');
@@ -23680,6 +24529,8 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
   const [rapport, setRapport] = React.useState(null);
   const [enCours, setEnCours] = React.useState(false);
   const [confirm, setConfirm] = React.useState(null);
+  const [papier, setPapier] = React.useState(null);
+  const ctxConv = React.useContext(ConventionsContext) || {};
 
   const participants = participantsDuGroupe(clients, groupe.id).sort((a, b) => (a.nom_complet || a.nom || '').localeCompare(b.nom_complet || b.nom || '', 'fr'));
   const seances = seancesDuGroupe(groupeSeances, groupe.id);
@@ -23692,7 +24543,9 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
   const totalSignes = passees.reduce((n, s) => n + statsParSeance[s.id].signes, 0);
   const enAttente = totalAttendus - totalSignes;
 
-  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: groupe.module_id, groupeId: groupe.id }), [texte, choisis, clients, groupes, groupe.module_id, groupe.id]);
+  // 30/10/2026 : un groupe dont tous les participants sont sans compte propose « sans compte » par défaut.
+  const [sansCompteAjout, setSansCompteAjout] = React.useState(() => participantsDuGroupe(clients, groupe.id).length > 0 && participantsDuGroupe(clients, groupe.id).every(c => c.acces_differe));
+  const analyse = React.useMemo(() => analyserParticipantsGroupe({ texte, choisis, clients, groupes, moduleId: groupe.module_id, groupeId: groupe.id, sansCompte: sansCompteAjout }), [texte, choisis, clients, groupes, groupe.module_id, groupe.id, sansCompteAjout]);
   const valides = analyse.filter(a => a.type === 'nouveau' || a.type === 'existant');
   const nbNouveaux = analyse.filter(a => a.type === 'nouveau').length;
   const limite = getClientLimitForOrg(orgSettings);
@@ -23702,7 +24555,7 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
   const lancerAjout = async () => {
     setEnCours(true); setRapport(null);
     try {
-      const r = await actions.ajouterParticipants(groupe, valides, setProgression);
+      const r = await actions.ajouterParticipants(groupe, valides, setProgression, sansCompteAjout);
       setRapport({ ...r, titre: 'Participants ajoutés au groupe.' });
       setTexte(''); setChoisis([]);
     } catch (e) {
@@ -23764,7 +24617,7 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
       </div>
 
       <div className="flex gap-6 border-b border-gray-200 overflow-x-auto">
-        {[['planning', 'Planning'], ['participants', `Participants (${participants.length})`]].map(([k, l]) => (
+        {[['planning', 'Planning'], ['participants', `Participants (${participants.length})`], ['convention', 'Convention entreprise']].map(([k, l]) => (
           <button key={k} onClick={() => setOnglet(k)} className={`pb-3 px-1 font-bold text-sm whitespace-nowrap border-b-2 transition-colors ${onglet === k ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>{l}</button>
         ))}
       </div>
@@ -23774,7 +24627,7 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm divide-y divide-gray-100 overflow-hidden">
             {seances.length === 0 && <p className="p-6 text-sm text-gray-500">Aucune séance pour l'instant.</p>}
             {seances.map(s => (
-              <LigneSeanceGroupe key={s.id} seance={s} groupe={groupe} formateurs={formateurs} stats={statsParSeance[s.id]} actions={actionsFiche}
+              <LigneSeanceGroupe key={s.id} seance={s} groupe={groupe} formateurs={formateurs} stats={statsParSeance[s.id]} actions={actionsFiche} onPapier={participants.length ? () => setPapier(s) : null}
                 estAujourdhui={s.date === today} estPassee={!!s.date && s.date < today} />
             ))}
           </div>
@@ -23809,7 +24662,8 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
           {ajoutParticipants && (
             <div className="bg-white rounded-3xl border border-violet-100 shadow-sm p-5 md:p-6 space-y-4">
               <p className="font-black text-gray-900">Ajouter des participants</p>
-              <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} groupeId={groupe.id} />
+              <ChoixAccesParticipants sansCompte={sansCompteAjout} setSansCompte={setSansCompteAjout} nom="acces-ajout" />
+              <SaisieParticipantsGroupe texte={texte} setTexte={setTexte} choisis={choisis} setChoisis={setChoisis} clients={clients} analyse={analyse} groupeId={groupe.id} sansCompte={sansCompteAjout} />
               {depasse && <p className="text-sm text-red-600">Votre offre ne permet pas d'ajouter {nbNouveaux} nouveaux dossiers (il en reste {Math.max(0, restant)}).</p>}
               <div className="flex flex-wrap gap-2 justify-end">
                 <button onClick={() => { setAjoutParticipants(false); setTexte(''); setChoisis([]); }} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
@@ -23837,7 +24691,7 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
                         <span className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-xs font-black shrink-0">{(p.nom_complet || p.nom || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()}</span>
                         <span className="min-w-0">
                           <span className="block font-bold text-sm text-gray-900 group-hover:text-violet-700 truncate">{p.nom_complet || p.nom}</span>
-                          <span className="block text-xs text-gray-500 truncate">{p.email_contact || p.email}{p.numero_dossier ? ` · Dossier ${p.numero_dossier}` : ''}</span>
+                          <span className="block text-xs text-gray-500 truncate">{p.email_contact || p.email || 'Sans e-mail'}{p.numero_dossier ? ` · Dossier ${p.numero_dossier}` : ''}{p.acces_differe ? <span className="ml-1.5 text-[10px] font-black px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">Sans compte</span> : null}</span>
                         </span>
                       </button>
                       <div className="flex items-center gap-3">
@@ -23859,6 +24713,19 @@ const GroupeFiche = ({ groupe, groupes, groupeSeances, clients, sessions, format
             </div>
           )}
         </div>
+      )}
+
+      {onglet === 'convention' && (
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 md:p-6">
+          <BlocConventionsEntreprise groupe={groupe} participants={participants} seances={seances} />
+        </div>
+      )}
+
+      {papier && (
+        <EmargementPapierModal groupe={groupe} seance={seancesDuGroupe(groupeSeances, groupe.id).find(x => x.id === papier.id) || papier} participants={participants} sessions={sessions}
+          formateurNom={(formateurs || []).find(f => String(f.id) === String(papier.formateur_id || groupe.formateur_id))?.nom || ''}
+          orgNom={orgSettings?.nom || ''} nomUtilisateur={ctxConv.nomUtilisateur} onClose={() => setPapier(null)}
+          onEnregistre={() => actions.rafraichir && actions.rafraichir()} />
       )}
 
       {edition && (
@@ -24817,6 +25684,7 @@ export default function App() {
   const isFirstTabSync = React.useRef(true);
   React.useEffect(() => {
     if (!userRole) return;
+    if (isSignatureEntreprise || isProspectQuestionnaire) return; // 30/10/2026 : page publique ouverte par une personne connectée
     const path = TAB_TO_PATH[activeTab];
     if (!path) return; // onglet inconnu de la table (ex: valeur interne à un sous-composant) → ignoré
     if (isFirstTabSync.current) {
@@ -24888,6 +25756,8 @@ export default function App() {
   const [isSignup, setIsSignup] = useState(() => window.location.pathname === '/signup');
   // Questionnaire prospect (sans compte SkorUp) : /questionnaire?t=<token> — voir ProspectQuestionnaireView.
   const [isProspectQuestionnaire] = useState(() => window.location.pathname === '/questionnaire');
+  // 30/10/2026 : signature d'une convention par une entreprise (sans compte) : /signer?t=<token>.
+  const [isSignatureEntreprise] = useState(() => window.location.pathname === '/signer');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [orgSettings, setOrgSettings] = useState(null);
@@ -25300,7 +26170,32 @@ export default function App() {
   };
 
   // Rattache une liste de participants (nouveaux ou existants) à un groupe, puis reporte le planning.
-  const integrerParticipants = async (groupe, seancesGroupe, participants, onProgress, rapport) => {
+  // 30/10/2026 : participant sans compte → dossier seul (acces_differe), aucun e-mail, e-mail facultatif.
+  const creerParticipantSansCompte = async ({ nom, email, formateurId, groupeId, numeroDossier }) => {
+    const id = nouvelUuid();
+    const formateurIntId = formateurId ? Number(formateurId) : null;
+    const formateurRecord = formateurIntId ? formateurs.find(f => Number(f.id) === formateurIntId) : null;
+    const { error: dbError } = await supabase.from('clients').insert([{
+      id, nom_complet: nom, email_contact: email || null,
+      formateur_id: formateurIntId, formateur_auth_uid: formateurRecord?.auth_uid || null,
+      organisation_id: currentOrgId, groupe_id: groupeId, acces_differe: true,
+      ...(numeroDossier ? { numero_dossier: numeroDossier } : {}),
+    }]);
+    if (dbError) {
+      if (!email && /email_contact|not-null|null value/i.test(dbError.message || '')) throw new Error('ajoutez son e-mail, ou lancez le SQL « signature_entreprise » pour rendre l\'e-mail facultatif');
+      throw new Error(dbError.message);
+    }
+    const defaultClientDocs = Object.entries(documentTemplates || {})
+      .filter(([, tpl]) => (tpl.destination || 'client') === 'client')
+      .map(([titre, tpl], idx) => ({ client_id: id, template_titre: titre, template_url: tpl.url || null, destination: 'client', ordre: idx, organisation_id: currentOrgId }));
+    if (defaultClientDocs.length > 0) {
+      const { error: docsError } = await supabase.from('client_documents').insert(defaultClientDocs);
+      if (docsError) console.error('[groupes] init client_documents :', docsError);
+    }
+    return id;
+  };
+
+  const integrerParticipants = async (groupe, seancesGroupe, participants, onProgress, rapport, sansCompte = false) => {
     const ids = [];
     let i = 0;
     for (const p of participants) {
@@ -25309,7 +26204,10 @@ export default function App() {
       try {
         let clientId = p.clientId;
         const existant = clientId ? clients.find(c => String(c.id) === String(clientId)) : null;
-        if (p.type === 'nouveau') {
+        if (p.type === 'nouveau' && sansCompte) {
+          clientId = await creerParticipantSansCompte({ nom: p.nom, email: p.email, formateurId: groupe.formateur_id, groupeId: groupe.id, numeroDossier: p.numero_dossier });
+          rapport.sansCompte = (rapport.sansCompte || 0) + 1;
+        } else if (p.type === 'nouveau') {
           clientId = await inviterParticipant({ nom: p.nom, email: p.email, formateurId: groupe.formateur_id, groupeId: groupe.id, numeroDossier: p.numero_dossier });
           rapport.invites++;
         } else {
@@ -25359,7 +26257,8 @@ export default function App() {
   };
 
   const actionsGroupes = {
-    creerGroupe: async ({ infos, seances, participants }, onProgress = () => {}) => {
+    rafraichir: () => rafraichirApresGroupe(),
+    creerGroupe: async ({ infos, seances, participants, sansCompte = false }, onProgress = () => {}) => {
       const rapport = { invites: 0, ajoutes: 0, seances: 0, erreurs: [] };
       await verifierQuotaGroupe(participants.filter(p => p.type === 'nouveau').length);
       onProgress('Création du groupe…');
@@ -25385,16 +26284,16 @@ export default function App() {
         if (e2) { await supabase.from('groupes').delete().eq('id', g.id); throw new Error(e2.message); }
         seancesGroupe = sg || lignes;
       }
-      await integrerParticipants(g, seancesGroupe, participants, onProgress, rapport);
+      await integrerParticipants(g, seancesGroupe, participants, onProgress, rapport, sansCompte);
       onProgress('Mise à jour de l\'affichage…');
       await rafraichirApresGroupe();
       return { groupeId: g.id, rapport };
     },
 
-    ajouterParticipants: async (groupe, participants, onProgress = () => {}) => {
+    ajouterParticipants: async (groupe, participants, onProgress = () => {}, sansCompte = false) => {
       const rapport = { invites: 0, ajoutes: 0, seances: 0, erreurs: [] };
       await verifierQuotaGroupe(participants.filter(p => p.type === 'nouveau').length);
-      await integrerParticipants(groupe, seancesDuGroupe(groupeSeances, groupe.id), participants, onProgress, rapport);
+      await integrerParticipants(groupe, seancesDuGroupe(groupeSeances, groupe.id), participants, onProgress, rapport, sansCompte);
       onProgress('Mise à jour de l\'affichage…');
       await rafraichirApresGroupe();
       return rapport;
@@ -30064,6 +30963,10 @@ export default function App() {
     );
   }
 
+  if (isSignatureEntreprise) {
+    return <SignatureEntreprisePage />;
+  }
+
   if (isProspectQuestionnaire) {
     return <ProspectQuestionnaireView />;
   }
@@ -30438,6 +31341,7 @@ export default function App() {
           </div>
         </header>
 
+        <ConventionsContext.Provider value={{ orgSettings, currentOrgId, documentTemplates, estPro, nomUtilisateur: nomUtilisateurConnecte, modules, formateurs: assignableFormateurs, groupes, groupeSeances, clients, sessions, userRole, rafraichirGroupes: fetchGroupes }}>
         <main className={`flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-10 w-full h-full relative ${userRole === 'client' ? 'pb-28 md:pb-10' : ''}`}>
           {isSubscriptionExpired && activeTab !== 'parametres_org' ? (
             // Abonnement expiré : on n'affiche QUE l'écran paywall, le contenu de l'onglet n'est même
@@ -30873,6 +31777,7 @@ export default function App() {
           </>
           )}
         </main>
+        </ConventionsContext.Provider>
       </div>
 
       {/* Modals Qualiopi */}
