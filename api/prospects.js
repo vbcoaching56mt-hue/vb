@@ -1077,29 +1077,53 @@ const proprietaireVeille = () => String(process.env.VEILLE_PROPRIETAIRE || '').t
 const LIBELLES_THEME_VEILLE = { qualiopi: 'Qualiopi', cpf: 'CPF', controle: 'Contrôle', apprentissage: 'Apprentissage', financement: 'Financement', certification: 'Certification', reconversion: 'Reconversion', reglementation: 'Réglementation' };
 const LIBELLES_PRIORITE_VEILLE = { action: 'Action requise', surveiller: 'À surveiller', info: 'Pour information' };
 
-// Collecte d'une semaine : renvoie { infos, rapport, nbLus } sans rien écrire.
-async function collecterVeille({ debut, fin, semaine }) {
+// v3 (04/11/2026) : la plupart des fils ne gardent que leurs ~10 derniers articles. Lire les sources
+// une seule fois le lundi faisait donc rater une bonne partie de la semaine passée. Désormais :
+//   - chaque jour (cron de 8 h), les sources sont lues et les articles de la semaine en cours sont mis
+//     de côté pour le lundi suivant, invisibles jusque-là (publie_le = lundi 9 h, heure de Paris) ;
+//   - le lundi (ou au premier passage suivant si le cron du lundi a manqué), la veille complète avec la
+//     semaine passée, garde les 15 plus importantes, publie tout de suite et envoie les e-mails ;
+//   - sources généralistes (filtrer = true) : le mot « formation », « CPF »… doit être dans le TITRE.
+// Une information déjà publiée ou déjà suivie par un organisme n'est jamais supprimée.
+
+// Lundi 9 h (ou autre heure) à Paris, en heure UTC, été comme hiver.
+function heureParisUtc(jour, heure) {
+  for (const decal of [1, 2]) {
+    const d = new Date(`${jour}T${String(heure - decal).padStart(2, '0')}:00:00Z`);
+    const h = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: 'numeric', hour12: false }).formatToParts(d).find(p => p.type === 'hour').value);
+    if (h === heure) return d;
+  }
+  return new Date(`${jour}T${String(heure - 1).padStart(2, '0')}:00:00Z`);
+}
+const rangVeille = (x, y) => (ORDRE_PRIORITE[x.priorite] - ORDRE_PRIORITE[y.priorite]) || (new Date(y.date_article) - new Date(x.date_article));
+
+// Lecture de toutes les sources actives (en parallèle, une seule fois par passage).
+async function lireSourcesVeille() {
   const { data: sources, error } = await supabaseAdmin.from('veille_sources').select('*').eq('actif', true).order('ordre', { ascending: true });
   if (error) throw error;
-  const resultats = await Promise.all((sources || []).map(async (s) => {
+  return Promise.all((sources || []).map(async (s) => {
     try {
       const articles = lireFil(await lireUrl(s.url));
-      const retenus = articles.filter(a => {
-        const jour = a.date ? jourParis(a.date) : null;
-        if (!jour || jour < debut || jour > fin) return false;
-        return !s.filtrer || RE_FORMATION.test(`${a.titre} ${a.texte}`);
-      });
-      return { source: s, articles, retenus, etat: articles.length ? 'ok' : 'vide' };
+      return { source: s, articles, etat: articles.length ? 'ok' : 'vide' };
     } catch (e) {
-      return { source: s, articles: [], retenus: [], etat: 'erreur', erreur: String(e && (e.name === 'AbortError' ? 'délai dépassé' : e.message) || e).slice(0, 200) };
+      return { source: s, articles: [], etat: 'erreur', erreur: String(e && (e.name === 'AbortError' ? 'délai dépassé' : e.message) || e).slice(0, 200) };
     }
   }));
+}
+
+// Articles d'une période (du lundi debut au dimanche fin), sans doublon, classés par importance.
+function trierVeille(resultats, { debut, fin, semaine }) {
   const vusUrl = new Set(), vusTitre = new Set();
   const infos = [];
-  resultats.forEach(({ source, retenus }) => retenus.forEach(a => {
+  const parSource = {};
+  resultats.forEach(({ source, articles }) => articles.forEach(a => {
+    const jour = a.date ? jourParis(a.date) : null;
+    if (!jour || jour < debut || jour > fin) return;
+    if (source.filtrer && !RE_FORMATION.test(a.titre)) return;
     const ct = cleTitre(a.titre);
     if (vusUrl.has(a.url) || (ct && vusTitre.has(ct))) return;
     vusUrl.add(a.url); if (ct) vusTitre.add(ct);
+    parSource[source.cle] = (parSource[source.cle] || 0) + 1;
     const tout = `${a.titre} ${a.texte}`;
     const theme = themeVeille(tout);
     infos.push({
@@ -1107,12 +1131,55 @@ async function collecterVeille({ debut, fin, semaine }) {
       theme, priorite: prioriteVeille(tout, theme), date_article: a.date.toISOString(), semaine,
     });
   }));
-  infos.sort((x, y) => (ORDRE_PRIORITE[x.priorite] - ORDRE_PRIORITE[y.priorite]) || (y.date_article > x.date_article ? 1 : -1));
+  infos.sort(rangVeille);
   return {
-    infos: infos.slice(0, VEILLE_MAX_PAR_SEMAINE),
+    infos,
     nbLus: resultats.reduce((n, r) => n + r.articles.length, 0),
-    rapport: resultats.map(r => ({ cle: r.source.cle, nom: r.source.nom, etat: r.etat, articles: r.articles.length, retenus: r.retenus.length, ...(r.erreur ? { erreur: r.erreur } : {}) })),
+    rapport: resultats.map(r => ({ cle: r.source.cle, nom: r.source.nom, etat: r.etat, articles: r.articles.length, retenus: parSource[r.source.cle] || 0, ...(r.erreur ? { erreur: r.erreur } : {}) })),
   };
+}
+
+// Enregistre les nouveautés d'une semaine. Semaine pas encore publiée : on garde les 15 plus importantes
+// (une information mise de côté peut céder sa place, elle n'était visible par personne). Semaine déjà
+// publiée : on complète seulement jusqu'à 15, sans rien retirer.
+async function enregistrerVeille(infos, semaine, { publieLe, publiee, maintenant }) {
+  const { data: existantes, error } = await supabaseAdmin.from('veille_infos')
+    .select('id, url, titre, source_cle, priorite, date_article, masquee, publie_le').eq('semaine', semaine);
+  if (error) throw error;
+  const urls = new Set((existantes || []).map(e => e.url));
+  const titres = new Set((existantes || []).map(e => cleTitre(e.titre)).filter(Boolean));
+  const nouvelles = infos.filter(i => !urls.has(i.url) && !(cleTitre(i.titre) && titres.has(cleTitre(i.titre))));
+  const visibles = (existantes || []).filter(e => !e.masquee);
+  let aInserer, gardees;
+  if (publiee) {
+    aInserer = nouvelles.slice(0, Math.max(0, VEILLE_MAX_PAR_SEMAINE - visibles.length));
+    gardees = visibles;
+  } else {
+    const tout = [...visibles.map(e => ({ ...e, _existe: true })), ...nouvelles].sort(rangVeille);
+    gardees = tout.slice(0, VEILLE_MAX_PAR_SEMAINE).filter(x => x._existe);
+    aInserer = tout.slice(0, VEILLE_MAX_PAR_SEMAINE).filter(x => !x._existe);
+    const enTrop = tout.slice(VEILLE_MAX_PAR_SEMAINE).filter(x => x._existe && new Date(x.publie_le) > maintenant);
+    if (enTrop.length) {
+      const { data: suivies } = await supabaseAdmin.from('veille_suivi').select('info_id').in('info_id', enTrop.map(x => x.id));
+      const proteger = new Set((suivies || []).map(s => String(s.info_id)));
+      const ids = enTrop.filter(x => !proteger.has(String(x.id))).map(x => x.id);
+      gardees = gardees.concat(enTrop.filter(x => proteger.has(String(x.id))));
+      if (ids.length) {
+        const { error: errSup } = await supabaseAdmin.from('veille_infos').delete().in('id', ids).gt('publie_le', maintenant.toISOString());
+        if (errSup) throw errSup;
+      }
+    }
+  }
+  let inserees = [];
+  if (aInserer.length) {
+    const lignes = aInserer.map(({ _existe, ...i }) => ({ ...i, semaine, publie_le: publieLe.toISOString() }));
+    const { data: ins, error: errIns } = await supabaseAdmin.from('veille_infos').upsert(lignes, { onConflict: 'url', ignoreDuplicates: true }).select('*');
+    if (errIns) throw errIns;
+    inserees = ins || [];
+  }
+  const parSource = {};
+  gardees.concat(inserees).forEach(x => { parSource[x.source_cle] = (parSource[x.source_cle] || 0) + 1; });
+  return { inserees, total: gardees.length + inserees.length, parSource };
 }
 
 function htmlInfosVeille(infos, { liensRetirer = false } = {}) {
@@ -1124,36 +1191,62 @@ function htmlInfosVeille(infos, { liensRetirer = false } = {}) {
     </div>`).join('');
 }
 
-// Collecte + publication + e-mails. options : { force, essai, maintenant }
+// Passage quotidien (cron de 8 h) : préparation de la semaine en cours + publication du lundi.
+// options : { force (bouton du propriétaire), essai (aperçu sans rien écrire), maintenant }
 async function veilleHebdomadaire(options = {}) {
   const maintenant = options.maintenant || new Date();
   const { estLundi, semaine, debut, fin } = semainesVeille(maintenant);
-  if (!estLundi && !options.force) return { ignore: true, raison: 'pas_lundi' };
-  const { data: deja, error: errDeja } = await supabaseAdmin.from('veille_collectes').select('*').eq('semaine', semaine).maybeSingle();
-  if (errDeja && tableAbsente(errDeja)) return { ignore: true, raison: 'sql_absent' };
-  if (errDeja) throw errDeja;
+  const lundi = new Date(`${semaine}T12:00:00Z`);
+  const prochaine = new Date(lundi.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  const finCourante = new Date(lundi.getTime() + 6 * 86400000).toISOString().slice(0, 10);
+  const { data: collectes, error: errC0 } = await supabaseAdmin.from('veille_collectes').select('*').in('semaine', [semaine, prochaine]);
+  if (errC0 && tableAbsente(errC0)) return { ignore: true, raison: 'sql_absent' };
+  if (errC0) throw errC0;
+  const actuelle = (collectes || []).find(c => String(c.semaine).slice(0, 10) === semaine) || null;
+  const future = (collectes || []).find(c => String(c.semaine).slice(0, 10) === prochaine) || null;
+  // Publication : le lundi ; ou plus tard dans la semaine si elle avait été préparée mais pas publiée
+  // (cron du lundi manqué) ; ou à la demande du propriétaire.
+  const aPublier = !!options.force || (!(actuelle && actuelle.termine_le) && (estLundi || !!actuelle));
 
-  let publiees = [];
-  let collecte = deja;
-  if (!deja || !deja.termine_le || options.force) {
-    const { infos, rapport, nbLus } = await collecterVeille({ debut, fin, semaine });
-    if (options.essai) return { essai: true, semaine, debut, fin, nbLus, infos, rapport };
-    if (infos.length) {
-      const { data: ins, error: errIns } = await supabaseAdmin.from('veille_infos').upsert(infos, { onConflict: 'url', ignoreDuplicates: true }).select('*');
-      if (errIns) throw errIns;
-      publiees = ins || [];
-    }
-    const ligne = { semaine, termine_le: new Date().toISOString(), nb_lus: nbLus, nb_publies: (deja?.nb_publies || 0) + publiees.length, rapport };
-    const { error: errC } = await supabaseAdmin.from('veille_collectes').upsert([ligne], { onConflict: 'semaine' });
-    if (errC) throw errC;
-    collecte = { ...(deja || {}), ...ligne };
+  const resultats = await lireSourcesVeille();
+  const prep = trierVeille(resultats, { debut: semaine, fin: finCourante, semaine: prochaine });
+  const pub = aPublier ? trierVeille(resultats, { debut, fin, semaine }) : null;
+  if (options.essai) {
+    return { essai: true, semaine, debut, fin, nbLus: prep.nbLus, infos: pub.infos.slice(0, VEILLE_MAX_PAR_SEMAINE), rapport: pub.rapport, aVenir: { semaine: prochaine, nb: Math.min(prep.infos.length, VEILLE_MAX_PAR_SEMAINE) } };
   }
 
-  // E-mails : une seule fois par semaine, seulement s'il y a des informations cette semaine.
+  // 1. Semaine en cours, mise de côté pour lundi prochain (invisible jusque-là).
+  const rPrep = await enregistrerVeille(prep.infos, prochaine, { publieLe: heureParisUtc(prochaine, 9), publiee: false, maintenant });
+  const { error: errF } = await supabaseAdmin.from('veille_collectes').upsert([{
+    semaine: prochaine, demarre_le: (future && future.demarre_le) || maintenant.toISOString(), nb_lus: prep.nbLus, nb_publies: rPrep.total,
+    rapport: prep.rapport.map(x => ({ ...x, retenus: rPrep.parSource[x.cle] || 0 })),
+  }], { onConflict: 'semaine' });
+  if (errF) throw errF;
+
+  // 2. Publication de la semaine passée.
+  let publiees = [];
+  let collecte = actuelle;
+  if (aPublier) {
+    const dejaVisible = !!(actuelle && actuelle.termine_le) || maintenant >= heureParisUtc(semaine, 9);
+    const rPub = await enregistrerVeille(pub.infos, semaine, { publieLe: maintenant, publiee: dejaVisible, maintenant });
+    publiees = rPub.inserees;
+    // Ce qui avait été mis de côté pendant la semaine devient visible tout de suite.
+    const { error: errV } = await supabaseAdmin.from('veille_infos').update({ publie_le: maintenant.toISOString() }).eq('semaine', semaine).gt('publie_le', maintenant.toISOString());
+    if (errV) throw errV;
+    const ligne = {
+      semaine, demarre_le: (actuelle && actuelle.demarre_le) || maintenant.toISOString(), termine_le: maintenant.toISOString(), nb_lus: pub.nbLus, nb_publies: rPub.total,
+      rapport: pub.rapport.map(x => ({ ...x, retenus: rPub.parSource[x.cle] || 0 })),
+    };
+    const { error: errC } = await supabaseAdmin.from('veille_collectes').upsert([ligne], { onConflict: 'semaine' });
+    if (errC) throw errC;
+    collecte = { ...(actuelle || {}), ...ligne };
+  }
+
+  // 3. E-mails : une seule fois par semaine, une fois la semaine publiée, s'il y a des informations.
   let nbResumes = 0;
-  if (!collecte.resumes_envoyes_le) {
-    const { data: semaineInfos } = await supabaseAdmin.from('veille_infos').select('*').eq('semaine', semaine).eq('masquee', false);
-    const infos = (semaineInfos || []).sort((x, y) => (ORDRE_PRIORITE[x.priorite] - ORDRE_PRIORITE[y.priorite]));
+  if (collecte && collecte.termine_le && !collecte.resumes_envoyes_le) {
+    const { data: semaineInfos } = await supabaseAdmin.from('veille_infos').select('*').eq('semaine', semaine).eq('masquee', false).lte('publie_le', maintenant.toISOString());
+    const infos = (semaineInfos || []).sort(rangVeille);
     if (infos.length) {
       const [{ data: orgs }, { data: reglages }, { data: admins }] = await Promise.all([
         supabaseAdmin.from('organisations').select('id, nom, subscription_status, subscribed_plan'),
@@ -1182,7 +1275,10 @@ async function veilleHebdomadaire(options = {}) {
     }
     await supabaseAdmin.from('veille_collectes').update({ resumes_envoyes_le: new Date().toISOString(), nb_resumes: nbResumes }).eq('semaine', semaine);
   }
-  return { semaine, debut, fin, publiees: publiees.length, resumes: nbResumes, rapport: collecte.rapport };
+  return {
+    semaine, debut, fin, publication: aPublier, publiees: publiees.length, resumes: nbResumes, rapport: collecte && collecte.rapport,
+    aVenir: { semaine: prochaine, nb: rPrep.total },
+  };
 }
 
 async function utilisateurConnecte(req) {
@@ -1195,7 +1291,7 @@ const estProprietaireVeille = (user) => !!user && !!proprietaireVeille() && Stri
 
 async function handleVeillePublique(req, res) {
   const { data, error } = await supabaseAdmin.from('veille_infos').select('titre, resume, url, source_nom, theme, priorite, date_article, semaine')
-    .eq('masquee', false).order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(60);
+    .eq('masquee', false).lte('publie_le', new Date().toISOString()).order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(60);
   if (error && tableAbsente(error)) return res.status(200).json({ infos: [] });
   if (error) throw error;
   res.setHeader('Cache-Control', 'public, s-maxage=1800, stale-while-revalidate=86400');
@@ -1205,12 +1301,14 @@ async function handleVeilleStatut(req, res) {
   const user = await utilisateurConnecte(req);
   if (!user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
   if (!estProprietaireVeille(user)) return res.status(200).json({ proprietaire: false });
-  const [{ data: collectes, error }, { data: masquees }] = await Promise.all([
+  const [{ data: collectes, error }, { data: masquees }, { data: aVenir }] = await Promise.all([
     supabaseAdmin.from('veille_collectes').select('*').order('semaine', { ascending: false }).limit(4),
     supabaseAdmin.from('veille_infos').select('id, titre, source_nom, semaine').eq('masquee', true).order('semaine', { ascending: false }).limit(30),
+    // v3 : informations mises de côté pour lundi prochain (le propriétaire peut les retirer avant).
+    supabaseAdmin.from('veille_infos').select('id, titre, source_nom, semaine, priorite, date_article').eq('masquee', false).gt('publie_le', new Date().toISOString()).order('semaine', { ascending: true }).limit(30),
   ]);
   if (error && !tableAbsente(error)) throw error;
-  return res.status(200).json({ proprietaire: true, collectes: collectes || [], masquees: masquees || [] });
+  return res.status(200).json({ proprietaire: true, collectes: collectes || [], masquees: masquees || [], aVenir: aVenir || [] });
 }
 async function handleVeilleLancer(req, res) {
   const user = await utilisateurConnecte(req);

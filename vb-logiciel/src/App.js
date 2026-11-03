@@ -7318,7 +7318,7 @@ const appelVeilleApi = async (action, body = {}) => {
 // Nombre d'informations de la dernière semaine pas encore traitées (badge du menu).
 const compterVeilleNonTraitees = async (orgId) => {
   try {
-    const { data: infos, error } = await supabase.from('veille_infos').select('id, semaine').order('semaine', { ascending: false }).limit(40);
+    const { data: infos, error } = await supabase.from('veille_infos').select('id, semaine').lte('publie_le', new Date().toISOString()).order('semaine', { ascending: false }).limit(40);
     if (error || !infos || !infos.length) return 0;
     const derniere = infos[0].semaine;
     const ids = infos.filter(i => i.semaine === derniere).map(i => i.id);
@@ -7394,7 +7394,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
   const charger = React.useCallback(async () => {
     if (!currentOrgId) return;
     const [ri, rs, rr] = await Promise.all([
-      supabase.from('veille_infos').select('*').order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(500),
+      supabase.from('veille_infos').select('*').lte('publie_le', new Date().toISOString()).order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(500),
       supabase.from('veille_suivi').select('*').eq('organisation_id', currentOrgId),
       supabase.from('veille_reglages').select('*').eq('organisation_id', currentOrgId).maybeSingle(),
     ]);
@@ -7466,7 +7466,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
     try {
       const d = await appelVeilleApi('veille_lancer', { essai: modeEssai });
       if (modeEssai) setEssai(d);
-      else { toast.success(`Collecte terminée : ${d.publiees || 0} nouvelle(s) information(s) publiée(s).`); setEssai(null); await charger(); }
+      else { toast.success(`Collecte terminée : ${d.publiees || 0} nouvelle(s) information(s) publiée(s)${d.aVenir ? `, ${d.aVenir.nb} prête(s) pour lundi prochain` : ''}.`); setEssai(null); await charger(); }
       await chargerProprio();
     } catch (e) { toast.error(e.message || String(e)); }
     setOccupe('');
@@ -7482,7 +7482,10 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
   if (etat === 'chargement') return <div className="p-10 text-center text-gray-500">Chargement de la veille…</div>;
   if (etat === 'absent') return <div className="bg-white p-8 rounded-3xl border border-gray-100 max-w-2xl mx-auto text-center text-gray-600">La veille n'est pas encore activée : lancez le SQL « veille » dans Supabase.</div>;
   if (etat === 'erreur') return <div className="bg-white p-8 rounded-3xl border border-red-100 max-w-2xl mx-auto text-center text-red-700">La veille n'a pas pu être chargée. Réessayez dans un instant.</div>;
-  const derniereCollecte = proprio && proprio.collectes && proprio.collectes[0];
+  const derniereCollecte = proprio && (proprio.collectes || []).find(c => c.termine_le);
+  const prochaineVeille = proprio && (proprio.collectes || []).find(c => !c.termine_le);
+  const ordreAVenir = { action: 0, surveiller: 1, info: 2 };
+  const aVenirTriees = ((proprio && proprio.aVenir) || []).slice().sort((x, y) => (ordreAVenir[x.priorite] - ordreAVenir[y.priorite]) || String(y.date_article).localeCompare(String(x.date_article)));
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
@@ -7567,26 +7570,34 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
             <p className="text-xs text-gray-500 leading-relaxed">Chaque lundi matin, les nouvelles informations de la semaine, triées par priorité, envoyées aux administrateurs de l'organisme.</p>
           </div>
           <div className="bg-white rounded-3xl border border-gray-100 p-5 text-xs text-gray-500 leading-relaxed">
-            Informations collectées automatiquement chaque semaine auprès de sources officielles et spécialisées (service-public.fr, France compétences, Centre Inffo…). Le résumé reprend le début de l'article : le texte officiel fait foi, vérifiez-le avant d'agir.
+            Informations collectées automatiquement chaque jour et publiées chaque lundi, auprès de sources officielles et spécialisées (service-public.fr, France compétences, Centre Inffo…). Le résumé reprend le début de l'article : le texte officiel fait foi, vérifiez-le avant d'agir.
           </div>
           {proprio && (
             <div className="bg-white rounded-3xl border-2 border-violet-200 p-5 space-y-3">
               <p className="font-black text-gray-900">Propriétaire de SkorUp</p>
               {derniereCollecte ? (
                 <div className="text-xs text-gray-600 space-y-1">
-                  <p>Dernière collecte : semaine du {libelleSemaineVeille(derniereCollecte.semaine)} · {derniereCollecte.nb_publies} publiée(s) · {derniereCollecte.nb_resumes || 0} résumé(s) envoyé(s)</p>
+                  <p>Dernière veille publiée : {libelleSemaineVeille(derniereCollecte.semaine)} · {derniereCollecte.nb_publies} information(s) · {derniereCollecte.nb_resumes || 0} résumé(s) envoyé(s)</p>
                   <ul className="space-y-0.5">
                     {(derniereCollecte.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : r.etat === 'vide' ? 'text-amber-700' : ''}>{r.etat === 'erreur' ? '✗' : r.etat === 'vide' ? '⚠' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : r.etat === 'vide' ? 'aucun article trouvé (adresse à vérifier)' : `${r.articles} lus, ${r.retenus} retenus`}</li>)}
                   </ul>
                 </div>
-              ) : <p className="text-xs text-gray-500">Aucune collecte pour l'instant.</p>}
+              ) : <p className="text-xs text-gray-500">Aucune veille publiée pour l'instant.</p>}
+              {prochaineVeille && (
+                <div className="text-xs text-gray-600 space-y-1 bg-violet-50 rounded-xl p-3">
+                  <p className="font-bold text-violet-800">Prochaine veille (lundi {dateSemaineVeille(prochaineVeille.semaine)}) : {aVenirTriees.length} information(s) prête(s)</p>
+                  <p className="text-gray-500">Les sources sont lues chaque jour à 8 h ; ces informations restent invisibles jusqu'au lundi.</p>
+                  {aVenirTriees.map(m => <p key={m.id} className="flex items-start justify-between gap-2"><span className="break-words">{m.titre} <span className="text-gray-400">({m.source_nom})</span></span><button type="button" onClick={() => masquer(m, true)} className="text-red-600 font-bold shrink-0">Retirer</button></p>)}
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => lancer(true)} disabled={!!occupe} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 disabled:opacity-40">{occupe === 'essai' ? 'Essai…' : 'Tester les sources (sans publier)'}</button>
                 <button type="button" onClick={() => lancer(false)} disabled={!!occupe} className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold disabled:opacity-40">{occupe === 'lancer' ? 'Collecte…' : 'Lancer la collecte maintenant'}</button>
               </div>
               {essai && (
                 <div className="text-xs text-gray-700 bg-gray-50 rounded-xl p-3 space-y-1">
-                  <p className="font-bold">Essai : {essai.infos.length} information(s) seraient publiées ({essai.nbLus} articles lus).</p>
+                  <p className="font-bold">Essai : {essai.infos.length} information(s) pour la semaine passée ({essai.nbLus} articles lus).</p>
+                  {essai.aVenir && <p>Semaine en cours, pour le lundi {dateSemaineVeille(essai.aVenir.semaine)} : {essai.aVenir.nb} information(s) déjà trouvée(s).</p>}
                   <ul className="list-disc pl-4 space-y-0.5">{essai.infos.map(x => <li key={x.url} className="break-words">{x.titre} <span className="text-gray-500">({x.source_nom})</span></li>)}</ul>
                   <ul className="space-y-0.5 pt-1">{(essai.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : r.etat === 'vide' ? 'text-amber-700' : ''}>{r.etat === 'erreur' ? '✗' : r.etat === 'vide' ? '⚠' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : r.etat === 'vide' ? 'aucun article trouvé (adresse à vérifier)' : `${r.articles} lus, ${r.retenus} retenus`}</li>)}</ul>
                 </div>
