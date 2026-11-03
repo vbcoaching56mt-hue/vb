@@ -7576,7 +7576,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
                 <div className="text-xs text-gray-600 space-y-1">
                   <p>Dernière collecte : semaine du {libelleSemaineVeille(derniereCollecte.semaine)} · {derniereCollecte.nb_publies} publiée(s) · {derniereCollecte.nb_resumes || 0} résumé(s) envoyé(s)</p>
                   <ul className="space-y-0.5">
-                    {(derniereCollecte.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : ''}>{r.etat === 'erreur' ? '✗' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : `${r.articles} lus, ${r.retenus} retenus`}</li>)}
+                    {(derniereCollecte.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : r.etat === 'vide' ? 'text-amber-700' : ''}>{r.etat === 'erreur' ? '✗' : r.etat === 'vide' ? '⚠' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : r.etat === 'vide' ? 'aucun article trouvé (adresse à vérifier)' : `${r.articles} lus, ${r.retenus} retenus`}</li>)}
                   </ul>
                 </div>
               ) : <p className="text-xs text-gray-500">Aucune collecte pour l'instant.</p>}
@@ -7588,7 +7588,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
                 <div className="text-xs text-gray-700 bg-gray-50 rounded-xl p-3 space-y-1">
                   <p className="font-bold">Essai : {essai.infos.length} information(s) seraient publiées ({essai.nbLus} articles lus).</p>
                   <ul className="list-disc pl-4 space-y-0.5">{essai.infos.map(x => <li key={x.url} className="break-words">{x.titre} <span className="text-gray-500">({x.source_nom})</span></li>)}</ul>
-                  <ul className="space-y-0.5 pt-1">{(essai.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : ''}>{r.etat === 'erreur' ? '✗' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : `${r.articles} lus, ${r.retenus} retenus`}</li>)}</ul>
+                  <ul className="space-y-0.5 pt-1">{(essai.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : r.etat === 'vide' ? 'text-amber-700' : ''}>{r.etat === 'erreur' ? '✗' : r.etat === 'vide' ? '⚠' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : r.etat === 'vide' ? 'aucun article trouvé (adresse à vérifier)' : `${r.articles} lus, ${r.retenus} retenus`}</li>)}</ul>
                 </div>
               )}
               {(proprio.masquees || []).length > 0 && (

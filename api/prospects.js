@@ -982,7 +982,8 @@ async function handleSignerEntreprise(req, res) {
 //   GET  ?action=veille_retirer&id=…&sig=…   — lien signé de l'e-mail du propriétaire.
 const VEILLE_MAX_PAR_SEMAINE = 15;
 const VEILLE_DELAI_FLUX_MS = 8000;
-const RE_FORMATION = /formation|qualiopi|\bcpf\b|compte personnel de formation|opco|apprenti|alternance|bilan de comp[ée]tences|\bvae\b|validation des acquis|certification|rncp|r[ée]pertoire sp[ée]cifique|france comp[ée]tences|organisme de formation|stagiaire|reconversion|transitions? pro|comp[ée]tences/i;
+// v2 : mots entiers seulement (« information », « transformation » ne comptent plus) ; « compétences » seul retiré.
+const RE_FORMATION = /\bformations?\b|\bqualiopi\b|\bcpf\b|mon ?compte ?formation|\bopcos?\b|\bapprenti|\balternance\b|bilan de comp[ée]tences|\bvae\b|validation des acquis|certifications? professionnelles?|\brncp\b|r[ée]pertoire sp[ée]cifique|france comp[ée]tences|\bstagiaires?\b|\breconversion|transitions? pro/i;
 const THEMES_VEILLE = [
   ['qualiopi', /qualiopi|r[ée]f[ée]rentiel national (de )?qualit[ée]|certification qualit[ée]/i],
   ['cpf', /\bcpf\b|compte personnel de formation|mon ?compte ?formation|\bedof\b/i],
