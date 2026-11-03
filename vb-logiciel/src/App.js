@@ -7285,6 +7285,366 @@ const lireParMorceaux = async (table, colonnes, colonneFiltre, ids) => {
   return sortie;
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// VEILLE LÉGALE ET RÉGLEMENTAIRE (03/11/2026) — offre Pro / Illimité, administrateur.
+// Les informations sont collectées et publiées chaque lundi par le serveur (api/prospects.js,
+// veilleHebdomadaire, tables veille_infos / veille_suivi / veille_reglages / veille_collectes).
+// L'organisme note ce qu'il en a fait (preuve Qualiopi, critère 6) et exporte la preuve en PDF.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const THEMES_VEILLE_APP = { qualiopi: 'Qualiopi', cpf: 'CPF', financement: 'Financement', controle: 'Contrôle', apprentissage: 'Apprentissage', certification: 'Certification', reconversion: 'Reconversion', reglementation: 'Réglementation' };
+const PRIORITES_VEILLE_APP = {
+  action: ['Action requise', 'bg-red-50 text-red-700'],
+  surveiller: ['À surveiller', 'bg-amber-50 text-amber-800'],
+  info: ['Pour information', 'bg-blue-50 text-blue-700'],
+};
+const ACTIONS_VEILLE_RAPIDES = ['Information lue : pas d\'impact pour nous.', 'Information partagée avec l\'équipe.', 'Procédure ou document mis à jour.', 'Clients ou bénéficiaires informés.'];
+const veilleTableAbsente = (err) => !!err && (err.code === '42P01' || err.code === 'PGRST205' || /(does not exist|schema cache|could not find)/i.test(err.message || ''));
+const dateSemaineVeille = (iso) => { if (!iso) return ''; const d = new Date(`${String(iso).slice(0, 10)}T12:00:00Z`); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); };
+const libelleSemaineVeille = (lundi) => {
+  if (!lundi) return '';
+  const l = new Date(`${lundi}T12:00:00Z`);
+  const debut = new Date(l.getTime() - 7 * 86400000), fin = new Date(l.getTime() - 86400000);
+  const f = (d, annee) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', ...(annee ? { year: 'numeric' } : {}), timeZone: 'UTC' });
+  return `${f(debut)} – ${f(fin, true)}`;
+};
+const appelVeilleApi = async (action, body = {}) => {
+  const { data: { session } } = await supabase.auth.getSession();
+  const r = await fetch(`/api/prospects?action=${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `Erreur ${r.status}`);
+  return d;
+};
+
+// Nombre d'informations de la dernière semaine pas encore traitées (badge du menu).
+const compterVeilleNonTraitees = async (orgId) => {
+  try {
+    const { data: infos, error } = await supabase.from('veille_infos').select('id, semaine').order('semaine', { ascending: false }).limit(40);
+    if (error || !infos || !infos.length) return 0;
+    const derniere = infos[0].semaine;
+    const ids = infos.filter(i => i.semaine === derniere).map(i => i.id);
+    const { data: suivi } = await supabase.from('veille_suivi').select('info_id').eq('organisation_id', orgId).in('info_id', ids);
+    const faits = new Set((suivi || []).map(s => String(s.info_id)));
+    return ids.filter(id => !faits.has(String(id))).length;
+  } catch (_) { return 0; }
+};
+
+// PDF de preuve : toutes les informations reçues sur la période, avec le traitement noté.
+const genererPreuveVeillePdf = async ({ orgNom, infos, suivi, debut, fin }) => {
+  const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const gras = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const sur = (t, f = font) => Array.from(String(t ?? '').replace(/[  \t\r\n]/g, ' ')).map(ch => { try { f.encodeText(ch); return ch; } catch (_) { return '?'; } }).join('');
+  const lignes = (t, f, taille, largeur) => {
+    const mots = sur(t, f).split(' '); const out = []; let l = '';
+    mots.forEach(m => { const e = l ? `${l} ${m}` : m; if (f.widthOfTextAtSize(e, taille) > largeur && l) { out.push(l); l = m; } else l = e; });
+    if (l) out.push(l);
+    return out.length ? out : [''];
+  };
+  const W = 841.89, H = 595.28, M = 32;
+  const cols = [['Semaine', 70], ['Information et source', 300], ['Priorité', 70], ['Traitée le', 70], ['Action menée', 210], ['Par', 58]];
+  let page, y;
+  const entete = () => {
+    page = pdf.addPage([W, H]); y = H - M;
+    page.drawText(sur(orgNom || 'Organisme de formation', gras), { x: M, y, size: 10, font: gras, color: rgb(0.43, 0.16, 0.85) }); y -= 20;
+    page.drawText(sur('Veille légale et réglementaire — preuve de suivi (Qualiopi, critère 6)', gras), { x: M, y, size: 15, font: gras }); y -= 16;
+    page.drawText(sur(`Période : ${debut.split('-').reverse().join('/')} au ${fin.split('-').reverse().join('/')} · éditée le ${new Date().toLocaleDateString('fr-FR')} · ${infos.length} information(s), ${infos.filter(i => suivi[i.id]).length} traitée(s)`), { x: M, y, size: 9, font, color: rgb(0.35, 0.35, 0.4) }); y -= 18;
+    let x = M;
+    cols.forEach(([t, w]) => { page.drawRectangle({ x, y: y - 16, width: w, height: 16, color: rgb(0.95, 0.93, 0.99) }); page.drawText(sur(t, gras), { x: x + 4, y: y - 11, size: 8, font: gras }); x += w; });
+    y -= 16;
+  };
+  entete();
+  infos.forEach(i => {
+    const s = suivi[i.id];
+    const cellules = [
+      [dateSemaineVeille(i.semaine)],
+      [...lignes(i.titre, gras, 8, cols[1][1] - 8), ...lignes(`${i.source_nom} · ${i.url}`, font, 7, cols[1][1] - 8)],
+      [(PRIORITES_VEILLE_APP[i.priorite] || ['', ''])[0]],
+      [s ? new Date(s.traitee_le).toLocaleDateString('fr-FR') : 'Non traitée'],
+      lignes(s ? (s.action_menee || '—') : '', font, 8, cols[4][1] - 8),
+      lignes(s ? (s.traite_par || '') : '', font, 7, cols[5][1] - 8),
+    ];
+    const h = Math.max(...cellules.map(c => c.length)) * 10 + 8;
+    if (y - h < M) entete();
+    let x = M;
+    cols.forEach(([, w], j) => {
+      page.drawRectangle({ x, y: y - h, width: w, height: h, borderColor: rgb(0.85, 0.85, 0.88), borderWidth: 0.5 });
+      cellules[j].forEach((t, k) => page.drawText(t, { x: x + 4, y: y - 11 - k * 10, size: j === 1 && k === 0 ? 8 : (j === 1 ? 7 : 8), font: j === 1 && k < lignes(i.titre, gras, 8, cols[1][1] - 8).length ? gras : font, color: j === 3 && !s ? rgb(0.7, 0.2, 0.1) : rgb(0.1, 0.1, 0.12) }));
+      x += w;
+    });
+    y -= h;
+  });
+  if (!infos.length) page.drawText(sur('Aucune information sur cette période.'), { x: M, y: y - 20, size: 10, font });
+  return new Blob([await pdf.save()], { type: 'application/pdf' });
+};
+
+const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, onNonLus }) => {
+  const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
+  const [infos, setInfos] = React.useState([]);
+  const [suivi, setSuivi] = React.useState({});
+  const [semaine, setSemaine] = React.useState(null);
+  const [filtre, setFiltre] = React.useState('tout');
+  const [resumeLundi, setResumeLundi] = React.useState(true);
+  const [edition, setEdition] = React.useState(null); // { info, texte }
+  const [export_, setExport] = React.useState(null); // { debut, fin }
+  const [proprio, setProprio] = React.useState(null);
+  const [essai, setEssai] = React.useState(null);
+  const [occupe, setOccupe] = React.useState('');
+
+  const charger = React.useCallback(async () => {
+    if (!currentOrgId) return;
+    const [ri, rs, rr] = await Promise.all([
+      supabase.from('veille_infos').select('*').order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(500),
+      supabase.from('veille_suivi').select('*').eq('organisation_id', currentOrgId),
+      supabase.from('veille_reglages').select('*').eq('organisation_id', currentOrgId).maybeSingle(),
+    ]);
+    if (ri.error || rs.error) { setEtat(veilleTableAbsente(ri.error || rs.error) ? 'absent' : 'erreur'); return; }
+    setInfos(ri.data || []);
+    setSuivi(Object.fromEntries((rs.data || []).map(s => [s.info_id, s])));
+    setResumeLundi(!(rr.data && rr.data.resume_lundi === false));
+    setSemaine(prev => prev || (ri.data && ri.data[0] ? ri.data[0].semaine : null));
+    setEtat('ok');
+  }, [currentOrgId]);
+  React.useEffect(() => { charger(); }, [charger]);
+  const chargerProprio = React.useCallback(async () => {
+    try { const d = await appelVeilleApi('veille_statut'); setProprio(d.proprietaire ? d : null); } catch (_) { setProprio(null); }
+  }, []);
+  React.useEffect(() => { chargerProprio(); }, [chargerProprio]);
+
+  const semaines = Array.from(new Set(infos.map(i => i.semaine)));
+  const deLaSemaine = infos.filter(i => i.semaine === semaine);
+  const themes = Array.from(new Set(deLaSemaine.map(i => i.theme)));
+  const affichees = deLaSemaine.filter(i => filtre === 'tout' || i.theme === filtre)
+    .sort((a, b) => ['action', 'surveiller', 'info'].indexOf(a.priorite) - ['action', 'surveiller', 'info'].indexOf(b.priorite));
+  const nb = (p) => deLaSemaine.filter(i => i.priorite === p).length;
+  const nbTraitees = deLaSemaine.filter(i => suivi[i.id]).length;
+  React.useEffect(() => {
+    if (etat !== 'ok' || !onNonLus) return;
+    const derniere = semaines[0];
+    onNonLus(infos.filter(i => i.semaine === derniere && !suivi[i.id]).length);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etat, infos, suivi]);
+
+  const enregistrer = async () => {
+    const { info, texte } = edition;
+    setOccupe('enregistrement');
+    const ligne = { organisation_id: currentOrgId, info_id: info.id, action_menee: texte.trim() || null, traite_par: nomUtilisateur || null, traite_par_id: currentUserId ? String(currentUserId) : null, updated_at: new Date().toISOString(), ...(suivi[info.id] ? {} : { traitee_le: new Date().toISOString() }) };
+    const { data, error } = await supabase.from('veille_suivi').upsert([ligne], { onConflict: 'organisation_id,info_id' }).select().maybeSingle();
+    setOccupe('');
+    if (error) { toast.error('Enregistrement impossible : ' + error.message); return; }
+    setSuivi(prev => ({ ...prev, [info.id]: data || { ...ligne, traitee_le: prev[info.id]?.traitee_le || ligne.updated_at } }));
+    setEdition(null);
+    toast.success('Action notée');
+  };
+  const annulerTraitement = async (info) => {
+    const { error } = await supabase.from('veille_suivi').delete().eq('organisation_id', currentOrgId).eq('info_id', info.id);
+    if (error) { toast.error('Impossible : ' + error.message); return; }
+    setSuivi(prev => { const n = { ...prev }; delete n[info.id]; return n; });
+    setEdition(null);
+  };
+  const changerResume = async (v) => {
+    setResumeLundi(v);
+    const { error } = await supabase.from('veille_reglages').upsert([{ organisation_id: currentOrgId, resume_lundi: v, updated_at: new Date().toISOString() }], { onConflict: 'organisation_id' });
+    if (error) { setResumeLundi(!v); toast.error('Réglage non enregistré : ' + error.message); }
+    else toast.success(v ? 'Vous recevrez le résumé chaque lundi' : 'Résumé du lundi désactivé');
+  };
+  const exporter = async () => {
+    setOccupe('export');
+    try {
+      const periode = infos.filter(i => i.semaine >= export_.debut && i.semaine <= export_.fin);
+      const blob = await genererPreuveVeillePdf({ orgNom: orgSettings?.nom, infos: periode, suivi, debut: export_.debut, fin: export_.fin });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `Preuve_veille_${export_.debut}_${export_.fin}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setExport(null);
+    } catch (e) { toast.error('Le PDF n\'a pas pu être créé : ' + (e.message || e)); }
+    setOccupe('');
+  };
+  const lancer = async (modeEssai) => {
+    setOccupe(modeEssai ? 'essai' : 'lancer');
+    try {
+      const d = await appelVeilleApi('veille_lancer', { essai: modeEssai });
+      if (modeEssai) setEssai(d);
+      else { toast.success(`Collecte terminée : ${d.publiees || 0} nouvelle(s) information(s) publiée(s).`); setEssai(null); await charger(); }
+      await chargerProprio();
+    } catch (e) { toast.error(e.message || String(e)); }
+    setOccupe('');
+  };
+  const masquer = async (info, masquee) => {
+    try {
+      await appelVeilleApi('veille_masquer', { infoId: info.id, masquee });
+      toast.success(masquee ? 'Information retirée de SkorUp et du site' : 'Information remise');
+      await Promise.all([charger(), chargerProprio()]);
+    } catch (e) { toast.error(e.message || String(e)); }
+  };
+
+  if (etat === 'chargement') return <div className="p-10 text-center text-gray-500">Chargement de la veille…</div>;
+  if (etat === 'absent') return <div className="bg-white p-8 rounded-3xl border border-gray-100 max-w-2xl mx-auto text-center text-gray-600">La veille n'est pas encore activée : lancez le SQL « veille » dans Supabase.</div>;
+  if (etat === 'erreur') return <div className="bg-white p-8 rounded-3xl border border-red-100 max-w-2xl mx-auto text-center text-red-700">La veille n'a pas pu être chargée. Réessayez dans un instant.</div>;
+  const derniereCollecte = proprio && proprio.collectes && proprio.collectes[0];
+  return (
+    <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-widest text-violet-600">Veille légale et réglementaire</p>
+          <h1 className="text-2xl md:text-3xl font-black text-gray-900 mt-1">{semaine ? 'Ce qui a changé dans la formation' : 'Votre veille arrive lundi'}</h1>
+          <p className="text-sm text-gray-500 mt-1">{semaine ? `Publiée le lundi ${dateSemaineVeille(semaine)} · semaine du ${libelleSemaineVeille(semaine)} · ${deLaSemaine.length} information${deLaSemaine.length > 1 ? 's' : ''}` : 'Chaque lundi matin, les nouveautés de la semaine passée (Qualiopi, CPF, financement, réglementation) arrivent ici avec leur source.'}</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          {semaines.length > 0 && (
+            <div>
+              <label htmlFor="veille-semaine" className="block text-[11px] font-bold text-gray-500 mb-1">Semaine</label>
+              <select id="veille-semaine" value={semaine || ''} onChange={e => { setSemaine(e.target.value); setFiltre('tout'); }} className="px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+                {semaines.map(s => <option key={s} value={s}>{libelleSemaineVeille(s)}</option>)}
+              </select>
+            </div>
+          )}
+          <button type="button" onClick={() => { const f = new Date(); const d = new Date(f.getTime() - 365 * 86400000); setExport({ debut: jourLocalISO(d), fin: jourLocalISO(f) }); }} disabled={!infos.length}
+            className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 inline-flex items-center gap-2"><Download size={16} /> Exporter la preuve (PDF)</button>
+        </div>
+      </div>
+
+      {semaine && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[[nb('action'), 'action requise', 'text-red-700'], [nb('surveiller'), 'à surveiller', 'text-amber-700'], [nb('info'), 'pour information', 'text-blue-700'], [`${nbTraitees} / ${deLaSemaine.length}`, 'traitées', 'text-gray-900']].map(([v, l, c]) => (
+            <div key={l} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm"><p className={`text-2xl font-black tabular-nums ${c}`}>{v}</p><p className="text-xs text-gray-500 mt-0.5">{l}</p></div>
+          ))}
+        </div>
+      )}
+
+      {themes.length > 1 && (
+        <div role="group" aria-label="Filtrer par thème" className="flex flex-wrap gap-2">
+          {['tout', ...themes].map(t => (
+            <button key={t} type="button" aria-pressed={filtre === t} onClick={() => setFiltre(t)}
+              className={`px-3.5 py-2 rounded-xl text-sm font-bold border ${filtre === t ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-200 hover:border-violet-300'}`}>{t === 'tout' ? 'Tout' : THEMES_VEILLE_APP[t] || t}</button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <div className="flex-1 min-w-0 space-y-4 w-full">
+          {!semaine && <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">Aucune information publiée pour l'instant. La première veille arrivera lundi matin.</div>}
+          {affichees.map(i => {
+            const s = suivi[i.id];
+            const [lp, cp] = PRIORITES_VEILLE_APP[i.priorite] || PRIORITES_VEILLE_APP.info;
+            return (
+              <article key={i.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 md:p-6 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`text-[11px] font-black px-2 py-1 rounded-lg ${cp}`}>{lp}</span>
+                  <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-50 text-violet-700">{THEMES_VEILLE_APP[i.theme] || i.theme}</span>
+                  {i.date_article && <span className="text-xs text-gray-500">{new Date(i.date_article).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</span>}
+                  {s && <span className="ml-auto text-xs font-black text-emerald-700">✓ Traitée le {new Date(s.traitee_le).toLocaleDateString('fr-FR')}</span>}
+                </div>
+                <h2 className="text-base md:text-lg font-black text-gray-900 leading-snug break-words">{i.titre}</h2>
+                {i.resume && <p className="text-sm text-gray-700 leading-relaxed break-words">{i.resume}</p>}
+                {s && <p className="text-sm text-gray-700 bg-emerald-50 rounded-xl px-3 py-2 break-words"><b>Action menée :</b> {s.action_menee || '—'}{s.traite_par ? <span className="text-gray-500"> · {s.traite_par}</span> : null}</p>}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <a href={i.url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-violet-700 hover:underline inline-flex items-center gap-1.5 break-all"><ExternalLink size={14} className="shrink-0" /> Source : {i.source_nom}</a>
+                  <div className="flex flex-wrap gap-2">
+                    {proprio && <button type="button" onClick={() => masquer(i, true)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-500 hover:text-red-600 hover:border-red-200">Retirer (propriétaire)</button>}
+                    <button type="button" onClick={() => setEdition({ info: i, texte: s?.action_menee || '' })}
+                      className={s ? 'px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:border-violet-300' : 'px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700'}>{s ? 'Modifier' : 'Traitée : noter l\'action menée'}</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        <aside className="w-full lg:w-80 shrink-0 space-y-4">
+          <div className="bg-gray-900 text-white rounded-3xl p-5 space-y-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-violet-300">Preuve Qualiopi</p>
+            <p className="font-black leading-snug">Votre veille est tracée pour l'audit</p>
+            <div className="flex justify-between text-sm"><span>Traitées cette semaine</span><b>{nbTraitees}/{deLaSemaine.length}</b></div>
+            <div className="h-2 rounded-full bg-white/15 overflow-hidden"><div className="h-full bg-violet-400 rounded-full" style={{ width: `${deLaSemaine.length ? Math.round((nbTraitees / deLaSemaine.length) * 100) : 0}%` }} /></div>
+            <p className="text-xs text-violet-100 leading-relaxed">Le PDF liste chaque information reçue, sa source, la date de traitement, l'action menée et qui l'a notée.</p>
+          </div>
+          <div className="bg-white rounded-3xl border border-gray-100 p-5 space-y-2">
+            <label className="flex items-center justify-between gap-3 font-black text-gray-900 cursor-pointer">Résumé du lundi par e-mail
+              <input type="checkbox" checked={resumeLundi} onChange={e => changerResume(e.target.checked)} className="w-5 h-5 accent-violet-600" />
+            </label>
+            <p className="text-xs text-gray-500 leading-relaxed">Chaque lundi matin, les nouvelles informations de la semaine, triées par priorité, envoyées aux administrateurs de l'organisme.</p>
+          </div>
+          <div className="bg-white rounded-3xl border border-gray-100 p-5 text-xs text-gray-500 leading-relaxed">
+            Informations collectées automatiquement chaque semaine auprès de sources officielles et spécialisées (service-public.fr, France compétences, Centre Inffo…). Le résumé reprend le début de l'article : le texte officiel fait foi, vérifiez-le avant d'agir.
+          </div>
+          {proprio && (
+            <div className="bg-white rounded-3xl border-2 border-violet-200 p-5 space-y-3">
+              <p className="font-black text-gray-900">Propriétaire de SkorUp</p>
+              {derniereCollecte ? (
+                <div className="text-xs text-gray-600 space-y-1">
+                  <p>Dernière collecte : semaine du {libelleSemaineVeille(derniereCollecte.semaine)} · {derniereCollecte.nb_publies} publiée(s) · {derniereCollecte.nb_resumes || 0} résumé(s) envoyé(s)</p>
+                  <ul className="space-y-0.5">
+                    {(derniereCollecte.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : ''}>{r.etat === 'erreur' ? '✗' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : `${r.articles} lus, ${r.retenus} retenus`}</li>)}
+                  </ul>
+                </div>
+              ) : <p className="text-xs text-gray-500">Aucune collecte pour l'instant.</p>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => lancer(true)} disabled={!!occupe} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 disabled:opacity-40">{occupe === 'essai' ? 'Essai…' : 'Tester les sources (sans publier)'}</button>
+                <button type="button" onClick={() => lancer(false)} disabled={!!occupe} className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold disabled:opacity-40">{occupe === 'lancer' ? 'Collecte…' : 'Lancer la collecte maintenant'}</button>
+              </div>
+              {essai && (
+                <div className="text-xs text-gray-700 bg-gray-50 rounded-xl p-3 space-y-1">
+                  <p className="font-bold">Essai : {essai.infos.length} information(s) seraient publiées ({essai.nbLus} articles lus).</p>
+                  <ul className="list-disc pl-4 space-y-0.5">{essai.infos.map(x => <li key={x.url} className="break-words">{x.titre} <span className="text-gray-500">({x.source_nom})</span></li>)}</ul>
+                  <ul className="space-y-0.5 pt-1">{(essai.rapport || []).map(r => <li key={r.cle} className={r.etat === 'erreur' ? 'text-red-700' : ''}>{r.etat === 'erreur' ? '✗' : '✓'} {r.nom} : {r.etat === 'erreur' ? r.erreur : `${r.articles} lus, ${r.retenus} retenus`}</li>)}</ul>
+                </div>
+              )}
+              {(proprio.masquees || []).length > 0 && (
+                <div className="text-xs text-gray-600 space-y-1">
+                  <p className="font-bold">Informations retirées</p>
+                  {proprio.masquees.map(m => <p key={m.id} className="flex items-start justify-between gap-2"><span className="break-words">{m.titre}</span><button type="button" onClick={() => masquer(m, false)} className="text-violet-700 font-bold shrink-0">Remettre</button></p>)}
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {edition && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-3 sm:p-4" onClick={() => !occupe && setEdition(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="veille-action-titre" className="bg-white rounded-3xl w-full max-w-lg shadow-2xl p-5 sm:p-6 space-y-4 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h2 id="veille-action-titre" className="text-lg font-black text-gray-900">Qu'avez-vous fait de cette information ?</h2>
+            <p className="text-sm text-gray-600 break-words">{edition.info.titre}</p>
+            <div className="flex flex-wrap gap-2">
+              {ACTIONS_VEILLE_RAPIDES.map(a => <button key={a} type="button" onClick={() => setEdition(p => ({ ...p, texte: a }))} className="px-3 py-1.5 rounded-lg bg-violet-50 text-violet-800 text-xs font-bold text-left">{a}</button>)}
+            </div>
+            <div>
+              <label htmlFor="veille-action" className="block text-xs font-bold text-gray-600 mb-1">Action menée</label>
+              <textarea id="veille-action" rows={4} maxLength={2000} value={edition.texte} onChange={e => setEdition(p => ({ ...p, texte: e.target.value }))} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm resize-y" placeholder="Ex : modalités vérifiées auprès de l'OPCO, mention ajoutée dans nos devis." />
+            </div>
+            <div className="flex flex-wrap justify-between gap-2">
+              {suivi[edition.info.id] ? <button type="button" onClick={() => annulerTraitement(edition.info)} className="px-4 py-2.5 rounded-xl text-sm font-bold text-red-600 hover:bg-red-50">Marquer comme non traitée</button> : <span />}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setEdition(null)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                <button type="button" onClick={enregistrer} disabled={!!occupe} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">{occupe === 'enregistrement' ? 'Enregistrement…' : 'Enregistrer'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {export_ && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-3 sm:p-4" onClick={() => !occupe && setExport(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="veille-export-titre" className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-5 sm:p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h2 id="veille-export-titre" className="text-lg font-black text-gray-900">Preuve de veille pour l'audit</h2>
+            <p className="text-sm text-gray-600">Choisissez la période (semaines de publication).</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label htmlFor="veille-du" className="block text-xs font-bold text-gray-600 mb-1">Du</label><input id="veille-du" type="date" value={export_.debut} onChange={e => setExport(p => ({ ...p, debut: e.target.value }))} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" /></div>
+              <div><label htmlFor="veille-au" className="block text-xs font-bold text-gray-600 mb-1">Au</label><input id="veille-au" type="date" value={export_.fin} onChange={e => setExport(p => ({ ...p, fin: e.target.value }))} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" /></div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setExport(null)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+              <button type="button" onClick={exporter} disabled={!!occupe || !export_.debut || !export_.fin || export_.debut > export_.fin} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 inline-flex items-center gap-2"><Download size={15} /> {occupe === 'export' ? 'Création…' : 'Télécharger le PDF'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const BpfView = ({ currentOrgId, orgSettings, onOuvrirClient }) => {
   const exos = React.useMemo(() => exercicesProposes(), []);
   const [exo, setExo] = React.useState(exos[0]);
@@ -23208,6 +23568,7 @@ const TAB_TO_PATH = {
   exercices: '/exercices',
   prospects: '/prospects',
   bpf: '/bpf',
+  veille: '/veille',
 };
 // Réciproque URL → onglet — 1:1, sans collision (chaque chemin ci-dessus n'a qu'un seul propriétaire).
 const PATH_TO_TAB = {};
@@ -25718,7 +26079,7 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'bpf', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'bpf', 'veille', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
       formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
@@ -26440,6 +26801,14 @@ export default function App() {
   const ouvrirRecusClient = (clientId) => { setOngletFicheDemande('recus'); setExpandedClientId(clientId); setActiveTab('clients'); };
 
   const estPro = hasFeatureAccess(orgSettings, 'pro');
+  // 03/11/2026 : veille — nombre d'informations de la dernière semaine pas encore traitées (badge du menu).
+  const [veilleNonLues, setVeilleNonLues] = useState(0);
+  useEffect(() => {
+    if (userRole !== 'admin' || !estPro || !currentOrgId) { setVeilleNonLues(0); return; }
+    let annule = false;
+    compterVeilleNonTraitees(currentOrgId).then(n => { if (!annule) setVeilleNonLues(n); });
+    return () => { annule = true; };
+  }, [userRole, estPro, currentOrgId]);
   const nomUtilisateurConnecte = assignableFormateurs.find(f => String(f.id) === String(currentUserId))?.nom
     || (userRole === 'admin' ? (orgSettings?.nom || 'Administrateur') : 'Formateur');
 
@@ -31102,6 +31471,12 @@ export default function App() {
                 <FileCheck className="w-5 h-5 mr-3" /> BPF
                 {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[11px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
               </button>
+              <button onClick={() => { setActiveTab('veille'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'veille' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <ClipboardList className="w-5 h-5 mr-3" /> Veille
+                {!hasFeatureAccess(orgSettings, 'pro')
+                  ? <span className="ml-auto text-[11px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>
+                  : (veilleNonLues > 0 && <span className="ml-auto text-[11px] font-black bg-white text-violet-700 px-1.5 py-0.5 rounded-md" aria-label={`${veilleNonLues} information(s) à traiter`}>{veilleNonLues}</span>)}
+              </button>
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -31563,6 +31938,23 @@ export default function App() {
           {activeTab === 'bpf' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && (
             <BpfView currentOrgId={currentOrgId} orgSettings={orgSettings}
               onOuvrirClient={(id) => { setOngletFicheDemande('finances'); setExpandedClientId(id); setActiveTab('clients'); }} />
+          )}
+          {activeTab === 'veille' && userRole === 'admin' && !hasFeatureAccess(orgSettings, 'pro') && (
+            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
+              <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
+                <Lock className="w-7 h-7 text-violet-600" />
+              </div>
+              <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
+                Chaque lundi, les nouveautés de la formation (Qualiopi, CPF, financement, réglementation) avec leur source, l'action menée notée en un clic et la preuve de veille prête pour votre audit Qualiopi.
+              </p>
+              <button onClick={() => setActiveTab('parametres_org')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
+                Voir les plans →
+              </button>
+            </div>
+          )}
+          {activeTab === 'veille' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && (
+            <VeilleView currentOrgId={currentOrgId} orgSettings={orgSettings} nomUtilisateur={nomUtilisateurConnecte} currentUserId={currentUserId} onNonLus={setVeilleNonLues} />
           )}
           {activeTab === 'processus' && (
             <SharedProcessesView

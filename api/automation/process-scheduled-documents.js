@@ -90,6 +90,15 @@ module.exports = async (req, res) => {
 
   const supabase = createClient(supabaseUrl, serviceKey);
 
+  // 03/11/2026 : le lundi, veille légale et réglementaire (collecte, publication, résumés par e-mail).
+  // Une erreur de la veille n'empêche jamais l'envoi des documents programmés.
+  try {
+    const veille = await require('../prospects.js').veilleHebdomadaire();
+    if (!veille.ignore) console.log('[veille]', JSON.stringify({ semaine: veille.semaine, publiees: veille.publiees, resumes: veille.resumes }));
+  } catch (e) {
+    console.error('[veille] échec :', e && e.message ? e.message : e);
+  }
+
   try {
     const todayStr = todayInParisStr();
     const debut = Date.now();

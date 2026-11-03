@@ -19,6 +19,9 @@
 //   « CONVENTIONS SIGNÉES PAR UNE ENTREPRISE ») : envoyer/relancer/annuler_signature, signer_organisme,
 //   lire_signature, code_signature, signer_entreprise.
 //
+// 03/11/2026 — veille légale et réglementaire (voir plus bas, « VEILLE LÉGALE ET RÉGLEMENTAIRE ») :
+//   veille_publique, veille_statut, veille_lancer, veille_masquer, veille_retirer + veilleHebdomadaire (cron).
+//
 // Sécurité de l'accès public (lire/soumettre) : la table prospect_questionnaire_envois n'a AUCUNE
 // policy RLS pour "anon" (voir prospect_questionnaires_migration.sql) — cette fonction utilise donc
 // la clé service_role, et c'est ELLE, pas la base, qui garantit qu'un token ne révèle jamais que SA
@@ -963,6 +966,285 @@ async function handleSignerEntreprise(req, res) {
   return res.status(200).json({ etat: termine ? 'termine' : 'signe', pdfUrl: urlPubliqueConv(chemin) });
 }
 
+// ── VEILLE LÉGALE ET RÉGLEMENTAIRE (03/11/2026) ───────────────────────────────────────────────────
+// Chaque lundi (appel depuis le cron api/automation/process-scheduled-documents.js, 8 h Paris) :
+//   1. lecture des fils d'actualité (table veille_sources), articles de la semaine précédente (lundi → dimanche),
+//   2. tri : sujets « formation » seulement pour les sources généralistes, doublons retirés, thème et priorité
+//      estimés par mots-clés, résumé = début du texte de la source (gratuit, sans IA), 15 informations au plus,
+//   3. publication dans veille_infos (commune à tous les organismes ; lue aussi par le site skorup.fr),
+//   4. résumé du lundi par e-mail aux administrateurs des organismes Pro / Illimité (désactivable),
+//   5. copie au propriétaire de SkorUp (variable VEILLE_PROPRIETAIRE) avec un lien « Retirer » par information.
+// Une seule collecte et un seul envoi par semaine (table veille_collectes), même si le cron repasse.
+//   GET  ?action=veille_publique             — PUBLIC : dernières semaines publiées (site skorup.fr).
+//   POST ?action=veille_statut               — connecté : { proprietaire } (+ dernière collecte si propriétaire).
+//   POST ?action=veille_lancer               — propriétaire : lance la collecte maintenant (essai possible).
+//   POST ?action=veille_masquer              — propriétaire : retire / remet une information.
+//   GET  ?action=veille_retirer&id=…&sig=…   — lien signé de l'e-mail du propriétaire.
+const VEILLE_MAX_PAR_SEMAINE = 15;
+const VEILLE_DELAI_FLUX_MS = 8000;
+const RE_FORMATION = /formation|qualiopi|\bcpf\b|compte personnel de formation|opco|apprenti|alternance|bilan de comp[ée]tences|\bvae\b|validation des acquis|certification|rncp|r[ée]pertoire sp[ée]cifique|france comp[ée]tences|organisme de formation|stagiaire|reconversion|transitions? pro|comp[ée]tences/i;
+const THEMES_VEILLE = [
+  ['qualiopi', /qualiopi|r[ée]f[ée]rentiel national (de )?qualit[ée]|certification qualit[ée]/i],
+  ['cpf', /\bcpf\b|compte personnel de formation|mon ?compte ?formation|\bedof\b/i],
+  ['controle', /contr[ôo]le|sanction|dreets|d[ée]claration d.activit[ée]|\bbpf\b|bilan p[ée]dagogique|fraude|num[ée]ro de d[ée]claration/i],
+  ['apprentissage', /apprenti|alternance|\bcfa\b|contrat de professionnalisation/i],
+  ['financement', /opco|financement|prise en charge|subrogation|\btva\b|france travail|\baides?\b|r[ée]gion|plan de d[ée]veloppement/i],
+  ['certification', /rncp|r[ée]pertoire sp[ée]cifique|certification professionnelle|france comp[ée]tences|certificateur/i],
+  ['reconversion', /reconversion|transitions? pro|\bvae\b|validation des acquis|bilan de comp[ée]tences/i],
+];
+const RE_ACTION = /entr(e|ent|era|eront) en vigueur|[àa] compter du|obligatoire|obligation|date limite|au plus tard|avant le \d|doi(t|vent) (d[ée]sormais |[êe]tre|d[ée]clarer|transmettre)|sanction|d[ée]cret|arr[êe]t[ée] du|nouveau r[ée]f[ée]rentiel/i;
+const RE_SURVEILLER = /projet|consultation|[àa] venir|prochainement|r[ée]forme|annonc|pr[ée]vu|envisag|concertation|proposition de loi|amendement/i;
+
+function decoderEntites(s) {
+  return String(s || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(Number(n)); } catch (_) { return ' '; } })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => { try { return String.fromCodePoint(parseInt(n, 16)); } catch (_) { return ' '; } })
+    .replace(/&nbsp;/g, ' ').replace(/&rsquo;|&lsquo;/g, '’').replace(/&laquo;/g, '«').replace(/&raquo;/g, '»')
+    .replace(/&eacute;/g, 'é').replace(/&egrave;/g, 'è').replace(/&agrave;/g, 'à').replace(/&ccedil;/g, 'ç').replace(/&hellip;/g, '…')
+    .replace(/&quot;/g, '"').replace(/&apos;|&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+const texteBrut = (html) => decoderEntites(decoderEntites(html).replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' '))
+  .replace(/\s+/g, ' ').trim();
+function baliseXml(bloc, noms) {
+  for (const n of noms) {
+    const m = new RegExp(`<${n}(?:\\s[^>]*)?>([\\s\\S]*?)</${n}>`, 'i').exec(bloc);
+    if (m && m[1].trim()) return m[1];
+  }
+  return '';
+}
+// Fil RSS 2.0 ou Atom → [{ titre, url, texte, date }]
+function lireFil(xml) {
+  const blocs = String(xml || '').match(/<(item|entry)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi) || [];
+  return blocs.slice(0, 80).map(b => {
+    let url = texteBrut(baliseXml(b, ['link']));
+    if (!/^https?:\/\//i.test(url)) {
+      const alt = /<link[^>]*rel=["']alternate["'][^>]*href=["']([^"']+)["']/i.exec(b) || /<link[^>]*href=["']([^"']+)["']/i.exec(b);
+      url = alt ? decoderEntites(alt[1]) : texteBrut(baliseXml(b, ['guid', 'id']));
+    }
+    const dateTxt = texteBrut(baliseXml(b, ['pubDate', 'published', 'updated', 'dc:date']));
+    const d = dateTxt ? new Date(dateTxt) : null;
+    return {
+      titre: texteBrut(baliseXml(b, ['title'])).slice(0, 300),
+      url: String(url || '').trim().slice(0, 1000),
+      texte: texteBrut(baliseXml(b, ['description', 'summary', 'content:encoded', 'content'])),
+      date: d && !Number.isNaN(d.getTime()) ? d : null,
+    };
+  }).filter(a => a.titre && /^https?:\/\//i.test(a.url));
+}
+// Résumé gratuit : début du texte de la source, 2 à 3 phrases, 320 caractères au plus.
+function resumeVeille(texte, titre) {
+  let t = String(texte || '').replace(/\s*(L.article|The post|Cet article) .{0,200}(est apparu|appeared) .*$/i, '').trim();
+  if (titre && t.toLowerCase().startsWith(titre.toLowerCase())) t = t.slice(titre.length).replace(/^[\s:.–-]+/, '');
+  if (!t) return null;
+  if (t.length <= 320) return t;
+  const phrases = t.match(/[^.!?]+[.!?]+(\s|$)/g) || [];
+  let r = '';
+  for (const p of phrases) { if ((r + p).length > 320) break; r += p; }
+  r = r.trim();
+  if (r.length < 80) r = t.slice(0, 300).replace(/\s+\S*$/, '') + '…';
+  return r;
+}
+const themeVeille = (t) => (THEMES_VEILLE.find(([, re]) => re.test(t)) || ['reglementation'])[0];
+const prioriteVeille = (t, theme) => (RE_ACTION.test(t) && theme !== 'reglementation' ? 'action' : (RE_ACTION.test(t) ? 'surveiller' : (RE_SURVEILLER.test(t) ? 'surveiller' : 'info')));
+const ORDRE_PRIORITE = { action: 0, surveiller: 1, info: 2 };
+const cleTitre = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ')
+  .split(/\s+/).filter(m => m.length > 3).slice(0, 8).join(' ');
+// Dates en heure de Paris (AAAA-MM-JJ) : lundi de la semaine en cours et semaine précédente.
+const jourParis = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(d);
+function semainesVeille(maintenant) {
+  const j = jourParis(maintenant);
+  const base = new Date(`${j}T12:00:00Z`);
+  const decal = (base.getUTCDay() + 6) % 7; // lundi = 0
+  const lundi = new Date(base.getTime() - decal * 86400000);
+  const lundiPrec = new Date(lundi.getTime() - 7 * 86400000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { estLundi: decal === 0, semaine: iso(lundi), debut: iso(lundiPrec), fin: iso(new Date(lundi.getTime() - 86400000)) };
+}
+async function lireUrl(url) {
+  const ctrl = new AbortController();
+  const minuterie = setTimeout(() => ctrl.abort(), VEILLE_DELAI_FLUX_MS);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'SkorUp-Veille/1.0 (+https://www.skorup.fr)', Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const txt = await r.text();
+    return txt.slice(0, 3 * 1024 * 1024);
+  } finally { clearTimeout(minuterie); }
+}
+const signatureVeille = (id) => crypto.createHmac('sha256', String(process.env.SUPABASE_SERVICE_ROLE_KEY || 'skorup')).update(`veille:${id}`).digest('hex').slice(0, 32);
+const proprietaireVeille = () => String(process.env.VEILLE_PROPRIETAIRE || '').trim().toLowerCase();
+const LIBELLES_THEME_VEILLE = { qualiopi: 'Qualiopi', cpf: 'CPF', controle: 'Contrôle', apprentissage: 'Apprentissage', financement: 'Financement', certification: 'Certification', reconversion: 'Reconversion', reglementation: 'Réglementation' };
+const LIBELLES_PRIORITE_VEILLE = { action: 'Action requise', surveiller: 'À surveiller', info: 'Pour information' };
+
+// Collecte d'une semaine : renvoie { infos, rapport, nbLus } sans rien écrire.
+async function collecterVeille({ debut, fin, semaine }) {
+  const { data: sources, error } = await supabaseAdmin.from('veille_sources').select('*').eq('actif', true).order('ordre', { ascending: true });
+  if (error) throw error;
+  const resultats = await Promise.all((sources || []).map(async (s) => {
+    try {
+      const articles = lireFil(await lireUrl(s.url));
+      const retenus = articles.filter(a => {
+        const jour = a.date ? jourParis(a.date) : null;
+        if (!jour || jour < debut || jour > fin) return false;
+        return !s.filtrer || RE_FORMATION.test(`${a.titre} ${a.texte}`);
+      });
+      return { source: s, articles, retenus, etat: articles.length ? 'ok' : 'vide' };
+    } catch (e) {
+      return { source: s, articles: [], retenus: [], etat: 'erreur', erreur: String(e && (e.name === 'AbortError' ? 'délai dépassé' : e.message) || e).slice(0, 200) };
+    }
+  }));
+  const vusUrl = new Set(), vusTitre = new Set();
+  const infos = [];
+  resultats.forEach(({ source, retenus }) => retenus.forEach(a => {
+    const ct = cleTitre(a.titre);
+    if (vusUrl.has(a.url) || (ct && vusTitre.has(ct))) return;
+    vusUrl.add(a.url); if (ct) vusTitre.add(ct);
+    const tout = `${a.titre} ${a.texte}`;
+    const theme = themeVeille(tout);
+    infos.push({
+      url: a.url, titre: a.titre, resume: resumeVeille(a.texte, a.titre), source_cle: source.cle, source_nom: source.nom,
+      theme, priorite: prioriteVeille(tout, theme), date_article: a.date.toISOString(), semaine,
+    });
+  }));
+  infos.sort((x, y) => (ORDRE_PRIORITE[x.priorite] - ORDRE_PRIORITE[y.priorite]) || (y.date_article > x.date_article ? 1 : -1));
+  return {
+    infos: infos.slice(0, VEILLE_MAX_PAR_SEMAINE),
+    nbLus: resultats.reduce((n, r) => n + r.articles.length, 0),
+    rapport: resultats.map(r => ({ cle: r.source.cle, nom: r.source.nom, etat: r.etat, articles: r.articles.length, retenus: r.retenus.length, ...(r.erreur ? { erreur: r.erreur } : {}) })),
+  };
+}
+
+function htmlInfosVeille(infos, { liensRetirer = false } = {}) {
+  return infos.map(i => `<div style="border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:0 0 12px;">
+      <p style="margin:0 0 6px;font-size:12px;color:#6d28d9;font-weight:bold;">${escapeHtml(LIBELLES_PRIORITE_VEILLE[i.priorite] || '')} · ${escapeHtml(LIBELLES_THEME_VEILLE[i.theme] || '')}</p>
+      <p style="margin:0 0 6px;font-size:15px;color:#111827;font-weight:bold;">${escapeHtml(i.titre)}</p>
+      ${i.resume ? `<p style="margin:0 0 8px;font-size:13px;color:#374151;line-height:1.55;">${escapeHtml(i.resume)}</p>` : ''}
+      <p style="margin:0;font-size:12px;"><a href="${escapeHtml(i.url)}" style="color:#6d28d9;">Source : ${escapeHtml(i.source_nom)}</a>${liensRetirer && i.id ? ` &nbsp;·&nbsp; <a href="${APP_URL}/api/prospects?action=veille_retirer&id=${i.id}&sig=${signatureVeille(i.id)}" style="color:#b42318;">Retirer cette information</a>` : ''}</p>
+    </div>`).join('');
+}
+
+// Collecte + publication + e-mails. options : { force, essai, maintenant }
+async function veilleHebdomadaire(options = {}) {
+  const maintenant = options.maintenant || new Date();
+  const { estLundi, semaine, debut, fin } = semainesVeille(maintenant);
+  if (!estLundi && !options.force) return { ignore: true, raison: 'pas_lundi' };
+  const { data: deja, error: errDeja } = await supabaseAdmin.from('veille_collectes').select('*').eq('semaine', semaine).maybeSingle();
+  if (errDeja && tableAbsente(errDeja)) return { ignore: true, raison: 'sql_absent' };
+  if (errDeja) throw errDeja;
+
+  let publiees = [];
+  let collecte = deja;
+  if (!deja || !deja.termine_le || options.force) {
+    const { infos, rapport, nbLus } = await collecterVeille({ debut, fin, semaine });
+    if (options.essai) return { essai: true, semaine, debut, fin, nbLus, infos, rapport };
+    if (infos.length) {
+      const { data: ins, error: errIns } = await supabaseAdmin.from('veille_infos').upsert(infos, { onConflict: 'url', ignoreDuplicates: true }).select('*');
+      if (errIns) throw errIns;
+      publiees = ins || [];
+    }
+    const ligne = { semaine, termine_le: new Date().toISOString(), nb_lus: nbLus, nb_publies: (deja?.nb_publies || 0) + publiees.length, rapport };
+    const { error: errC } = await supabaseAdmin.from('veille_collectes').upsert([ligne], { onConflict: 'semaine' });
+    if (errC) throw errC;
+    collecte = { ...(deja || {}), ...ligne };
+  }
+
+  // E-mails : une seule fois par semaine, seulement s'il y a des informations cette semaine.
+  let nbResumes = 0;
+  if (!collecte.resumes_envoyes_le) {
+    const { data: semaineInfos } = await supabaseAdmin.from('veille_infos').select('*').eq('semaine', semaine).eq('masquee', false);
+    const infos = (semaineInfos || []).sort((x, y) => (ORDRE_PRIORITE[x.priorite] - ORDRE_PRIORITE[y.priorite]));
+    if (infos.length) {
+      const [{ data: orgs }, { data: reglages }, { data: admins }] = await Promise.all([
+        supabaseAdmin.from('organisations').select('id, nom, subscription_status, subscribed_plan'),
+        supabaseAdmin.from('veille_reglages').select('organisation_id, resume_lundi'),
+        supabaseAdmin.from('utilisateurs').select('email, organisation_id, role').eq('role', 'admin'),
+      ]);
+      const sansResume = new Set((reglages || []).filter(r => r.resume_lundi === false).map(r => String(r.organisation_id)));
+      const destinataires = [];
+      (orgs || []).filter(o => offreOrganisme(o) !== 'essentiel' && !sansResume.has(String(o.id))).forEach(o => {
+        (admins || []).filter(a => String(a.organisation_id) === String(o.id) && EMAIL_RE.test(String(a.email || '').trim()))
+          .forEach(a => { if (!destinataires.includes(String(a.email).trim().toLowerCase())) destinataires.push(String(a.email).trim().toLowerCase()); });
+      });
+      const nbAction = infos.filter(i => i.priorite === 'action').length;
+      const sujet = `Veille formation · ${infos.length} nouveauté${infos.length > 1 ? 's' : ''}${nbAction ? ` dont ${nbAction} action${nbAction > 1 ? 's' : ''} requise${nbAction > 1 ? 's' : ''}` : ''}`;
+      const corps = (intro, liens) => gabaritEmailConv('SkorUp · Veille',
+        pEmail(intro) + htmlInfosVeille(infos, { liensRetirer: liens }) + pPetit('Résumés repris automatiquement du début de chaque article. Le texte officiel fait foi : vérifiez-le avant d\'agir. Vous pouvez désactiver cet e-mail dans SkorUp, menu Veille.'),
+        { lien: `${APP_URL}/veille`, texte: 'Noter les actions dans SkorUp' });
+      for (const email of destinataires.slice(0, 200)) {
+        const r = await envoyerEmailConv({ a: email, sujet, html: corps(`Voici les nouveautés de la formation publiées du ${debut.split('-').reverse().join('/')} au ${fin.split('-').reverse().join('/')}.`, false), nomOrgMarque: '', replyTo: null });
+        if (r.sent || r.simulated) nbResumes++;
+      }
+      const proprio = proprietaireVeille();
+      if (EMAIL_RE.test(proprio)) {
+        await envoyerEmailConv({ a: proprio, sujet: `[Copie] ${sujet}`, html: corps(`Copie de la veille publiée ce lundi (${destinataires.length} destinataire${destinataires.length > 1 ? 's' : ''}). Une information hors sujet ? Cliquez sur « Retirer » : elle disparaît de SkorUp et du site.`, true), nomOrgMarque: '', replyTo: null }).catch(() => null);
+      }
+    }
+    await supabaseAdmin.from('veille_collectes').update({ resumes_envoyes_le: new Date().toISOString(), nb_resumes: nbResumes }).eq('semaine', semaine);
+  }
+  return { semaine, debut, fin, publiees: publiees.length, resumes: nbResumes, rapport: collecte.rapport };
+}
+
+async function utilisateurConnecte(req) {
+  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+  if (!token) return null;
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  return error || !data?.user ? null : data.user;
+}
+const estProprietaireVeille = (user) => !!user && !!proprietaireVeille() && String(user.email || '').trim().toLowerCase() === proprietaireVeille();
+
+async function handleVeillePublique(req, res) {
+  const { data, error } = await supabaseAdmin.from('veille_infos').select('titre, resume, url, source_nom, theme, priorite, date_article, semaine')
+    .eq('masquee', false).order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(60);
+  if (error && tableAbsente(error)) return res.status(200).json({ infos: [] });
+  if (error) throw error;
+  res.setHeader('Cache-Control', 'public, s-maxage=1800, stale-while-revalidate=86400');
+  return res.status(200).json({ infos: data || [] });
+}
+async function handleVeilleStatut(req, res) {
+  const user = await utilisateurConnecte(req);
+  if (!user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
+  if (!estProprietaireVeille(user)) return res.status(200).json({ proprietaire: false });
+  const [{ data: collectes, error }, { data: masquees }] = await Promise.all([
+    supabaseAdmin.from('veille_collectes').select('*').order('semaine', { ascending: false }).limit(4),
+    supabaseAdmin.from('veille_infos').select('id, titre, source_nom, semaine').eq('masquee', true).order('semaine', { ascending: false }).limit(30),
+  ]);
+  if (error && !tableAbsente(error)) throw error;
+  return res.status(200).json({ proprietaire: true, collectes: collectes || [], masquees: masquees || [] });
+}
+async function handleVeilleLancer(req, res) {
+  const user = await utilisateurConnecte(req);
+  if (!user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
+  if (!estProprietaireVeille(user)) return res.status(403).json({ error: 'Réservé au propriétaire de SkorUp.' });
+  const r = await veilleHebdomadaire({ force: true, essai: !!(req.body && req.body.essai) });
+  if (r.raison === 'sql_absent') return res.status(503).json({ error: 'Lancez d\'abord le SQL « veille » dans Supabase.' });
+  return res.status(200).json(r);
+}
+async function handleVeilleMasquer(req, res) {
+  const user = await utilisateurConnecte(req);
+  if (!user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
+  if (!estProprietaireVeille(user)) return res.status(403).json({ error: 'Réservé au propriétaire de SkorUp.' });
+  const { infoId, masquee } = req.body || {};
+  if (!infoId) return res.status(400).json({ error: 'Information manquante.' });
+  const { data, error } = await supabaseAdmin.from('veille_infos').update({ masquee: masquee !== false }).eq('id', infoId).select('id').maybeSingle();
+  if (error) throw error;
+  if (!data) return res.status(404).json({ error: 'Information introuvable.' });
+  return res.status(200).json({ ok: true });
+}
+async function handleVeilleRetirer(req, res) {
+  const id = String((req.query && req.query.id) || '');
+  const sig = String((req.query && req.query.sig) || '');
+  const page = (titre, texte) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titre}</title></head><body style="font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:0 16px;color:#111827;"><h1 style="font-size:22px;">${titre}</h1><p style="color:#374151;line-height:1.6;">${texte}</p></body></html>`);
+  };
+  const attendu = Buffer.from(signatureVeille(id));
+  const recu = Buffer.from(sig);
+  if (!/^[0-9a-f-]{36}$/i.test(id) || attendu.length !== recu.length || !crypto.timingSafeEqual(attendu, recu)) return page('Lien invalide', 'Ce lien ne fonctionne pas.');
+  const { data, error } = await supabaseAdmin.from('veille_infos').update({ masquee: true }).eq('id', id).select('titre').maybeSingle();
+  if (error || !data) return page('Information introuvable', 'Elle a peut-être déjà été supprimée.');
+  return page('Information retirée', `« ${escapeHtml(data.titre)} » n'apparaît plus dans SkorUp ni sur le site. Pour la remettre : menu Veille de SkorUp, avec votre compte.`);
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -985,9 +1267,18 @@ module.exports = async (req, res) => {
     if (req.method === 'GET' && action === 'lire_signature') return await handleLireSignature(req, res);
     if (req.method === 'POST' && action === 'code_signature') return await handleCodeSignature(req, res);
     if (req.method === 'POST' && action === 'signer_entreprise') return await handleSignerEntreprise(req, res);
+    // 03/11/2026 : veille légale et réglementaire.
+    if (req.method === 'GET' && action === 'veille_publique') return await handleVeillePublique(req, res);
+    if (req.method === 'POST' && action === 'veille_statut') return await handleVeilleStatut(req, res);
+    if (req.method === 'POST' && action === 'veille_lancer') return await handleVeilleLancer(req, res);
+    if (req.method === 'POST' && action === 'veille_masquer') return await handleVeilleMasquer(req, res);
+    if (req.method === 'GET' && action === 'veille_retirer') return await handleVeilleRetirer(req, res);
     return res.status(400).json({ error: 'Action invalide.' });
   } catch (err) {
     console.error('[prospects]', err);
     return res.status(500).json({ error: 'Erreur interne.' });
   }
 };
+
+// 03/11/2026 : collecte du lundi, appelée par le cron api/automation/process-scheduled-documents.js.
+module.exports.veilleHebdomadaire = veilleHebdomadaire;
