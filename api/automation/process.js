@@ -125,7 +125,7 @@ function emailRelanceCompte({ nomClient, nomOrganisme, lien, etape }) {
 }
 
 async function envoyerViaResend(resendApiKey, message) {
-  const r = await fetch('https://api.resend.com/emails', {
+  const r = await fetchResend('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(message),
@@ -243,6 +243,29 @@ async function relancerComptesClients(supabase, resendApiKey) {
     }
   }
   return bilan;
+}
+
+// ── Audit 04/11/2026 : quota commun d'e-mails ─────────────────────────────────────────────────
+// L'offre gratuite de Resend permet 100 e-mails par jour pour TOUTE la plateforme. Chaque envoi réserve
+// d'abord une place (fonction SQL skorup_reserver_email, SQL « lot2_quotas ») : les envois courants
+// s'arrêtent à 75 par jour, pour garder une réserve aux codes de signature et aux liens d'accès (95).
+// Si le SQL n'est pas lancé ou si la base ne répond pas, l'envoi n'est jamais bloqué par le compteur.
+// options.quota = { prioritaire, cle, limite } (cle/limite : plafond par jour propre à un usage).
+const MESSAGE_QUOTA_EMAIL = 'Limite quotidienne d\'e-mails atteinte pour la plateforme : envoi reporté, réessayez demain.';
+let _clientQuotaEmail = null;
+async function fetchResend(url, options = {}) {
+  const { quota = {}, ...opts } = options;
+  try {
+    if (!_clientQuotaEmail) _clientQuotaEmail = createClient(process.env.SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+    const { data, error } = await _clientQuotaEmail.rpc('skorup_reserver_email', {
+      p_prioritaire: !!quota.prioritaire, p_cle: quota.cle || null, p_limite: quota.limite || null,
+    });
+    if (!error && data === false) {
+      console.warn('[quota e-mails] envoi refusé :', quota.cle || (quota.prioritaire ? 'prioritaire' : 'courant'));
+      return { ok: false, status: 429, quota: true, json: async () => ({ message: MESSAGE_QUOTA_EMAIL }), text: async () => MESSAGE_QUOTA_EMAIL };
+    }
+  } catch (_) { /* compteur indisponible : on envoie quand même */ }
+  return fetch(url, opts);
 }
 
 module.exports = async (req, res) => {
@@ -382,9 +405,9 @@ module.exports = async (req, res) => {
           .eq('automation_setting_id', setting.id)
           .eq('client_id', client.id)
           .gte('sent_at', todayStr + 'T00:00:00Z')
-          .maybeSingle();
+          .limit(1); // audit 04/11/2026 : maybeSingle échouait dès 2 envois le même jour → renvoi en boucle
 
-        if (existingLog) {
+        if (existingLog && existingLog.length) {
           results.push({ skipped: true, reason: 'already_sent_today', trigger: setting.trigger_type });
           continue;
         }
@@ -436,7 +459,7 @@ module.exports = async (req, res) => {
           emailSent = true;
         } else {
           try {
-            const resendResp = await fetch('https://api.resend.com/emails', {
+            const resendResp = await fetchResend('https://api.resend.com/emails', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${resendApiKey}`,

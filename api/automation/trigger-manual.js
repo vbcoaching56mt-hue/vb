@@ -97,6 +97,29 @@ function interpolate(str, vars, esc = false) {
     .replace(/\{module_name\}|\{\{module_name\}\}/g, () => v(vars.moduleName));
 }
 
+// ── Audit 04/11/2026 : quota commun d'e-mails ─────────────────────────────────────────────────
+// L'offre gratuite de Resend permet 100 e-mails par jour pour TOUTE la plateforme. Chaque envoi réserve
+// d'abord une place (fonction SQL skorup_reserver_email, SQL « lot2_quotas ») : les envois courants
+// s'arrêtent à 75 par jour, pour garder une réserve aux codes de signature et aux liens d'accès (95).
+// Si le SQL n'est pas lancé ou si la base ne répond pas, l'envoi n'est jamais bloqué par le compteur.
+// options.quota = { prioritaire, cle, limite } (cle/limite : plafond par jour propre à un usage).
+const MESSAGE_QUOTA_EMAIL = 'Limite quotidienne d\'e-mails atteinte pour la plateforme : envoi reporté, réessayez demain.';
+let _clientQuotaEmail = null;
+async function fetchResend(url, options = {}) {
+  const { quota = {}, ...opts } = options;
+  try {
+    if (!_clientQuotaEmail) _clientQuotaEmail = supabaseAdmin;
+    const { data, error } = await _clientQuotaEmail.rpc('skorup_reserver_email', {
+      p_prioritaire: !!quota.prioritaire, p_cle: quota.cle || null, p_limite: quota.limite || null,
+    });
+    if (!error && data === false) {
+      console.warn('[quota e-mails] envoi refusé :', quota.cle || (quota.prioritaire ? 'prioritaire' : 'courant'));
+      return { ok: false, status: 429, quota: true, json: async () => ({ message: MESSAGE_QUOTA_EMAIL }), text: async () => MESSAGE_QUOTA_EMAIL };
+    }
+  } catch (_) { /* compteur indisponible : on envoie quand même */ }
+  return fetch(url, opts);
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -175,6 +198,7 @@ module.exports = async (req, res) => {
 
     // ── 5. Construire la liste des emails à envoyer (même logique que l'ancien code client) ──
     const emailQueue = [];
+    const dejaEnFile = new Set(); // audit 04/11/2026 : un seul e-mail par relance et par client pour ce clic
     const debugSettingsInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-28) — à retirer ensuite.
     const debugSessionInfo = []; // MARQUEUR DE DEBUG TEMPORAIRE (2026-07-29) — à retirer ensuite.
     for (const setting of activeSettings) {
@@ -235,13 +259,17 @@ module.exports = async (req, res) => {
 
         const { data: existing, error: existingErr } = await supabaseAdmin.from('automation_logs')
           .select('id').eq('automation_setting_id', setting.id).eq('client_id', client.id)
-          .gte('sent_at', todayStr + 'T00:00:00Z').maybeSingle();
+          .gte('sent_at', todayStr + 'T00:00:00Z').limit(1);
+        // Audit 04/11/2026 : déjà envoyé aujourd'hui, ou déjà dans la liste de ce clic (2 séances le même jour).
+        const cleEnvoi = `${setting.id}|${client.id}`;
+        const existingRow = (existing && existing[0]) || (dejaEnFile.has(cleEnvoi) ? { id: 'en_file' } : null);
+        dejaEnFile.add(cleEnvoi);
 
-        if (existing) {
+        if (existingRow) {
           debugSessionInfo.push({
             sessionId: session.id, settingId: setting.id, clientId: session.client_id,
             clientFound: true, clientEmail: client.email_contact,
-            skippedReason: 'deja_envoye_aujourdhui', existingLogId: existing.id,
+            skippedReason: 'deja_envoye_aujourdhui', existingLogId: existingRow.id,
           });
           continue;
         }
@@ -299,7 +327,7 @@ module.exports = async (req, res) => {
 
       if (resendConfigured) {
         try {
-          const resendResp = await fetch('https://api.resend.com/emails', {
+          const resendResp = await fetchResend('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${resendApiKey}`,

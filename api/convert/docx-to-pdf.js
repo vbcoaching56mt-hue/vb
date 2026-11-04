@@ -47,9 +47,32 @@ module.exports = async (req, res) => {
     const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
     if (authErr || !authData?.user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
 
+    // ── Audit 04/11/2026 : compte rattaché à un organisme + limites par jour ──
+    // Avant : tout compte connecté (y compris un compte d'essai créé pour l'occasion) pouvait lancer
+    // des conversions sans limite et vider les crédits CloudConvert. Les clients gardent l'accès : ils
+    // en ont besoin pour signer un document Word d'une séance. Au-delà des limites, l'application
+    // bascule d'elle-même sur la conversion dans le navigateur.
+    const uid = authData.user.id;
+    let organisationId = null;
+    const { data: equipe } = await supabaseAdmin.from('utilisateurs').select('organisation_id').eq('auth_uid', uid).maybeSingle();
+    if (equipe && equipe.organisation_id) organisationId = equipe.organisation_id;
+    else {
+      const { data: beneficiaire } = await supabaseAdmin.from('clients').select('organisation_id').eq('id', uid).maybeSingle();
+      if (beneficiaire && beneficiaire.organisation_id) organisationId = beneficiaire.organisation_id;
+    }
+    if (!organisationId) return res.status(403).json({ error: 'Compte non rattaché à un organisme.' });
+
     // ── 2. Récupérer le DOCX (base64) envoyé par le client ──
     const base64Data = req.body?.docxBase64;
     if (!base64Data) return res.status(400).json({ error: 'docxBase64 manquant dans le corps de la requête.' });
+    if (String(base64Data).length > 6 * 1024 * 1024) return res.status(413).json({ error: 'Document trop lourd pour la conversion (4 Mo maximum).' });
+    try {
+      const limites = [[`conversion:${uid}`, 40], [`conversion_org:${organisationId}`, 150]];
+      for (const [cle, limite] of limites) {
+        const { data: ok, error: errQuota } = await supabaseAdmin.rpc('skorup_compter', { p_cle: cle, p_limite: limite });
+        if (!errQuota && ok === false) return res.status(429).json({ error: 'Limite de conversions du jour atteinte.' });
+      }
+    } catch (_) { /* compteur indisponible (SQL pas encore lancé) : la conversion n'est pas bloquée */ }
 
     const ccKey = process.env.CLOUDCONVERT_API_KEY;
     const convertApiSecret = process.env.CONVERT_API_SECRET || process.env.CONVERTAPI_SECRET;
@@ -145,6 +168,7 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: "Aucune clé API de conversion configurée côté serveur (CLOUDCONVERT_API_KEY)." });
   } catch (err) {
     console.error('[convert/docx-to-pdf]', err);
-    return res.status(500).json({ error: err.message });
+    // Audit 04/11/2026 : le détail (réponse de CloudConvert) reste dans les journaux du serveur.
+    return res.status(500).json({ error: 'La conversion du document a échoué.' });
   }
 };

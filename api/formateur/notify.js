@@ -42,12 +42,35 @@ function plainText(v, max = 200) {
   return String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
 }
 
-async function envoyerEmailFormateur(formateur, subject, bodyHtml) {
+// ── Audit 04/11/2026 : quota commun d'e-mails ─────────────────────────────────────────────────
+// L'offre gratuite de Resend permet 100 e-mails par jour pour TOUTE la plateforme. Chaque envoi réserve
+// d'abord une place (fonction SQL skorup_reserver_email, SQL « lot2_quotas ») : les envois courants
+// s'arrêtent à 75 par jour, pour garder une réserve aux codes de signature et aux liens d'accès (95).
+// Si le SQL n'est pas lancé ou si la base ne répond pas, l'envoi n'est jamais bloqué par le compteur.
+// options.quota = { prioritaire, cle, limite } (cle/limite : plafond par jour propre à un usage).
+const MESSAGE_QUOTA_EMAIL = 'Limite quotidienne d\'e-mails atteinte pour la plateforme : envoi reporté, réessayez demain.';
+let _clientQuotaEmail = null;
+async function fetchResend(url, options = {}) {
+  const { quota = {}, ...opts } = options;
+  try {
+    if (!_clientQuotaEmail) _clientQuotaEmail = supabaseAdmin;
+    const { data, error } = await _clientQuotaEmail.rpc('skorup_reserver_email', {
+      p_prioritaire: !!quota.prioritaire, p_cle: quota.cle || null, p_limite: quota.limite || null,
+    });
+    if (!error && data === false) {
+      console.warn('[quota e-mails] envoi refusé :', quota.cle || (quota.prioritaire ? 'prioritaire' : 'courant'));
+      return { ok: false, status: 429, quota: true, json: async () => ({ message: MESSAGE_QUOTA_EMAIL }), text: async () => MESSAGE_QUOTA_EMAIL };
+    }
+  } catch (_) { /* compteur indisponible : on envoie quand même */ }
+  return fetch(url, opts);
+}
+
+async function envoyerEmailFormateur(formateur, subject, bodyHtml, quota = {}) {
   if (!formateur.email) return { sent: false, message: 'Ce formateur n\'a pas d\'adresse email enregistrée.' };
   if (!resendApiKey) return { sent: false, simulated: true, message: 'RESEND_API_KEY non configurée côté serveur (Vercel).' };
 
-  const resendResp = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
+  const resendResp = await fetchResend('https://api.resend.com/emails', {
+    method: 'POST', quota,
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: FROM_EMAIL, to: [formateur.email], subject, html: bodyHtml }),
   });
@@ -197,7 +220,8 @@ async function handleNouveauDocument(req, res, authData) {
     </div>
   </div>`;
 
-  const resultat = await envoyerEmailFormateur(formateur, subject, bodyHtml);
+  // Audit 04/11/2026 : 20 notifications « nouveau document » par compte et par jour au maximum.
+  const resultat = await envoyerEmailFormateur(formateur, subject, bodyHtml, { cle: `notify_doc:${authData.user.id}`, limite: 20 });
   return res.status(200).json(resultat);
 }
 
@@ -264,7 +288,8 @@ async function handleDepotClient(req, res, authData) {
       <p style="color:#9ca3af;font-size:11px;">Email automatique SkorUp — ne pas répondre à ce message.</p>
     </div>
   </div>`;
-    resultats.push(await envoyerEmailFormateur(dest, subject, bodyHtml));
+    // Audit 04/11/2026 : 3 e-mails par dépôt et par jour au maximum (avant : un nouvel envoi à chaque appel).
+    resultats.push(await envoyerEmailFormateur(dest, subject, bodyHtml, { cle: `notify_depot:${depotId}`, limite: 3 }));
   }
   return res.status(200).json({ sent: resultats.some(r => r.sent), resultats });
 }
@@ -370,6 +395,7 @@ async function handleCompteClient(req, res, authData) {
     { email },
     `Votre espace de formation ${org && org.nom ? `chez ${plainText(org.nom, 60)} ` : ''}vous attend`,
     emailAccesClient({ nomClient: client.nom_complet, nomOrganisme: org && org.nom, lien, relance: false }),
+    { prioritaire: true },
   );
   return res.status(200).json({ created: true, ...resultat });
 }
@@ -450,6 +476,7 @@ async function handleRenvoiLien(req, res, authData) {
       ? `Votre lien de connexion à votre espace de formation${org && org.nom ? ` (${plainText(org.nom, 60)})` : ''}`
       : `Votre espace de formation ${org && org.nom ? `chez ${plainText(org.nom, 60)} ` : ''}vous attend`,
     emailAccesClient({ nomClient: client.nom_complet, nomOrganisme: org && org.nom, lien, relance: false, connexion: dejaActif }),
+    { prioritaire: true },
   );
   return res.status(200).json({ ...resultat, method: methode, email });
 }

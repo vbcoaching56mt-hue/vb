@@ -14,6 +14,9 @@
     },
     "api/automation/process-scheduled-documents.js": {
       "maxDuration": 280
+    },
+    "api/convert/docx-to-pdf.js": {
+      "maxDuration": 120
     }
   },
   "headers": [

@@ -205,7 +205,7 @@ async function handleEnvoyer(req, res) {
     return res.status(200).json({ sent: false, simulated: true, envoiId: envoi.id, message: 'RESEND_API_KEY non configurée côté serveur (Vercel).' });
   }
 
-  const resendResp = await fetch('https://api.resend.com/emails', {
+  const resendResp = await fetchResend('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: expediteurPour(organisme.nom), to: [emailTrim], subject, html: bodyHtml, ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}) }),
@@ -217,6 +217,29 @@ async function handleEnvoyer(req, res) {
   }
 
   return res.status(200).json({ sent: true, envoiId: envoi.id });
+}
+
+// ── Audit 04/11/2026 : quota commun d'e-mails ─────────────────────────────────────────────────
+// L'offre gratuite de Resend permet 100 e-mails par jour pour TOUTE la plateforme. Chaque envoi réserve
+// d'abord une place (fonction SQL skorup_reserver_email, SQL « lot2_quotas ») : les envois courants
+// s'arrêtent à 75 par jour, pour garder une réserve aux codes de signature et aux liens d'accès (95).
+// Si le SQL n'est pas lancé ou si la base ne répond pas, l'envoi n'est jamais bloqué par le compteur.
+// options.quota = { prioritaire, cle, limite } (cle/limite : plafond par jour propre à un usage).
+const MESSAGE_QUOTA_EMAIL = 'Limite quotidienne d\'e-mails atteinte pour la plateforme : envoi reporté, réessayez demain.';
+let _clientQuotaEmail = null;
+async function fetchResend(url, options = {}) {
+  const { quota = {}, ...opts } = options;
+  try {
+    if (!_clientQuotaEmail) _clientQuotaEmail = supabaseAdmin;
+    const { data, error } = await _clientQuotaEmail.rpc('skorup_reserver_email', {
+      p_prioritaire: !!quota.prioritaire, p_cle: quota.cle || null, p_limite: quota.limite || null,
+    });
+    if (!error && data === false) {
+      console.warn('[quota e-mails] envoi refusé :', quota.cle || (quota.prioritaire ? 'prioritaire' : 'courant'));
+      return { ok: false, status: 429, quota: true, json: async () => ({ message: MESSAGE_QUOTA_EMAIL }), text: async () => MESSAGE_QUOTA_EMAIL };
+    }
+  } catch (_) { /* compteur indisponible : on envoie quand même */ }
+  return fetch(url, opts);
 }
 
 // ── FINANCEURS (26/10/2026) ─────────────────────────────────────────────────────────────────────
@@ -277,7 +300,7 @@ async function emailFinanceur({ envoi, client, organisationId, origin, rappel })
     </div>
   </div>`;
   if (!resendApiKey) return { sent: false, simulated: true };
-  const r = await fetch('https://api.resend.com/emails', {
+  const r = await fetchResend('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: expediteurPour(organisme.nom), to: [envoi.destinataire_email], subject, html, ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}) }),
@@ -497,7 +520,11 @@ function evenementConv(req, quoi, extra) {
   return { quand: new Date().toISOString(), quoi, ip: req ? ipDe(req) : null, navigateur: req ? (plainText(req.headers && req.headers['user-agent'], 300) || null) : null, ...(extra || {}) };
 }
 const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-const hashCodeConv = (code, token) => sha256Hex(Buffer.from(`${code}|${token}`));
+// Audit 04/11/2026 : empreinte calculée avec un secret serveur. Avant, sha256(code|jeton) se
+// retrouvait hors ligne en un instant (un million de codes) par qui lisait le jeton et l'empreinte.
+const SECRET_CODE_CONV = `${process.env.SUPABASE_SERVICE_ROLE_KEY || ''}:code-convention`;
+const hashCodeConv = (code, token) => crypto.createHmac('sha256', SECRET_CODE_CONV).update(`${code}|${token}`).digest('hex');
+const hashCodeConvAncien = (code, token) => sha256Hex(Buffer.from(`${code}|${token}`));
 const emailMasque = (e) => { const [u, d] = String(e || '').split('@'); return d ? `${u.slice(0, 1)}${'•'.repeat(Math.max(2, Math.min(6, u.length - 1)))}@${d}` : ''; };
 function imagePng(dataUrl) {
   const m = RE_PNG.exec(String(dataUrl || ''));
@@ -629,10 +656,10 @@ async function construirePdfConvention(originalBytes, conv, nomOrg) {
   return Buffer.from(await pdf.save());
 }
 
-async function envoyerEmailConv({ a, sujet, html, nomOrgMarque, replyTo, pieceJointe }) {
+async function envoyerEmailConv({ a, sujet, html, nomOrgMarque, replyTo, pieceJointe, prioritaire = false }) {
   if (!resendApiKey) return { sent: false, simulated: true };
-  const r = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
+  const r = await fetchResend('https://api.resend.com/emails', {
+    method: 'POST', quota: { prioritaire },
     headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       from: expediteurPour(nomOrgMarque), to: [a], subject: sujet, html,
@@ -640,7 +667,7 @@ async function envoyerEmailConv({ a, sujet, html, nomOrgMarque, replyTo, pieceJo
       ...(pieceJointe ? { attachments: [{ filename: pieceJointe.nom, content: Buffer.from(pieceJointe.octets).toString('base64') }] } : {}),
     }),
   });
-  if (!r.ok) { const e = await r.json().catch(() => ({})); return { sent: false, error: e.message || `Resend erreur HTTP ${r.status}` }; }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); return { sent: false, quota: !!r.quota, error: e.message || `Resend erreur HTTP ${r.status}` }; }
   return { sent: true };
 }
 function gabaritEmailConv(nomEntete, corps, bouton) {
@@ -685,7 +712,7 @@ async function emailsApresSignature(conv, pdfFinal, { termine }) {
       sujet: `Document signé : ${plainText(conv.titre, 150)}`,
       html: gabaritEmailConv(entete, pEmail(`Bonjour ${escapeHtml(conv.signataire_nom)},`) + pEmail(`Le document <strong>${echappe(plainText(conv.titre, 200))}</strong> est maintenant signé par vous et par ${escapeHtml(nomReel)}. Vous le trouverez en pièce jointe (avec sa page de certificat).`) + pPetit('Conservez cet email : il contient votre exemplaire signé.')),
       nomOrgMarque: organisme.nom, replyTo: organisme.replyTo,
-      pieceJointe: { nom: nomFichier, octets: pdfFinal },
+      pieceJointe: { nom: nomFichier, octets: pdfFinal }, prioritaire: true,
     }));
   }
   if (organisme.replyTo) {
@@ -696,7 +723,7 @@ async function emailsApresSignature(conv, pdfFinal, { termine }) {
         ? `<strong>${escapeHtml(conv.signataire_nom)}</strong>${conv.entreprise_nom ? ` (${escapeHtml(conv.entreprise_nom)})` : ''} a signé « ${echappe(plainText(conv.titre, 200))} ». Le document est complet : il est en pièce jointe et rangé dans SkorUp.`
         : `<strong>${escapeHtml(conv.signataire_nom)}</strong>${conv.entreprise_nom ? ` (${escapeHtml(conv.entreprise_nom)})` : ''} a signé « ${echappe(plainText(conv.titre, 200))} ». Il reste à le signer pour l'organisme : ouvrez SkorUp, le document est dans ${conv.groupe_id ? 'l\'onglet « Convention » du groupe' : 'la fiche du client, onglet Finances'}.`),
         { lien: `${APP_URL}/${conv.groupe_id ? 'groupes' : 'clients'}`, texte: 'Ouvrir SkorUp' }),
-      nomOrgMarque: '', replyTo: null,
+      nomOrgMarque: '', replyTo: null, prioritaire: true,
       ...(termine ? { pieceJointe: { nom: nomFichier, octets: pdfFinal } } : {}),
     }));
   }
@@ -905,19 +932,33 @@ async function handleCodeSignature(req, res) {
   if (conv.code_envoye_at && Date.now() - new Date(conv.code_envoye_at).getTime() < 60 * 1000) return res.status(429).json({ error: 'Un code vient d\'être envoyé : patientez une minute avant d\'en demander un autre.' });
   if ((conv.nb_codes || 0) >= 8) return res.status(429).json({ error: 'Trop de codes demandés : contactez l\'organisme de formation.' });
   const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  // Audit 04/11/2026 : on réserve d'abord l'envoi en base, à condition que personne ne l'ait fait
+  // entre-temps (mêmes nb_codes et code_envoye_at qu'à la lecture). Avant, des demandes simultanées
+  // passaient toutes les limites (1 par minute, 8 au total).
+  const nbAvant = conv.nb_codes || 0;
+  const avantCode = { code_hash: conv.code_hash || null, code_expire_at: conv.code_expire_at || null, code_envoye_at: conv.code_envoye_at || null, historique: conv.historique || [] };
+  let reserve = supabaseAdmin.from(TABLE_CONV).update({
+    code_hash: hashCodeConv(code, conv.token), code_expire_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    code_essais: 0, code_envoye_at: new Date().toISOString(), nb_codes: nbAvant + 1,
+    historique: [...(conv.historique || []), evenementConv(req, 'code_envoye', { email: conv.signataire_email })],
+  }).eq('id', conv.id).eq('statut', 'envoye').eq('nb_codes', nbAvant);
+  reserve = conv.code_envoye_at ? reserve.eq('code_envoye_at', conv.code_envoye_at) : reserve.is('code_envoye_at', null);
+  const { data: place, error: errPlace } = await reserve.select('id').maybeSingle();
+  if (errPlace) throw errPlace;
+  if (!place) return res.status(429).json({ error: 'Un code vient d\'être envoyé : patientez une minute avant d\'en demander un autre.' });
   const organisme = await infosOrganisme(supabaseAdmin, conv.organisation_id);
   const r = await envoyerEmailConv({
     a: conv.signataire_email,
-    sujet: `Votre code de signature : ${code}`,
+    sujet: `Votre code de signature : ${code}`, prioritaire: true,
     html: gabaritEmailConv(htmlEchappe(organisme.nom || 'SkorUp'), pEmail(`Bonjour ${escapeHtml(conv.signataire_nom)},`) + pEmail(`Voici votre code pour signer « ${echappe(plainText(conv.titre, 200))} » :`) + `<p style="font-size:28px;letter-spacing:6px;font-weight:bold;text-align:center;color:#111827;">${code}</p>` + pPetit('Ce code est valable 15 minutes. Si vous n\'avez rien demandé, ignorez cet email.')),
     nomOrgMarque: organisme.nom, replyTo: organisme.replyTo,
   });
-  if (!r.sent && !r.simulated) return res.status(502).json({ error: 'L\'email n\'a pas pu être envoyé : réessayez dans un instant.' });
-  await supabaseAdmin.from(TABLE_CONV).update({
-    code_hash: hashCodeConv(code, conv.token), code_expire_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    code_essais: 0, code_envoye_at: new Date().toISOString(), nb_codes: (conv.nb_codes || 0) + 1,
-    historique: [...(conv.historique || []), evenementConv(req, 'code_envoye', { email: conv.signataire_email })],
-  }).eq('id', conv.id).eq('statut', 'envoye');
+  if (!r.sent && !r.simulated) {
+    // E-mail non parti : on rend la place (le code n'a pas été reçu).
+    await supabaseAdmin.from(TABLE_CONV).update({ ...avantCode, nb_codes: nbAvant })
+      .eq('id', conv.id).eq('nb_codes', nbAvant + 1);
+    return res.status(r.quota ? 429 : 502).json({ error: r.quota ? 'Trop d\'e-mails envoyés aujourd\'hui sur la plateforme : réessayez demain ou contactez l\'organisme de formation.' : 'L\'email n\'a pas pu être envoyé : réessayez dans un instant.' });
+  }
   return res.status(200).json({ sent: true, email: emailMasque(conv.signataire_email), ...(r.simulated ? { simulated: true } : {}) });
 }
 
@@ -938,12 +979,17 @@ async function handleSignerEntreprise(req, res) {
     if (!conv.code_hash || !conv.code_expire_at) return res.status(400).json({ error: 'Demandez d\'abord le code de vérification.' });
     if (new Date(conv.code_expire_at).getTime() < Date.now()) return res.status(400).json({ error: 'Ce code a expiré : demandez-en un nouveau.' });
     if ((conv.code_essais || 0) >= 5) return res.status(429).json({ error: 'Trop d\'essais : demandez un nouveau code.' });
+    // Audit 04/11/2026 : l'essai est compté AVANT la comparaison, en une seule opération (même nombre
+    // d'essais qu'à la lecture). Des essais simultanés ne peuvent donc plus dépasser 5.
+    const essais = (conv.code_essais || 0) + 1;
+    const { data: essaiCompte, error: errEssai } = await supabaseAdmin.from(TABLE_CONV).update({ code_essais: essais })
+      .eq('id', conv.id).eq('statut', 'envoye').eq('code_essais', conv.code_essais || 0).select('id').maybeSingle();
+    if (errEssai) throw errEssai;
+    if (!essaiCompte) return res.status(429).json({ error: 'Vérification déjà en cours : patientez un instant puis réessayez.' });
     const attendu = Buffer.from(conv.code_hash, 'hex');
-    const recu = Buffer.from(hashCodeConv(code, conv.token), 'hex');
-    if (code.length !== 6 || attendu.length !== recu.length || !crypto.timingSafeEqual(attendu, recu)) {
-      const essais = (conv.code_essais || 0) + 1;
+    const correspond = (empreinte) => { const recu = Buffer.from(empreinte, 'hex'); return attendu.length === recu.length && crypto.timingSafeEqual(attendu, recu); };
+    if (code.length !== 6 || !(correspond(hashCodeConv(code, conv.token)) || correspond(hashCodeConvAncien(code, conv.token)))) {
       const restants = Math.max(0, 5 - essais);
-      await supabaseAdmin.from(TABLE_CONV).update({ code_essais: essais }).eq('id', conv.id).eq('statut', 'envoye');
       return res.status(400).json({ error: restants ? `Code incorrect. Il vous reste ${restants} essai${restants > 1 ? 's' : ''}.` : 'Code incorrect. Demandez un nouveau code.' });
     }
     historique.push(evenementConv(req, 'code_valide'));

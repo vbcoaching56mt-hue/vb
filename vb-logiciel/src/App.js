@@ -24341,6 +24341,7 @@ const nouvelUuid = () => {
   const h = Array.from(o, x => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 };
+const COLONNES_CONVENTIONS = 'id, organisation_id, groupe_id, client_id, titre, entreprise_nom, entreprise_adresse, signataire_nom, signataire_fonction, signataire_email, ordre, code_requis, message, pdf_path, pdf_sha256, pdf_signe_path, statut, code_expire_at, code_essais, code_envoye_at, nb_codes, champs_entreprise, signature_entreprise, signature_organisme, organisme_signataire, signe_entreprise_at, signe_organisme_at, historique, envoye_par, created_at, ouvert_at, relance_at, nb_relances, expire_at';
 const urlDocumentStockage = (chemin) => (chemin ? supabase.storage.from('documents').getPublicUrl(chemin).data.publicUrl : null);
 const appelSignatureApi = async (action, body) => {
   const { data: { session } } = await supabase.auth.getSession();
@@ -24701,7 +24702,8 @@ const BlocConventionsEntreprise = ({ groupe = null, client = null, participants 
   const [confirm, setConfirm] = React.useState(null);
   const charger = React.useCallback(async () => {
     if (!currentOrgId || (!groupe && !client)) return;
-    let req = supabase.from('conventions_entreprise').select('*').eq('organisation_id', currentOrgId);
+    // Audit 04/11/2026 : colonnes listées (le jeton du lien et l'empreinte du code ne sont plus lisibles).
+    let req = supabase.from('conventions_entreprise').select(COLONNES_CONVENTIONS).eq('organisation_id', currentOrgId);
     if (groupe) req = req.eq('groupe_id', groupe.id);
     else if (groupeDuClient) req = req.or(`client_id.eq.${client.id},groupe_id.eq.${groupeDuClient.id}`);
     else req = req.eq('client_id', client.id);

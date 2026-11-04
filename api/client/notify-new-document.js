@@ -77,6 +77,29 @@ function plainText(v, max = 200) {
   return String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
 }
 
+// ── Audit 04/11/2026 : quota commun d'e-mails ─────────────────────────────────────────────────
+// L'offre gratuite de Resend permet 100 e-mails par jour pour TOUTE la plateforme. Chaque envoi réserve
+// d'abord une place (fonction SQL skorup_reserver_email, SQL « lot2_quotas ») : les envois courants
+// s'arrêtent à 75 par jour, pour garder une réserve aux codes de signature et aux liens d'accès (95).
+// Si le SQL n'est pas lancé ou si la base ne répond pas, l'envoi n'est jamais bloqué par le compteur.
+// options.quota = { prioritaire, cle, limite } (cle/limite : plafond par jour propre à un usage).
+const MESSAGE_QUOTA_EMAIL = 'Limite quotidienne d\'e-mails atteinte pour la plateforme : envoi reporté, réessayez demain.';
+let _clientQuotaEmail = null;
+async function fetchResend(url, options = {}) {
+  const { quota = {}, ...opts } = options;
+  try {
+    if (!_clientQuotaEmail) _clientQuotaEmail = supabaseAdmin;
+    const { data, error } = await _clientQuotaEmail.rpc('skorup_reserver_email', {
+      p_prioritaire: !!quota.prioritaire, p_cle: quota.cle || null, p_limite: quota.limite || null,
+    });
+    if (!error && data === false) {
+      console.warn('[quota e-mails] envoi refusé :', quota.cle || (quota.prioritaire ? 'prioritaire' : 'courant'));
+      return { ok: false, status: 429, quota: true, json: async () => ({ message: MESSAGE_QUOTA_EMAIL }), text: async () => MESSAGE_QUOTA_EMAIL };
+    }
+  } catch (_) { /* compteur indisponible : on envoie quand même */ }
+  return fetch(url, opts);
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -178,7 +201,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ sent: false, simulated: true, message: 'RESEND_API_KEY non configurée côté serveur (Vercel).' });
     }
 
-    const resendResp = await fetch('https://api.resend.com/emails', {
+    const resendResp = await fetchResend('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from: expediteurPour(organisme.nom), to: [client.email_contact], subject, html: bodyHtml, ...(organisme.replyTo ? { reply_to: organisme.replyTo } : {}) }),
