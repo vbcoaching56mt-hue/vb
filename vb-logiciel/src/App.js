@@ -7597,6 +7597,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
   const [proprio, setProprio] = React.useState(null);
   const [essai, setEssai] = React.useState(null);
   const [occupe, setOccupe] = React.useState('');
+  const [rangement, setRangement] = React.useState(null); // audit 04/11/2026
 
   const charger = React.useCallback(async () => {
     if (!currentOrgId) return;
@@ -7675,6 +7676,16 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
       if (modeEssai) setEssai(d);
       else { toast.success(`Collecte terminée : ${d.publiees || 0} nouvelle(s) information(s) publiée(s)${d.aVenir ? `, ${d.aVenir.nb} prête(s) pour lundi prochain` : ''}.`); setEssai(null); await charger(); }
       await chargerProprio();
+    } catch (e) { toast.error(e.message || String(e)); }
+    setOccupe('');
+  };
+  const rangerConventions = async () => {
+    setOccupe('ranger');
+    try {
+      const d = await appelVeilleApi('ranger_conventions');
+      setRangement(d);
+      if (d.erreurs && d.erreurs.length) toast.error(`${d.ranges} convention(s) rangée(s), ${d.erreurs.length} à revoir.`);
+      else toast.success(d.trouves ? `${d.ranges} convention(s) signée(s) rangée(s) dans le dossier de leur organisme.` : 'Rien à ranger : toutes les conventions sont déjà à leur place.');
     } catch (e) { toast.error(e.message || String(e)); }
     setOccupe('');
   };
@@ -7800,6 +7811,17 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => lancer(true)} disabled={!!occupe} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 disabled:opacity-40">{occupe === 'essai' ? 'Essai…' : 'Tester les sources (sans publier)'}</button>
                 <button type="button" onClick={() => lancer(false)} disabled={!!occupe} className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold disabled:opacity-40">{occupe === 'lancer' ? 'Collecte…' : 'Lancer la collecte maintenant'}</button>
+              </div>
+              <div className="border-t border-gray-100 pt-3 space-y-2">
+                <p className="text-xs font-bold text-gray-700">Sécurité des fichiers</p>
+                <p className="text-xs text-gray-500">Range dans le dossier de leur organisme les conventions signées enregistrées avant le 04/11/2026. Rien n'est supprimé.</p>
+                <button type="button" onClick={rangerConventions} disabled={!!occupe} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 disabled:opacity-40">{occupe === 'ranger' ? 'Rangement…' : 'Ranger les conventions signées'}</button>
+                {rangement && (
+                  <div className="text-xs text-gray-600 space-y-0.5">
+                    <p>{rangement.trouves ? `${rangement.ranges} / ${rangement.trouves} fichier(s) rangé(s), dont ${rangement.references} convention(s) mise(s) à jour.` : 'Rien à ranger.'}</p>
+                    {(rangement.erreurs || []).map((e, i) => <p key={i} className="text-red-700 break-words">{e}</p>)}
+                  </div>
+                )}
               </div>
               {essai && (
                 <div className="text-xs text-gray-700 bg-gray-50 rounded-xl p-3 space-y-1">
@@ -28273,13 +28295,14 @@ export default function App() {
     if (updateError) {
       console.error("[handleModuleChange] Erreur lors de l'update client:", updateError);
       toast.error("Erreur lors de l'assignation : " + updateError.message);
-      return;
+      return false;
     }
 
     const { data: updatedClient, error: fetchErr } = await supabase.from('clients').select('*').eq('id', clientId).single();
     if (fetchErr) {
       console.error("[handleModuleChange] Erreur lors de la récupération du client mis à jour:", fetchErr);
-      return;
+      toast.error('Le module a été enregistré, mais la fiche n\'a pas pu être relue : rechargez la page, puis utilisez « Reprendre dans le parcours actuel » si besoin.');
+      return false;
     }
 
 
@@ -28304,6 +28327,7 @@ export default function App() {
     // 4. Rafraîchir l'UI globale
     await fetchUtilisateurs();
     await fetchDocuments();
+    return true;
   };
 
   // 04/11/2026 : séances que le nouveau module créera (pour l'aperçu, avant de rien écrire).
@@ -28386,7 +28410,8 @@ export default function App() {
     if (!etat || etat.enCours || etat.chargement) return;
     setChangementModule({ ...etat, enCours: true });
     try {
-      if (!etat.fusionSeule) await appliquerChangementModule(etat.clientId, etat.moduleId);
+      // Audit 04/11/2026 : si le module n'a pas été enregistré, on ne déplace aucune séance.
+      if (!etat.fusionSeule && (await appliquerChangementModule(etat.clientId, etat.moduleId)) === false) { setChangementModule(null); return; }
       let nb = 0;
       if (etat.moduleId) ({ nb } = await executerFusionModule(etat.clientId, etat.moduleId, { renumeroter: etat.renumeroter }));
       await fetchSessions();

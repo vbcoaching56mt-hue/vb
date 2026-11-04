@@ -513,6 +513,9 @@ async function lirePdfConv(chemin) {
   if (error || !data) throw new Error('PDF introuvable dans le stockage');
   return Buffer.from(await data.arrayBuffer());
 }
+// 04/11/2026 (audit) : une convention signée est rangée dans le dossier de son organisme. À la racine du
+// bucket (sans auteur, car déposée par le serveur), elle était lisible par le personnel de TOUS les organismes.
+const cheminConventionSignee = (conv) => `org_${conv.organisation_id}/conventions/convention_signee_${conv.id}_${Date.now()}.pdf`;
 async function deposerPdfConv(chemin, octets) {
   const { error } = await supabaseAdmin.storage.from(BUCKET_CONV).upload(chemin, Buffer.from(octets), { contentType: 'application/pdf', upsert: false });
   if (error) throw new Error('Enregistrement du PDF signé impossible : ' + (error.message || error));
@@ -849,7 +852,7 @@ async function handleSignerOrganisme(req, res) {
   };
   const nomOrg = await nomOrganisme(conv.organisation_id);
   const pdf = await construirePdfConvention(await lirePdfConv(conv.pdf_path), suite, nomOrg);
-  const chemin = `convention_signee_${conv.id}_${Date.now()}.pdf`;
+  const chemin = cheminConventionSignee(conv);
   await deposerPdfConv(chemin, pdf);
   const { data: maj, error } = await supabaseAdmin.from(TABLE_CONV).update({
     statut: 'termine', signature_organisme: suite.signature_organisme, organisme_signataire: nom, signe_organisme_at: maintenant,
@@ -954,7 +957,7 @@ async function handleSignerEntreprise(req, res) {
   const suite = { ...conv, signature_entreprise: String(b.signature), signe_entreprise_at: maintenant, champs_entreprise: champs, historique };
   const nomOrg = await nomOrganisme(conv.organisation_id);
   const pdf = await construirePdfConvention(await lirePdfConv(conv.pdf_path), suite, nomOrg);
-  const chemin = `convention_signee_${conv.id}_${Date.now()}.pdf`;
+  const chemin = cheminConventionSignee(conv);
   await deposerPdfConv(chemin, pdf);
   const { data: maj, error } = await supabaseAdmin.from(TABLE_CONV).update({
     statut: termine ? 'termine' : 'signe_entreprise', signature_entreprise: suite.signature_entreprise, signe_entreprise_at: maintenant,
@@ -1281,6 +1284,47 @@ async function veilleHebdomadaire(options = {}) {
   };
 }
 
+// 04/11/2026 (audit) : rangement, à usage unique, des conventions signées déposées à la racine avant ce
+// correctif (y compris les versions intermédiaires). Rien n'est supprimé : chaque fichier est déplacé
+// dans org_<organisme>/conventions/ et l'adresse enregistrée dans la convention est mise à jour.
+const RE_CONV_RACINE = /^convention_signee_(.+)_\d+\.pdf$/;
+async function handleRangerConventions(req, res) {
+  const user = await utilisateurConnecte(req);
+  if (!user) return res.status(401).json({ error: 'Session invalide ou expirée.' });
+  if (!estProprietaireVeille(user)) return res.status(403).json({ error: 'Réservé au propriétaire de SkorUp.' });
+  const fichiers = [];
+  for (let page = 0; page < 20; page++) {
+    const { data, error } = await supabaseAdmin.storage.from(BUCKET_CONV).list('', { limit: 100, offset: page * 100, search: 'convention_signee_' });
+    if (error) throw error;
+    (data || []).forEach(f => { if (f && RE_CONV_RACINE.test(f.name || '')) fichiers.push(f.name); });
+    if (!data || data.length < 100) break;
+  }
+  if (!fichiers.length) return res.status(200).json({ trouves: 0, ranges: 0, references: 0, erreurs: [] });
+  const ids = [...new Set(fichiers.map(n => RE_CONV_RACINE.exec(n)[1]))];
+  const { data: convs, error } = await supabaseAdmin.from(TABLE_CONV).select('id, organisation_id, pdf_signe_path').in('id', ids);
+  if (error) throw error;
+  let ranges = 0, references = 0;
+  const erreurs = [];
+  for (const nom of fichiers) {
+    const conv = (convs || []).find(c => String(c.id) === RE_CONV_RACINE.exec(nom)[1]);
+    if (!conv || !conv.organisation_id) { erreurs.push(`${nom} : convention introuvable, fichier laissé en place`); continue; }
+    const dest = `org_${conv.organisation_id}/conventions/${nom}`;
+    const { error: errDep } = await supabaseAdmin.storage.from(BUCKET_CONV).move(nom, dest);
+    if (errDep) { erreurs.push(`${nom} : ${errDep.message || errDep}`); continue; }
+    if (conv.pdf_signe_path === nom) {
+      const { error: errMaj } = await supabaseAdmin.from(TABLE_CONV).update({ pdf_signe_path: dest }).eq('id', conv.id).eq('pdf_signe_path', nom);
+      if (errMaj) {
+        await supabaseAdmin.storage.from(BUCKET_CONV).move(dest, nom).catch(() => null);
+        erreurs.push(`${nom} : adresse non mise à jour, fichier remis en place`);
+        continue;
+      }
+      references++;
+    }
+    ranges++;
+  }
+  return res.status(200).json({ trouves: fichiers.length, ranges, references, erreurs: erreurs.slice(0, 20) });
+}
+
 async function utilisateurConnecte(req) {
   const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
   if (!token) return null;
@@ -1372,6 +1416,8 @@ module.exports = async (req, res) => {
     if (req.method === 'POST' && action === 'veille_lancer') return await handleVeilleLancer(req, res);
     if (req.method === 'POST' && action === 'veille_masquer') return await handleVeilleMasquer(req, res);
     if (req.method === 'GET' && action === 'veille_retirer') return await handleVeilleRetirer(req, res);
+    // 04/11/2026 (audit) : rangement des conventions signées (propriétaire).
+    if (req.method === 'POST' && action === 'ranger_conventions') return await handleRangerConventions(req, res);
     return res.status(400).json({ error: 'Action invalide.' });
   } catch (err) {
     console.error('[prospects]', err);
