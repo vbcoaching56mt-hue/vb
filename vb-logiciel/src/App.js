@@ -12,6 +12,7 @@ import { Buffer } from 'buffer';
 import process from 'process';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabaseClientConfig';
+import { signalerErreur } from './erreurs';
 import SetupOrganisationPage from './pages/SetupOrganisation';
 import { CONDITIONS_VERSION, PAGES_LEGALES, LIENS_LEGAUX, documentsAAccepter } from './conditions';
 import { DndContext as BaseDndContext, useDraggable, useDroppable, useSensors, useSensor, MouseSensor, TouchSensor, KeyboardSensor } from '@dnd-kit/core';
@@ -327,6 +328,115 @@ const nomTelechargement = (nomDoc, nomPersonne) => {
   if (!personne || simple(base).includes(simple(personne))) return base.slice(0, 150);
   return `${base.slice(0, 110).trim()} - ${personne.slice(0, 60)}`;
 };
+
+// ── FICHIERS PRIVÉS, étape 1 (audit du 04/11/2026) ───────────────────────────────────────────────
+// Les espaces documents, exercice-returns, exercices-reponses et signed_documents vont passer en
+// privé : un fichier ne s'ouvrira plus par son adresse publique, seulement avec les droits de la
+// personne connectée (règles de stockage skorup_fichiers_*). Les adresses publiques déjà enregistrées
+// partout dans la base restent la référence du fichier ; c'est au moment de l'ouvrir qu'on les convertit :
+//   - fetch(adresse publique) → téléchargement avec la session (PDF, Word, images, signatures…) ;
+//   - window.open(adresse publique) ou clic sur un lien → lien temporaire (1 h) fabriqué au clic.
+// Tant que les espaces sont encore publics (étape 1), un refus n'empêche rien : on se rabat sur
+// l'adresse publique et on note l'incident dans le journal d'erreurs (empreinte du chemin, jamais le
+// nom du fichier), pour corriger les droits AVANT de passer en privé (étape 3).
+const BUCKETS_PRIVES = ['documents', 'exercice-returns', 'exercices-reponses', 'signed_documents'];
+const RE_ADRESSE_PUBLIQUE = /\/storage\/v1\/object\/public\/([^/?#]+)\/([^?#]+)/;
+const fichierPrive = (adresse) => {
+  if (typeof adresse !== 'string' || !adresse.includes('/storage/v1/object/public/')) return null;
+  const base = String(process.env.REACT_APP_SUPABASE_URL || '').replace(/\/+$/, '');
+  if (base && !adresse.startsWith(base + '/')) return null;
+  const m = RE_ADRESSE_PUBLIQUE.exec(adresse);
+  if (!m || !BUCKETS_PRIVES.includes(m[1])) return null;
+  let chemin = m[2];
+  try { chemin = decodeURIComponent(m[2]); } catch (_) { /* chemin laissé tel quel */ }
+  return { bucket: m[1], path: chemin };
+};
+// SHA-256 (16 premiers caractères) du chemin : même calcul que le SQL « fichiers_prives_CONSULTER ».
+const sha256Hex = (texte) => {
+  const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  const o = new TextEncoder().encode(texte);
+  const l = o.length, n = ((l + 9 + 63) >> 6) << 6;
+  const m = new Uint8Array(n); m.set(o); m[l] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(n - 4, l * 8); dv.setUint32(n - 8, Math.floor(l / 0x20000000));
+  let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const r = (x, k) => (x >>> k) | (x << (32 - k)); const W = new Array(64);
+  for (let i = 0; i < n; i += 64) {
+    for (let t = 0; t < 16; t++) W[t] = dv.getUint32(i + t * 4);
+    for (let t = 16; t < 64; t++) { const s0 = r(W[t - 15], 7) ^ r(W[t - 15], 18) ^ (W[t - 15] >>> 3); const s1 = r(W[t - 2], 17) ^ r(W[t - 2], 19) ^ (W[t - 2] >>> 10); W[t] = (W[t - 16] + s0 + W[t - 7] + s1) | 0; }
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let t = 0; t < 64; t++) {
+      const t1 = (h + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[t] + W[t]) | 0;
+      const t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H = [H[0] + a, H[1] + b, H[2] + c, H[3] + d, H[4] + e, H[5] + f, H[6] + g, H[7] + h].map(x => x | 0);
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+};
+const empreinteFichier = async (f) => { try { return sha256Hex(`${f.bucket}/${f.path}`).slice(0, 16); } catch (_) { return 'inconnue'; } };
+const noterRefusFichier = async (f, motif) => {
+  try { signalerErreur(new Error(`Fichier privé refusé (${f.bucket}) ${await empreinteFichier(f)}`), { origine: `fichiers privés : ${String(motif || '').slice(0, 120)}` }); } catch (_) { /* jamais bloquant */ }
+};
+// Lien temporaire (1 h) pour une adresse publique d'un espace privé ; null si refusé.
+const lienTemporaireFichier = async (f) => {
+  try {
+    const { data, error } = await supabase.storage.from(f.bucket).createSignedUrl(f.path, 3600);
+    if (!error && data && data.signedUrl) return data.signedUrl;
+    noterRefusFichier(f, error && error.message);
+  } catch (e) { noterRefusFichier(f, e && e.message); }
+  return null;
+};
+// Pour un <iframe>, une visionneuse ou un lien construit à la main : renvoie un lien temporaire si
+// l'adresse est celle d'un espace privé, sinon l'adresse telle quelle.
+const adresseOuvrable = async (adresse) => {
+  const f = fichierPrive(adresse);
+  if (!f) return adresse;
+  return (await lienTemporaireFichier(f)) || adresse;
+};
+if (typeof window !== 'undefined' && !window.__skorupFichiersPrives) {
+  window.__skorupFichiersPrives = true;
+  const fetchOrigine = window.fetch.bind(window);
+  window.fetch = async (entree, init) => {
+    const adresse = typeof entree === 'string' ? entree : (entree && (entree.href || entree.url));
+    const f = fichierPrive(adresse);
+    const methode = String((init && init.method) || (entree && typeof entree === 'object' && entree.method) || 'GET').toUpperCase();
+    if (!f || (methode !== 'GET' && methode !== 'HEAD')) return fetchOrigine(entree, init);
+    try {
+      const { data, error } = await supabase.storage.from(f.bucket).download(f.path);
+      if (!error && data) {
+        return new Response(methode === 'HEAD' ? null : data, { status: 200, headers: { 'Content-Type': data.type || 'application/octet-stream' } });
+      }
+      noterRefusFichier(f, error && error.message);
+    } catch (e) { noterRefusFichier(f, e && e.message); }
+    return fetchOrigine(entree, init); // espace encore public : comportement d'avant
+  };
+  const ouvrirOrigine = window.open.bind(window);
+  window.open = (adresse, cible, options) => {
+    const f = fichierPrive(typeof adresse === 'string' ? adresse : (adresse && adresse.href));
+    if (!f) return ouvrirOrigine(adresse, cible, options);
+    const href = typeof adresse === 'string' ? adresse : adresse.href;
+    if (cible === '_self' || cible === '_top' || cible === '_parent') {
+      lienTemporaireFichier(f).then(lien => { window.location.href = lien || href; });
+      return null;
+    }
+    // La fenêtre est ouverte tout de suite (sinon le navigateur la bloque), puis reçoit le lien temporaire.
+    const fenetre = ouvrirOrigine('', cible || '_blank', options);
+    lienTemporaireFichier(f).then(lien => {
+      const dest = lien || href;
+      if (fenetre && !fenetre.closed) fenetre.location.href = dest;
+      else ouvrirOrigine(dest, cible || '_blank', options);
+    });
+    return fenetre;
+  };
+  // Liens <a href="adresse publique"> : ouverts avec un lien temporaire.
+  document.addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.button !== 0) return;
+    const lien = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!lien || !fichierPrive(lien.href)) return;
+    e.preventDefault();
+    window.open(lien.href, lien.target && lien.target !== '_self' ? lien.target : '_blank');
+  }, true);
+}
 
 // Télécharge un fichier de stockage en forçant le nom donné par l'utilisateur (doc.nom), au lieu du nom
 // technique généré à l'upload (horodatage, dossier, etc.) — utilisé partout où un document du "dossier
@@ -2282,10 +2392,12 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
             console.warn('[DocumentViewerModal] Signed URL indisponible (non-404) — fallback sur URL publique directe.');
             const fallbackPath = pdfUrl.split('?')[0].toLowerCase();
             const isFallbackWord = fallbackPath.endsWith('.docx') || fallbackPath.endsWith('.doc');
+            const ouvrable = await adresseOuvrable(pdfUrl); // fichiers privés : lien temporaire si possible
+            if (cancelled) return;
             if (isFallbackWord) {
-              setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`);
+              setBlobUrl(`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(ouvrable)}`);
             } else {
-              setBlobUrl(pdfUrl);
+              setBlobUrl(ouvrable);
             }
             setLoadingPdf(false);
             return;
@@ -2298,10 +2410,8 @@ const DocumentViewerModal = ({ isOpen, onClose, document, url, title, mode = 'vi
         const isWord = finalPath.toLowerCase().endsWith('.docx') || finalPath.toLowerCase().endsWith('.doc');
         if (isWord) {
           // Microsoft Office Online Viewer — gratuit, sans clé API, rendu fidèle DOCX
-          // On utilise la pdfUrl (URL publique) plutôt que la signed URL pour la stabilité
-          const docViewerSrc = pdfUrl && pdfUrl.startsWith('http')
-            ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(pdfUrl)}`
-            : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl)}`;
+          // Fichiers privés (audit 04/11/2026) : lien temporaire d'1 h (Microsoft lit le fichier avec).
+          const docViewerSrc = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(finalSignedUrl || pdfUrl)}`;
           if (!cancelled) setBlobUrl(docViewerSrc);
         } else {
           setBlobUrl(finalSignedUrl);

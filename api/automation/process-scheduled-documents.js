@@ -239,6 +239,19 @@ async function prevenirClient(supabase, clientId, noms) {
   return true;
 }
 
+// Fichiers privés (audit 04/11/2026) : un fichier des espaces SkorUp est lu avec la clé du serveur
+// (son adresse publique ne marchera plus) ; sinon téléchargement classique, limité à 60 s.
+async function lireFichierServeur(supabase, adresse) {
+  const m = /\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/?#]+)\/([^?#]+)/.exec(String(adresse || ''));
+  if (m) {
+    let chemin = m[2];
+    try { chemin = decodeURIComponent(m[2]); } catch (_) { /* chemin laissé tel quel */ }
+    const { data, error } = await supabase.storage.from(m[1]).download(chemin);
+    if (!error && data) return new Response(data, { status: 200 });
+  }
+  return fetch(adresse, { signal: AbortSignal.timeout(60000) });
+}
+
 async function generateAndSendOne(supabase, row) {
   // 1. Client
   const { data: client, error: clientErr } = await supabase.from('clients').select('*').eq('id', row.client_id).single();
@@ -367,7 +380,7 @@ async function generateAndSendOne(supabase, row) {
       .order('page', { ascending: true });
     if (tfErr) throw new Error('Erreur chargement balises : ' + tfErr.message);
 
-    const templateResp = await fetch(effectiveMsr.file_url);
+    const templateResp = await lireFichierServeur(supabase, effectiveMsr.file_url);
     if (!templateResp.ok) throw new Error('Impossible de récupérer le modèle.');
     const templateArrayBuffer = await templateResp.arrayBuffer();
     const templateIsPdf = /\.pdf$/i.test((effectiveMsr.file_url || '').split('?')[0]);
@@ -396,7 +409,7 @@ async function generateAndSendOne(supabase, row) {
     templateIdForInsert = effectiveMsr.id;
   } else {
     // ── Branche classique : fusion docxtemplater puis conversion PDF via CloudConvert ──
-    const templateResp = await fetch(effectiveMsr.file_url);
+    const templateResp = await lireFichierServeur(supabase, effectiveMsr.file_url);
     if (!templateResp.ok) throw new Error('Impossible de récupérer le modèle.');
     const templateArrayBuffer = await templateResp.arrayBuffer();
 

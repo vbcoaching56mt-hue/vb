@@ -1,5 +1,5 @@
 // ============================================================
-// Edge Function Supabase : delete-user — version 2 (22/10/2026)
+// Edge Function Supabase : delete-user — version 3 (04/11/2026)
 // Mise en ligne : Supabase > Edge Functions > delete-user > Code > tout remplacer par ce fichier > Deploy.
 //
 // Ce que fait cette version :
@@ -11,6 +11,9 @@
 //    effacé, son compte de connexion est supprimé, aucun email ne lui est plus envoyé) ; sinon tout est
 //    supprimé comme avant ;
 //  - chaque étape est vérifiée : en cas d'erreur, on s'arrête et on le dit.
+//  - v3 (audit 04/11/2026) : un client supprimé (jamais signé) voit aussi ses fichiers déposés
+//    (dossier depots/<client>/) supprimés ; un client archivé garde tout. L'appelant reconnu par son
+//    email doit avoir une fiche pas encore rattachée à un autre compte.
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -20,7 +23,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const repondre = (corps, status = 200) => new Response(JSON.stringify({ version: 2, ...corps }), {
+const repondre = (corps, status = 200) => new Response(JSON.stringify({ version: 3, ...corps }), {
   status,
   headers: { ...corsHeaders, 'Content-Type': 'application/json' },
 })
@@ -76,7 +79,7 @@ Deno.serve(async (req) => {
     if (!appelant && user.email) {
       const email = String(user.email).trim().replace(/[\\%_]/g, (m) => '\\' + m)
       const { data } = await admin.from('utilisateurs').select('id, role, organisation_id')
-        .ilike('email', email).order('id', { ascending: true }).limit(1)
+        .ilike('email', email).is('auth_uid', null).order('id', { ascending: true }).limit(1)
       if (data && data[0]) appelant = data[0]
     }
     if (!appelant || appelant.role !== 'admin' || !appelant.organisation_id) {
@@ -135,10 +138,23 @@ Deno.serve(async (req) => {
       if (eDel || !supprime || supprime.length === 0) {
         return repondre({ error: 'Le dossier client n\'a pas pu être supprimé' + (eDel ? ' : ' + eDel.message : '') }, 500)
       }
+      // v3 : fichiers déposés par ce client (pièces d'identité, justificatifs…) supprimés aussi.
+      let fichiersSupprimes = 0
+      try {
+        for (let tour = 0; tour < 10; tour++) {
+          const { data: liste, error: eListe } = await admin.storage.from('documents').list(`depots/${userId}`, { limit: 100 })
+          if (eListe || !liste || liste.length === 0) break
+          const chemins = liste.filter(f => f && f.name && f.id).map(f => `depots/${userId}/${f.name}`)
+          if (!chemins.length) break
+          const { error: eRm } = await admin.storage.from('documents').remove(chemins)
+          if (eRm) break
+          fichiersSupprimes += chemins.length
+        }
+      } catch (_) { /* le dossier est supprimé même si le rangement des fichiers échoue */ }
       let compteSupprime = true
       const { error: eAuth } = await admin.auth.admin.deleteUser(userId)
       if (eAuth && !pasTrouve(eAuth)) compteSupprime = false
-      return repondre({ success: true, archive: false, compteSupprime })
+      return repondre({ success: true, archive: false, compteSupprime, fichiersSupprimes })
     }
 
     // ════════ FORMATEUR ════════

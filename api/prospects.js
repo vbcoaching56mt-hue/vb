@@ -535,6 +535,16 @@ function imagePng(dataUrl) {
   return buf;
 }
 const urlPubliqueConv = (chemin) => (chemin ? supabaseAdmin.storage.from(BUCKET_CONV).getPublicUrl(chemin).data.publicUrl : null);
+// Fichiers privés (audit 04/11/2026) : la page de l'entreprise reçoit un lien temporaire (1 h),
+// qui continuera de marcher quand l'espace des documents sera privé.
+async function urlConv(chemin) {
+  if (!chemin) return null;
+  try {
+    const { data, error } = await supabaseAdmin.storage.from(BUCKET_CONV).createSignedUrl(chemin, 3600);
+    if (!error && data && data.signedUrl) return data.signedUrl;
+  } catch (_) { /* repli ci-dessous */ }
+  return urlPubliqueConv(chemin);
+}
 async function lirePdfConv(chemin) {
   const { data, error } = await supabaseAdmin.storage.from(BUCKET_CONV).download(chemin);
   if (error || !data) throw new Error('PDF introuvable dans le stockage');
@@ -888,7 +898,7 @@ async function handleSignerOrganisme(req, res) {
   if (error) throw error;
   if (!maj) return res.status(409).json({ error: 'Le document vient de changer : rechargez la page.' });
   await emailsApresSignature(suite, pdf, { termine: true });
-  return res.status(200).json({ ok: true, pdfUrl: urlPubliqueConv(chemin) });
+  return res.status(200).json({ ok: true, pdfUrl: await urlConv(chemin) });
 }
 
 // ── action=lire_signature — PUBLIC ─────────────────────────────────────────────────────────────
@@ -906,7 +916,7 @@ async function handleLireSignature(req, res) {
   const organisme = (await nomOrganisme(conv.organisation_id)) || 'Organisme de formation';
   const base = { titre: conv.titre, organisme, entrepriseNom: conv.entreprise_nom || '' };
   if (conv.statut === 'annule') return res.status(200).json({ etat: 'annule', ...base });
-  if (conv.statut === 'termine') return res.status(200).json({ etat: 'termine', ...base, pdfUrl: urlPubliqueConv(conv.pdf_signe_path) });
+  if (conv.statut === 'termine') return res.status(200).json({ etat: 'termine', ...base, pdfUrl: await urlConv(conv.pdf_signe_path) });
   if (conv.statut === 'signe_entreprise') return res.status(200).json({ etat: 'signe', ...base });
   if (conv.expire_at && new Date(conv.expire_at).getTime() < Date.now()) return res.status(200).json({ etat: 'expire', ...base });
   if (!conv.ouvert_at) {
@@ -919,7 +929,7 @@ async function handleLireSignature(req, res) {
     signataireNom: conv.signataire_nom, signataireFonction: conv.signataire_fonction || '',
     email: emailMasque(conv.signataire_email), codeRequis: !!conv.code_requis,
     organismeASigne: !!conv.signe_organisme_at, message: conv.message || '',
-    pdfUrl: urlPubliqueConv(conv.pdf_path),
+    pdfUrl: await urlConv(conv.pdf_path),
   });
 }
 
@@ -1012,7 +1022,7 @@ async function handleSignerEntreprise(req, res) {
   if (error) throw error;
   if (!maj) return res.status(409).json({ error: 'Ce document a déjà été signé.' });
   await emailsApresSignature(suite, pdf, { termine });
-  return res.status(200).json({ etat: termine ? 'termine' : 'signe', pdfUrl: urlPubliqueConv(chemin) });
+  return res.status(200).json({ etat: termine ? 'termine' : 'signe', pdfUrl: await urlConv(chemin) });
 }
 
 // ── VEILLE LÉGALE ET RÉGLEMENTAIRE (03/11/2026) ───────────────────────────────────────────────────
