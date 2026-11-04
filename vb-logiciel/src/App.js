@@ -919,6 +919,202 @@ const computeInitials = (fullName) => {
 // et apparaît dans le planning. Une séance sans module (anciennes données) compte toujours.
 const lireMetaSeance = (m) => (typeof m === 'string' ? (() => { try { return JSON.parse(m); } catch { return {}; } })() : (m || {}));
 const estDuModuleActuel = (s, moduleId) => moduleId == null || moduleId === '' || s.module_id == null || String(s.module_id) === String(moduleId);
+// ── FUSION_MODULE_DEBUT ──────────────────────────────────────────────────────────────────────
+// 04/11/2026 : changement de module = fusion SÉANCE PAR SÉANCE (décision de l'utilisateur), au lieu de
+// ranger toute l'ancienne séance à part. Rien n'est jamais supprimé :
+//   - un élément signé / rendu de l'ancienne séance N prend la place de l'élément équivalent (pas encore
+//     commencé) de la séance N du nouveau module ; l'élément remplacé est rangé avec l'ancien module ;
+//   - un élément pas encore commencé est remplacé par le contenu du nouveau module ; si l'ancienne séance
+//     était planifiée, sa date et ses horaires sont repris sur la séance du nouveau module (si elle n'en a pas) ;
+//   - une ancienne séance signée ou planifiée qui n'existe pas dans le nouveau module se place selon sa
+//     date (les séances suivantes sont renumérotées), sinon à la fin. Jamais de renumérotation pour un
+//     participant de groupe (les séances du groupe sont liées par leur numéro) ;
+//   - un élément ni commencé ni daté reste rangé avec l'ancien module (non affiché).
+const elementSeanceCommence = (s) => elementSeanceEstSigne(s) || !!(s && s.reponse_url);
+const estEmargementElement = (s) => /[ée]margement/i.test(`${s.ressource_titre || ''} ${s.nom || ''}`);
+const titreElementNormalise = (s) => String(s.ressource_titre || s.nom || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  .replace(/^seance\s*\d+\s*[-–:·]\s*/, '').replace(/\s*[-–]\s*\d+\s*$/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const elementsEquivalents = (a, b) => {
+  if (estEmargementElement(a) || estEmargementElement(b)) return estEmargementElement(a) && estEmargementElement(b);
+  if (a.ressource_id && b.ressource_id && String(a.ressource_id) === String(b.ressource_id)) return true;
+  const ta = titreElementNormalise(a);
+  return !!ta && ta === titreElementNormalise(b);
+};
+const renumeroterTexte = (t, avant, apres) => (t ? String(t)
+  .replace(new RegExp(`^(S[ée]ance\\s+)${avant}(?!\\d)`), `$1${apres}`)
+  .replace(new RegExp(`(\\s[-–]\\s)${avant}$`), `$1${apres}`) : t);
+const titreElementSeance = (s) => s.ressource_titre || s.nom || 'Élément';
+
+const planFusionModule = (lignes, moduleId, { renumeroter = true } = {}) => {
+  const mid = String(moduleId);
+  const valeurModule = /^\d+$/.test(mid) ? Number(mid) : moduleId;
+  const eligibles = (lignes || []).filter(s => s && s.numero_seance != null && Number(s.numero_seance) >= 1 && !s.is_administrative);
+  const estActuel = (s) => s.module_id == null || String(s.module_id) === mid;
+  const finaux = eligibles.filter(estActuel).map(s => ({ ...s, _initActuel: true }));
+  const anciens = eligibles.filter(s => !estActuel(s));
+  const sortants = [];
+  const extras = [];
+  const lignesDe = (n) => finaux.filter(s => !s._sortant && Number(s.numero_seance) === n);
+  const aGarder = (s) => elementSeanceCommence(s) || !!s.date;
+  const reporterDate = (rangees, src) => {
+    rangees.forEach(s => {
+      if (s.date || elementSeanceCommence(s)) return;
+      s.date = src.date; s.heure_debut = s.heure_debut || src.heure_debut || null; s.heure_fin = s.heure_fin || src.heure_fin || null;
+    });
+  };
+
+  [...new Set(anciens.map(s => Number(s.numero_seance)))].sort((a, b) => a - b).forEach(n => {
+    const olds = anciens.filter(s => Number(s.numero_seance) === n);
+    const cible = lignesDe(n);
+    if (!olds.some(aGarder)) return; // ni signé ni planifié : rien à reprendre
+    if (!cible.length) {
+      const gardes = olds.filter(aGarder);
+      if (gardes.length) extras.push({ numero: n, lignes: gardes });
+      return;
+    }
+    const entrees = [];
+    olds.filter(elementSeanceCommence).forEach(e => {
+      const f = cible.find(x => !x._sortant && !elementSeanceCommence(x) && elementsEquivalents(e, x));
+      if (f) { f._sortant = true; sortants.push({ ...f, module_id: e.module_id }); }
+      entrees.push({ ...e, module_id: valeurModule, _repris: true });
+    });
+    entrees.forEach(e => finaux.push(e));
+    const seance = lignesDe(n);
+    seance.forEach(s => { s._touchee = true; });
+    const src = seance.find(s => s._initActuel && s.date) || seance.find(s => s.date)
+      || olds.filter(s => s.date).sort((a, b) => Number(elementSeanceCommence(b)) - Number(elementSeanceCommence(a)))[0];
+    if (src) reporterDate(seance, src);
+  });
+
+  const dateSeance = (n) => lignesDe(n).map(s => s.date).filter(Boolean).sort()[0] || null;
+  extras.forEach(x => { x.date = x.lignes.map(s => s.date).filter(Boolean).sort()[0] || null; });
+  extras.sort((a, b) => ((a.date || '9999') < (b.date || '9999') ? -1 : (a.date || '9999') > (b.date || '9999') ? 1 : a.numero - b.numero));
+  extras.forEach(x => {
+    const nums = [...new Set(finaux.filter(s => !s._sortant).map(s => Number(s.numero_seance)))].sort((a, b) => a - b);
+    const max = nums.length ? nums[nums.length - 1] : 0;
+    const libre = !nums.includes(x.numero);
+    const ordreOk = (k) => nums.every(n => { const d = dateSeance(n); if (!d || !x.date) return true; return n < k ? d <= x.date : d >= x.date; });
+    let K = null;
+    if (libre && (!renumeroter || ordreOk(x.numero))) K = Math.min(x.numero, max + 1);
+    else if (renumeroter && x.date) {
+      const suivant = nums.find(n => { const d = dateSeance(n); return d && d > x.date; });
+      if (suivant != null) {
+        K = suivant;
+        finaux.filter(s => !s._sortant && Number(s.numero_seance) >= K).forEach(s => {
+          const av = Number(s.numero_seance);
+          s.numero_seance = av + 1;
+          if (!elementSeanceCommence(s)) { s.nom = renumeroterTexte(s.nom, av, av + 1); s.ressource_titre = renumeroterTexte(s.ressource_titre, av, av + 1); }
+        });
+      }
+    }
+    if (K == null) K = max + 1;
+    const src = x.lignes.find(s => s.date);
+    x.lignes.forEach(e => {
+      const n = { ...e, module_id: valeurModule, numero_seance: K, _repris: true, _touchee: true, _extra: x.numero };
+      if (!n.date && src && !elementSeanceCommence(n)) { n.date = src.date; n.heure_debut = n.heure_debut || src.heure_debut || null; n.heure_fin = n.heure_fin || src.heure_fin || null; }
+      finaux.push(n);
+    });
+  });
+
+  // Différences à écrire (les lignes « virtuel-… » servent seulement à l'aperçu).
+  const parId = new Map(eligibles.map(s => [String(s.id), s]));
+  const CHAMPS = ['module_id', 'numero_seance', 'nom', 'ressource_titre', 'date', 'heure_debut', 'heure_fin'];
+  const changements = [];
+  [...finaux.filter(s => !s._sortant), ...sortants].forEach(s => {
+    const o = parId.get(String(s.id));
+    if (!o) return;
+    const maj = {};
+    CHAMPS.forEach(c => { const a = o[c] ?? null, b = s[c] ?? null; if (String(a) !== String(b)) maj[c] = b; });
+    if (Object.keys(maj).length) changements.push({ id: s.id, maj });
+  });
+
+  // Récapitulatif pour la fenêtre de confirmation.
+  const reprises = {};
+  finaux.filter(s => s._repris).forEach(s => {
+    const k = Number(s.numero_seance);
+    (reprises[k] = reprises[k] || []).push({ titre: titreElementSeance(s), signe: elementSeanceCommence(s), ancienNumero: Number(parId.get(String(s.id))?.numero_seance), extra: s._extra != null });
+  });
+  const decales = {};
+  finaux.filter(s => s._initActuel && !s._sortant).forEach(s => {
+    const av = Number(parId.get(String(s.id)).numero_seance);
+    if (av !== Number(s.numero_seance)) decales[av] = Number(s.numero_seance);
+  });
+  const dates = [];
+  finaux.filter(s => !s._sortant && s._initActuel).forEach(s => {
+    const o = parId.get(String(s.id));
+    if (!o.date && s.date) { const k = Number(s.numero_seance); if (!dates.some(d => d.numero === k)) dates.push({ numero: k, date: s.date }); }
+  });
+  const nonRepris = anciens.filter(s => !finaux.some(f => String(f.id) === String(s.id))).length;
+  return {
+    changements,
+    reprises: Object.keys(reprises).map(Number).sort((a, b) => a - b).map(n => ({ numero: n, elements: reprises[n] })),
+    dates: dates.sort((a, b) => a.numero - b.numero),
+    decales: Object.keys(decales).map(Number).sort((a, b) => a - b).map(av => ({ avant: av, apres: decales[av] })),
+    remplaces: sortants.length,
+    nonRepris,
+    idsRepris: finaux.filter(s => s._repris).map(s => String(s.id)),
+  };
+};
+// ── FUSION_MODULE_FIN ────────────────────────────────────────────────────────────────────────
+
+// Fenêtre de confirmation d'un changement de module (ou d'une fusion d'un ancien module).
+const ChangementModuleModal = ({ etat, onAnnuler, onConfirmer }) => {
+  if (!etat) return null;
+  const { plan, chargement, enCours, erreur, fusionSeule, moduleId, nomClient, ancien, nouveau, automatisations = [] } = etat;
+  const dateFr = (d) => (d ? new Date(`${String(d).slice(0, 10)}T12:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+  const rien = plan && !plan.reprises.length && !plan.dates.length && !plan.decales.length;
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="titre-changement-module">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 space-y-4">
+        <div>
+          <h3 id="titre-changement-module" className="text-lg font-black text-gray-900">{fusionSeule ? 'Reprendre les séances de l\'ancien module' : `Changer le module de ${nomClient}`}</h3>
+          <p className="text-sm text-gray-500 mt-1">{fusionSeule ? `Dans le parcours actuel : ${nouveau}` : `${ancien} → ${nouveau}`}</p>
+        </div>
+        {chargement && <p className="text-sm text-gray-500">Préparation du récapitulatif…</p>}
+        {erreur && <p className="text-sm text-red-700 bg-red-50 rounded-xl p-3">{erreur}</p>}
+        {!chargement && !erreur && !moduleId && (
+          <p className="text-sm text-gray-700">Le module sera retiré du dossier. Les séances et les signatures restent dans le dossier.</p>
+        )}
+        {!chargement && !erreur && moduleId && plan && (
+          <div className="space-y-3 text-sm text-gray-700">
+            {rien && <p>{fusionSeule ? 'Rien à reprendre : aucun élément signé ou planifié dans l\'ancien module.' : 'Aucune séance signée ou planifiée à reprendre : le parcours du nouveau module est créé tel quel.'}</p>}
+            {plan.reprises.length > 0 && (
+              <div className="rounded-xl bg-emerald-50 p-3 space-y-1">
+                <p className="font-bold text-emerald-800">Repris dans le nouveau parcours</p>
+                {plan.reprises.map(r => (
+                  <p key={r.numero}>Séance {r.numero} : {r.elements.map((e, i) => <span key={i}>{i > 0 ? ', ' : ''}« {e.titre} »{e.signe ? ' (signé)' : ' (planifié)'}{e.extra && e.ancienNumero !== r.numero ? ` — ancienne séance ${e.ancienNumero}` : ''}</span>)}</p>
+                ))}
+              </div>
+            )}
+            {plan.dates.length > 0 && (
+              <div className="rounded-xl bg-violet-50 p-3 space-y-1">
+                <p className="font-bold text-violet-800">Dates reprises</p>
+                {plan.dates.map(d => <p key={d.numero}>Séance {d.numero} : {dateFr(d.date)}</p>)}
+              </div>
+            )}
+            {plan.decales.length > 0 && (
+              <div className="rounded-xl bg-amber-50 p-3 space-y-1">
+                <p className="font-bold text-amber-800">Séances renumérotées (placement selon la date)</p>
+                <p>{plan.decales.map(d => `${d.avant} → ${d.apres}`).join(' · ')}</p>
+                {automatisations.length > 0 && (
+                  <p className="text-amber-900">⚠ {automatisations.length} envoi(s) automatique(s) réglé(s) sur une de ces séances suivra(ont) le numéro : {automatisations.map(a => `« ${a.email_subject || 'sans objet'} » (séance ${a.target_numero_seance})`).join(', ')}.</p>
+                )}
+              </div>
+            )}
+            <p className="text-xs text-gray-500">Rien n'est supprimé : les éléments signés gardent leur nom et leur PDF, et ce qui n'est pas repris reste rangé dans le dossier.</p>
+          </div>
+        )}
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
+          <button type="button" onClick={onAnnuler} disabled={enCours} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 disabled:opacity-40">Annuler</button>
+          <button type="button" onClick={onConfirmer} disabled={chargement || enCours || !!erreur || (fusionSeule && rien)} className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40">
+            {enCours ? 'Enregistrement…' : (fusionSeule ? 'Reprendre dans le parcours' : 'Confirmer le changement')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const moduleDuClient = (clients, clientId) => {
   const c = (clients || []).find(x => String(x.id) === String(clientId));
   return c ? (c.module_id ?? null) : null;
@@ -5202,6 +5398,12 @@ const ClientDetailView = ({
   // LOT A (2026-10-21) : séances d'un ancien module — conservées, affichées à part en lecture seule.
   const seancesAncienModule = allClientSessions.filter(s => s.numero_seance !== null && s.numero_seance !== undefined && !estDuModuleActuel(s, client.module_id))
     .sort((a, b) => (Number(a.numero_seance) - Number(b.numero_seance)) || String(a.nom || '').localeCompare(String(b.nom || '')));
+  // 04/11/2026 : on n'affiche que ce qui compte (signé, rendu, ou à reprendre dans le parcours) ; le reste
+  // (éléments jamais commencés ni planifiés, éléments remplacés) reste dans le dossier sans encombrer.
+  const planAncienModule = client.module_id && seancesAncienModule.length ? planFusionModule(allClientSessions, client.module_id, { renumeroter: !client.groupe_id }) : null;
+  const idsAReprendre = new Set(planAncienModule ? planAncienModule.idsRepris : []);
+  const seancesAncienModuleVisibles = seancesAncienModule.filter(s => elementSeanceCommence(s) || idsAReprendre.has(String(s.id)));
+  const repriseAncienPossible = !!(planAncienModule && planAncienModule.changements.length);
   const clientDocs = documents ? documents.filter(d => d.user_id === client.id) : [];
   const clientExercises = allClientSessions.filter(s => s.type_activite === 'exercice' || s.type_activite === 'Exercice');
   const clientPendingCorrections = clientExercises.filter(s =>
@@ -6529,14 +6731,19 @@ const ClientDetailView = ({
                 <p className="text-gray-400 italic text-sm">Aucune séance n'est encore programmée.</p>
               </div>
             )}
-            {seancesAncienModule.length > 0 && (
-              <details className="mt-6 rounded-2xl border border-gray-200 bg-gray-50/60 p-4">
+            {seancesAncienModuleVisibles.length > 0 && (
+              <details open={repriseAncienPossible} className="mt-6 rounded-2xl border border-gray-200 bg-gray-50/60 p-4">
                 <summary className="cursor-pointer text-sm font-bold text-gray-600">
-                  📁 Séances d'un ancien module ({seancesAncienModule.length}) — conservées, en lecture seule
+                  📁 Éléments d'un ancien module ({seancesAncienModuleVisibles.length}) — conservés
                 </summary>
-                <p className="mt-2 text-xs text-gray-500">Ce client a changé de module. Ces éléments restent dans son dossier (preuves, signatures) mais ne comptent plus dans son parcours actuel.</p>
+                <p className="mt-2 text-xs text-gray-500">Ce client a changé de module. Ces éléments restent dans son dossier (preuves, signatures).{repriseAncienPossible ? ' Ils peuvent être repris dans son parcours actuel, séance par séance.' : ''}</p>
+                {repriseAncienPossible && (
+                  <button type="button" onClick={() => handleModuleChange(client.id, client.module_id, { fusionSeule: true })} className="mt-3 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold">
+                    Reprendre dans le parcours actuel
+                  </button>
+                )}
                 <div className="mt-3 divide-y divide-gray-100 rounded-xl bg-white border border-gray-100">
-                  {seancesAncienModule.map(s => (
+                  {seancesAncienModuleVisibles.map(s => (
                     <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
                       <span className="font-semibold text-gray-700">Séance {s.numero_seance} · {s.ressource_titre || s.nom}</span>
                       <span className="text-xs text-gray-500">
@@ -26208,6 +26415,7 @@ export default function App() {
   const [lastModifiedSessionId, setLastModifiedSessionId] = useState(null);
   const [editedTimes, setEditedTimes] = useState({});
   const [isSessionItemModalOpen, setIsSessionItemModalOpen] = useState(false);
+  const [changementModule, setChangementModule] = useState(null); // 04/11/2026 : fenêtre « Changer le module »
   const [isDocSettingsOpen, setIsDocSettingsOpen] = useState(false);
   const [docSettingsTarget, setDocSettingsTarget] = useState(null); // session row
   const [targetSessionForAddition, setTargetSessionForAddition] = useState(null);
@@ -28053,7 +28261,7 @@ export default function App() {
     }
   };
 
-  const handleModuleChange = async (clientId, moduleId) => {
+  const appliquerChangementModule = async (clientId, moduleId) => {
     const finalModuleId = moduleId || null;
 
     // 1. Sauvegarde dans Supabase table 'clients'
@@ -28096,6 +28304,99 @@ export default function App() {
     // 4. Rafraîchir l'UI globale
     await fetchUtilisateurs();
     await fetchDocuments();
+  };
+
+  // 04/11/2026 : séances que le nouveau module créera (pour l'aperçu, avant de rien écrire).
+  const seancesVirtuellesModule = async (lignes, moduleId) => {
+    const deja = (lignes || []).some(s => String(s.module_id) === String(moduleId) && !s.is_administrative
+      && (() => { const m = lireMetaSeance(s.metadata); return !m.isCustom && !m.groupe_id; })());
+    if (deja) return [];
+    const { data: templates } = await supabase.from('module_session_templates').select('*').eq('module_id', moduleId).order('ordre', { ascending: true });
+    const virt = [];
+    if (templates && templates.length) {
+      const { data: res } = await supabase.from('module_step_resources').select('*').in('template_id', templates.map(t => t.id)).order('ordre', { ascending: true });
+      templates.forEach(t => {
+        const rs = (res || []).filter(x => String(x.template_id) === String(t.id));
+        if (!rs.length) virt.push({ id: `virtuel-${t.id}`, module_id: moduleId, numero_seance: t.ordre, nom: t.titre, ressource_titre: null, metadata: {} });
+        rs.forEach(x => virt.push({ id: `virtuel-${t.id}-${x.id}`, module_id: moduleId, numero_seance: t.ordre, nom: `${t.titre} - ${x.titre}`, ressource_titre: x.titre, ressource_id: x.ressource_id || null, metadata: {} }));
+      });
+    } else {
+      const mod = (modules || []).find(m => String(m.id) === String(moduleId));
+      for (let i = 1; i <= Number(mod?.seances_prevues || 0); i++) virt.push({ id: `virtuel-s${i}`, module_id: moduleId, numero_seance: i, nom: `${mod.nom} - Séance ${i}`, ressource_titre: null, metadata: {} });
+    }
+    return virt;
+  };
+
+  // Écrit la fusion calculée par planFusionModule (relue juste avant, sur les vraies séances du client).
+  const executerFusionModule = async (clientId, moduleId, { renumeroter = true } = {}) => {
+    const { data: lignes, error } = await supabase.from('sessions').select('*').eq('client_id', clientId);
+    if (error) throw error;
+    const plan = planFusionModule(lignes || [], moduleId, { renumeroter });
+    const le = new Date().toISOString();
+    const aSynchroniser = new Set();
+    let nb = 0;
+    for (const c of plan.changements) {
+      const o = (lignes || []).find(l => String(l.id) === String(c.id));
+      if (!o) continue;
+      const metadata = { ...lireMetaSeance(o.metadata), fusion_module: { le, module_avant: o.module_id ?? null, numero_avant: o.numero_seance ?? null } };
+      const { error: errMaj } = await supabase.from('sessions').update({ ...c.maj, metadata }).eq('id', c.id);
+      if (errMaj) throw errMaj;
+      nb++;
+      if (o.numero_seance != null) aSynchroniser.add(Number(o.numero_seance));
+      if (c.maj.numero_seance != null) aSynchroniser.add(Number(c.maj.numero_seance));
+    }
+    aSynchroniser.forEach(n => planifierSyncAgenda(clientId, n));
+    return { plan, nb };
+  };
+
+  // Ouvre la fenêtre de confirmation avec le récapitulatif (rien n'est écrit avant « Confirmer »).
+  // options.fusionSeule : bouton « Reprendre dans le parcours actuel » (le module ne change pas).
+  const handleModuleChange = async (clientId, moduleId, options = {}) => {
+    const fusionSeule = !!options.fusionSeule;
+    const cible = moduleId ? String(moduleId) : '';
+    const client = (clients || []).find(c => String(c.id) === String(clientId));
+    if (!fusionSeule && String(client?.module_id ?? '') === cible) return;
+    const nomModule = (id) => (id ? ((modules || []).find(m => String(m.id) === String(id))?.nom || 'Module supprimé') : 'Aucun module');
+    const base = {
+      clientId, moduleId: cible, fusionSeule, renumeroter: !client?.groupe_id,
+      nomClient: client?.nom_complet || client?.nom || 'ce client', ancien: nomModule(client?.module_id), nouveau: nomModule(cible),
+      chargement: !!cible,
+    };
+    setChangementModule(base);
+    if (!cible) return;
+    try {
+      const { data: lignes, error } = await supabase.from('sessions').select('*').eq('client_id', clientId);
+      if (error) throw error;
+      const toutes = fusionSeule ? (lignes || []) : (lignes || []).concat(await seancesVirtuellesModule(lignes, cible));
+      const plan = planFusionModule(toutes, cible, { renumeroter: base.renumeroter });
+      let automatisations = [];
+      if (plan.decales.length) {
+        const nums = plan.decales.map(d => d.avant);
+        const { data: autos } = await supabase.from('automation_settings').select('id, email_subject, target_module_id, target_numero_seance, is_active').eq('organisation_id', currentOrgId);
+        automatisations = (autos || []).filter(x => x.is_active !== false && String(x.target_module_id) === cible && nums.includes(Number(x.target_numero_seance)));
+      }
+      setChangementModule(prev => (prev && prev.clientId === clientId ? { ...prev, chargement: false, plan, automatisations } : prev));
+    } catch (e) {
+      setChangementModule(prev => (prev && prev.clientId === clientId ? { ...prev, chargement: false, erreur: 'Le récapitulatif n\'a pas pu être préparé : ' + (e.message || e) } : prev));
+    }
+  };
+
+  const confirmerChangementModule = async () => {
+    const etat = changementModule;
+    if (!etat || etat.enCours || etat.chargement) return;
+    setChangementModule({ ...etat, enCours: true });
+    try {
+      if (!etat.fusionSeule) await appliquerChangementModule(etat.clientId, etat.moduleId);
+      let nb = 0;
+      if (etat.moduleId) ({ nb } = await executerFusionModule(etat.clientId, etat.moduleId, { renumeroter: etat.renumeroter }));
+      await fetchSessions();
+      toast.success(etat.fusionSeule ? `${nb} élément(s) repris dans le parcours actuel.` : `Module changé${nb ? ` : ${nb} élément(s) repris ou mis à jour` : ''}.`);
+    } catch (e) {
+      console.error('[changement de module]', e);
+      toast.error('Le changement n\'a pas pu être terminé : ' + (e.message || e) + '. Rien n\'a été supprimé ; vous pouvez relancer « Reprendre dans le parcours actuel » depuis la fiche.');
+      await fetchSessions();
+    }
+    setChangementModule(null);
   };
 
   // --- Actions Supabase : Configuration Modules ---
@@ -32255,6 +32556,8 @@ export default function App() {
         })()}
         signerRole={userRole}
       />
+
+      <ChangementModuleModal etat={changementModule} onAnnuler={() => { if (!changementModule?.enCours) setChangementModule(null); }} onConfirmer={confirmerChangementModule} />
 
       <SessionItemModal
         isOpen={isSessionItemModalOpen}
