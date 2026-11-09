@@ -7,7 +7,7 @@
 import React from 'react';
 import { supabase } from './supabaseClientConfig';
 
-const VERSION_APP = '2026-10-27';
+const VERSION_APP = '2026-11-09';
 const MAX_PAR_CHARGEMENT = 5;
 const dejaEnvoyees = new Set();
 let nbEnvoyees = 0;

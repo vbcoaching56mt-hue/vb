@@ -1,3 +1,4 @@
+import './protectionPage'; // en premier : protège la page avant que React ne démarre
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
