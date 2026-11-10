@@ -19,6 +19,8 @@
 //   « CONVENTIONS SIGNÉES PAR UNE ENTREPRISE ») : envoyer/relancer/annuler_signature, signer_organisme,
 //   lire_signature, code_signature, signer_entreprise.
 //
+// 10/11/2026 — liens à partager (voir « LIENS À PARTAGER ») : liens_mes_liens, lien_maj ; lire / soumettre
+//   acceptent aussi ?l=… (un lien commun, la personne donne ses coordonnées).
 // 03/11/2026 — veille légale et réglementaire (voir plus bas, « VEILLE LÉGALE ET RÉGLEMENTAIRE ») :
 //   veille_publique, veille_statut, veille_lancer, veille_masquer, veille_retirer + veilleHebdomadaire (cron).
 //
@@ -402,6 +404,8 @@ async function handleRelancerFinanceur(req, res) {
 
 // ── action=lire — PUBLIC, GET ───────────────────────────────────────────────────────────────────
 async function handleLire(req, res) {
+  const l = (req.query?.l || '').toString().trim();
+  if (l) return handleLireLien(req, res, l); // 10/11/2026 : lien à partager
   const t = (req.query?.t || '').toString().trim();
   if (!t) return res.status(400).json({ error: 'Lien invalide.' });
 
@@ -446,6 +450,8 @@ async function handleLire(req, res) {
 
 // ── action=soumettre — PUBLIC, POST ─────────────────────────────────────────────────────────────
 async function handleSoumettre(req, res) {
+  const l = (req.body?.l || '').toString().trim();
+  if (l) return handleSoumettreLien(req, res, l); // 10/11/2026 : lien à partager
   const t = (req.body?.t || req.query?.t || '').toString().trim();
   if (!t) return res.status(400).json({ error: 'Lien invalide.' });
 
@@ -483,6 +489,165 @@ async function handleSoumettre(req, res) {
   }
 
   return res.status(200).json({ etat: 'rempli' });
+}
+
+// ── LIENS À PARTAGER (10/11/2026) ────────────────────────────────────────────────────────────────
+// Chaque admin ou formateur a SON lien pour chaque modèle actif (table prospect_questionnaire_liens,
+// SQL « liens_questionnaires », écriture uniquement ici). Le lien (/questionnaire?l=…) est le même
+// pour tout le monde : la personne donne ses coordonnées, répond, et une ligne « rempli » est créée
+// dans prospect_questionnaire_envois (source 'lien', envoye_par = propriétaire du lien), visible dans
+// l'onglet Prospects comme les envois par e-mail. Protections : 30 réponses par lien et par jour,
+// piège à robots (champ « site » invisible), une même adresse ne compte qu'une fois en 10 minutes.
+const TABLE_LIENS = 'prospect_questionnaire_liens';
+const LIMITE_REPONSES_LIEN = 30;
+const MESSAGE_FIN_DEFAUT = 'Merci pour vos réponses ! Elles nous aideront à préparer notre premier échange.';
+const jetonLien = () => crypto.randomBytes(12).toString('base64url'); // 16 caractères, 96 bits
+// Admin ou formateur de l'organisme, sinon réponse d'erreur envoyée et null renvoyé.
+async function equipeAppelant(req, res) {
+  const token = (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+  if (!token) { res.status(401).json({ error: 'Authentification requise.' }); return null; }
+  const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+  if (authErr || !authData?.user) { res.status(401).json({ error: 'Session invalide ou expirée.' }); return null; }
+  let { data: row, error } = await supabaseAdmin.from('utilisateurs').select('id, role, organisation_id').eq('auth_uid', authData.user.id).maybeSingle();
+  if (!error && !row && authData.user.email) {
+    const fb = await supabaseAdmin.from('utilisateurs').select('id, role, organisation_id').is('auth_uid', null).eq('email', authData.user.email).maybeSingle();
+    row = fb.data; error = fb.error;
+  }
+  if (error || !row || !['admin', 'formateur'].includes(row.role) || !row.organisation_id) {
+    res.status(403).json({ error: 'Réservé aux administrateurs et formateurs d\'un organisme.' }); return null;
+  }
+  return row;
+}
+const lienPublic = (l) => ({ template_id: l.template_id, token: l.token, actif: !!l.actif });
+
+// ── action=liens_mes_liens — authentifié : mes liens (un par modèle) ─────────────────────────────
+async function handleMesLiens(req, res) {
+  const moi = await equipeAppelant(req, res); if (!moi) return;
+  const { data, error } = await supabaseAdmin.from(TABLE_LIENS).select('template_id, token, actif')
+    .eq('organisation_id', moi.organisation_id).eq('utilisateur_id', moi.id);
+  if (error) { if (tableAbsente(error)) return res.status(200).json({ indisponible: true, liens: [] }); throw error; }
+  return res.status(200).json({ liens: (data || []).map(lienPublic) });
+}
+
+// ── action=lien_maj — authentifié : créer mon lien, l'activer / le désactiver, ou le changer ─────
+async function handleLienMaj(req, res) {
+  const moi = await equipeAppelant(req, res); if (!moi) return;
+  const { templateId, actif, changer } = req.body || {};
+  if (!templateId) return res.status(400).json({ error: 'Modèle manquant.' });
+  const { data: tpl, error: tplErr } = await supabaseAdmin.from('prospect_questionnaire_templates')
+    .select('id, actif').eq('id', templateId).eq('organisation_id', moi.organisation_id).maybeSingle();
+  if (tplErr) throw tplErr;
+  if (!tpl) return res.status(404).json({ error: 'Modèle de questionnaire introuvable dans cet organisme.' });
+  const { data: existant, error: exErr } = await supabaseAdmin.from(TABLE_LIENS).select('id, template_id, token, actif')
+    .eq('template_id', tpl.id).eq('utilisateur_id', moi.id).maybeSingle();
+  if (exErr) { if (tableAbsente(exErr)) return res.status(409).json({ error: 'Les liens ne sont pas encore activés : lancez le SQL « liens_questionnaires ».' }); throw exErr; }
+  if (!existant) {
+    if (!tpl.actif) return res.status(400).json({ error: 'Ce modèle est désactivé.' });
+    const { data: cree, error: insErr } = await supabaseAdmin.from(TABLE_LIENS)
+      .insert([{ organisation_id: moi.organisation_id, template_id: tpl.id, utilisateur_id: moi.id, token: jetonLien(), actif: true }])
+      .select('template_id, token, actif').single();
+    if (insErr) {
+      // Double clic : le lien vient d'être créé par l'autre requête.
+      const { data: deja } = await supabaseAdmin.from(TABLE_LIENS).select('template_id, token, actif').eq('template_id', tpl.id).eq('utilisateur_id', moi.id).maybeSingle();
+      if (deja) return res.status(200).json({ lien: lienPublic(deja) });
+      throw insErr;
+    }
+    return res.status(200).json({ lien: lienPublic(cree) });
+  }
+  const maj = {};
+  if (typeof actif === 'boolean') maj.actif = actif;
+  if (changer === true) maj.token = jetonLien();
+  if (!Object.keys(maj).length) return res.status(200).json({ lien: lienPublic(existant) });
+  const { data: apres, error: majErr } = await supabaseAdmin.from(TABLE_LIENS).update(maj).eq('id', existant.id)
+    .select('template_id, token, actif').single();
+  if (majErr) throw majErr;
+  return res.status(200).json({ lien: lienPublic(apres) });
+}
+
+// Lien public : le lien, son modèle et son organisme, ou null.
+async function lienParJeton(l) {
+  if (!l || l.length > 64) return null;
+  const { data: lien, error } = await supabaseAdmin.from(TABLE_LIENS)
+    .select('id, organisation_id, template_id, utilisateur_id, actif').eq('token', l).maybeSingle();
+  if (error) { if (tableAbsente(error)) return null; throw error; }
+  if (!lien) return null;
+  const { data: tpl, error: tplErr } = await supabaseAdmin.from('prospect_questionnaire_templates')
+    .select('*').eq('id', lien.template_id).eq('organisation_id', lien.organisation_id).maybeSingle();
+  if (tplErr) throw tplErr;
+  if (!tpl) return null;
+  return { lien, tpl };
+}
+const messageFin = (tpl) => plainText(tpl && tpl.message_fin, 1000) || MESSAGE_FIN_DEFAUT;
+
+async function handleLireLien(req, res, l) {
+  const trouve = await lienParJeton(l);
+  if (!trouve) return res.status(404).json({ error: 'Lien invalide.' });
+  const organisme = (await nomOrganisme(trouve.lien.organisation_id)) || '';
+  if (!trouve.lien.actif || !trouve.tpl.actif) return res.status(200).json({ etat: 'ferme', organisme });
+  return res.status(200).json({ etat: 'a_remplir', mode: 'lien', titre: trouve.tpl.titre, questions: trouve.tpl.questions || [], organisme });
+}
+
+async function emailNouvelleReponse({ lien, tpl, envoi }) {
+  if (!resendApiKey) return;
+  const [{ data: proprio }, { data: admins }] = await Promise.all([
+    supabaseAdmin.from('utilisateurs').select('email').eq('id', lien.utilisateur_id).maybeSingle(),
+    supabaseAdmin.from('utilisateurs').select('email').eq('organisation_id', lien.organisation_id).eq('role', 'admin'),
+  ]);
+  const a = [...new Set([proprio && proprio.email, ...(admins || []).map(x => x.email)]
+    .map(e => String(e || '').trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))].slice(0, 5);
+  if (!a.length) return;
+  const qui = `${plainText(envoi.prenom, 100)} ${plainText(envoi.nom, 100)}`.trim();
+  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+    <div style="background:#7C3AED;color:white;padding:16px 24px;border-radius:12px 12px 0 0;font-size:18px;font-weight:bold;">SkorUp</div>
+    <div style="background:#f9fafb;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;">
+      <p style="color:#111827;font-size:14px;line-height:1.7;">Bonjour,</p>
+      <p style="color:#111827;font-size:14px;line-height:1.7;"><strong>${escapeHtml(qui)}</strong> a répondu au questionnaire « ${echappe(tpl.titre)} » grâce à votre lien à partager.</p>
+      <p style="text-align:center;margin:28px 0;"><a href="${APP_URL}/prospects" style="background:#7C3AED;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-size:14px;font-weight:bold;display:inline-block;">Voir les réponses</a></p>
+      <p style="color:#9ca3af;font-size:11px;">Vous recevez cet e-mail car ce lien a été partagé par vous ou par votre organisme.</p>
+    </div></div>`;
+  try {
+    await fetchResend('https://api.resend.com/emails', {
+      method: 'POST', quota: { cle: `lien_questionnaire:${lien.organisation_id}`, limite: 40 },
+      headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: FROM_EMAIL, to: a, subject: `Nouvelles réponses : ${plainText(qui, 120)}`, html }),
+    });
+  } catch (_) { /* la réponse est enregistrée même si l'e-mail ne part pas */ }
+}
+
+async function handleSoumettreLien(req, res, l) {
+  const corps = req.body || {};
+  const trouve = await lienParJeton(l);
+  if (!trouve) return res.status(404).json({ error: 'Lien invalide.' });
+  const { lien, tpl } = trouve;
+  if (!lien.actif || !tpl.actif) return res.status(409).json({ error: 'Ce questionnaire n\'est plus disponible.' });
+  // Piège à robots : un vrai visiteur ne voit pas ce champ. On fait comme si tout allait bien.
+  if (String(corps.site || '').trim()) return res.status(200).json({ etat: 'rempli', message_fin: messageFin(tpl) });
+  const id = corps.identite || {};
+  const prenom = plainText(id.prenom, 100), nom = plainText(id.nom, 100);
+  const email = String(id.email || '').trim().toLowerCase().slice(0, 200);
+  const telephone = plainText(id.telephone, 30) || null;
+  if (!prenom || !nom) return res.status(400).json({ error: 'Indiquez votre prénom et votre nom.' });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Adresse e-mail invalide.' });
+  const reponses = corps.reponses;
+  if (!reponses || typeof reponses !== 'object' || Array.isArray(reponses)) return res.status(400).json({ error: 'Réponses manquantes.' });
+  if (JSON.stringify(reponses).length > 100000) return res.status(413).json({ error: 'Réponses trop longues.' });
+  // Double clic ou renvoi : même adresse sur ce lien il y a moins de 10 minutes → déjà reçu.
+  const { data: recent } = await supabaseAdmin.from('prospect_questionnaire_envois').select('id')
+    .eq('lien_id', lien.id).eq('email', email).gte('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()).limit(1);
+  if (recent && recent.length) return res.status(200).json({ etat: 'rempli', message_fin: messageFin(tpl) });
+  try {
+    const { data: place, error: errCpt } = await supabaseAdmin.rpc('skorup_compter', { p_cle: `lien_questionnaire:${lien.id}`, p_limite: LIMITE_REPONSES_LIEN });
+    if (!errCpt && place === false) return res.status(429).json({ error: 'Ce questionnaire a reçu beaucoup de réponses aujourd\'hui : réessayez demain.' });
+  } catch (_) { /* compteur indisponible : on enregistre quand même */ }
+  const maintenant = new Date().toISOString();
+  const { data: envoi, error: insErr } = await supabaseAdmin.from('prospect_questionnaire_envois').insert([{
+    organisation_id: lien.organisation_id, template_id: tpl.id, token: crypto.randomBytes(32).toString('base64url'),
+    nom, prenom, email, telephone, statut: 'rempli', reponses, rempli_at: maintenant, envoye_at: maintenant,
+    envoye_par: lien.utilisateur_id, source: 'lien', lien_id: lien.id,
+  }]).select('id, prenom, nom').single();
+  if (insErr) throw insErr;
+  await emailNouvelleReponse({ lien, tpl, envoi });
+  return res.status(200).json({ etat: 'rempli', message_fin: messageFin(tpl) });
 }
 
 // ── CONVENTIONS SIGNÉES PAR UNE ENTREPRISE, SANS COMPTE (30/10/2026) ──────────────────────────────
@@ -1458,6 +1623,9 @@ module.exports = async (req, res) => {
     if (req.method === 'POST' && action === 'soumettre') return await handleSoumettre(req, res);
     if (req.method === 'POST' && action === 'envoyer_financeur') return await handleEnvoyerFinanceur(req, res);
     if (req.method === 'POST' && action === 'relancer_financeur') return await handleRelancerFinanceur(req, res);
+    // 10/11/2026 : liens à partager des questionnaires prospects.
+    if (req.method === 'POST' && action === 'liens_mes_liens') return await handleMesLiens(req, res);
+    if (req.method === 'POST' && action === 'lien_maj') return await handleLienMaj(req, res);
     // 30/10/2026 : conventions signées par une entreprise, sans compte.
     if (req.method === 'POST' && action === 'envoyer_signature') return await handleEnvoyerSignature(req, res);
     if (req.method === 'POST' && action === 'relancer_signature') return await handleRelancerSignature(req, res);

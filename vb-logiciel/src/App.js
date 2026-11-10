@@ -4113,37 +4113,49 @@ const SessionItemModal = ({ isOpen, onClose, onSave, pedagogicalResources, supab
 // le même comportement de module par défaut doit aussi y être retiré.)
 
 // ─── Vue publique : questionnaire d'entretien préalable envoyé à un prospect ──────────────────
-// Accessible sans compte SkorUp, via /questionnaire?t=<token> (lien reçu par email — voir
+// Accessible sans compte SkorUp, via /questionnaire?t=<token> (lien reçu par email) ou, depuis le
+// 10/11/2026, /questionnaire?l=<lien à partager> (le même pour tout le monde — voir
 // api/prospects.js action=envoyer). Demandé par l'utilisateur le 22/09/2026. Reprend le même
 // rendu de questions (text/single/multiple) que QuestionnaireFillerModal plus bas dans ce
 // fichier, adapté en page pleine plutôt qu'en modale puisqu'il n'y a ici ni app ni utilisateur
 // connecté autour. Tout passe par api/prospects.js (clé service_role côté serveur) : cette vue
 // n'appelle jamais directement Supabase.
 const ProspectQuestionnaireView = () => {
-  const token = React.useMemo(() => new URLSearchParams(window.location.search).get('t') || '', []);
-  const [etat, setEtat] = useState('chargement'); // chargement | a_remplir | rempli | expire | erreur
+  // 10/11/2026 : deux sortes de liens. ?t=… = lien personnel envoyé par e-mail (inchangé) ;
+  // ?l=… = lien à partager (le même pour tout le monde) : la personne donne d'abord ses coordonnées.
+  const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
+  const token = params.get('t') || '';
+  const lienPartage = params.get('l') || '';
+  const [etat, setEtat] = useState('chargement'); // chargement | a_remplir | rempli | expire | ferme | erreur
   const [erreurMsg, setErreurMsg] = useState('');
   const [titre, setTitre] = useState('');
   const [questions, setQuestions] = useState([]);
   const [prenom, setPrenom] = useState('');
+  const [organisme, setOrganisme] = useState('');
+  const [messageFin, setMessageFin] = useState('');
+  const [identite, setIdentite] = useState({ prenom: '', nom: '', email: '', telephone: '' });
+  const [piege, setPiege] = useState('');
   const [answers, setAnswers] = useState({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!token) { setEtat('erreur'); setErreurMsg('Ce lien est incomplet.'); return; }
-    fetch(`/api/prospects?action=lire&t=${encodeURIComponent(token)}`)
+    if (!token && !lienPartage) { setEtat('erreur'); setErreurMsg('Ce lien est incomplet.'); return; }
+    const url = lienPartage ? `/api/prospects?action=lire&l=${encodeURIComponent(lienPartage)}` : `/api/prospects?action=lire&t=${encodeURIComponent(token)}`;
+    fetch(url)
       .then(async (resp) => {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) { setEtat('erreur'); setErreurMsg(data.error || 'Ce lien est invalide.'); return; }
+        setOrganisme(data.organisme || '');
         if (data.etat === 'rempli') { setEtat('rempli'); return; }
         if (data.etat === 'expire') { setEtat('expire'); return; }
+        if (data.etat === 'ferme') { setEtat('ferme'); return; }
         setTitre(data.titre || '');
         setQuestions(data.questions || []);
         setPrenom(data.prenom || '');
         setEtat('a_remplir');
       })
       .catch(() => { setEtat('erreur'); setErreurMsg('Impossible de charger le questionnaire pour le moment.'); });
-  }, [token]);
+  }, [token, lienPartage]);
 
   const setAnswer = (qId, value) => setAnswers(prev => ({ ...prev, [qId]: value }));
   const toggleMultiple = (qId, option) => {
@@ -4156,25 +4168,32 @@ const ProspectQuestionnaireView = () => {
   // FIX (demande utilisateur, 2026-09-22) : seules les questions cochees "obligatoire" par
   // l'admin bloquent la soumission - un champ obligatoire absent (anciens modeles crees avant
   // cette option) est traite comme facultatif, pas comme obligatoire.
-  const isComplete = questions.every(q => {
+  const questionsCompletes = questions.every(q => {
     if (!q.obligatoire) return true;
     if (q.type === 'text') return (answers[q.id] || '').trim().length > 0;
     if (q.type === 'single') return !!answers[q.id];
     if (q.type === 'multiple') return (answers[q.id] || []).length > 0;
     return true;
   });
+  const emailValide = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(identite.email.trim());
+  const identiteComplete = !lienPartage || (identite.prenom.trim() && identite.nom.trim() && emailValide);
+  const isComplete = questionsCompletes && identiteComplete;
 
   const handleSubmit = async () => {
     setSubmitting(true);
     setErreurMsg('');
     try {
+      const corps = lienPartage
+        ? { l: lienPartage, identite: { prenom: identite.prenom.trim(), nom: identite.nom.trim(), email: identite.email.trim(), telephone: identite.telephone.trim() }, reponses: answers, site: piege }
+        : { t: token, reponses: answers };
       const resp = await fetch(`/api/prospects?action=soumettre`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ t: token, reponses: answers }),
+        body: JSON.stringify(corps),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) { setErreurMsg(data.error || 'Ce lien n\'est plus valable.'); setSubmitting(false); return; }
+      setMessageFin(data.message_fin || '');
       setEtat('rempli');
     } catch (e) {
       setErreurMsg('Erreur réseau — vérifiez votre connexion et réessayez.');
@@ -4203,13 +4222,15 @@ const ProspectQuestionnaireView = () => {
     );
   }
 
-  if (etat === 'expire') {
+  if (etat === 'expire' || etat === 'ferme') {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
           <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center text-2xl">⏱</div>
-          <h1 className="text-xl font-black text-gray-900 mb-2">Ce lien a expiré</h1>
-          <p className="text-gray-500 text-sm">Contactez directement l'organisme qui vous l'a envoyé pour recevoir un nouveau lien.</p>
+          <h1 className="text-xl font-black text-gray-900 mb-2">{etat === 'ferme' ? 'Ce questionnaire n\'est plus disponible' : 'Ce lien a expiré'}</h1>
+          <p className="text-gray-500 text-sm">{etat === 'ferme'
+            ? `Contactez directement ${organisme || 'l\'organisme qui vous l\'a transmis'}.`
+            : 'Contactez directement l\'organisme qui vous l\'a envoyé pour recevoir un nouveau lien.'}</p>
         </div>
       </div>
     );
@@ -4220,25 +4241,49 @@ const ProspectQuestionnaireView = () => {
       <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
         <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md text-center border border-gray-100">
           <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center text-2xl">✓</div>
-          <h1 className="text-xl font-black text-gray-900 mb-2">Merci !</h1>
-          <p className="text-gray-500 text-sm">Vos réponses ont bien été transmises. Vous pouvez fermer cette page.</p>
+          <h1 className="text-xl font-black text-gray-900 mb-2">{messageFin ? 'Réponses envoyées' : 'Merci !'}</h1>
+          <p className="text-gray-600 text-sm whitespace-pre-line">{messageFin || 'Vos réponses ont bien été transmises. Vous pouvez fermer cette page.'}</p>
         </div>
       </div>
     );
   }
+
+  const champIdentite = (cle, libelle, props = {}) => (
+    <label className="block">
+      <span className="block text-xs font-bold text-gray-600 mb-1">{libelle}</span>
+      <input value={identite[cle]} onChange={e => setIdentite(v => ({ ...v, [cle]: e.target.value }))} maxLength={cle === 'telephone' ? 30 : 100}
+        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 transition-all" {...props} />
+    </label>
+  );
 
   // etat === 'a_remplir'
   return (
     <div className="flex flex-col items-center justify-center min-h-dvh bg-gray-50 p-4">
       <div className="bg-white rounded-[32px] w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="bg-violet-600 p-6 text-white shrink-0">
-          <p className="text-violet-200 text-xs font-bold uppercase tracking-widest mb-1">SkorUp</p>
+          <p className="text-violet-200 text-xs font-bold uppercase tracking-widest mb-1">{lienPartage && organisme ? organisme : 'SkorUp'}</p>
           <h1 className="text-xl font-black flex items-center gap-2">📝 {titre}</h1>
           <p className="text-violet-200 text-sm mt-1">
             {prenom ? `Bonjour ${prenom}, ` : ''}{questions.length} question{questions.length > 1 ? 's' : ''} à compléter
           </p>
         </div>
         <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {lienPartage && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">Merci de remplir ce questionnaire avant notre premier échange.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {champIdentite('prenom', 'Prénom *', { autoComplete: 'given-name', name: 'prenom' })}
+                {champIdentite('nom', 'Nom *', { autoComplete: 'family-name', name: 'nom' })}
+              </div>
+              {champIdentite('email', 'E-mail *', { type: 'email', autoComplete: 'email', name: 'email' })}
+              {identite.email.trim() && !emailValide && <p className="text-[11px] text-red-500 -mt-2">Adresse e-mail incomplète.</p>}
+              {champIdentite('telephone', 'Téléphone (facultatif)', { type: 'tel', autoComplete: 'tel', name: 'telephone' })}
+              {/* Piège à robots : invisible pour une personne, rempli par les robots. */}
+              <input type="text" name="site" value={piege} onChange={e => setPiege(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true"
+                style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }} />
+              <hr className="border-gray-100" />
+            </div>
+          )}
           {questions.map((q, qi) => (
             <div key={q.id} className="space-y-3">
               <p className="font-bold text-gray-900 text-sm leading-relaxed">
@@ -4288,6 +4333,11 @@ const ProspectQuestionnaireView = () => {
               )}
             </div>
           ))}
+          {lienPartage && (
+            <p className="text-[11px] text-gray-500 bg-gray-50 rounded-xl p-3 leading-relaxed">
+              Vos coordonnées et vos réponses sont transmises à {organisme || 'l\'organisme de formation'} pour préparer votre accompagnement. Elles ne sont pas utilisées à d'autres fins. Pour y accéder, les corriger ou les faire supprimer, contactez directement {organisme || 'cet organisme'}.
+            </p>
+          )}
         </div>
         <div className="p-6 border-t border-gray-100 shrink-0">
           {erreurMsg && <p className="text-[11px] text-red-500 text-center mb-3">{erreurMsg}</p>}
@@ -4295,7 +4345,9 @@ const ProspectQuestionnaireView = () => {
             className="w-full bg-violet-600 hover:bg-violet-700 text-white font-black py-4 rounded-2xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? '⏳ Envoi en cours…' : '✓ Soumettre mes réponses'}
           </button>
-          {!isComplete && <p className="text-xs text-gray-400 text-center mt-2">Répondez à toutes les questions obligatoires (*) pour soumettre</p>}
+          {!isComplete && <p className="text-xs text-gray-400 text-center mt-2">{identiteComplete
+            ? 'Répondez à toutes les questions obligatoires (*) pour soumettre'
+            : 'Indiquez votre prénom, votre nom et votre e-mail, puis répondez aux questions obligatoires (*)'}</p>}
         </div>
       </div>
     </div>
@@ -20214,8 +20266,8 @@ const ResetPasswordPage = ({ supabase, onComplete }) => {
   );
 };
 
-const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole }) => {
-  const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '' });
+const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defaultRole, prefill = null }) => {
+  const [formData, setFormData] = useState({ nom: '', email: '', role: 'client', formateur_id: '', telephone: '' });
   // 2026-10-21 : décocher = créer le dossier sans prévenir le client (prospect en étude, financement en attente…).
   const [envoyerInvitation, setEnvoyerInvitation] = useState(true);
 
@@ -20230,10 +20282,11 @@ const InviteModal = ({ isOpen, onClose, onInvite, isAddingUser, formateurs, defa
   // (fermeture automatique) repart bien de zéro.
   React.useEffect(() => {
     if (isOpen) {
-      setFormData({ nom: '', email: '', role: defaultRole || 'client', formateur_id: '' });
+      // 10/11/2026 : « Créer le dossier » depuis les réponses d'un prospect → nom, e-mail et téléphone repris.
+      setFormData({ nom: (prefill && prefill.nom) || '', email: (prefill && prefill.email) || '', role: defaultRole || 'client', formateur_id: '', telephone: (prefill && prefill.telephone) || '' });
       setEnvoyerInvitation(true);
     }
-  }, [isOpen, defaultRole]);
+  }, [isOpen, defaultRole, prefill]);
 
   if (!isOpen) return null;
 
@@ -22417,7 +22470,7 @@ function FinancesView({ supabase, currentOrgId, clients }) {
   );
 }
 
-function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null }) {
+function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null, onCreerDossier = null }) {
   const isAdmin = userRole === 'admin';
   const [templates, setTemplates] = useState([]);
   const [envois, setEnvois] = useState([]);
@@ -22439,6 +22492,13 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
   const [tTitre, setTTitre] = useState('');
   const [tQuestions, setTQuestions] = useState([]);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [tMessageFin, setTMessageFin] = useState('');
+
+  // --- Liens à partager (10/11/2026) : un lien par modèle et par personne, géré par api/prospects.js ---
+  const [liens, setLiens] = useState({});
+  const [liensDispo, setLiensDispo] = useState(false);
+  const [lienOccupe, setLienOccupe] = useState(null);
+  const [confirmChanger, setConfirmChanger] = useState(null);
 
   // --- Consultation des réponses d'un envoi rempli ---
   const [viewingEnvoi, setViewingEnvoi] = useState(null);
@@ -22469,6 +22529,40 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
     if (!error) setEnvois(isAdmin ? (data || []) : (data || []).filter(e => currentUserId != null && String(e.envoye_par) === String(currentUserId)));
   };
 
+  const appelProspects = async (action, body = {}) => {
+    const { data: s } = await supabase.auth.getSession();
+    const jeton = s?.session?.access_token;
+    if (!jeton) throw new Error('Session expirée, reconnectez-vous.');
+    const resp = await fetch(`/api/prospects?action=${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jeton}` }, body: JSON.stringify(body) });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Erreur, réessayez.');
+    return data;
+  };
+  const fetchLiens = async () => {
+    try {
+      const d = await appelProspects('liens_mes_liens');
+      if (d.indisponible) { setLiensDispo(false); return; }
+      setLiens(Object.fromEntries((d.liens || []).map(l => [l.template_id, l])));
+      setLiensDispo(true);
+    } catch (_) { setLiensDispo(false); }
+  };
+  const majLien = async (templateId, opts = {}) => {
+    setLienOccupe(templateId);
+    try {
+      const d = await appelProspects('lien_maj', { templateId, ...opts });
+      setLiens(prev => ({ ...prev, [templateId]: d.lien }));
+      if (opts.changer) toast.success('Nouveau lien créé : l\'ancien ne marche plus.');
+      else if (opts.actif === false) toast.success('Lien désactivé : plus personne ne peut répondre avec.');
+      else if (opts.actif === true) toast.success('Lien réactivé.');
+      else toast.success('Votre lien est prêt : copiez-le.');
+    } catch (e) { toast.error(e.message); }
+    setLienOccupe(null);
+  };
+  const copierLien = async (url) => {
+    try { await navigator.clipboard.writeText(url); toast.success('Lien copié : collez-le dans votre message.'); }
+    catch (_) { toast('Sélectionnez le lien et copiez-le (Ctrl+C).', { icon: '📋' }); }
+  };
+
   const fetchStaff = async () => {
     if (!currentOrgId) return;
     const { data, error } = await supabase
@@ -22485,7 +22579,7 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchTemplates(), fetchEnvois(), fetchStaff()]);
+      await Promise.all([fetchTemplates(), fetchEnvois(), fetchStaff(), fetchLiens()]);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -22601,23 +22695,25 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
   const tUpdateOption = (qId, oi, val) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.map((o, i) => i === oi ? val : o) } : q));
   const tRemoveOption = (qId, oi) => setTQuestions(prev => prev.map(q => q.id === qId ? { ...q, options: q.options.filter((_, i) => i !== oi) } : q));
 
-  const resetBuilder = () => { setTTitre(''); setTQuestions([]); setEditingTemplateId(null); setShowBuilder(false); };
+  const resetBuilder = () => { setTTitre(''); setTQuestions([]); setTMessageFin(''); setEditingTemplateId(null); setShowBuilder(false); };
 
   const handleSaveTemplate = async () => {
     if (!tTitre.trim() || tQuestions.length === 0) return;
     setSavingTemplate(true);
     const questionsPayload = tQuestions.map(q => ({ id: String(q.id), text: q.text, type: q.type, options: q.options, obligatoire: !!q.obligatoire }));
+    // 10/11/2026 : message de fin (colonne du SQL « liens_questionnaires ») ; sans ce SQL, on enregistre sans lui.
+    const avecMessage = { message_fin: tMessageFin.trim() || null };
+    const sansColonne = (err) => !!err && /message_fin/.test(err.message || '');
     if (editingTemplateId) {
-      const { error } = await supabase
-        .from('prospect_questionnaire_templates')
-        .update({ titre: tTitre.trim(), questions: questionsPayload, updated_at: new Date().toISOString() })
-        .eq('id', editingTemplateId);
+      const base = { titre: tTitre.trim(), questions: questionsPayload, updated_at: new Date().toISOString() };
+      let { error } = await supabase.from('prospect_questionnaire_templates').update({ ...base, ...avecMessage }).eq('id', editingTemplateId);
+      if (sansColonne(error)) ({ error } = await supabase.from('prospect_questionnaire_templates').update(base).eq('id', editingTemplateId));
       if (error) { toast.error('Erreur mise à jour : ' + error.message); setSavingTemplate(false); return; }
       toast.success('Modèle mis à jour.');
     } else {
-      const { error } = await supabase
-        .from('prospect_questionnaire_templates')
-        .insert([{ titre: tTitre.trim(), questions: questionsPayload, organisation_id: currentOrgId, actif: true }]);
+      const base = { titre: tTitre.trim(), questions: questionsPayload, organisation_id: currentOrgId, actif: true };
+      let { error } = await supabase.from('prospect_questionnaire_templates').insert([{ ...base, ...avecMessage }]);
+      if (sansColonne(error)) ({ error } = await supabase.from('prospect_questionnaire_templates').insert([base]));
       if (error) { toast.error('Erreur création : ' + error.message); setSavingTemplate(false); return; }
       toast.success('Modèle créé.');
     }
@@ -22628,6 +22724,7 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
 
   const handleEditTemplate = (t) => {
     setTTitre(t.titre || '');
+    setTMessageFin(t.message_fin || '');
     setTQuestions((t.questions || []).map(q => ({ ...q, id: q.id || Date.now() + Math.random() })));
     setEditingTemplateId(t.id);
     setShowBuilder(true);
@@ -22847,6 +22944,13 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Message affiché après l'envoi des réponses</label>
+                <textarea rows={3} maxLength={1000} value={tMessageFin} onChange={e => setTMessageFin(e.target.value)}
+                  placeholder="Merci pour vos réponses ! Elles nous aideront à préparer notre premier échange."
+                  className="w-full p-3 bg-white border border-violet-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none" />
+                <p className="text-[11px] text-violet-500 mt-1">Vu par la personne qui répond avec un lien à partager. Laissé vide : le texte ci-dessus.</p>
+              </div>
               <button onClick={handleSaveTemplate} disabled={!tTitre.trim() || tQuestions.length === 0 || savingTemplate}
                 className="w-full bg-violet-700 hover:bg-violet-800 text-white font-black py-3 rounded-xl transition-all disabled:opacity-50">
                 {savingTemplate ? 'Enregistrement…' : editingTemplateId ? '✓ Mettre à jour le modèle' : '✓ Enregistrer le modèle'}
@@ -22879,11 +22983,66 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
         </div>
       )}
 
+      {/* ── Mes liens à partager (10/11/2026) ── */}
+      {liensDispo && activeTemplates.length > 0 && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <h2 className="text-base font-bold text-gray-800">🔗 Mes liens à partager</h2>
+          <p className="text-sm text-gray-500 mt-1 mb-4">Collez votre lien dans votre e-mail de rendez-vous, un SMS ou votre site : la personne répond sans compte, et ses réponses arrivent ici.</p>
+          <div className="space-y-3">
+            {activeTemplates.map(t => {
+              const lien = liens[t.id];
+              const url = lien ? `${window.location.origin}/questionnaire?l=${lien.token}` : '';
+              const occupe = lienOccupe === t.id;
+              return (
+                <div key={t.id} className="p-3 rounded-xl border border-gray-100 space-y-2">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="font-bold text-gray-800 text-sm min-w-0">{t.titre}</p>
+                    {lien && (
+                      <button onClick={() => majLien(t.id, { actif: !lien.actif })} disabled={occupe}
+                        className={`flex items-center gap-1.5 text-xs font-bold ${lien.actif ? 'text-emerald-700' : 'text-gray-400'} disabled:opacity-50`}
+                        title={lien.actif ? 'Désactiver ce lien' : 'Réactiver ce lien'}>
+                        {lien.actif ? <ToggleRight className="w-6 h-6 text-emerald-600" /> : <ToggleLeft className="w-6 h-6" />}
+                        {lien.actif ? 'Lien actif' : 'Lien désactivé'}
+                      </button>
+                    )}
+                  </div>
+                  {!lien ? (
+                    <button onClick={() => majLien(t.id)} disabled={occupe}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 text-violet-700 text-sm font-bold hover:bg-violet-100 transition-all disabled:opacity-50">
+                      <Plus className="w-4 h-4" /> {occupe ? 'Création…' : 'Créer mon lien'}
+                    </button>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <code className={`flex-1 min-w-0 break-all text-xs px-3 py-2 rounded-lg border border-dashed ${lien.actif ? 'bg-violet-50 border-violet-300 text-violet-900' : 'bg-gray-50 border-gray-200 text-gray-400 line-through'}`}>{url}</code>
+                        <button onClick={() => copierLien(url)} disabled={!lien.actif}
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Copy className="w-4 h-4" /> Copier le lien
+                        </button>
+                      </div>
+                      {confirmChanger === t.id ? (
+                        <div className="flex items-center gap-3 flex-wrap text-xs">
+                          <span className="text-gray-600">L'ancien lien ne marchera plus. Continuer ?</span>
+                          <button onClick={async () => { setConfirmChanger(null); await majLien(t.id, { changer: true }); }} className="font-bold text-red-600 hover:underline">Oui, changer le lien</button>
+                          <button onClick={() => setConfirmChanger(null)} className="font-bold text-gray-500 hover:underline">Annuler</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmChanger(t.id)} disabled={occupe} className="text-xs text-gray-400 hover:text-violet-600 font-bold">Changer de lien</button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Liste des envois ── */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h2 className="text-base font-bold text-gray-800 mb-4">Questionnaires envoyés ({envois.length})</h2>
+        <h2 className="text-base font-bold text-gray-800 mb-4">Questionnaires envoyés et reçus ({envois.length})</h2>
         {envois.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-8">Aucun questionnaire envoyé pour le moment.</p>
+          <p className="text-gray-400 text-sm text-center py-8">Aucun questionnaire envoyé ou reçu pour le moment.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -22891,8 +23050,8 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
                 <tr className="text-left text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
                   <th className="pb-2 pr-3">Prospect</th>
                   <th className="pb-2 pr-3">Modèle</th>
-                  <th className="pb-2 pr-3">Envoyé par</th>
-                  <th className="pb-2 pr-3">Envoyé le</th>
+                  <th className="pb-2 pr-3">Par</th>
+                  <th className="pb-2 pr-3">Date</th>
                   <th className="pb-2 pr-3">Statut</th>
                   <th className="pb-2"></th>
                 </tr>
@@ -22902,11 +23061,14 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
                   <tr key={e.id} className="border-b border-gray-50 last:border-0">
                     <td className="py-3 pr-3">
                       <p className="font-bold text-gray-800">{e.prenom} {e.nom}</p>
-                      <p className="text-xs text-gray-400">{e.email}</p>
+                      <p className="text-xs text-gray-400">{e.email}{e.telephone ? ` · ${e.telephone}` : ''}</p>
                     </td>
                     <td className="py-3 pr-3 text-gray-600">{templateTitre(e.template_id)}</td>
-                    <td className="py-3 pr-3 text-gray-600 text-xs">{staffById[e.envoye_par] || '—'}</td>
-                    <td className="py-3 pr-3 text-gray-500 text-xs">{e.envoye_at ? new Date(e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
+                    <td className="py-3 pr-3 text-gray-600 text-xs">
+                      {staffById[e.envoye_par] || '—'}
+                      <span className={`block w-max mt-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${e.source === 'lien' ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{e.source === 'lien' ? 'Par lien' : 'Par e-mail'}</span>
+                    </td>
+                    <td className="py-3 pr-3 text-gray-500 text-xs">{(e.source === 'lien' ? (e.rempli_at || e.envoye_at) : e.envoye_at) ? new Date(e.source === 'lien' ? (e.rempli_at || e.envoye_at) : e.envoye_at).toLocaleDateString('fr-FR') : '—'}</td>
                     <td className="py-3 pr-3">
                       {e.statut === 'rempli'
                         ? <span className="inline-flex items-center gap-1 text-xs font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3" /> Rempli</span>
@@ -22980,7 +23142,8 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
             <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
               <div className="bg-violet-600 p-6 text-white relative shrink-0">
                 <h2 className="text-lg font-black">{viewingEnvoi.prenom} {viewingEnvoi.nom}</h2>
-                <p className="text-violet-200 text-sm mt-1">{template?.titre || 'Modèle supprimé'} · Répondu le {viewingEnvoi.rempli_at ? new Date(viewingEnvoi.rempli_at).toLocaleDateString('fr-FR') : '—'}</p>
+                <p className="text-violet-200 text-sm mt-1">{template?.titre || 'Modèle supprimé'} · {viewingEnvoi.source === 'lien' ? 'Reçu par lien' : 'Répondu'} le {viewingEnvoi.rempli_at ? new Date(viewingEnvoi.rempli_at).toLocaleDateString('fr-FR') : '—'}</p>
+                <p className="text-violet-100 text-xs mt-1 break-all">{viewingEnvoi.email}{viewingEnvoi.telephone ? ` · ${viewingEnvoi.telephone}` : ''}{viewingEnvoi.source === 'lien' && staffById[viewingEnvoi.envoye_par] ? ` · lien de ${staffById[viewingEnvoi.envoye_par]}` : ''}</p>
                 <button onClick={() => setViewingEnvoi(null)} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20">✕</button>
               </div>
               <div className="p-6 space-y-5 overflow-y-auto flex-1">
@@ -22997,12 +23160,20 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null 
                 })}
                 {questions.length === 0 && <p className="text-gray-400 text-sm text-center py-6">Le modèle utilisé pour cet envoi a été supprimé — impossible d'afficher les questions.</p>}
               </div>
-              {questions.length > 0 && (
-                <div className="p-4 border-t border-gray-100 shrink-0">
-                  <button onClick={() => handleDownloadResponsesPdf(viewingEnvoi)}
-                    className="w-full flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl transition-all text-sm">
-                    <Download className="w-4 h-4" /> Télécharger en PDF
-                  </button>
+              {(questions.length > 0 || onCreerDossier) && (
+                <div className="p-4 border-t border-gray-100 shrink-0 flex flex-col sm:flex-row gap-2">
+                  {questions.length > 0 && (
+                    <button onClick={() => handleDownloadResponsesPdf(viewingEnvoi)}
+                      className="flex-1 flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl transition-all text-sm">
+                      <Download className="w-4 h-4" /> Télécharger en PDF
+                    </button>
+                  )}
+                  {onCreerDossier && (
+                    <button onClick={() => { const v = viewingEnvoi; setViewingEnvoi(null); onCreerDossier({ nom: `${v.prenom || ''} ${v.nom || ''}`.trim(), email: v.email || '', telephone: v.telephone || '' }); }}
+                      className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl transition-all text-sm">
+                      <Plus className="w-4 h-4" /> Créer le dossier
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -26655,6 +26826,9 @@ export default function App() {
   // boutons "Nouveau Client" (onglet Clients) et "Nouveau Formateur" (onglet Formateurs) de
   // pré-remplir le bon rôle, sans que l'admin ait à le changer manuellement à chaque fois.
   const [inviteDefaultRole, setInviteDefaultRole] = useState('client');
+  // 10/11/2026 : création d'un dossier depuis les réponses d'un prospect (nom, e-mail, téléphone).
+  const [invitePrefill, setInvitePrefill] = useState(null);
+  React.useEffect(() => { if (!isInviteModalOpen) setInvitePrefill(null); }, [isInviteModalOpen]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [targetToDelete, setTargetToDelete] = useState(null); // { type: 'template'|'client'|'formateur', id: ... }
 
@@ -27533,7 +27707,8 @@ export default function App() {
           formateur_id: formateurIntId,
           formateur_auth_uid: formateurRecord?.auth_uid || null,
           organisation_id: currentOrgId,
-          ...(sansEmail ? { acces_differe: true } : {})
+          ...(sansEmail ? { acces_differe: true } : {}),
+          ...(formData.telephone ? { telephone: String(formData.telephone).trim().slice(0, 30) } : {})
         }]);
         if (dbError) {
           console.error("Erreur DB clients:", dbError);
@@ -32364,6 +32539,7 @@ export default function App() {
             currentOrgId={currentOrgId}
             userRole={userRole}
             currentUserId={currentUserId}
+            onCreerDossier={userRole === 'admin' ? (p) => { setInvitePrefill(p); setInviteDefaultRole('client'); setIsInviteModalOpen(true); } : null}
           />}
           {activeTab === 'finances' && userRole === 'admin' && <FinancesView
             supabase={supabase}
@@ -32794,6 +32970,7 @@ export default function App() {
         isAddingUser={isAddingUser}
         formateurs={assignableFormateurs}
         defaultRole={inviteDefaultRole}
+        prefill={invitePrefill}
       />
 
       <DeleteConfirmationModal
