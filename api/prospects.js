@@ -526,42 +526,58 @@ async function handleMesLiens(req, res) {
   const { data, error } = await supabaseAdmin.from(TABLE_LIENS).select('template_id, token, actif')
     .eq('organisation_id', moi.organisation_id).eq('utilisateur_id', moi.id);
   if (error) { if (tableAbsente(error)) return res.status(200).json({ indisponible: true, liens: [] }); throw error; }
-  return res.status(200).json({ liens: (data || []).map(lienPublic) });
+  const liens = (data || []).map(lienPublic);
+  // v2 : lien d'un questionnaire de la page Questionnaires → on indique lequel.
+  const ids = liens.map(l => l.template_id);
+  if (ids.length) {
+    const { data: tpls, error: tErr } = await supabaseAdmin.from('prospect_questionnaire_templates').select('id, source_ressource_id').in('id', ids);
+    if (!tErr) {
+      const src = Object.fromEntries((tpls || []).map(x => [x.id, x.source_ressource_id]));
+      liens.forEach(l => { if (src[l.template_id]) l.source_ressource_id = String(src[l.template_id]); });
+    }
+  }
+  return res.status(200).json({ liens });
 }
 
-// ── action=lien_maj — authentifié : créer mon lien, l'activer / le désactiver, ou le changer ─────
-async function handleLienMaj(req, res) {
-  const moi = await equipeAppelant(req, res); if (!moi) return;
-  const { templateId, actif, changer } = req.body || {};
-  if (!templateId) return res.status(400).json({ error: 'Modèle manquant.' });
+// Créer mon lien pour un modèle, l'activer / le désactiver, ou le changer. Renvoie { statut, lien | error }.
+async function lienDeModele(moi, templateId, { actif, changer } = {}) {
   const { data: tpl, error: tplErr } = await supabaseAdmin.from('prospect_questionnaire_templates')
     .select('id, actif').eq('id', templateId).eq('organisation_id', moi.organisation_id).maybeSingle();
   if (tplErr) throw tplErr;
-  if (!tpl) return res.status(404).json({ error: 'Modèle de questionnaire introuvable dans cet organisme.' });
+  if (!tpl) return { statut: 404, error: 'Modèle de questionnaire introuvable dans cet organisme.' };
   const { data: existant, error: exErr } = await supabaseAdmin.from(TABLE_LIENS).select('id, template_id, token, actif')
     .eq('template_id', tpl.id).eq('utilisateur_id', moi.id).maybeSingle();
-  if (exErr) { if (tableAbsente(exErr)) return res.status(409).json({ error: 'Les liens ne sont pas encore activés : lancez le SQL « liens_questionnaires ».' }); throw exErr; }
+  if (exErr) { if (tableAbsente(exErr)) return { statut: 409, error: 'Les liens ne sont pas encore activés : lancez le SQL « liens_questionnaires ».' }; throw exErr; }
   if (!existant) {
-    if (!tpl.actif) return res.status(400).json({ error: 'Ce modèle est désactivé.' });
+    if (!tpl.actif) return { statut: 400, error: 'Ce modèle est désactivé.' };
     const { data: cree, error: insErr } = await supabaseAdmin.from(TABLE_LIENS)
-      .insert([{ organisation_id: moi.organisation_id, template_id: tpl.id, utilisateur_id: moi.id, token: jetonLien(), actif: true }])
+      .insert([{ organisation_id: moi.organisation_id, template_id: tpl.id, utilisateur_id: moi.id, token: jetonLien(), actif: typeof actif === 'boolean' ? actif : true }])
       .select('template_id, token, actif').single();
     if (insErr) {
       // Double clic : le lien vient d'être créé par l'autre requête.
       const { data: deja } = await supabaseAdmin.from(TABLE_LIENS).select('template_id, token, actif').eq('template_id', tpl.id).eq('utilisateur_id', moi.id).maybeSingle();
-      if (deja) return res.status(200).json({ lien: lienPublic(deja) });
+      if (deja) return { statut: 200, lien: lienPublic(deja) };
       throw insErr;
     }
-    return res.status(200).json({ lien: lienPublic(cree) });
+    return { statut: 200, lien: lienPublic(cree) };
   }
   const maj = {};
   if (typeof actif === 'boolean') maj.actif = actif;
   if (changer === true) maj.token = jetonLien();
-  if (!Object.keys(maj).length) return res.status(200).json({ lien: lienPublic(existant) });
+  if (!Object.keys(maj).length) return { statut: 200, lien: lienPublic(existant) };
   const { data: apres, error: majErr } = await supabaseAdmin.from(TABLE_LIENS).update(maj).eq('id', existant.id)
     .select('template_id, token, actif').single();
   if (majErr) throw majErr;
-  return res.status(200).json({ lien: lienPublic(apres) });
+  return { statut: 200, lien: lienPublic(apres) };
+}
+
+// ── action=lien_maj — authentifié : mon lien d'un modèle de l'onglet Prospects ──────────────────
+async function handleLienMaj(req, res) {
+  const moi = await equipeAppelant(req, res); if (!moi) return;
+  const { templateId, actif, changer } = req.body || {};
+  if (!templateId) return res.status(400).json({ error: 'Modèle manquant.' });
+  const r = await lienDeModele(moi, templateId, { actif, changer });
+  return res.status(r.statut).json(r.lien ? { lien: r.lien } : { error: r.error });
 }
 
 // Lien public : le lien, son modèle et son organisme, ou null.
@@ -575,7 +591,8 @@ async function lienParJeton(l) {
     .select('*').eq('id', lien.template_id).eq('organisation_id', lien.organisation_id).maybeSingle();
   if (tplErr) throw tplErr;
   if (!tpl) return null;
-  return { lien, tpl };
+  // v2 : questionnaire de la page Questionnaires → toujours sa dernière version.
+  return { lien, tpl: tpl.source_ressource_id ? await synchroniserMiroir(tpl) : tpl };
 }
 const messageFin = (tpl) => plainText(tpl && tpl.message_fin, 1000) || MESSAGE_FIN_DEFAUT;
 
@@ -648,6 +665,71 @@ async function handleSoumettreLien(req, res, l) {
   if (insErr) throw insErr;
   await emailNouvelleReponse({ lien, tpl, envoi });
   return res.status(200).json({ etat: 'rempli', message_fin: messageFin(tpl) });
+}
+
+// 10/11/2026 (v2) : liens aussi pour les questionnaires de la page « Questionnaires » (module_step_resources,
+// type 'questionnaire'). Chaque questionnaire a un modèle prospect « miroir » (source_ressource_id, SQL
+// « liens_questionnaires_v2 »), caché dans l'onglet Prospects, qui reprend TOUJOURS la dernière version du
+// questionnaire (titre, questions, message de fin) au moment où la personne ouvre le lien.
+const metaRessource = (r) => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch (_) { return {}; } };
+function contenuMiroir(ressource) {
+  const meta = metaRessource(ressource);
+  return {
+    titre: plainText(ressource.titre, 200) || 'Questionnaire',
+    questions: questionsPubliques(meta.questions),
+    message_fin: plainText(meta.closingMessage, 1000) || null,
+  };
+}
+const colonneSourceAbsente = (err) => !!err && /source_ressource_id/.test(err.message || '');
+async function ressourceQuestionnaire(id, organisationId) {
+  if (id === undefined || id === null || String(id).length > 64) return null;
+  const { data, error } = await supabaseAdmin.from('module_step_resources').select('id, titre, metadata, organisation_id, type')
+    .eq('id', id).eq('organisation_id', organisationId).maybeSingle();
+  if (error) throw error;
+  return data && data.type === 'questionnaire' ? data : null;
+}
+// Remet le modèle miroir à jour depuis son questionnaire (seulement si quelque chose a changé).
+async function synchroniserMiroir(tpl) {
+  const ressource = await ressourceQuestionnaire(tpl.source_ressource_id, tpl.organisation_id);
+  if (!ressource) return { ...tpl, actif: false }; // questionnaire supprimé : lien fermé
+  const c = contenuMiroir(ressource);
+  if (c.titre !== tpl.titre || JSON.stringify(c.questions) !== JSON.stringify(tpl.questions || []) || (c.message_fin || null) !== (tpl.message_fin || null)) {
+    await supabaseAdmin.from('prospect_questionnaire_templates').update({ ...c, updated_at: new Date().toISOString() }).eq('id', tpl.id);
+  }
+  return { ...tpl, ...c };
+}
+
+// ── action=lien_questionnaire — admin : le lien d'un questionnaire de la page Questionnaires ─────
+async function handleLienQuestionnaire(req, res) {
+  const moi = await adminAppelant(req, res); if (!moi) return;
+  const { ressourceId, actif, changer } = req.body || {};
+  const ressource = await ressourceQuestionnaire(ressourceId, moi.organisation_id);
+  if (!ressource) return res.status(404).json({ error: 'Questionnaire introuvable dans cet organisme.' });
+  const contenu = contenuMiroir(ressource);
+  if (!contenu.questions.length) return res.status(400).json({ error: 'Ce questionnaire n\'a aucune question.' });
+  const { data: miroirs, error: mErr } = await supabaseAdmin.from('prospect_questionnaire_templates').select('id, actif')
+    .eq('organisation_id', moi.organisation_id).eq('source_ressource_id', String(ressource.id)).limit(1);
+  if (mErr) {
+    if (colonneSourceAbsente(mErr) || tableAbsente(mErr)) return res.status(409).json({ error: 'Les liens des questionnaires ne sont pas encore activés : lancez le SQL « liens_questionnaires_v2 ».' });
+    throw mErr;
+  }
+  let miroir = miroirs && miroirs[0];
+  if (!miroir) {
+    const { data: cree, error: insErr } = await supabaseAdmin.from('prospect_questionnaire_templates')
+      .insert([{ organisation_id: moi.organisation_id, ...contenu, actif: true, created_by: moi.id, source_ressource_id: String(ressource.id) }])
+      .select('id, actif').single();
+    if (insErr) {
+      const { data: deja } = await supabaseAdmin.from('prospect_questionnaire_templates').select('id, actif')
+        .eq('organisation_id', moi.organisation_id).eq('source_ressource_id', String(ressource.id)).limit(1);
+      if (!deja || !deja[0]) throw insErr;
+      miroir = deja[0];
+    } else miroir = cree;
+  } else {
+    await supabaseAdmin.from('prospect_questionnaire_templates').update({ ...contenu, actif: true, updated_at: new Date().toISOString() }).eq('id', miroir.id);
+  }
+  const r = await lienDeModele(moi, miroir.id, { actif, changer });
+  if (r.lien) r.lien.source_ressource_id = String(ressource.id);
+  return res.status(r.statut).json(r.lien ? { lien: r.lien } : { error: r.error });
 }
 
 // ── CONVENTIONS SIGNÉES PAR UNE ENTREPRISE, SANS COMPTE (30/10/2026) ──────────────────────────────
@@ -1626,6 +1708,7 @@ module.exports = async (req, res) => {
     // 10/11/2026 : liens à partager des questionnaires prospects.
     if (req.method === 'POST' && action === 'liens_mes_liens') return await handleMesLiens(req, res);
     if (req.method === 'POST' && action === 'lien_maj') return await handleLienMaj(req, res);
+    if (req.method === 'POST' && action === 'lien_questionnaire') return await handleLienQuestionnaire(req, res);
     // 30/10/2026 : conventions signées par une entreprise, sans compte.
     if (req.method === 'POST' && action === 'envoyer_signature') return await handleEnvoyerSignature(req, res);
     if (req.method === 'POST' && action === 'relancer_signature') return await handleRelancerSignature(req, res);

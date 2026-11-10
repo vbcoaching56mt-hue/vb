@@ -13873,6 +13873,67 @@ const QuestionnaireStatsPanel = ({ questionnaire, responses, loadingResponses, c
   );
 };
 
+// ── Lien à partager d'un questionnaire de la page Questionnaires (10/11/2026, v2) ─────────────────
+// Géré par api/prospects.js (action lien_questionnaire) : un modèle « miroir » caché dans Prospects reprend
+// toujours la dernière version du questionnaire ; les réponses par lien arrivent dans l'onglet Prospects.
+async function appelApiProspects(supabase, action, body = {}) {
+  const { data: s } = await supabase.auth.getSession();
+  const jeton = s?.session?.access_token;
+  if (!jeton) throw new Error('Session expirée, reconnectez-vous.');
+  const resp = await fetch(`/api/prospects?action=${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jeton}` }, body: JSON.stringify(body) });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || 'Erreur, réessayez.');
+  return data;
+}
+const BlocLienQuestionnaire = ({ lien, occupe, onCreer, onActif, onChanger }) => {
+  const [confirmer, setConfirmer] = React.useState(false);
+  const url = lien ? `${window.location.origin}/questionnaire?l=${lien.token}` : '';
+  const copier = async () => {
+    try { await navigator.clipboard.writeText(url); toast.success('Lien copié : collez-le dans votre message.'); }
+    catch (_) { toast('Sélectionnez le lien et copiez-le (Ctrl+C).', { icon: '📋' }); }
+  };
+  if (!lien) {
+    return (
+      <div className="mt-1 p-3 rounded-xl border border-violet-100 bg-violet-50/50 space-y-2">
+        <p className="text-xs text-gray-600">Un lien à coller dans un e-mail, un SMS ou sur votre site : la personne répond sans compte, ses réponses arrivent dans <b>Prospects</b>.</p>
+        <button type="button" onClick={onCreer} disabled={occupe}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-50">
+          <Plus size={13} /> {occupe ? 'Création…' : 'Créer le lien'}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 p-3 rounded-xl border border-violet-100 bg-violet-50/50 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-[11px] text-gray-500">Réponses dans <b>Prospects</b> · toujours la dernière version</span>
+        <button type="button" onClick={() => onActif(!lien.actif)} disabled={occupe}
+          className={`flex items-center gap-1 text-[11px] font-bold ${lien.actif ? 'text-emerald-700' : 'text-gray-400'} disabled:opacity-50`}
+          title={lien.actif ? 'Désactiver ce lien' : 'Réactiver ce lien'}>
+          {lien.actif ? <ToggleRight className="w-5 h-5 text-emerald-600" /> : <ToggleLeft className="w-5 h-5" />}
+          {lien.actif ? 'Lien actif' : 'Lien désactivé'}
+        </button>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <code className={`flex-1 min-w-0 break-all text-[11px] px-2 py-1.5 rounded-lg border border-dashed ${lien.actif ? 'bg-white border-violet-300 text-violet-900' : 'bg-gray-50 border-gray-200 text-gray-400 line-through'}`}>{url}</code>
+        <button type="button" onClick={copier} disabled={!lien.actif}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed">
+          <Copy size={13} /> Copier le lien
+        </button>
+      </div>
+      {confirmer ? (
+        <div className="flex items-center gap-3 flex-wrap text-[11px]">
+          <span className="text-gray-600">L'ancien lien ne marchera plus. Continuer ?</span>
+          <button type="button" onClick={() => { setConfirmer(false); onChanger(); }} className="font-bold text-red-600 hover:underline">Oui, changer le lien</button>
+          <button type="button" onClick={() => setConfirmer(false)} className="font-bold text-gray-500 hover:underline">Annuler</button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setConfirmer(true)} disabled={occupe} className="text-[11px] text-gray-400 hover:text-violet-600 font-bold">Changer de lien</button>
+      )}
+    </div>
+  );
+};
+
 const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modules, orgName }) => {
   // Modale de confirmation suppression (même mécanisme que DocumentsView)
   const [confirmState, setConfirmState] = React.useState({ open: false, title: '', message: '', onConfirm: null });
@@ -13891,6 +13952,36 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
   // renseigné) — leurs statistiques sont consultables ici, leur modification reste dans Modules.
   const [moduleQuestionnaires, setModuleQuestionnaires] = React.useState([]);
   const [selectedStatsId, setSelectedStatsId] = React.useState(null);
+
+  // ── Liens à partager (10/11/2026, v2) : un lien par questionnaire, réponses dans Prospects ──
+  const [liensQ, setLiensQ] = React.useState({});
+  const [liensQDispo, setLiensQDispo] = React.useState(false);
+  const [lienQOuvert, setLienQOuvert] = React.useState(null);
+  const [lienQOccupe, setLienQOccupe] = React.useState(null);
+  React.useEffect(() => {
+    let annule = false;
+    appelApiProspects(supabase, 'liens_mes_liens').then(d => {
+      if (annule) return;
+      if (d.indisponible) { setLiensQDispo(false); return; }
+      const m = {};
+      (d.liens || []).forEach(l => { if (l.source_ressource_id) m[l.source_ressource_id] = l; });
+      setLiensQ(m);
+      setLiensQDispo(true);
+    }).catch(() => { if (!annule) setLiensQDispo(false); });
+    return () => { annule = true; };
+  }, [supabase, currentOrgId]);
+  const majLienQ = async (ressourceId, opts = {}) => {
+    setLienQOccupe(ressourceId);
+    try {
+      const d = await appelApiProspects(supabase, 'lien_questionnaire', { ressourceId, ...opts });
+      setLiensQ(prev => ({ ...prev, [String(ressourceId)]: d.lien }));
+      if (opts.changer) toast.success('Nouveau lien créé : l\'ancien ne marche plus.');
+      else if (opts.actif === false) toast.success('Lien désactivé : plus personne ne peut répondre avec.');
+      else if (opts.actif === true) toast.success('Lien réactivé.');
+      else toast.success('Le lien est prêt : copiez-le.');
+    } catch (e) { toast.error(e.message); }
+    setLienQOccupe(null);
+  };
 
   // ── Réponses de tous les bénéficiaires de l'organisme ──
   const [responses, setResponses] = React.useState([]);
@@ -14344,6 +14435,19 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                             <span className="text-[11px] font-black uppercase tracking-widest">📊 Voir les statistiques</span>
                             <span className="text-[11px] font-bold">{loadingResponses ? '…' : `${nbReponsesRegroupees(q)} réponse${nbReponsesRegroupees(q) > 1 ? 's' : ''} · ${pendingCountFor(q)} en attente`}</span>
                           </button>
+                          {liensQDispo && (
+                            <>
+                              <button type="button" onClick={() => setLienQOuvert(lienQOuvert === q.id ? null : q.id)}
+                                className="w-full flex items-center justify-between mt-2 px-2 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors">
+                                <span className="text-xs font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">🔗 {liensQ[String(q.id)] ? (liensQ[String(q.id)].actif ? 'Lien à partager · actif' : 'Lien à partager · désactivé') : 'Lien à partager'}</span>
+                                <span className="text-violet-400 text-xs">{lienQOuvert === q.id ? '▲' : '▼'}</span>
+                              </button>
+                              {lienQOuvert === q.id && (
+                                <BlocLienQuestionnaire lien={liensQ[String(q.id)]} occupe={lienQOccupe === q.id}
+                                  onCreer={() => majLienQ(q.id)} onActif={(a) => majLienQ(q.id, { actif: a })} onChanger={() => majLienQ(q.id, { changer: true })} />
+                              )}
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={() => setExpandedQGroupId(expandedQGroupId === q.id ? null : q.id)}
@@ -22585,7 +22689,10 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentOrgId, currentUserId, userRole]);
 
-  const activeTemplates = templates.filter(t => t.actif);
+  // 10/11/2026 (v2) : les modèles « miroirs » des questionnaires (page Questionnaires) restent cachés ici ;
+  // leurs réponses apparaissent quand même dans la liste et les statistiques.
+  const modelesProspects = templates.filter(t => !t.source_ressource_id);
+  const activeTemplates = modelesProspects.filter(t => t.actif);
   const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
 
   // ── Statistiques par modèle — calculées ici, côté navigateur, à partir des envois déjà en
@@ -22958,9 +23065,9 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
             </div>
           )}
 
-          {templates.length > 0 ? (
+          {modelesProspects.length > 0 ? (
             <div className="space-y-2">
-              {templates.map(t => (
+              {modelesProspects.map(t => (
                 <div key={t.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:border-violet-200 transition-all">
                   <div className="flex items-center gap-3 min-w-0">
                     <button onClick={() => handleToggleActif(t)} className="focus:outline-none shrink-0" title={t.actif ? 'Désactiver' : 'Activer'}>
@@ -22987,7 +23094,7 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
       {liensDispo && activeTemplates.length > 0 && (
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <h2 className="text-base font-bold text-gray-800">🔗 Mes liens à partager</h2>
-          <p className="text-sm text-gray-500 mt-1 mb-4">Collez votre lien dans votre e-mail de rendez-vous, un SMS ou votre site : la personne répond sans compte, et ses réponses arrivent ici.</p>
+          <p className="text-sm text-gray-500 mt-1 mb-4">Collez votre lien dans votre e-mail de rendez-vous, un SMS ou votre site : la personne répond sans compte, et ses réponses arrivent ici.{isAdmin ? ' Les questionnaires de la page Questionnaires ont aussi chacun leur lien (bouton « Lien à partager »).' : ''}</p>
           <div className="space-y-3">
             {activeTemplates.map(t => {
               const lien = liens[t.id];
