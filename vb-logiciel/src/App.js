@@ -22691,7 +22691,8 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
 
   // 10/11/2026 (v2) : les modèles « miroirs » des questionnaires (page Questionnaires) restent cachés ici ;
   // leurs réponses apparaissent quand même dans la liste et les statistiques.
-  const modelesProspects = templates.filter(t => !t.source_ressource_id);
+  // v3 : un modèle « supprimé, réponses gardées » (supprime_le) disparaît aussi ; ses réponses restent dans la liste.
+  const modelesProspects = templates.filter(t => !t.source_ressource_id && !t.supprime_le);
   const activeTemplates = modelesProspects.filter(t => t.actif);
   const templateTitre = (id) => templates.find(t => t.id === id)?.titre || 'Modèle supprimé';
 
@@ -22838,6 +22839,59 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
     setShowTemplates(true);
   };
 
+  // ── Supprimer un modèle (10/11/2026, v3) ──
+  // Jamais utilisé : suppression définitive. Déjà utilisé : par défaut le modèle est seulement retiré
+  // (supprime_le, SQL « modeles_prospects_suppression ») et ses réponses restent ; « Tout supprimer »
+  // efface aussi les envois et réponses (la base les supprime avec le modèle), après une 2e confirmation.
+  const [suppression, setSuppression] = useState(null); // { id, nb, toutConfirmer }
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false);
+  const apresSuppression = async (t) => {
+    if (editingTemplateId === t.id) resetBuilder();
+    setSuppression(null);
+    await Promise.all([fetchTemplates(), fetchEnvois(), fetchLiens()]);
+  };
+  // Nombre d'envois de ce modèle, relu dans la base ; null si on ne peut pas le savoir (on ne supprime alors rien).
+  // Jamais 0 « par défaut » : on prend le plus grand entre la base et la liste affichée.
+  const compterEnvois = async (t) => {
+    const { data, count, error } = await supabase.from('prospect_questionnaire_envois').select('id', { count: 'exact' }).eq('template_id', t.id).limit(1);
+    if (error) { toast.error('Vérification impossible : ' + error.message); return null; }
+    const base = typeof count === 'number' ? count : (data || []).length;
+    return Math.max(base, (data || []).length, envois.filter(e => e.template_id === t.id).length);
+  };
+  const supprimerModeleDefinitivement = async (t) => {
+    setSuppressionEnCours(true);
+    if (!suppression || !suppression.toutConfirmer) {
+      // « Jamais envoyé » : on revérifie juste avant (une réponse a pu arriver entre-temps par un lien).
+      const nb = await compterEnvois(t);
+      if (nb === null || nb > 0) {
+        setSuppressionEnCours(false);
+        if (nb > 0) { toast("Une réponse vient d'arriver pour ce modèle : choisissez quoi garder.", { icon: '⚠️' }); setSuppression({ id: t.id, nb, toutConfirmer: false }); }
+        return;
+      }
+    }
+    const { error } = await supabase.from('prospect_questionnaire_templates').delete().eq('id', t.id);
+    setSuppressionEnCours(false);
+    if (error) { toast.error('Suppression impossible : ' + error.message); return; }
+    toast.success('Modèle supprimé.');
+    await apresSuppression(t);
+  };
+  const demanderSuppression = async (t) => {
+    const nb = await compterEnvois(t);
+    if (nb === null) return;
+    setSuppression({ id: t.id, nb, toutConfirmer: false });
+  };
+  const retirerModeleGarderReponses = async (t) => {
+    setSuppressionEnCours(true);
+    const { error } = await supabase.from('prospect_questionnaire_templates').update({ supprime_le: new Date().toISOString(), actif: false }).eq('id', t.id);
+    setSuppressionEnCours(false);
+    if (error) {
+      toast.error(/supprime_le/.test(error.message || '') ? 'Lancez d\'abord le SQL « modeles_prospects_suppression » dans Supabase.' : 'Suppression impossible : ' + error.message);
+      return;
+    }
+    toast.success('Modèle supprimé : ses réponses restent dans la liste.');
+    await apresSuppression(t);
+  };
+
   const handleToggleActif = async (t) => {
     const { error } = await supabase.from('prospect_questionnaire_templates').update({ actif: !t.actif }).eq('id', t.id);
     if (error) { toast.error('Erreur : ' + error.message); return; }
@@ -22942,7 +22996,7 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
             {templates.length > 0 && (
               <select value={statsTemplateId} onChange={e => setStatsTemplateId(e.target.value)}
                 className="p-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400">
-                {templates.map(t => <option key={t.id} value={t.id}>{t.titre}</option>)}
+                {templates.map(t => <option key={t.id} value={t.id}>{t.titre}{t.supprime_le ? ' (supprimé)' : ''}</option>)}
               </select>
             )}
           </div>
@@ -23068,8 +23122,8 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
           {modelesProspects.length > 0 ? (
             <div className="space-y-2">
               {modelesProspects.map(t => (
-                <div key={t.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:border-violet-200 transition-all">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div key={t.id} className="flex flex-wrap items-center justify-between p-3 rounded-xl border border-gray-100 hover:border-violet-200 transition-all">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <button onClick={() => handleToggleActif(t)} className="focus:outline-none shrink-0" title={t.actif ? 'Désactiver' : 'Activer'}>
                       {t.actif ? <ToggleRight className="w-6 h-6 text-violet-600" /> : <ToggleLeft className="w-6 h-6 text-gray-300" />}
                     </button>
@@ -23078,9 +23132,45 @@ function ProspectsView({ supabase, currentOrgId, userRole, currentUserId = null,
                       <p className="text-xs text-gray-400">{(t.questions || []).length} question{(t.questions || []).length > 1 ? 's' : ''} {!t.actif && '· Désactivé'}</p>
                     </div>
                   </div>
-                  <button onClick={() => handleEditTemplate(t)} className="text-gray-400 hover:text-violet-600 shrink-0 p-1.5">
-                    <Pencil className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center shrink-0">
+                    <button onClick={() => handleEditTemplate(t)} className="text-gray-400 hover:text-violet-600 p-1.5" title="Modifier">
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => demanderSuppression(t)} className="text-gray-300 hover:text-red-500 p-1.5" title="Supprimer ce modèle" aria-label={`Supprimer le modèle ${t.titre}`}>
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {suppression && suppression.id === t.id && (
+                    <div className="basis-full w-full mt-3 p-3 rounded-xl bg-red-50 border border-red-100 space-y-2 text-sm">
+                      {suppression.nb === 0 ? (
+                        <>
+                          <p className="text-gray-700">Supprimer définitivement le modèle « {t.titre} » ? Il n'a jamais été envoyé.</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={() => supprimerModeleDefinitivement(t)} disabled={suppressionEnCours} className="px-3 py-1.5 rounded-lg bg-red-600 text-white font-bold text-xs disabled:opacity-50">Supprimer</button>
+                            <button onClick={() => setSuppression(null)} className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 font-bold text-xs">Annuler</button>
+                          </div>
+                        </>
+                      ) : !suppression.toutConfirmer ? (
+                        <>
+                          <p className="text-gray-700">Ce modèle a déjà servi : <b>{suppression.nb} questionnaire{suppression.nb > 1 ? 's' : ''} envoyé{suppression.nb > 1 ? 's' : ''} ou reçu{suppression.nb > 1 ? 's' : ''}</b>.</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={() => retirerModeleGarderReponses(t)} disabled={suppressionEnCours} className="px-3 py-1.5 rounded-lg bg-violet-600 text-white font-bold text-xs disabled:opacity-50">Supprimer le modèle, garder les réponses</button>
+                            <button onClick={() => setSuppression(s => ({ ...s, toutConfirmer: true }))} disabled={suppressionEnCours} className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-600 font-bold text-xs">Tout supprimer, réponses comprises</button>
+                            <button onClick={() => setSuppression(null)} className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 font-bold text-xs">Annuler</button>
+                          </div>
+                          <p className="text-xs text-gray-500">« Garder les réponses » : le modèle disparaît d'ici, de l'envoi et des liens (ses liens ne marchent plus), mais les réponses restent lisibles dans la liste et en PDF.</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-red-700 font-bold">Effacer définitivement le modèle ET ses {suppression.nb} questionnaire{suppression.nb > 1 ? 's' : ''} envoyé{suppression.nb > 1 ? 's' : ''} ou reçu{suppression.nb > 1 ? 's' : ''}, réponses comprises ? Ce n'est pas réversible.</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={() => supprimerModeleDefinitivement(t)} disabled={suppressionEnCours} className="px-3 py-1.5 rounded-lg bg-red-600 text-white font-bold text-xs disabled:opacity-50">Oui, tout effacer</button>
+                            <button onClick={() => setSuppression(s => ({ ...s, toutConfirmer: false }))} className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 font-bold text-xs">Retour</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
