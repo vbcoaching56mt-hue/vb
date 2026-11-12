@@ -29854,9 +29854,13 @@ export default function App() {
 
     if (sessionChoice === 'existing') {
       numero = sessionData.numero_seance;
-      date = sessionData.date;
-      debut = sessionData.heure_debut;
-      fin = sessionData.heure_fin;
+      // FIX (12/11/2026) : avant, l'élément recopiait la date d'UNE ligne de la séance ; si elle était vide,
+      // l'élément restait sans date alors que l'écran affichait celle de la séance → signature refusée
+      // (« pas encore de date »). On prend maintenant le planning de la séance (toutes ses lignes).
+      const planSeance = scheduleOf(sessions.filter(s => s.client_id === clientId && s.numero_seance === numero));
+      date = planSeance.date || sessionData.date || null;
+      debut = planSeance.debut || sessionData.heure_debut || null;
+      fin = planSeance.fin || sessionData.heure_fin || null;
     } else {
       // Nouvelle séance
       const clientSessions = sessions.filter(s => s.client_id === clientId);
@@ -29996,16 +30000,18 @@ export default function App() {
   const handleAddSession = async (client) => {
     const clientSessions = sessions.filter(s => s.client_id === client.id).sort((a, b) => a.numero_seance - b.numero_seance);
     const nextNum = clientSessions.length > 0 ? Math.max(...clientSessions.map(s => s.numero_seance)) + 1 : 1;
-    const module = modules.find(m => m.id === client.module_id);
-    const moduleName = module ? module.nom : "Séance";
-
+    // 12/11/2026 : la séance est créée avec un « Émargement de présence » (signature client + formateur),
+    // comme les séances d'un module. Il se supprime ensuite comme tout élément si on n'en veut pas.
+    // Avant : une ligne vide « Séance - Séance N » (« Aucune signature »), inutile et source de confusion.
     const { error: insError } = await supabase.from('sessions').insert([{
       numero_seance: nextNum,
-      nom: `${moduleName} - Séance ${nextNum}`,
+      nom: `Séance ${nextNum} - Émargement de présence`,
+      ressource_titre: 'Émargement de présence',
+      type_activite: 'signature',
       client_id: client.id,
       module_id: client.module_id,
       organisation_id: client.organisation_id || currentOrgId || null,
-      metadata: {},
+      metadata: { requiresClientSignature: true, requiresTrainerSignature: true },
       statut: 'À venir',
       statut_client: 'À venir',
       statut_formateur: 'À venir'
@@ -30016,6 +30022,7 @@ export default function App() {
       await supabase.from('clients').update({ seances_totales: newTotal }).eq('id', client.id);
       await fetchUtilisateurs();
       await fetchSessions();
+      toast.success(`Séance ${nextNum} ajoutée avec un émargement de présence. Indiquez sa date.`);
     } else {
       toast.error("Erreur lors de l'ajout de la séance: " + insError.message);
     }
