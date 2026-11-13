@@ -7697,6 +7697,19 @@ const compterVeilleNonTraitees = async (orgId) => {
   } catch (_) { return 0; }
 };
 
+// 13/11/2026 : formateur (lecture seule) — la dernière semaine vue est retenue dans ce navigateur.
+const cleVeilleVue = (userId) => `skorup_veille_vue_${userId || 'moi'}`;
+const lireVeilleVue = (userId) => { try { return localStorage.getItem(cleVeilleVue(userId)) || ''; } catch (_) { return ''; } };
+const noterVeilleVue = (userId, semaine) => { try { if (semaine) localStorage.setItem(cleVeilleVue(userId), semaine); } catch (_) { /* navigation privée */ } };
+const compterVeilleNouvelles = async (userId) => {
+  try {
+    const { data: infos, error } = await supabase.from('veille_infos').select('id, semaine').lte('publie_le', new Date().toISOString()).order('semaine', { ascending: false }).limit(40);
+    if (error || !infos || !infos.length) return 0;
+    const derniere = infos[0].semaine;
+    return lireVeilleVue(userId) === derniere ? 0 : infos.filter(i => i.semaine === derniere).length;
+  } catch (_) { return 0; }
+};
+
 // PDF de preuve : toutes les informations reçues sur la période, avec le traitement noté.
 const genererPreuveVeillePdf = async ({ orgNom, infos, suivi, debut, fin }) => {
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
@@ -7747,7 +7760,9 @@ const genererPreuveVeillePdf = async ({ orgNom, infos, suivi, debut, fin }) => {
   return new Blob([await pdf.save()], { type: 'application/pdf' });
 };
 
-const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, onNonLus }) => {
+// 13/11/2026 : lectureSeule = formateur : les informations seulement (pas de suivi, PDF, réglages ni outils).
+const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, onNonLus, lectureSeule = false }) => {
+  const [vueAvant] = React.useState(() => (lectureSeule ? lireVeilleVue(currentUserId) : ''));
   const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
   const [infos, setInfos] = React.useState([]);
   const [suivi, setSuivi] = React.useState({});
@@ -7765,8 +7780,8 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
     if (!currentOrgId) return;
     const [ri, rs, rr] = await Promise.all([
       supabase.from('veille_infos').select('*').lte('publie_le', new Date().toISOString()).order('semaine', { ascending: false }).order('date_article', { ascending: false }).limit(500),
-      supabase.from('veille_suivi').select('*').eq('organisation_id', currentOrgId),
-      supabase.from('veille_reglages').select('*').eq('organisation_id', currentOrgId).maybeSingle(),
+      lectureSeule ? Promise.resolve({ data: [] }) : supabase.from('veille_suivi').select('*').eq('organisation_id', currentOrgId),
+      lectureSeule ? Promise.resolve({ data: null }) : supabase.from('veille_reglages').select('*').eq('organisation_id', currentOrgId).maybeSingle(),
     ]);
     if (ri.error || rs.error) { setEtat(veilleTableAbsente(ri.error || rs.error) ? 'absent' : 'erreur'); return; }
     setInfos(ri.data || []);
@@ -7774,11 +7789,12 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
     setResumeLundi(!(rr.data && rr.data.resume_lundi === false));
     setSemaine(prev => prev || (ri.data && ri.data[0] ? ri.data[0].semaine : null));
     setEtat('ok');
-  }, [currentOrgId]);
+  }, [currentOrgId, lectureSeule]);
   React.useEffect(() => { charger(); }, [charger]);
   const chargerProprio = React.useCallback(async () => {
+    if (lectureSeule) { setProprio(null); return; }
     try { const d = await appelVeilleApi('veille_statut'); setProprio(d.proprietaire ? d : null); } catch (_) { setProprio(null); }
-  }, []);
+  }, [lectureSeule]);
   React.useEffect(() => { chargerProprio(); }, [chargerProprio]);
 
   const semaines = Array.from(new Set(infos.map(i => i.semaine)));
@@ -7789,8 +7805,10 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
   const nb = (p) => deLaSemaine.filter(i => i.priorite === p).length;
   const nbTraitees = deLaSemaine.filter(i => suivi[i.id]).length;
   React.useEffect(() => {
-    if (etat !== 'ok' || !onNonLus) return;
+    if (etat !== 'ok') return;
     const derniere = semaines[0];
+    if (lectureSeule) { noterVeilleVue(currentUserId, derniere); if (onNonLus) onNonLus(0); return; }
+    if (!onNonLus) return;
     onNonLus(infos.filter(i => i.semaine === derniere && !suivi[i.id]).length);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [etat, infos, suivi]);
@@ -7883,14 +7901,14 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
               </select>
             </div>
           )}
-          <button type="button" onClick={() => { const f = new Date(); const d = new Date(f.getTime() - 365 * 86400000); setExport({ debut: jourLocalISO(d), fin: jourLocalISO(f) }); }} disabled={!infos.length}
-            className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 inline-flex items-center gap-2"><Download size={16} /> Exporter la preuve (PDF)</button>
+          {!lectureSeule && <button type="button" onClick={() => { const f = new Date(); const d = new Date(f.getTime() - 365 * 86400000); setExport({ debut: jourLocalISO(d), fin: jourLocalISO(f) }); }} disabled={!infos.length}
+            className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-40 inline-flex items-center gap-2"><Download size={16} /> Exporter la preuve (PDF)</button>}
         </div>
       </div>
 
       {semaine && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[[nb('action'), 'action requise', 'text-red-700'], [nb('surveiller'), 'à surveiller', 'text-amber-700'], [nb('info'), 'pour information', 'text-blue-700'], [`${nbTraitees} / ${deLaSemaine.length}`, 'traitées', 'text-gray-900']].map(([v, l, c]) => (
+        <div className={`grid grid-cols-2 gap-3 ${lectureSeule ? 'lg:grid-cols-3' : 'lg:grid-cols-4'}`}>
+          {[[nb('action'), 'action requise', 'text-red-700'], [nb('surveiller'), 'à surveiller', 'text-amber-700'], [nb('info'), 'pour information', 'text-blue-700'], ...(lectureSeule ? [] : [[`${nbTraitees} / ${deLaSemaine.length}`, 'traitées', 'text-gray-900']])].map(([v, l, c]) => (
             <div key={l} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm"><p className={`text-2xl font-black tabular-nums ${c}`}>{v}</p><p className="text-xs text-gray-500 mt-0.5">{l}</p></div>
           ))}
         </div>
@@ -7909,11 +7927,13 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
         <div className="flex-1 min-w-0 space-y-4 w-full">
           {!semaine && <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">Aucune information publiée pour l'instant. La première veille arrivera lundi matin.</div>}
           {affichees.map(i => {
-            const s = suivi[i.id];
+            const s = lectureSeule ? null : suivi[i.id];
+            const nouveau = lectureSeule && i.semaine === semaines[0] && vueAvant !== semaines[0];
             const [lp, cp] = PRIORITES_VEILLE_APP[i.priorite] || PRIORITES_VEILLE_APP.info;
             return (
               <article key={i.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 md:p-6 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
+                  {nouveau && <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-600 text-white">Nouveau</span>}
                   <span className={`text-[11px] font-black px-2 py-1 rounded-lg ${cp}`}>{lp}</span>
                   <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-50 text-violet-700">{THEMES_VEILLE_APP[i.theme] || i.theme}</span>
                   {i.date_article && <span className="text-xs text-gray-500">{new Date(i.date_article).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</span>}
@@ -7924,11 +7944,11 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
                 {s && <p className="text-sm text-gray-700 bg-emerald-50 rounded-xl px-3 py-2 break-words"><b>Action menée :</b> {s.action_menee || '—'}{s.traite_par ? <span className="text-gray-500"> · {s.traite_par}</span> : null}</p>}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                   <a href={i.url} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-violet-700 hover:underline inline-flex items-center gap-1.5 break-all"><ExternalLink size={14} className="shrink-0" /> Source : {i.source_nom}</a>
-                  <div className="flex flex-wrap gap-2">
+                  {!lectureSeule && <div className="flex flex-wrap gap-2">
                     {proprio && <button type="button" onClick={() => masquer(i, true)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-500 hover:text-red-600 hover:border-red-200">Retirer (propriétaire)</button>}
                     <button type="button" onClick={() => setEdition({ info: i, texte: s?.action_menee || '' })}
                       className={s ? 'px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:border-violet-300' : 'px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700'}>{s ? 'Modifier' : 'Traitée : noter l\'action menée'}</button>
-                  </div>
+                  </div>}
                 </div>
               </article>
             );
@@ -7936,6 +7956,13 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
         </div>
 
         <aside className="w-full lg:w-80 shrink-0 space-y-4">
+          {lectureSeule ? (
+            <div className="bg-gray-900 text-white rounded-3xl p-5 space-y-2">
+              <p className="text-[11px] font-black uppercase tracking-widest text-violet-300">Partagée par votre organisme</p>
+              <p className="font-black leading-snug">{orgSettings?.nom ? `${orgSettings.nom} partage avec vous sa veille` : 'Votre organisme partage avec vous sa veille'}</p>
+              <p className="text-xs text-violet-100 leading-relaxed">Chaque lundi, les nouveautés de la semaine passée sur la formation (Qualiopi, CPF, financement, réglementation). Tenez-en compte dans vos accompagnements ; pour toute question, voyez avec votre organisme.</p>
+            </div>
+          ) : (<>
           <div className="bg-gray-900 text-white rounded-3xl p-5 space-y-3">
             <p className="text-[11px] font-black uppercase tracking-widest text-violet-300">Preuve Qualiopi</p>
             <p className="font-black leading-snug">Votre veille est tracée pour l'audit</p>
@@ -7949,6 +7976,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
             </label>
             <p className="text-xs text-gray-500 leading-relaxed">Chaque lundi matin, les nouvelles informations de la semaine, triées par priorité, envoyées aux administrateurs de l'organisme.</p>
           </div>
+          </>)}
           <div className="bg-white rounded-3xl border border-gray-100 p-5 text-xs text-gray-500 leading-relaxed">
             Informations collectées automatiquement chaque jour et publiées chaque lundi, auprès de sources officielles et spécialisées (service-public.fr, France compétences, Centre Inffo…). Le résumé reprend le début de l'article : le texte officiel fait foi, vérifiez-le avant d'agir.
           </div>
@@ -26800,7 +26828,7 @@ export default function App() {
     if (!userRole) return;
     const ROLE_TABS = {
       admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'bpf', 'veille', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
-      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
+      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'veille', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
     const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
@@ -27528,11 +27556,12 @@ export default function App() {
   // 03/11/2026 : veille — nombre d'informations de la dernière semaine pas encore traitées (badge du menu).
   const [veilleNonLues, setVeilleNonLues] = useState(0);
   useEffect(() => {
-    if (userRole !== 'admin' || !estPro || !currentOrgId) { setVeilleNonLues(0); return; }
+    if (!['admin', 'formateur'].includes(userRole) || !estPro || !currentOrgId) { setVeilleNonLues(0); return; }
     let annule = false;
-    compterVeilleNonTraitees(currentOrgId).then(n => { if (!annule) setVeilleNonLues(n); });
+    // 13/11/2026 : formateur → informations de la dernière semaine pas encore vues (lecture seule).
+    (userRole === 'admin' ? compterVeilleNonTraitees(currentOrgId) : compterVeilleNouvelles(currentUserId)).then(n => { if (!annule) setVeilleNonLues(n); });
     return () => { annule = true; };
-  }, [userRole, estPro, currentOrgId]);
+  }, [userRole, estPro, currentOrgId, currentUserId]);
   const nomUtilisateurConnecte = assignableFormateurs.find(f => String(f.id) === String(currentUserId))?.nom
     || (userRole === 'admin' ? (orgSettings?.nom || 'Administrateur') : 'Formateur');
 
@@ -32347,6 +32376,12 @@ export default function App() {
               <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
+              {estPro && (
+                <button onClick={() => { setActiveTab('veille'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'veille' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                  <ClipboardList className="w-5 h-5 mr-3" /> Veille
+                  {veilleNonLues > 0 && <span className="ml-auto text-[11px] font-black bg-white text-violet-700 px-1.5 py-0.5 rounded-md" aria-label={`${veilleNonLues} nouvelle(s) information(s)`}>{veilleNonLues}</span>}
+                </button>
+              )}
               <button onClick={() => { setActiveTab('processus'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'processus' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Layout className="w-5 h-5 mr-3" /> Processus
               </button>
@@ -32781,6 +32816,11 @@ export default function App() {
                 Voir les plans →
               </button>
             </div>
+          )}
+          {activeTab === 'veille' && userRole === 'formateur' && (
+            hasFeatureAccess(orgSettings, 'pro')
+              ? <VeilleView lectureSeule currentOrgId={currentOrgId} orgSettings={orgSettings} nomUtilisateur={nomUtilisateurConnecte} currentUserId={currentUserId} onNonLus={setVeilleNonLues} />
+              : <div className="bg-white p-8 rounded-3xl border border-gray-100 max-w-2xl mx-auto text-center text-gray-600">La veille n'est pas disponible pour votre organisme.</div>
           )}
           {activeTab === 'veille' && userRole === 'admin' && hasFeatureAccess(orgSettings, 'pro') && (
             <VeilleView currentOrgId={currentOrgId} orgSettings={orgSettings} nomUtilisateur={nomUtilisateurConnecte} currentUserId={currentUserId} onNonLus={setVeilleNonLues} />
