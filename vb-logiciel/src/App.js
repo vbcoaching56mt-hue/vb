@@ -7906,9 +7906,9 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
         </div>
       </div>
 
-      {semaine && (
-        <div className={`grid grid-cols-2 gap-3 ${lectureSeule ? 'lg:grid-cols-3' : 'lg:grid-cols-4'}`}>
-          {[[nb('action'), 'action requise', 'text-red-700'], [nb('surveiller'), 'à surveiller', 'text-amber-700'], [nb('info'), 'pour information', 'text-blue-700'], ...(lectureSeule ? [] : [[`${nbTraitees} / ${deLaSemaine.length}`, 'traitées', 'text-gray-900']])].map(([v, l, c]) => (
+      {semaine && !lectureSeule && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[[nb('action'), 'action requise', 'text-red-700'], [nb('surveiller'), 'à surveiller', 'text-amber-700'], [nb('info'), 'pour information', 'text-blue-700'], [`${nbTraitees} / ${deLaSemaine.length}`, 'traitées', 'text-gray-900']].map(([v, l, c]) => (
             <div key={l} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm"><p className={`text-2xl font-black tabular-nums ${c}`}>{v}</p><p className="text-xs text-gray-500 mt-0.5">{l}</p></div>
           ))}
         </div>
@@ -7934,7 +7934,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
               <article key={i.id} className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 md:p-6 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   {nouveau && <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-600 text-white">Nouveau</span>}
-                  <span className={`text-[11px] font-black px-2 py-1 rounded-lg ${cp}`}>{lp}</span>
+                  {!lectureSeule && <span className={`text-[11px] font-black px-2 py-1 rounded-lg ${cp}`}>{lp}</span>}
                   <span className="text-[11px] font-black px-2 py-1 rounded-lg bg-violet-50 text-violet-700">{THEMES_VEILLE_APP[i.theme] || i.theme}</span>
                   {i.date_article && <span className="text-xs text-gray-500">{new Date(i.date_article).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</span>}
                   {s && <span className="ml-auto text-xs font-black text-emerald-700">✓ Traitée le {new Date(s.traitee_le).toLocaleDateString('fr-FR')}</span>}
@@ -7960,7 +7960,7 @@ const VeilleView = ({ currentOrgId, orgSettings, nomUtilisateur, currentUserId, 
             <div className="bg-gray-900 text-white rounded-3xl p-5 space-y-2">
               <p className="text-[11px] font-black uppercase tracking-widest text-violet-300">Partagée par votre organisme</p>
               <p className="font-black leading-snug">{orgSettings?.nom ? `${orgSettings.nom} partage avec vous sa veille` : 'Votre organisme partage avec vous sa veille'}</p>
-              <p className="text-xs text-violet-100 leading-relaxed">Chaque lundi, les nouveautés de la semaine passée sur la formation (Qualiopi, CPF, financement, réglementation). Tenez-en compte dans vos accompagnements ; pour toute question, voyez avec votre organisme.</p>
+              <p className="text-xs text-violet-100 leading-relaxed">Chaque lundi, les nouveautés de la semaine passée sur la formation (Qualiopi, CPF, financement, réglementation), à titre informatif. Votre organisme s'occupe des suites à donner ; pour toute question, voyez avec lui.</p>
             </div>
           ) : (<>
           <div className="bg-gray-900 text-white rounded-3xl p-5 space-y-3">
