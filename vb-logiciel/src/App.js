@@ -7264,6 +7264,14 @@ const libelleFinancement = (t) => LIBELLES_COURTS_FINANCEMENT[t] || 'Autre';
 const libelleStatutFinancement = (s) => (STATUTS_FINANCEMENT.find(([v]) => v === s) || [null, ''])[1];
 // Espaces fines insécables remplacées par des espaces simples : la police des PDF ne les connaît pas.
 const nombreFr = (n) => { const x = Math.round((Number(n) || 0) * 100) / 100; return x.toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(x) ? 0 : 2, maximumFractionDigits: 2 }).replace(/[\u202f\u00a0]/g, ' '); };
+// 17/11/2026 : balise {part_formateur} = montant de la prestation × % reversé au formateur (fiche client,
+// « Infos & Modalités »), même calcul que la page Finances. Vide si l'un des deux manque.
+const partFormateurBalise = (c) => {
+  const m = parseFloat(String(c?.montant_prestation || c?.prix_prestation || '').replace(/\s/g, '').replace(',', '.'));
+  const p = parseFloat(String(c?.pourcentage_formateur ?? '').replace(',', '.'));
+  if (!(m > 0) || !(p > 0)) return '';
+  return nombreFr(m * p / 100);
+};
 const montantRenseigne = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
 
 // Valeurs des balises de documents à partir des lignes de financement d'un dossier.
@@ -12049,7 +12057,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
   // pas sur une personne admin précise — cohérent avec les autres balises Organisme (toutes au niveau
   // société), et fonctionne pour tout organisme sans configuration supplémentaire.
   const ALL_TAGS = {
-    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature', 'initiales_client'],
+    'Client': ['nomcomplet_client', 'numero_dossier_client', 'client_email', 'client_phone', 'adresse_client', 'rue_client', 'code_postal_client', 'ville_client', 'region_client', 'adresse_session', 'prix_prestation', 'part_formateur', 'formation_nom', 'modalite_formation', 'date_debut', 'date_fin', 'date_signature', 'initiales_client'],
     'Formateur': ['nom_formateur', 'email_formateur', 'tel_formateur', 'adresse_formateur', 'rue_formateur', 'code_postal_formateur', 'ville_formateur', 'region_formateur', 'formateur_siret', 'formateur_nda', 'compagnie_assurance', 'numero_assurance_rcp', 'date_signature_formateur', 'initiales_formateur'],
     'Organisme': ['org_nom', 'org_siret', 'org_nda', 'org_adresse', 'org_code_postal', 'org_ville', 'org_region', 'org_site_web', 'date_signature_organisme', 'initiales_organisme'],
     'Financement': ['financement_type', 'financeur_nom', 'montant_financeur', 'reste_a_charge', 'numero_prise_en_charge'],
@@ -12549,7 +12557,7 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
         client_email: 'jean@exemple.fr', client_phone: '06 12 34 56 78',
         rue_client: '12 rue de la Paix', code_postal_client: '56000',
         adresse_client: '12 rue de la Paix, 56000 Vannes',
-        adresse_session: '56000 Vannes', prix_prestation: '1 500 €',
+        adresse_session: '56000 Vannes', prix_prestation: '1 500 €', part_formateur: '750',
         financement_type: 'CPF + Personnel', financeur_nom: 'Mon Compte Formation', montant_financeur: '1 300', reste_a_charge: '200', numero_prise_en_charge: 'CPF-2026-0001',
         formation_nom: 'Bilan de compétences BC 24h', modalite_formation: 'présentiel',
         date_debut: '01/09/2026', date_fin: '30/11/2026', date_signature: new Date().toLocaleDateString('fr-FR'),
@@ -28448,6 +28456,7 @@ export default function App() {
           region_client:       client.region || '',
           adresse_session:     client.adresse || client.adresse_postale || client.rue || '',
           prix_prestation:     client.prix_prestation || client.montant_prestation || '',
+          part_formateur:      partFormateurBalise(client),
           ...(await valeursFinancement(client.id, client.prix_prestation || client.montant_prestation)),
           modalite_formation:  client.modalite_formation || '',
           formation_nom:       '',
@@ -30822,6 +30831,7 @@ export default function App() {
           client_phone: finalClient.telephone || finalClient.client_phone || '',
           client_email: finalClient.email_contact || finalClient.client_email || finalClient.email || '',
           prix_prestation: finalClient.montant_prestation || module?.prix_prestation || '',
+          part_formateur: partFormateurBalise(finalClient),
           ...(await valeursFinancement(finalClient.id, finalClient.montant_prestation || module?.prix_prestation)),
           rue_client: finalClient.rue || '',
           code_postal_client: finalClient.code_postal || '',

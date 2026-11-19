@@ -348,6 +348,8 @@ async function generateAndSendOne(supabase, row) {
     client_phone: client.telephone || client.client_phone || '',
     client_email: client.email_contact || client.client_email || client.email || '',
     prix_prestation: client.montant_prestation || moduleRow?.prix_prestation || '',
+    // 17/11/2026 : balise {part_formateur} = montant × % reversé au formateur (même calcul que l'appli).
+    part_formateur: (() => { const m = parseFloat(String(client.montant_prestation || client.prix_prestation || '').replace(/\s/g, '').replace(',', '.')); const p = parseFloat(String(client.pourcentage_formateur ?? '').replace(',', '.')); if (!(m > 0) || !(p > 0)) return ''; const x = Math.round(m * p) / 100; return x.toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(x) ? 0 : 2, maximumFractionDigits: 2 }).replace(/[\u202f\u00a0]/g, ' '); })(),
     rue_client: client.rue || '',
     code_postal_client: client.code_postal || '',
     ville_client: client.ville || '',
