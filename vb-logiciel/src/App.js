@@ -14106,6 +14106,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
   const [qName, setQName] = React.useState('');
   const [qQuestions, setQQuestions] = React.useState([]);
   const [editingQId, setEditingQId] = React.useState(null);
+  const [qCopieDe, setQCopieDe] = React.useState(null); // 19/11/2026 : titre de l'original quand on duplique
   const [expandedQGroupId, setExpandedQGroupId] = React.useState(null);
   // AJOUT (2026-09-30) : quiz noté (correction auto + seuil de réussite) et messages facultatifs
   // de début/fin, communs aux questionnaires et aux quiz — voir QuestionnaireFillerModal.
@@ -14212,7 +14213,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
         if (error) { toast.error('Erreur création : ' + error.message); return; }
       }
       toast.success(editingQId ? `Questionnaire mis à jour${nbModulesMaj ? ` (et dans ${nbModulesMaj} module${nbModulesMaj > 1 ? 's' : ''})` : ''}.` : 'Questionnaire créé.');
-      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false);
+      setQName(''); setQQuestions([]); setEditingQId(null); setShowQBuilder(false); setQCopieDe(null);
       setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage('');
       await fetchQTemplates();
     } catch (e) { console.error('[handleSaveQTemplate] exception:', e); toast.error('Erreur inattendue : ' + e.message); }
@@ -14229,6 +14230,33 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
     setEditingQId(q.id);
     setShowQBuilder(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 19/11/2026 : « Dupliquer » — l'éditeur s'ouvre avec une copie (nouvelles questions, nouveaux identifiants) ;
+  // rien n'est enregistré tant qu'on ne clique pas sur « Enregistrer le questionnaire » (création classique).
+  const handleDuplicateQTemplate = (q) => {
+    if (showQBuilder && (editingQId || qName.trim() || qQuestions.length > 0)) {
+      toast.error('Enregistrez ou annulez d\'abord le questionnaire en cours, puis dupliquez.');
+      return;
+    }
+    const meta = (() => { try { return typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {}); } catch { return {}; } })();
+    const base = Date.now();
+    setQName(`${q.titre || 'Questionnaire'} (copie)`);
+    setQQuestions((meta.questions || []).map((qq, i) => ({
+      ...qq,
+      id: `${base}-${i}`,
+      options: Array.isArray(qq.options) ? [...qq.options] : qq.options,
+      correctAnswer: Array.isArray(qq.correctAnswer) ? [...qq.correctAnswer] : qq.correctAnswer,
+    })));
+    setQIsQuiz(!!meta.isQuiz);
+    setQSeuilReussite(meta.seuilReussite ?? 50);
+    setQDescription(meta.description || '');
+    setQClosingMessage(meta.closingMessage || '');
+    setEditingQId(null);
+    setQCopieDe(q.titre || 'Questionnaire');
+    setShowQBuilder(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast.success('Copie prête : modifiez-la si besoin, puis enregistrez.');
   };
 
   const handleDeleteQTemplate = (id) => {
@@ -14302,7 +14330,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                 </button>
               )}
               <button
-                onClick={() => { setShowQBuilder(v => !v); if (editingQId) { setEditingQId(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
+                onClick={() => { setShowQBuilder(v => !v); if (editingQId || qCopieDe) { setEditingQId(null); setQCopieDe(null); setQName(''); setQQuestions([]); setQIsQuiz(false); setQSeuilReussite(50); setQDescription(''); setQClosingMessage(''); } }}
                 className="flex items-center gap-2 bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm hover:bg-violet-800 transition-all"
               >
                 <Plus size={13} /> {showQBuilder && !editingQId ? 'Annuler' : 'Nouveau questionnaire'}
@@ -14312,6 +14340,11 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
 
             {showQBuilder && (
               <div className="bg-white rounded-2xl p-5 border border-violet-200 space-y-4 mb-4">
+                {qCopieDe && !editingQId && (
+                  <p className="text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
+                    ⧉ Copie de « <b>{qCopieDe}</b> ». Rien n'est enregistré tant que vous ne cliquez pas sur « Enregistrer le questionnaire ». L'original ne change pas.
+                  </p>
+                )}
                 <div>
                   <label className="block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5">Titre du questionnaire</label>
                   <input type="text" placeholder="Ex : Questionnaire de satisfaction"
@@ -14463,6 +14496,7 @@ const QuestionnairesView = ({ supabase, currentOrgId, clients, formateurs, modul
                             </div>
                             <div className="flex gap-1">
                               <button onClick={() => handleEditQTemplate(q)} title="Modifier" className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all text-sm">✏️</button>
+                              <button onClick={() => handleDuplicateQTemplate(q)} title="Dupliquer" aria-label={`Dupliquer ${q.titre}`} className="p-1.5 text-violet-400 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-all"><Copy size={13} /></button>
                               <button onClick={() => handleDeleteQTemplate(q.id)} title="Supprimer" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Trash2 size={13} /></button>
                             </div>
                           </div>
