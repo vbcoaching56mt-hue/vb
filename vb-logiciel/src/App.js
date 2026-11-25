@@ -16808,7 +16808,7 @@ const AccueilView = ({ setActiveTab, clientProgress, moduleName, totalSessions, 
       ) : (
         <div className="divide-y divide-gray-50">
           {todos.map(t => (
-            <button key={t.cle} onClick={() => setActiveTab(t.onglet)}
+            <button key={t.cle} onClick={() => { if (t.action) t.action(); setActiveTab(t.onglet); }}
               className="w-full px-6 py-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50 transition-colors">
               <span className="flex items-center gap-3 min-w-0">
                 <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${t.urgent ? 'bg-amber-400' : 'bg-violet-400'}`}></span>
@@ -17831,7 +17831,7 @@ const PanneauSignatureEnLot = ({ docs = [], role, tousDocuments = [], nomsGroupe
   );
 };
 
-const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings, sessions, fetchSessions }) => {
+const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetchDocuments, formateurs, orgSettings, sessions, fetchSessions, questionnaireAOuvrir = null, onQuestionnaireOuvert = null }) => {
   const [moduleResources, setModuleResources] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [signingResource, setSigningResource] = React.useState(null);
@@ -17877,6 +17877,19 @@ const ClientDocumentsView = ({ supabase, currentUserId, clients, documents, fetc
       setAssignedQuestionnaires((qs || []).map(q => ({ ...q, type: 'questionnaire' })));
     })();
   }, [currentUserId, supabase]);
+  // 26/11/2026 : ouverture directe d'un questionnaire demandé depuis « À faire maintenant » (accueil).
+  React.useEffect(() => {
+    if (!questionnaireAOuvrir || loading) return;
+    const q = [...moduleResources.filter(r => r.type === 'questionnaire'), ...groupQuestionnaires, ...assignedQuestionnaires]
+      .find(r => String(r.id) === String(questionnaireAOuvrir));
+    if (!q) return;
+    if (!questionnaireResponses.some(r => String(r.questionnaire_id) === String(q.id))) setActiveQuestionnaire(q);
+    if (onQuestionnaireOuvert) onQuestionnaireOuvert();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionnaireAOuvrir, loading, moduleResources, groupQuestionnaires, assignedQuestionnaires, questionnaireResponses]);
+  // En quittant l'onglet, on oublie la demande d'ouverture.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useEffect(() => () => { if (onQuestionnaireOuvert) onQuestionnaireOuvert(); }, []);
   // AJOUT (2026-09-18) : ressources de type "exercice" posées en Documents de début/fin — sorties de
   // moduleResources (qui n'affiche plus que document/questionnaire/document_group, voir plus bas) et
   // traitées à part pour être basculées vers l'onglet "Exercices" du client (voir l'effet plus bas).
@@ -27962,6 +27975,55 @@ export default function App() {
   const estPro = hasFeatureAccess(orgSettings, 'pro');
   // 03/11/2026 : veille — nombre d'informations de la dernière semaine pas encore traitées (badge du menu).
   const [veilleNonLues, setVeilleNonLues] = useState(0);
+  // 26/11/2026 : accueil du stagiaire — questionnaires et quiz pas encore remplis (« À faire maintenant »).
+  const [questionnairesAFaire, setQuestionnairesAFaire] = useState([]);
+  const [questionnaireAOuvrir, setQuestionnaireAOuvrir] = useState(null);
+  const moduleDuStagiaire = userRole === 'client' ? ((clients.find(c => c.id === currentUserId) || {}).module_id || null) : null;
+  const finOuverteStagiaire = userRole === 'client' && moduleDuStagiaire ? isModuleCompletedForClient(currentUserId, sessions, moduleDuStagiaire) : false;
+  useEffect(() => {
+    if (userRole !== 'client' || !currentUserId || activeTab !== 'accueil') return;
+    let annule = false;
+    const lireMetaQ = (m) => { if (m && typeof m === 'object') return m; try { return JSON.parse(m || '{}') || {}; } catch (_) { return {}; } };
+    (async () => {
+      try {
+        const [rRep, rMod, rAss] = await Promise.all([
+          supabase.from('questionnaire_responses').select('questionnaire_id').eq('client_id', currentUserId),
+          moduleDuStagiaire
+            ? supabase.from('module_step_resources').select('id, titre, metadata, type, moment, ordre, document_group_id').eq('module_id', moduleDuStagiaire).in('moment', ['debut', 'fin']).order('ordre', { ascending: true })
+            : Promise.resolve({ data: [] }),
+          supabase.from('questionnaire_assignments').select('questionnaire_id').eq('client_id', currentUserId),
+        ]);
+        if (rRep.error) throw rRep.error;
+        const repondus = new Set((rRep.data || []).map(r => String(r.questionnaire_id)));
+        // Début de parcours toujours ; fin de parcours seulement une fois débloquée (comme l'onglet Documents).
+        const visibles = (rMod.data || []).filter(r => r.moment === 'debut' || finOuverteStagiaire);
+        const liste = visibles.filter(r => r.type === 'questionnaire');
+        const groupes = visibles.filter(r => r.type === 'document_group' && r.document_group_id).map(r => r.document_group_id);
+        if (groupes.length) {
+          const { data } = await supabase.from('module_step_resources').select('id, titre, metadata').eq('type', 'questionnaire').is('module_id', null).in('document_group_id', groupes);
+          liste.push(...(data || []));
+        }
+        const idsEnvoyes = (rAss.data || []).map(a => a.questionnaire_id).filter(Boolean);
+        if (idsEnvoyes.length) {
+          const { data } = await supabase.from('module_step_resources').select('id, titre, metadata, type').in('id', idsEnvoyes);
+          liste.push(...(data || []));
+        }
+        const vus = new Set();
+        const aFaire = [];
+        liste.forEach(q => {
+          const k = String(q.id);
+          if (vus.has(k) || repondus.has(k)) return;
+          vus.add(k);
+          const meta = lireMetaQ(q.metadata);
+          if (!Array.isArray(meta.questions) || meta.questions.length === 0) return;
+          aFaire.push({ id: q.id, titre: q.titre || 'Questionnaire', quiz: !!meta.isQuiz });
+        });
+        if (!annule) setQuestionnairesAFaire(aFaire);
+      } catch (_) { if (!annule) setQuestionnairesAFaire([]); }
+    })();
+    return () => { annule = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole, currentUserId, activeTab, moduleDuStagiaire, finOuverteStagiaire]);
   useEffect(() => {
     if (!['admin', 'formateur'].includes(userRole) || !estPro || !currentOrgId) { setVeilleNonLues(0); return; }
     let annule = false;
@@ -33403,6 +33465,7 @@ export default function App() {
             const _todos = [
               ..._emargements.map(s => ({ cle: 'em-' + s.id, urgent: true, label: s.date === _todayL ? `Signer ma présence — Séance ${s.numero_seance} (aujourd'hui)` : `Signer ma présence — Séance ${s.numero_seance} du ${_jjmm(s.date)}`, onglet: 'mes_seances', bouton: 'Signer' })),
               ...(_pendingDocs > 0 ? [{ cle: 'docs', urgent: true, label: `${_pendingDocs} document${_pendingDocs > 1 ? 's' : ''} à signer`, onglet: 'mes_documents', bouton: 'Voir' }] : []),
+              ...questionnairesAFaire.map(q => ({ cle: 'q-' + q.id, urgent: true, label: `Répondre au ${q.quiz ? 'quiz' : 'questionnaire'} « ${q.titre} »`, onglet: 'mes_documents', bouton: 'Commencer', action: () => setQuestionnaireAOuvrir(q.id) })),
               ...(_exosARendre.length > 0 ? [{ cle: 'exos', label: `${_exosARendre.length} exercice${_exosARendre.length > 1 ? 's' : ''} à rendre`, onglet: 'exercices', bouton: 'Voir' }] : []),
               ...(unreadMessagesCount > 0 ? [{ cle: 'msg', label: `${unreadMessagesCount} nouveau${unreadMessagesCount > 1 ? 'x' : ''} message${unreadMessagesCount > 1 ? 's' : ''}`, onglet: 'messagerie', bouton: 'Lire' }] : []),
             ];
@@ -33422,7 +33485,7 @@ export default function App() {
             />;
           })()}
           {activeTab === 'mes_seances' && <SessionsView moduleActuelId={moduleDuClient(clients, currentUserId)} sessions={sessions} signSession={signSession} currentUserId={currentUserId} userRole={userRole} pedagogicalResources={pedagogicalResources} handleDownloadResource={handleDownloadResource} handleUploadExerciseResponse={handleUploadExerciseResponse} setViewingSession={setViewingSession} />}
-          {activeTab === 'mes_documents' && <ClientDocumentsView supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
+          {activeTab === 'mes_documents' && <ClientDocumentsView questionnaireAOuvrir={questionnaireAOuvrir} onQuestionnaireOuvert={() => setQuestionnaireAOuvrir(null)} supabase={supabase} currentUserId={currentUserId} clients={clients} documents={documents} fetchDocuments={fetchDocuments} formateurs={assignableFormateurs} orgSettings={orgSettings} sessions={sessions} fetchSessions={fetchSessions} />}
           {activeTab === 'exercices' && <ExercicesView setActiveTab={setActiveTab} sessions={sessions} currentUserId={currentUserId} handleUploadExerciseResponse={handleUploadExerciseResponse} />}
           {activeTab === 'questionnaires' && userRole === 'admin' && <QuestionnairesView supabase={supabase} currentOrgId={currentOrgId} clients={clients} formateurs={assignableFormateurs} modules={modules} orgName={orgSettings?.nom || ''} />}
           {activeTab === 'gestion_documents' && <DocumentsView
