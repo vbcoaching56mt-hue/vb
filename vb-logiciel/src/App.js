@@ -5,7 +5,7 @@ import {
   Eye, EyeOff, Pencil, Check, X, AlertCircle, AlertTriangle, Clock, Archive, CheckCircle, PenTool, History, Briefcase, TrendingUp, MapPin, Search, Upload, Bell, Mail, ToggleLeft, ToggleRight, Send, ExternalLink, Lock, HelpCircle, Copy, Euro, Percent, Wallet,
   Layers, ClipboardList, CalendarDays, BookOpen,
   UserCircle, MessageCircle, Menu, CalendarCheck, KeyRound,
-  UsersRound, UserPlus, UserMinus, Video, CalendarPlus
+  UsersRound, UserPlus, UserMinus, Video, CalendarPlus, Wrench, PlayCircle, Paperclip
 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { Buffer } from 'buffer';
@@ -21644,6 +21644,366 @@ const OrganisationSettingsView = ({ supabase, currentOrgId, orgSettings, onSaved
 // COMPOSANT PRINCIPAL
 // ==========================================
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// OUTILS DU BILAN (25/11/2026) — onglet « Outils » : la boîte à outils des bilans de l'organisme.
+// Offre Pro / Illimité. Administrateur : ajoute, modifie, supprime. Formateurs : lecture seule.
+// Table outils_bilan (SQL « outils_bilan ») ; fichiers joints dans ressources-pedagogiques/outils/<organisme>/ ;
+// vidéos : uniquement un lien YouTube ou Vimeo, lu dans la fiche (rien n'est stocké chez SkorUp).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const CATEGORIES_OUTILS = [['tests', 'Tests et questionnaires'], ['exercices', 'Exercices'], ['entretien', "Grilles d'entretien"], ['projet', 'Projet professionnel'], ['restitution', 'Synthèse et restitution'], ['autre', 'Autre']];
+const PHASES_OUTILS = [['preliminaire', 'Phase préliminaire'], ['investigation', "Phase d'investigation"], ['conclusion', 'Phase de conclusion'], ['toutes', 'Toutes les phases']];
+const libelleOutil = (liste, v) => (liste.find(([k]) => k === v) || [null, v || ''])[1];
+const TAILLE_MAX_FICHIER_OUTIL = 20 * 1024 * 1024;
+const ESPACE_OUTILS = 'ressources-pedagogiques';
+// Lien YouTube ou Vimeo → adresse du lecteur intégré ; null si le lien n'est pas reconnu.
+const videoIntegree = (url) => {
+  const u = String(url || '').trim();
+  if (!/^https:\/\//i.test(u)) return null;
+  let m = u.match(/^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})(?:[?&#/]|$)/i);
+  if (m) return `https://www.youtube-nocookie.com/embed/${m[1]}`;
+  m = u.match(/^https:\/\/(?:www\.|player\.)?vimeo\.com\/(?:video\/)?(\d{5,12})(?:\/([A-Za-z0-9]{6,20}))?(?:[?&#/]|$)/i);
+  if (m) return `https://player.vimeo.com/video/${m[1]}${m[2] ? `?h=${m[2]}` : ''}`;
+  return null;
+};
+const lienOutilSur = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
+const tailleFichierOutil = (n) => (!n ? '' : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} Ko` : `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`);
+const outilVide = () => ({ titre: '', categorie: 'tests', phase: 'toutes', duree: '', description: '', video_url: '', fichiers: [], liens: [] });
+
+const OutilsView = ({ supabase, userRole, currentOrgId }) => {
+  const estAdmin = userRole === 'admin';
+  const [etat, setEtat] = React.useState('chargement'); // chargement | ok | absent | erreur
+  const [outils, setOutils] = React.useState([]);
+  const [recherche, setRecherche] = React.useState('');
+  const [filtreCat, setFiltreCat] = React.useState('toutes');
+  const [filtrePhase, setFiltrePhase] = React.useState('toutes');
+  const [ouvert, setOuvert] = React.useState(null);
+  const [edition, setEdition] = React.useState(null);
+  const [occupe, setOccupe] = React.useState(false);
+  const [confirmSuppr, setConfirmSuppr] = React.useState(false);
+
+  const charger = React.useCallback(async () => {
+    if (!currentOrgId) return;
+    const { data, error } = await supabase.from('outils_bilan').select('*').eq('organisation_id', currentOrgId)
+      .order('ordre', { ascending: true }).order('titre', { ascending: true });
+    if (error) { setEtat(veilleTableAbsente(error) ? 'absent' : 'erreur'); return; }
+    setOutils(data || []);
+    setEtat('ok');
+  }, [supabase, currentOrgId]);
+  React.useEffect(() => { charger(); }, [charger]);
+
+  const urlFichier = (chemin) => supabase.storage.from(ESPACE_OUTILS).getPublicUrl(chemin)?.data?.publicUrl || '#';
+  const q = recherche.trim().toLowerCase();
+  const affiches = outils.filter(o => (filtreCat === 'toutes' || o.categorie === filtreCat)
+    && (filtrePhase === 'toutes' || o.phase === filtrePhase || o.phase === 'toutes')
+    && (!q || `${o.titre} ${o.description || ''}`.toLowerCase().includes(q)));
+
+  const ouvrirEdition = (o) => {
+    setConfirmSuppr(false);
+    setEdition(o ? {
+      id: o.id, titre: o.titre || '', categorie: o.categorie || 'autre', phase: o.phase || 'toutes', duree: o.duree || '',
+      description: o.description || '', video_url: o.video_url || '',
+      fichiers: (Array.isArray(o.fichiers) ? o.fichiers : []).map(f => ({ ...f })),
+      liens: (Array.isArray(o.liens) ? o.liens : []).map(l => ({ ...l })),
+    } : outilVide());
+  };
+  const majEdition = (champ, valeur) => setEdition(e => ({ ...e, [champ]: valeur }));
+  const ajouterFichiers = (liste) => {
+    const nouveaux = Array.from(liste || []);
+    const trop = nouveaux.filter(f => f.size > TAILLE_MAX_FICHIER_OUTIL);
+    if (trop.length) toast.error(`${trop.map(f => `« ${f.name} »`).join(', ')} : 20 Mo maximum par fichier.`);
+    const bons = nouveaux.filter(f => f.size <= TAILLE_MAX_FICHIER_OUTIL).map(f => ({ nom: f.name, taille: f.size, file: f }));
+    if (bons.length) setEdition(e => ({ ...e, fichiers: [...e.fichiers, ...bons] }));
+  };
+
+  const enregistrer = async () => {
+    const e = edition;
+    const titre = e.titre.trim();
+    if (!titre) { toast.error("Donnez un nom à l'outil."); return; }
+    if (e.video_url.trim() && !videoIntegree(e.video_url)) { toast.error('Lien vidéo non reconnu : collez le lien d\'une vidéo YouTube ou Vimeo (il commence par https://).'); return; }
+    const liens = e.liens.map(l => ({ nom: String(l.nom || '').trim().slice(0, 150), url: String(l.url || '').trim() })).filter(l => l.url || l.nom);
+    if (liens.some(l => !lienOutilSur(l.url))) { toast.error('Chaque lien doit être une adresse complète, qui commence par https://'); return; }
+    setOccupe(true);
+    try {
+      const fichiers = [];
+      for (const f of e.fichiers) {
+        if (f.chemin) { fichiers.push({ nom: f.nom, chemin: f.chemin, taille: f.taille || null }); continue; }
+        const ext = (f.file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+        const base = f.file.name.replace(/\.[^.]+$/, '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 60) || 'fichier';
+        const chemin = `outils/${currentOrgId}/${Date.now()}_${base}${ext ? `.${ext}` : ''}`;
+        const { error: errEnvoi } = await supabase.storage.from(ESPACE_OUTILS).upload(chemin, f.file);
+        if (errEnvoi) throw new Error(`Envoi de « ${f.file.name} » impossible : ${errEnvoi.message}`);
+        fichiers.push({ nom: f.file.name.slice(0, 200), chemin, taille: f.file.size });
+      }
+      const ligne = {
+        titre: titre.slice(0, 200), categorie: e.categorie, phase: e.phase, duree: e.duree.trim().slice(0, 60) || null,
+        description: e.description.trim().slice(0, 20000) || null, video_url: e.video_url.trim() || null, fichiers, liens,
+        updated_at: new Date().toISOString(),
+      };
+      const requete = e.id
+        ? supabase.from('outils_bilan').update(ligne).eq('id', e.id).eq('organisation_id', currentOrgId)
+        : supabase.from('outils_bilan').insert([{ ...ligne, organisation_id: currentOrgId }]);
+      const { data, error } = await requete.select().maybeSingle();
+      if (error) throw new Error(veilleTableAbsente(error) ? 'Lancez d\'abord le SQL « outils_bilan » dans Supabase.' : error.message);
+      if (!data) throw new Error("L'enregistrement a été refusé.");
+      // Fichiers retirés de l'outil : supprimés du stockage (sans bloquer si c'est refusé).
+      const avant = e.id ? ((outils.find(o => o.id === e.id) || {}).fichiers || []) : [];
+      const retires = avant.map(f => f.chemin).filter(c => c && !fichiers.some(f => f.chemin === c));
+      if (retires.length) { try { await supabase.storage.from(ESPACE_OUTILS).remove(retires); } catch (_) { /* sans gravité */ } }
+      toast.success(e.id ? 'Outil mis à jour.' : 'Outil ajouté.');
+      setEdition(null);
+      setOuvert(data);
+      await charger();
+    } catch (err) { toast.error(err.message || String(err)); }
+    setOccupe(false);
+  };
+
+  const supprimer = async (o) => {
+    setOccupe(true);
+    const { error } = await supabase.from('outils_bilan').delete().eq('id', o.id).eq('organisation_id', currentOrgId);
+    setOccupe(false);
+    if (error) { toast.error('Suppression impossible : ' + error.message); return; }
+    const chemins = (o.fichiers || []).map(f => f.chemin).filter(Boolean);
+    if (chemins.length) { try { await supabase.storage.from(ESPACE_OUTILS).remove(chemins); } catch (_) { /* sans gravité */ } }
+    toast.success('Outil supprimé.');
+    setConfirmSuppr(false);
+    setOuvert(null);
+    await charger();
+  };
+
+  if (etat === 'chargement') return <div className="p-10 text-center text-gray-500">Chargement des outils…</div>;
+  if (etat === 'absent') return <div className="bg-white p-8 rounded-3xl border border-gray-100 max-w-2xl mx-auto text-center text-gray-600">{estAdmin ? "Les outils ne sont pas encore activés : lancez le SQL « outils_bilan » dans Supabase." : "Les outils ne sont pas encore disponibles pour votre organisme."}</div>;
+  if (etat === 'erreur') return <div className="bg-white p-8 rounded-3xl border border-red-100 max-w-2xl mx-auto text-center text-red-700">Les outils n'ont pas pu être chargés. Réessayez dans un instant.</div>;
+
+  const badge = 'text-[11px] font-black px-2 py-1 rounded-lg';
+  const champ = 'w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-violet-400';
+  const etiquette = 'block text-xs font-black text-violet-700 uppercase tracking-widest mb-1.5';
+  const lienVideo = ouvert ? videoIntegree(ouvert.video_url) : null;
+
+  return (
+    <>
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-widest text-violet-600">Boîte à outils</p>
+          <h1 className="text-2xl md:text-3xl font-black text-gray-900 mt-1">Outils du bilan</h1>
+          <p className="text-sm text-gray-500 mt-1">{estAdmin ? 'Les outils à utiliser pendant les bilans, avec leur mode d\'emploi et une vidéo explicative. Vos formateurs les consultent ici.' : 'Les outils de votre organisme pour les bilans, avec leur mode d\'emploi et une vidéo explicative.'}</p>
+        </div>
+        {estAdmin && (
+          <button type="button" onClick={() => ouvrirEdition(null)} className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700">
+            <Plus size={16} /> Ajouter un outil
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-2">
+        <div className="relative flex-1 min-w-0">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input type="search" value={recherche} onChange={e => setRecherche(e.target.value)} placeholder="Rechercher un outil…" aria-label="Rechercher un outil"
+            className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-violet-400" />
+        </div>
+        <select value={filtreCat} onChange={e => setFiltreCat(e.target.value)} aria-label="Catégorie" className="px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          <option value="toutes">Toutes les catégories</option>
+          {CATEGORIES_OUTILS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select value={filtrePhase} onChange={e => setFiltrePhase(e.target.value)} aria-label="Phase du bilan" className="px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-sm">
+          <option value="toutes">Toutes les phases</option>
+          {PHASES_OUTILS.filter(([k]) => k !== 'toutes').map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </div>
+
+      {outils.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-10 text-center text-sm text-gray-500">
+          {estAdmin ? 'Aucun outil pour l\'instant. Cliquez sur « Ajouter un outil » pour créer le premier.' : 'Votre organisme n\'a pas encore ajouté d\'outil.'}
+        </div>
+      ) : affiches.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">Aucun outil ne correspond à votre recherche.</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {affiches.map(o => {
+            const nbF = (o.fichiers || []).length;
+            return (
+              <button key={o.id} type="button" onClick={() => { setConfirmSuppr(false); setOuvert(o); }}
+                className="text-left bg-white rounded-3xl border border-gray-100 shadow-sm p-5 space-y-3 hover:border-violet-300 hover:shadow-md transition-all min-w-0">
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={`${badge} bg-violet-50 text-violet-700`}>{libelleOutil(CATEGORIES_OUTILS, o.categorie)}</span>
+                  <span className={`${badge} bg-gray-100 text-gray-600`}>{libelleOutil(PHASES_OUTILS, o.phase)}</span>
+                </div>
+                <h2 className="font-black text-gray-900 leading-snug break-words">{o.titre}</h2>
+                {o.description && <p className="text-sm text-gray-600 break-words" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{o.description}</p>}
+                <div className="flex flex-wrap gap-3 text-xs font-bold text-gray-500">
+                  {videoIntegree(o.video_url) && <span className="inline-flex items-center gap-1 text-red-600"><PlayCircle size={14} /> Vidéo</span>}
+                  {nbF > 0 && <span className="inline-flex items-center gap-1"><Paperclip size={14} /> {nbF} fichier{nbF > 1 ? 's' : ''}</span>}
+                  {o.duree && <span className="inline-flex items-center gap-1"><Clock size={14} /> {o.duree}</span>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+    </div>
+
+      {/* Fiche d'un outil */}
+      {ouvert && !edition && (
+        <div className="fixed inset-0 z-[100] bg-gray-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto" onClick={() => setOuvert(null)}>
+          <div role="dialog" aria-modal="true" aria-label={ouvert.titre} className="bg-white rounded-3xl w-full max-w-3xl my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={`${badge} bg-violet-50 text-violet-700`}>{libelleOutil(CATEGORIES_OUTILS, ouvert.categorie)}</span>
+                  <span className={`${badge} bg-gray-100 text-gray-600`}>{libelleOutil(PHASES_OUTILS, ouvert.phase)}</span>
+                  {ouvert.duree && <span className={`${badge} bg-amber-50 text-amber-800`}>⏱ {ouvert.duree}</span>}
+                </div>
+                <h2 className="text-xl font-black text-gray-900 break-words">{ouvert.titre}</h2>
+              </div>
+              <button type="button" onClick={() => setOuvert(null)} aria-label="Fermer" className="shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100"><X size={18} /></button>
+            </div>
+            <div className="p-5 sm:p-6 space-y-5">
+              {lienVideo && (
+                <div className="relative w-full rounded-2xl overflow-hidden bg-black" style={{ paddingTop: '56.25%' }}>
+                  <iframe src={lienVideo} title={`Vidéo : ${ouvert.titre}`} className="absolute inset-0 w-full h-full" frameBorder="0"
+                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
+                </div>
+              )}
+              {ouvert.description ? (
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1.5">Mode d'emploi</p>
+                  <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-line break-words">{ouvert.description}</p>
+                </div>
+              ) : !lienVideo && <p className="text-sm text-gray-400 italic">Pas encore de mode d'emploi pour cet outil.</p>}
+              {(ouvert.fichiers || []).length > 0 && (
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1.5">Fichiers</p>
+                  <ul className="space-y-1.5">
+                    {ouvert.fichiers.map((f, i) => (
+                      <li key={f.chemin || i}>
+                        <a href={urlFichier(f.chemin)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 hover:border-violet-300 text-sm font-bold text-gray-800 min-w-0">
+                          <Download size={15} className="shrink-0 text-violet-600" /><span className="truncate">{f.nom}</span><span className="ml-auto shrink-0 text-xs font-normal text-gray-400">{tailleFichierOutil(f.taille)}</span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(ouvert.liens || []).filter(l => lienOutilSur(l.url)).length > 0 && (
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1.5">Liens utiles</p>
+                  <ul className="space-y-1.5">
+                    {ouvert.liens.filter(l => lienOutilSur(l.url)).map((l, i) => (
+                      <li key={i}><a href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-bold text-violet-700 hover:underline break-all"><ExternalLink size={14} className="shrink-0" /> {l.nom || l.url}</a></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            {estAdmin && (
+              <div className="p-5 sm:p-6 border-t border-gray-100 flex flex-wrap items-center justify-end gap-2">
+                {confirmSuppr ? (
+                  <>
+                    <span className="text-sm text-gray-700 mr-auto">Supprimer définitivement cet outil et ses fichiers ?</span>
+                    <button type="button" onClick={() => setConfirmSuppr(false)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                    <button type="button" onClick={() => supprimer(ouvert)} disabled={occupe} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-50">Oui, supprimer</button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => setConfirmSuppr(true)} className="px-4 py-2 rounded-xl border border-red-200 text-red-600 text-sm font-bold inline-flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
+                    <button type="button" onClick={() => ouvrirEdition(ouvert)} className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold inline-flex items-center gap-1.5"><Pencil size={14} /> Modifier</button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Ajout / modification (administrateur) */}
+      {estAdmin && edition && (
+        <div className="fixed inset-0 z-[100] bg-gray-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div role="dialog" aria-modal="true" aria-label={edition.id ? "Modifier l'outil" : 'Ajouter un outil'} className="bg-white rounded-3xl w-full max-w-2xl my-auto shadow-2xl">
+            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-black text-gray-900">{edition.id ? "Modifier l'outil" : 'Ajouter un outil'}</h2>
+              <button type="button" onClick={() => setEdition(null)} aria-label="Fermer" className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><X size={18} /></button>
+            </div>
+            <div className="p-5 sm:p-6 space-y-4">
+              <div>
+                <label htmlFor="outil-titre" className={etiquette}>Nom de l'outil</label>
+                <input id="outil-titre" type="text" maxLength={200} value={edition.titre} onChange={e => majEdition('titre', e.target.value)} placeholder="Ex : L'arbre de vie" className={champ} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label htmlFor="outil-cat" className={etiquette}>Catégorie</label>
+                  <select id="outil-cat" value={edition.categorie} onChange={e => majEdition('categorie', e.target.value)} className={champ}>
+                    {CATEGORIES_OUTILS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="outil-phase" className={etiquette}>Phase du bilan</label>
+                  <select id="outil-phase" value={edition.phase} onChange={e => majEdition('phase', e.target.value)} className={champ}>
+                    {PHASES_OUTILS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="outil-duree" className={etiquette}>Durée</label>
+                  <input id="outil-duree" type="text" maxLength={60} value={edition.duree} onChange={e => majEdition('duree', e.target.value)} placeholder="Ex : 45 min" className={champ} />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="outil-desc" className={etiquette}>Mode d'emploi</label>
+                <textarea id="outil-desc" rows={6} value={edition.description} onChange={e => majEdition('description', e.target.value)}
+                  placeholder="À quoi sert l'outil, comment le présenter au bénéficiaire, comment l'exploiter…" className={`${champ} resize-y`} />
+              </div>
+              <div>
+                <label htmlFor="outil-video" className={etiquette}>Vidéo explicative (lien YouTube ou Vimeo)</label>
+                <input id="outil-video" type="url" value={edition.video_url} onChange={e => majEdition('video_url', e.target.value)} placeholder="https://www.youtube.com/watch?v=…" className={champ} />
+                {edition.video_url.trim() && (videoIntegree(edition.video_url)
+                  ? <p className="text-xs font-bold text-emerald-700 mt-1">✓ Vidéo reconnue : elle sera lue directement dans la fiche.</p>
+                  : <p className="text-xs font-bold text-amber-700 mt-1">⚠ Lien non reconnu : collez le lien d'une vidéo YouTube ou Vimeo.</p>)}
+                <p className="text-xs text-gray-400 mt-1">Astuce : sur YouTube, choisissez la visibilité « Non répertoriée » : seuls ceux qui ont le lien peuvent la voir.</p>
+              </div>
+              <div>
+                <p className={etiquette}>Fichiers (PDF, Word…, 20 Mo maximum chacun)</p>
+                {edition.fichiers.length > 0 && (
+                  <ul className="space-y-1.5 mb-2">
+                    {edition.fichiers.map((f, i) => (
+                      <li key={f.chemin || `n${i}`} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 text-sm min-w-0">
+                        <Paperclip size={14} className="shrink-0 text-gray-400" /><span className="truncate">{f.nom}</span>
+                        <span className="shrink-0 text-xs text-gray-400">{tailleFichierOutil(f.taille)}{!f.chemin ? ' · à envoyer' : ''}</span>
+                        <button type="button" onClick={() => setEdition(e => ({ ...e, fichiers: e.fichiers.filter((_, j) => j !== i) }))} className="ml-auto shrink-0 text-xs font-bold text-red-600 hover:underline">Retirer</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-violet-300 text-sm font-bold text-violet-700 cursor-pointer hover:bg-violet-50">
+                  <Upload size={15} /> Ajouter un fichier
+                  <input type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.png,.jpg,.jpeg,.txt"
+                    onChange={e => { ajouterFichiers(e.target.files); e.target.value = ''; }} />
+                </label>
+              </div>
+              <div>
+                <p className={etiquette}>Liens utiles</p>
+                <div className="space-y-2">
+                  {edition.liens.map((l, i) => (
+                    <div key={i} className="flex flex-col sm:flex-row gap-2">
+                      <input type="text" value={l.nom} onChange={e => setEdition(ed => ({ ...ed, liens: ed.liens.map((x, j) => j === i ? { ...x, nom: e.target.value } : x) }))} placeholder="Nom du lien" className={`${champ} sm:w-48`} aria-label="Nom du lien" />
+                      <input type="url" value={l.url} onChange={e => setEdition(ed => ({ ...ed, liens: ed.liens.map((x, j) => j === i ? { ...x, url: e.target.value } : x) }))} placeholder="https://…" className={`${champ} flex-1 min-w-0`} aria-label="Adresse du lien" />
+                      <button type="button" onClick={() => setEdition(ed => ({ ...ed, liens: ed.liens.filter((_, j) => j !== i) }))} className="shrink-0 text-xs font-bold text-red-600 hover:underline px-2">Retirer</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setEdition(e => ({ ...e, liens: [...e.liens, { nom: '', url: '' }] }))} className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-violet-700 hover:underline"><Plus size={14} /> Ajouter un lien</button>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 border-t border-gray-100 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setEdition(null)} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+              <button type="button" onClick={enregistrer} disabled={occupe || !edition.titre.trim()} className="px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-50">{occupe ? 'Enregistrement…' : 'Enregistrer'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 const FichesMetiersView = ({ userRole, currentUserId, currentOrgId, supabase, clients, formateurs }) => {
   // 2026-10-21 : référentiel ROME chargé à l'ouverture de l'écran (vide pendant une fraction de seconde).
   const [romeData, setRomeData] = React.useState(ROME_VIDE);
@@ -24344,6 +24704,7 @@ const TAB_TO_PATH = {
   modules: '/modules',
   processus: '/processus',
   fiches_metiers: '/fiches-metiers',
+  outils: '/outils',
   calendrier: '/calendrier',
   messagerie: '/messagerie',
   gestion_documents: '/documents',
@@ -26869,8 +27230,8 @@ export default function App() {
   React.useEffect(() => {
     if (!userRole) return;
     const ROLE_TABS = {
-      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'relances', 'prospects', 'finances', 'bpf', 'veille', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
-      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'prospects', 'veille', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
+      admin: ['dashboard', 'clients', 'groupes', 'formateurs', 'calendrier', 'gestion_documents', 'questionnaires', 'modules', 'fiches_metiers', 'outils', 'relances', 'prospects', 'finances', 'bpf', 'veille', 'processus', 'messagerie', 'parametres_org', 'profil', 'set-password'],
+      formateur: ['accueil_formateur', 'clients', 'calendrier', 'fiches_metiers', 'outils', 'prospects', 'veille', 'processus', 'messagerie', 'ressources', 'profil', 'set-password'],
       client: ['accueil', 'mes_seances', 'calendrier', 'mes_documents', 'exercices', 'fiches_metiers', 'processus', 'messagerie', 'profil', 'set-password'],
     };
     const ROLE_DEFAULT_TAB = { admin: 'dashboard', formateur: 'accueil_formateur', client: 'accueil' };
@@ -32356,6 +32717,10 @@ export default function App() {
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
+              <button onClick={() => { setActiveTab('outils'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'outils' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                <Wrench className="w-5 h-5 mr-3" /> Outils
+                {!hasFeatureAccess(orgSettings, 'pro') && <span className="ml-auto text-[11px] font-black bg-violet-500/90 text-white px-1.5 py-0.5 rounded-md">PRO</span>}
+              </button>
               <p className="px-4 pt-4 pb-1 text-[11px] font-black uppercase tracking-widest text-slate-500">Commercial</p>
               <button onClick={() => { setActiveTab('relances'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'relances' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Bell className="w-5 h-5 mr-3" /> Relances
@@ -32417,6 +32782,11 @@ export default function App() {
               <button onClick={() => { setActiveTab('fiches_metiers'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'fiches_metiers' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Briefcase className="w-5 h-5 mr-3" /> Fiches Métiers
               </button>
+              {estPro && (
+                <button onClick={() => { setActiveTab('outils'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'outils' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
+                  <Wrench className="w-5 h-5 mr-3" /> Outils
+                </button>
+              )}
               <button onClick={() => { setActiveTab('prospects'); setMobileMenuOpen(false); }} className={`w-full flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 ${activeTab === 'prospects' ? 'nav-glow text-white' : 'text-slate-300 hover:bg-violet-900/30 hover:text-white font-medium'}`}>
                 <Send className="w-5 h-5 mr-3" /> Prospects
               </button>
@@ -32677,6 +33047,24 @@ export default function App() {
             setViewingSession={setViewingSession}
             handleSaveCorrection={handleSaveCorrection}
           />}
+          {activeTab === 'outils' && (userRole === 'admin' || userRole === 'formateur') && (
+            hasFeatureAccess(orgSettings, 'pro')
+              ? <OutilsView supabase={supabase} userRole={userRole} currentOrgId={currentOrgId} />
+              : userRole === 'admin' ? (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center max-w-2xl mx-auto">
+                  <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center mx-auto mb-5">
+                    <Lock className="w-7 h-7 text-violet-600" />
+                  </div>
+                  <h3 className="text-lg font-black text-gray-900 mb-2">Fonctionnalité réservée aux plans Pro et Illimité</h3>
+                  <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
+                    La boîte à outils de vos bilans : chaque outil avec son mode d'emploi, sa vidéo explicative et ses fichiers, partagée avec vos formateurs.
+                  </p>
+                  <button onClick={() => setActiveTab('parametres_org')} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl transition-all">
+                    Voir les plans →
+                  </button>
+                </div>
+              ) : <div className="bg-white p-8 rounded-3xl border border-gray-100 max-w-2xl mx-auto text-center text-gray-600">Les outils ne sont pas disponibles pour votre organisme.</div>
+          )}
           {activeTab === 'fiches_metiers' && <FichesMetiersView
             userRole={userRole}
             currentUserId={currentUserId}
