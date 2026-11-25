@@ -21847,16 +21847,36 @@ const OutilsView = ({ supabase, userRole, currentOrgId }) => {
       {ouvert && !edition && (
         <div className="fixed inset-0 z-[100] bg-gray-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto" onClick={() => setOuvert(null)}>
           <div role="dialog" aria-modal="true" aria-label={ouvert.titre} className="bg-white rounded-3xl w-full max-w-3xl my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-2">
-                <div className="flex flex-wrap gap-1.5">
-                  <span className={`${badge} bg-violet-50 text-violet-700`}>{libelleOutil(CATEGORIES_OUTILS, ouvert.categorie)}</span>
-                  <span className={`${badge} bg-gray-100 text-gray-600`}>{libelleOutil(PHASES_OUTILS, ouvert.phase)}</span>
-                  {ouvert.duree && <span className={`${badge} bg-amber-50 text-amber-800`}>⏱ {ouvert.duree}</span>}
+            {/* 25/11/2026 (v2) : Modifier / Supprimer en haut de la fiche, toujours visibles (avant : tout en bas, sous la vidéo). */}
+            <div className="sticky top-0 z-10 bg-white rounded-t-3xl border-b border-gray-100">
+              <div className="p-5 sm:p-6 flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className={`${badge} bg-violet-50 text-violet-700`}>{libelleOutil(CATEGORIES_OUTILS, ouvert.categorie)}</span>
+                    <span className={`${badge} bg-gray-100 text-gray-600`}>{libelleOutil(PHASES_OUTILS, ouvert.phase)}</span>
+                    {ouvert.duree && <span className={`${badge} bg-amber-50 text-amber-800`}>⏱ {ouvert.duree}</span>}
+                  </div>
+                  <h2 className="text-xl font-black text-gray-900 break-words">{ouvert.titre}</h2>
                 </div>
-                <h2 className="text-xl font-black text-gray-900 break-words">{ouvert.titre}</h2>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  {estAdmin && (
+                    <button type="button" onClick={() => ouvrirEdition(ouvert)} aria-label="Modifier l'outil" title="Modifier l'outil"
+                      className="px-3 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold inline-flex items-center gap-1.5 hover:bg-violet-700"><Pencil size={14} /><span className="hidden sm:inline">Modifier</span></button>
+                  )}
+                  {estAdmin && (
+                    <button type="button" onClick={() => setConfirmSuppr(true)} aria-label="Supprimer l'outil" title="Supprimer l'outil"
+                      className="p-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
+                  )}
+                  <button type="button" onClick={() => setOuvert(null)} aria-label="Fermer" className="p-2 rounded-xl text-gray-400 hover:bg-gray-100"><X size={18} /></button>
+                </div>
               </div>
-              <button type="button" onClick={() => setOuvert(null)} aria-label="Fermer" className="shrink-0 p-2 rounded-xl text-gray-400 hover:bg-gray-100"><X size={18} /></button>
+              {estAdmin && confirmSuppr && (
+                <div className="mx-5 sm:mx-6 mb-4 p-3 rounded-xl bg-red-50 border border-red-100 flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold text-red-800 mr-auto">Supprimer définitivement cet outil et ses fichiers ?</span>
+                  <button type="button" onClick={() => setConfirmSuppr(false)} className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
+                  <button type="button" onClick={() => supprimer(ouvert)} disabled={occupe} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-bold disabled:opacity-50">Oui, supprimer</button>
+                </div>
+              )}
             </div>
             <div className="p-5 sm:p-6 space-y-5">
               {lienVideo && (
@@ -21896,22 +21916,6 @@ const OutilsView = ({ supabase, userRole, currentOrgId }) => {
                 </div>
               )}
             </div>
-            {estAdmin && (
-              <div className="p-5 sm:p-6 border-t border-gray-100 flex flex-wrap items-center justify-end gap-2">
-                {confirmSuppr ? (
-                  <>
-                    <span className="text-sm text-gray-700 mr-auto">Supprimer définitivement cet outil et ses fichiers ?</span>
-                    <button type="button" onClick={() => setConfirmSuppr(false)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600">Annuler</button>
-                    <button type="button" onClick={() => supprimer(ouvert)} disabled={occupe} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-50">Oui, supprimer</button>
-                  </>
-                ) : (
-                  <>
-                    <button type="button" onClick={() => setConfirmSuppr(true)} className="px-4 py-2 rounded-xl border border-red-200 text-red-600 text-sm font-bold inline-flex items-center gap-1.5"><Trash2 size={14} /> Supprimer</button>
-                    <button type="button" onClick={() => ouvrirEdition(ouvert)} className="px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-bold inline-flex items-center gap-1.5"><Pencil size={14} /> Modifier</button>
-                  </>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}
