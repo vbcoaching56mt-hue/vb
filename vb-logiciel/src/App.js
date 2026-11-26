@@ -5127,6 +5127,7 @@ const ClientDetailView = ({
   const [groupeDate, setGroupeDate] = React.useState('');
   const [groupeProgression, setGroupeProgression] = React.useState(null);
   const [clientQuestionnaireResponses, setClientQuestionnaireResponses] = React.useState([]);
+  const ctxQuestionnairesPdf = React.useContext(ConventionsContext) || {}; // 26/11/2026 : nom de l'organisme dans le PDF
   const [clientQuestionnaireResources, setClientQuestionnaireResources] = React.useState([]);
   // AJOUT (2026-10-02) : envoi d'un questionnaire / quiz directement à ce client, même s'il n'est pas dans
   // son module (table questionnaire_assignments — voir questionnaire_assignments_migration.sql).
@@ -6591,15 +6592,15 @@ const ClientDetailView = ({
                 const response = clientQuestionnaireResponses.find(r => String(r.questionnaire_id) === String(qResource.id));
                 return (
                   <div key={qResource.id} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
-                    <div className="p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                    <div className="p-4 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 ${isQuizResource ? 'bg-violet-50 text-violet-600' : 'bg-amber-50 text-amber-600'}`}>{isQuizResource ? '🎯' : '📝'}</div>
                         <div>
-                          <p className="font-bold text-gray-900 text-sm">{qResource.titre}</p>
+                          <p className="font-bold text-gray-900 text-sm break-words">{qResource.titre}</p>
                           <p className="text-xs text-gray-500">{questions.length} question{questions.length > 1 ? 's' : ''} · {isQuizResource ? 'Quiz noté' : 'Questionnaire'} · {qResource._source === 'envoye' ? `envoyé le ${new Date(qResource._assignment.assigned_at).toLocaleDateString('fr-FR')}` : qResource._source === 'module' ? 'dans le module' : 'hors module'}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {response && isQuizResource && response.score_percent != null && (
                           <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
                             {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
@@ -6609,6 +6610,11 @@ const ClientDetailView = ({
                           <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété le {new Date(response.completed_at).toLocaleDateString('fr-FR')}</span>
                         ) : (
                           <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                        )}
+                        {response && (
+                          <button type="button" title="Télécharger ce questionnaire rempli en PDF" aria-label={`Télécharger « ${qResource.titre} » en PDF`}
+                            onClick={() => telechargerQuestionnaireRempliPdf({ questionnaire: qResource, reponse: response, nomClient: client.nom_complet || client.nomcomplet_client || client.nom, nomOrganisme: ctxQuestionnairesPdf.orgSettings?.nom })}
+                            className="text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg border border-violet-100 flex items-center gap-1"><Download size={13} /> PDF</button>
                         )}
                         {qResource._source === 'envoye' && !response && (
                           <button type="button" onClick={() => handleRemoveQAssignment(qResource._assignment)} title="Retirer ce questionnaire de l'espace du client"
@@ -10633,6 +10639,8 @@ const FormateurView = ({
   // qu'assignedClients juste au-dessus).
   const [formateurQuizResources, setFormateurQuizResources] = React.useState([]);
   const [formateurQuizResponses, setFormateurQuizResponses] = React.useState([]);
+  const [formateurQAssignments, setFormateurQAssignments] = React.useState([]); // 26/11/2026
+  const ctxQuestionnairesPdfF = React.useContext(ConventionsContext) || {};
   React.useEffect(() => {
     if (!currentOrgId || !supabase) return;
     supabase.from('module_step_resources').select('id, titre, metadata, module_id').eq('type', 'questionnaire').eq('organisation_id', currentOrgId)
@@ -10641,8 +10649,11 @@ const FormateurView = ({
     if (myClientIds.length > 0) {
       supabase.from('questionnaire_responses').select('*').in('client_id', myClientIds)
         .then(({ data }) => { if (data) setFormateurQuizResponses(data); });
+      supabase.from('questionnaire_assignments').select('client_id, questionnaire_id').in('client_id', myClientIds)
+        .then(({ data, error }) => { if (!error && data) setFormateurQAssignments(data); });
     } else {
       setFormateurQuizResponses([]);
+      setFormateurQAssignments([]);
     }
   }, [currentOrgId, supabase, clients, currentUserId]);
 
@@ -11137,7 +11148,7 @@ const FormateurView = ({
                         </span>
                       )}
                     </button>
-                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Quiz</button>
+                    <button onClick={() => setFormateurClientTab('quiz')} className={`px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'quiz' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Questionnaires</button>
                     <button onClick={() => setFormateurClientTab('recus')} className={`relative px-4 py-3 font-bold text-sm transition-all border-b-2 ${formateurClientTab === 'recus' ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                       Reçus du client
                       {(depotsNonLus || []).filter(d => String(d.client_id) === String(client.id) && d.destinataire !== 'organisme').length > 0 && (
@@ -11155,36 +11166,50 @@ const FormateurView = ({
                   {formateurClientTab === 'quiz' && (
                     <div className="space-y-3">
                       {(() => {
-                        const quizItems = formateurQuizResources
-                          .filter(r => String(r.module_id) === String(client.module_id))
-                          .map(r => {
-                            const meta = (() => { try { return typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}); } catch { return {}; } })();
-                            return { resource: r, meta };
-                          })
-                          .filter(({ meta }) => meta.isQuiz);
-                        if (quizItems.length === 0) {
+                        // 26/11/2026 : tous les questionnaires du bénéficiaire (module, envoyés, déjà remplis),
+                        // chacun téléchargeable en PDF une fois rempli.
+                        const reponsesClient = formateurQuizResponses.filter(r => String(r.client_id) === String(client.id));
+                        const envoyes = formateurQAssignments.filter(a => String(a.client_id) === String(client.id)).map(a => String(a.questionnaire_id));
+                        const items = formateurQuizResources.filter(r =>
+                          (client.module_id && String(r.module_id) === String(client.module_id))
+                          || envoyes.includes(String(r.id))
+                          || reponsesClient.some(x => String(x.questionnaire_id) === String(r.id)));
+                        if (items.length === 0) {
                           return (
                             <div className="py-10 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                              <p className="text-2xl mb-2">🎯</p>
-                              <p className="text-gray-400 text-sm">Aucun quiz dans le module de ce client.</p>
+                              <p className="text-2xl mb-2">📝</p>
+                              <p className="text-gray-400 text-sm">Aucun questionnaire pour ce bénéficiaire.</p>
                             </div>
                           );
                         }
-                        return quizItems.map(({ resource, meta }) => {
-                          const response = formateurQuizResponses.find(r => r.questionnaire_id === resource.id && r.client_id === client.id);
+                        return items.map(resource => {
+                          const meta = metaQuestionnaire(resource);
+                          const nbQ = Array.isArray(meta.questions) ? meta.questions.length : 0;
+                          const isQuiz = !!meta.isQuiz;
+                          const response = reponsesClient.find(x => String(x.questionnaire_id) === String(resource.id));
                           return (
-                            <div key={resource.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
-                              <div>
-                                <p className="font-bold text-gray-900 text-sm">{resource.titre}</p>
-                                <p className="text-xs text-gray-500">Seuil de réussite : {meta.seuilReussite ?? 50}%</p>
+                            <div key={resource.id} className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-bold text-gray-900 text-sm break-words">{isQuiz ? '🎯 ' : '📝 '}{resource.titre}</p>
+                                <p className="text-xs text-gray-500">{nbQ} question{nbQ > 1 ? 's' : ''} · {isQuiz ? `Quiz noté · seuil de réussite ${meta.seuilReussite ?? 50} %` : 'Questionnaire'}</p>
                               </div>
-                              {response && response.score_percent != null ? (
-                                <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
-                                  {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
-                                </span>
-                              ) : (
-                                <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
-                              )}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {response && isQuiz && response.score_percent != null && (
+                                  <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${response.passed ? 'text-green-600 bg-green-50 border-green-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+                                    {response.passed ? '✅ Acquis' : '❌ Non acquis'} · {Math.round(response.score_percent)}%
+                                  </span>
+                                )}
+                                {response ? (
+                                  <span className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-lg border border-green-100">✓ Complété{response.completed_at ? ` le ${new Date(response.completed_at).toLocaleDateString('fr-FR')}` : ''}</span>
+                                ) : (
+                                  <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">⏳ En attente</span>
+                                )}
+                                {response && (
+                                  <button type="button" title="Télécharger ce questionnaire rempli en PDF" aria-label={`Télécharger « ${resource.titre} » en PDF`}
+                                    onClick={() => telechargerQuestionnaireRempliPdf({ questionnaire: resource, reponse: response, nomClient: client.nom_complet || client.nomcomplet_client || client.nom, nomOrganisme: ctxQuestionnairesPdfF.orgSettings?.nom })}
+                                    className="text-xs font-bold text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg border border-violet-100 flex items-center gap-1"><Download size={13} /> PDF</button>
+                                )}
+                              </div>
                             </div>
                           );
                         });
@@ -13361,6 +13386,82 @@ const VisualTemplateEditor = ({ isOpen, onClose, onSave, initialData }) => {
 // dans la note seulement si c'est un choix unique/multiple et qu'elle n'est pas marquée notee === false.
 // Les questions créées avant restent notées (notee absent = notée).
 const qEstNotee = (q, isQuiz = true) => !!isQuiz && (q?.type === 'single' || q?.type === 'multiple') && q?.notee !== false;
+// 26/11/2026 — Fiche client › Questionnaires : télécharger en PDF, un par un, les questionnaires remplis
+// par le bénéficiaire (administrateur et formateur). Lecture seule : rien n'est modifié en base.
+const metaQuestionnaire = (r) => {
+  const m = r && r.metadata;
+  if (m && typeof m === 'object') return m;
+  try { return JSON.parse(m || '{}') || {}; } catch (_) { return {}; }
+};
+const reponsesDuQuestionnaire = (reponse) => {
+  const x = reponse && reponse.responses;
+  if (x && typeof x === 'object') return x;
+  try { return JSON.parse(x || '{}') || {}; } catch (_) { return {}; }
+};
+const reponseQuestionJuste = (q, rep, isQuiz) => {
+  if (!qEstNotee(q, isQuiz)) return null;
+  if (q.type === 'single') return rep === q.correctAnswer;
+  return Array.isArray(q.correctAnswer) && Array.isArray(rep) && q.correctAnswer.length === rep.length && q.correctAnswer.every(o => rep.includes(o));
+};
+// Les polices du PDF ne savent pas écrire les emojis et quelques symboles : on les retire proprement.
+const textePdfSur = (s) => String(s == null ? '' : s)
+  .replace(/[‘’‚′]/g, "'").replace(/[“”„«»]/g, '"')
+  .replace(/[–—−]/g, '-').replace(/…/g, '...').replace(/[   ]/g, ' ')
+  .replace(/œ/g, 'oe').replace(/Œ/g, 'OE').replace(/€/g, 'EUR')
+  .replace(/[^\n\t -~¡-ÿ]/g, '')
+  .replace(/[ \t]+\n/g, '\n');
+const telechargerQuestionnaireRempliPdf = async ({ questionnaire, reponse, nomClient, nomOrganisme }) => {
+  try {
+    const meta = metaQuestionnaire(questionnaire);
+    const questions = Array.isArray(meta.questions) ? meta.questions : [];
+    const isQuiz = !!meta.isQuiz;
+    const reps = reponsesDuQuestionnaire(reponse);
+    const { jsPDF } = await import('jspdf');
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    const mx = 50, largeur = 595.28 - 100, bas = 841.89 - 50, lh = 15;
+    let y = 60;
+    const place = (h) => { if (y + h > bas) { pdf.addPage(); y = 60; } };
+    const ecrire = (texte, taille, gras, couleur, interligne) => {
+      pdf.setFont('helvetica', gras ? 'bold' : 'normal'); pdf.setFontSize(taille);
+      if (Array.isArray(couleur)) pdf.setTextColor(couleur[0], couleur[1], couleur[2]); else pdf.setTextColor(couleur);
+      // Ligne par ligne : une longue réponse continue sur la page suivante au lieu de déborder.
+      pdf.splitTextToSize(textePdfSur(texte), largeur).forEach(ligne => { place(interligne + 4); pdf.text(ligne, mx, y); y += interligne; });
+    };
+    if (nomOrganisme) { ecrire(nomOrganisme, 10, false, 120, 14); y += 8; }
+    ecrire(questionnaire.titre || 'Questionnaire', 16, true, 20, 20); y += 6;
+    ecrire(`Bénéficiaire : ${nomClient || '-'}`, 10, false, 90, 14);
+    ecrire(`${isQuiz ? 'Quiz noté' : 'Questionnaire'} rempli le ${reponse && reponse.completed_at ? new Date(reponse.completed_at).toLocaleDateString('fr-FR') : '-'}`, 10, false, 90, 14);
+    if (isQuiz && reponse && reponse.score_percent != null) {
+      y += 2;
+      ecrire(`Résultat : ${Math.round(reponse.score_percent)} % - ${reponse.passed ? 'Acquis' : 'Non acquis'} (seuil de réussite : ${meta.seuilReussite ?? 50} %)`, 11, true, reponse.passed ? [5, 120, 60] : [200, 30, 30], 15);
+    }
+    y += 6; pdf.setDrawColor(220); pdf.line(mx, y, mx + largeur, y); y += 24;
+    if (!questions.length) ecrire('Ce questionnaire ne contient aucune question.', 10, false, 120, lh);
+    questions.forEach((q, i) => {
+      const rep = reps[q.id];
+      place(lh * 3);
+      ecrire(`${i + 1}. ${q.text || ''}`, 11, true, 20, lh); y += 4;
+      ecrire(texteReponse(q, rep), 10, false, 60, lh);
+      const juste = reponseQuestionJuste(q, rep, isQuiz);
+      if (juste === true) { y += 2; ecrire('Bonne réponse', 9, true, [5, 120, 60], 13); }
+      if (juste === false) {
+        y += 2;
+        const attendu = Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : (q.correctAnswer || '');
+        ecrire(`Réponse incorrecte${attendu ? ' - réponse attendue : ' + attendu : ''}`, 9, true, [200, 30, 30], 13);
+      }
+      y += 16;
+    });
+    const nb = pdf.getNumberOfPages();
+    for (let p = 1; p <= nb; p++) {
+      pdf.setPage(p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(150);
+      pdf.text(`Page ${p} / ${nb}`, 595.28 - mx, 841.89 - 25, { align: 'right' });
+    }
+    pdf.save(`${nomTelechargement(questionnaire.titre || 'Questionnaire', nomClient || '')}.pdf`);
+  } catch (e) {
+    console.error('[questionnaire PDF]', e);
+    toast.error('Téléchargement impossible : ' + (e && e.message ? e.message : 'erreur inconnue'));
+  }
+};
 const qManqueBonneReponse = (q) => qEstNotee(q) && (
   (q.type === 'single' && !q.correctAnswer) ||
   (q.type === 'multiple' && (!Array.isArray(q.correctAnswer) || q.correctAnswer.length === 0)));
